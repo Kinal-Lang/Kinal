@@ -17,7 +17,7 @@ concurrency:
 # ── shared env ──────────────────────────────────────────────────
 env:
   LLVM_RELEASE: "21.1.8"
-  ZIG_VERSION: "0.14.1"
+  ZIG_VERSION: "0.15.2"
   PYTHON_VERSION: "3.12"
 
 jobs:
@@ -34,21 +34,21 @@ jobs:
             name: Windows x64
             host-tag: win-x64
             llvm-archive: clang+llvm-21.1.8-x86_64-pc-windows-msvc.tar.xz
-            zig-archive: zig-windows-x86_64-0.14.1.zip
+            zig-archive: zig-x86_64-windows-0.15.2.zip
             exe-ext: .exe
           # ── Linux x64 ──
           - os: ubuntu-22.04
             name: Linux x64
             host-tag: linux-x64
-            llvm-archive: clang+llvm-21.1.8-x86_64-linux-gnu-ubuntu-22.04.tar.xz
-            zig-archive: zig-linux-x86_64-0.14.1.tar.xz
+            llvm-archive: LLVM-21.1.8-Linux-X64.tar.xz
+            zig-archive: zig-x86_64-linux-0.15.2.tar.xz
             exe-ext: ""
           # ── macOS arm64 ──
           - os: macos-14
             name: macOS arm64
             host-tag: macos-arm64
-            llvm-archive: clang+llvm-21.1.8-arm64-apple-darwin22.0.tar.xz
-            zig-archive: zig-macos-aarch64-0.14.1.tar.xz
+            llvm-archive: LLVM-21.1.8-macOS-ARM64.tar.xz
+            zig-archive: zig-aarch64-macos-0.15.2.tar.xz
             exe-ext: ""
 
     name: ${{ matrix.name }}

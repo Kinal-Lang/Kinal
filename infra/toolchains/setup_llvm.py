@@ -31,12 +31,12 @@ def host_default_prebuilt_url() -> str:
     if sys.platform == "linux":
         return (
             "https://github.com/llvm/llvm-project/releases/download/"
-            f"llvmorg-{LLVM_RELEASE}/clang+llvm-{LLVM_RELEASE}-x86_64-linux-gnu-ubuntu-22.04.tar.xz"
+            f"llvmorg-{LLVM_RELEASE}/LLVM-{LLVM_RELEASE}-Linux-X64.tar.xz"
         )
     if sys.platform == "darwin":
         return (
             "https://github.com/llvm/llvm-project/releases/download/"
-            f"llvmorg-{LLVM_RELEASE}/clang+llvm-{LLVM_RELEASE}-arm64-apple-darwin22.0.tar.xz"
+            f"llvmorg-{LLVM_RELEASE}/LLVM-{LLVM_RELEASE}-macOS-ARM64.tar.xz"
         )
     raise SystemExit(f"unsupported host platform: {sys.platform}")
 
