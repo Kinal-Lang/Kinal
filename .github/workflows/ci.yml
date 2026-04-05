@@ -1,0 +1,141 @@
+# ────────────────────────────────────────────────────────────────
+#  Kinal CI — build & test on every push / pull-request
+# ────────────────────────────────────────────────────────────────
+name: CI
+
+on:
+  push:
+    branches: [ main, dev, "release/**" ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# ── shared env ──────────────────────────────────────────────────
+env:
+  LLVM_RELEASE: "21.1.8"
+  ZIG_VERSION: "0.14.1"
+  PYTHON_VERSION: "3.12"
+
+jobs:
+  # ─────────────────────────────────────────────
+  #  Build matrix — Windows / Linux / macOS
+  # ─────────────────────────────────────────────
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # ── Windows x64 ──
+          - os: windows-latest
+            name: Windows x64
+            host-tag: win-x64
+            llvm-archive: clang+llvm-21.1.8-x86_64-pc-windows-msvc.tar.xz
+            zig-archive: zig-windows-x86_64-0.14.1.zip
+            exe-ext: .exe
+          # ── Linux x64 ──
+          - os: ubuntu-22.04
+            name: Linux x64
+            host-tag: linux-x64
+            llvm-archive: clang+llvm-21.1.8-x86_64-linux-gnu-ubuntu-22.04.tar.xz
+            zig-archive: zig-linux-x86_64-0.14.1.tar.xz
+            exe-ext: ""
+          # ── macOS arm64 ──
+          - os: macos-14
+            name: macOS arm64
+            host-tag: macos-arm64
+            llvm-archive: clang+llvm-21.1.8-arm64-apple-darwin22.0.tar.xz
+            zig-archive: zig-macos-aarch64-0.14.1.tar.xz
+            exe-ext: ""
+
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+
+    steps:
+      # ─── Checkout repos ───────────────────────
+      - name: Checkout Kinal
+        uses: actions/checkout@v4
+        with:
+          path: Kinal
+
+      - name: Checkout Kinal-ThirdParty
+        uses: actions/checkout@v4
+        with:
+          repository: Kinal-Lang/Kinal-ThirdParty
+          path: Kinal-ThirdParty
+
+      # ─── Setup tools ──────────────────────────
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Setup CMake & Ninja
+        uses: lukka/get-cmake@latest
+
+      # ─── Cache LLVM prebuilt ──────────────────
+      - name: Cache LLVM prebuilt
+        id: cache-llvm
+        uses: actions/cache@v4
+        with:
+          path: Kinal-ThirdParty/.cache/llvm/prebuilt
+          key: llvm-${{ env.LLVM_RELEASE }}-${{ matrix.host-tag }}
+
+      - name: Fetch LLVM prebuilt
+        if: steps.cache-llvm.outputs.cache-hit != 'true'
+        working-directory: Kinal
+        run: python x.py fetch llvm-prebuilt
+
+      # ─── Cache Zig ────────────────────────────
+      - name: Cache Zig
+        id: cache-zig
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/kinal/toolchains/zig
+            ~/AppData/Local/Kinal/toolchains/zig
+          key: zig-${{ env.ZIG_VERSION }}-${{ matrix.host-tag }}
+
+      - name: Fetch Zig
+        if: steps.cache-zig.outputs.cache-hit != 'true'
+        working-directory: Kinal
+        run: python x.py fetch zig-prebuilt
+
+      # ─── Full build (dist) ────────────────────
+      - name: Build release distribution
+        working-directory: Kinal
+        run: python x.py dist
+
+      # ─── Tests — smoke ────────────────────────
+      - name: Run smoke tests
+        working-directory: Kinal
+        run: python x.py test --release
+
+      # ─── Tests — full regression ──────────────
+      - name: Run full regression tests
+        working-directory: Kinal
+        run: python x.py test --release --full
+
+      # ─── Upload artifacts ─────────────────────
+      - name: Upload release bundle
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Kinal-${{ matrix.host-tag }}
+          path: Kinal/artifacts/release/Kinal-${{ matrix.host-tag }}.zip
+          if-no-files-found: warn
+          retention-days: 7
+
+      # ─── Upload test results ──────────────────
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-${{ matrix.host-tag }}
+          path: Kinal/out/test/
+          if-no-files-found: warn
+          retention-days: 7
