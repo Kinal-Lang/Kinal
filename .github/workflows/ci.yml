@@ -261,4 +261,3 @@ jobs:
           path: Kinal/out/test/
           if-no-files-found: warn
           retention-days: 7
-          retention-days: 7
