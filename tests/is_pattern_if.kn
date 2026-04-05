@@ -1,0 +1,24 @@
+Unit Tests.IsPatternIf;
+
+Get Console By IO.Console;
+
+Class Animal {
+}
+
+Class Dog By Animal {
+    Public Function string Name() {
+        Return "dog";
+    }
+}
+
+Safe Static Function int Main(string[] args) {
+    Animal a = New Dog();
+    If (a Is Dog d) {
+        Console.PrintLine(d.Name());
+        Console.PrintLine(d Is Animal);
+    } Else {
+        Console.PrintLine("no");
+        Console.PrintLine(false);
+    }
+    Return 0;
+}

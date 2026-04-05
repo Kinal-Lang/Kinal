@@ -1,0 +1,21 @@
+Unit Tests.CtorNamedFunction;
+
+Get Console By IO.Console;
+
+Class Counter {
+    Private int value;
+
+    Public Safe Function Counter(int start) {
+        This.value = start + 1;
+    }
+
+    Public Safe Function int Value() {
+        Return This.value;
+    }
+}
+
+Static Safe Function int Main(string args[]) {
+    Counter c = New Counter(41);
+    Console.PrintLine([string](c.Value()));
+    Return 0;
+}

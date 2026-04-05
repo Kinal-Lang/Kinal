@@ -1,0 +1,12 @@
+{
+  "kind": "package",
+  "name": "IO.UI",
+  "version": "1.0.0",
+  "summary": "Official hosted UI package bundled with Kinal.",
+  "source_root": "src",
+  "klib": "lib/IO.UI.klib",
+  "entry": "src/IO/UI/Window.kn",
+  "dependencies": [
+    "IO.Core"
+  ]
+}

@@ -1,0 +1,28 @@
+Unit Tests.SwitchObjectExpr;
+
+Get Console By IO.Console;
+
+Class Box {
+    Public string Value;
+
+    Public Safe Constructor(string value) {
+        This.Value = value;
+    }
+}
+
+Safe Static Function Box Pick(int value) {
+    Return Switch(value) {
+        Case(1) {
+            New Box("one");
+        }
+        Case(default) {
+            New Box("other");
+        }
+    };
+}
+
+Static Safe Function int Main(string args[]) {
+    Console.PrintLine(Pick(1).Value);
+    Console.PrintLine(Pick(9).Value);
+    Return 0;
+}

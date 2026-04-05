@@ -1,0 +1,9 @@
+Unit Tests.QualStatic.Target;
+
+Public Class Printer
+{
+    Public Static Function string Print()
+    {
+        Return "ok";
+    }
+}

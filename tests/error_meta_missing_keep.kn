@@ -1,0 +1,11 @@
+Unit Tests.ErrorMetaMissingKeep;
+
+Meta Demo(string value)
+{
+    On @function;
+}
+
+Static Function int Main()
+{
+    Return 0;
+}

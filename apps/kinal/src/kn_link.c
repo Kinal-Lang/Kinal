@@ -1,0 +1,82 @@
+﻿#include "kn/link.h"
+#include "kn/util.h"
+#include "kn/platform.h"
+
+#if !defined(_WIN32) && !defined(_WIN64)
+#include <unistd.h>
+#endif
+
+#define KN_ZIG_VERSION "0.14.1"
+
+static const char *KN_KERNEL32_DEF =
+    "LIBRARY KERNEL32.dll\n"
+    "EXPORTS\n"
+    "  GetStdHandle\n"
+    "  WriteFile\n"
+    "  ReadFile\n"
+    "  ExitProcess\n"
+    "  GetProcessHeap\n"
+    "  HeapAlloc\n"
+    "  HeapFree\n"
+    "  CreateFileA\n"
+    "  CreateFileMappingA\n"
+    "  MapViewOfFile\n"
+    "  UnmapViewOfFile\n"
+    "  CloseHandle\n"
+    "  GetFileSizeEx\n"
+    "  GetCommandLineA\n"
+    "  CreateProcessA\n"
+    "  WaitForSingleObject\n"
+    "  GetExitCodeProcess\n"
+    "  Sleep\n"
+    "  GetTickCount64\n"
+    "  LoadLibraryA\n"
+    "  GetProcAddress\n"
+    "  FreeLibrary\n"
+    "  QueryPerformanceCounter\n"
+    "  QueryPerformanceFrequency\n"
+    "  GetSystemTimeAsFileTime\n"
+    "  FileTimeToSystemTime\n"
+    "  FindFirstFileA\n"
+    "  FindNextFileA\n"
+    "  FindClose\n"
+    "  DeleteFileA\n"
+    "  GetEnvironmentVariableA\n"
+    "  GetModuleHandleA\n"
+    "  GetLastError\n"
+    "  SetConsoleOutputCP\n"
+    "  SetConsoleCP\n"
+    "  SetConsoleCursorPosition\n";
+
+static const char *KN_USER32_DEF =
+    "LIBRARY USER32.dll\n"
+    "EXPORTS\n"
+    "  GetAsyncKeyState\n"
+    "  MessageBoxA\n"
+    "  RegisterClassA\n"
+    "  CreateWindowExA\n"
+    "  ShowWindow\n"
+    "  UpdateWindow\n"
+    "  GetMessageA\n"
+    "  TranslateMessage\n"
+    "  DispatchMessageA\n"
+    "  PostQuitMessage\n"
+    "  DefWindowProcA\n"
+    "  LoadCursorA\n"
+    "  SendMessageA\n"
+    "  InvalidateRect\n"
+    "  GetClientRect\n"
+    "  FillRect\n";
+
+static const char *KN_GDI32_DEF =
+    "LIBRARY GDI32.dll\n"
+    "EXPORTS\n"
+    "  SetTextColor\n"
+    "  SetBkColor\n"
+    "  CreateSolidBrush\n"
+    "  DeleteObject\n"
+    "  CreateFontA\n";
+
+#include "link/kn_link_support.inc"
+#include "link/kn_link_runtime.inc"
+#include "link/kn_link_impl.inc"

@@ -1,0 +1,5 @@
+Unit App.BadMemberChain;
+
+Static Function int Main(string args[]) {
+    Return A.B.C(args);
+}

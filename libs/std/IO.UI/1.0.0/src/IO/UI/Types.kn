@@ -1,0 +1,372 @@
+Unit IO.UI;
+
+Enum FontWeight By int
+{
+    Normal = 400,
+    Bold = 700
+}
+
+Enum EventKind By int
+{
+    OnClick = 1,
+    OnClose = 2,
+    OnShown = 3,
+    OnResize = 4,
+    OnFocus = 5,
+    OnBlur = 6,
+    OnTextChanged = 7,
+    OnCheckedChanged = 8,
+    OnSelectedChanged = 9,
+    OnDoubleClick = 10,
+    OnKeyDown = 11,
+    OnKeyUp = 12,
+    OnMouseEnter = 13,
+    OnMouseLeave = 14,
+    OnMouseDown = 15,
+    OnMouseMove = 16,
+    OnMouseUp = 17,
+    OnMove = 18
+}
+
+Enum MessageBoxButtons By int
+{
+    OK = 0,
+    OKCancel = 1,
+    YesNo = 4
+}
+
+Enum MessageBoxIcon By int
+{
+    None = 0,
+    Error = 0x10,
+    Question = 0x20,
+    Warning = 0x30,
+    Info = 0x40
+}
+
+Trusted Function void __UI_ThrowUnsupportedEvent(string target, EventKind kind)
+{
+    Throw New IO.Error("IO.UI", target + " does not support event " + [string]([int](kind)));
+}
+
+Trusted Function void __UI_ThrowHostError(string api, int code)
+{
+    Throw New IO.Error("IO.UI", api + " failed: " + [string](code));
+}
+
+Public Class Color
+{
+    Private u8 _R;
+    Private u8 _G;
+    Private u8 _B;
+    Private u8 _A;
+
+    Public Constructor(u8 r = 0, u8 g = 0, u8 b = 0, u8 a = 255)
+    {
+        _R = r;
+        _G = g;
+        _B = b;
+        _A = a;
+    }
+
+    Public Property u8 R
+    {
+        Get
+        {
+            Return _R;
+        }
+        Set
+        {
+            _R = value;
+        }
+    }
+
+    Public Property u8 G
+    {
+        Get
+        {
+            Return _G;
+        }
+        Set
+        {
+            _G = value;
+        }
+    }
+
+    Public Property u8 B
+    {
+        Get
+        {
+            Return _B;
+        }
+        Set
+        {
+            _B = value;
+        }
+    }
+
+    Public Property u8 A
+    {
+        Get
+        {
+            Return _A;
+        }
+        Set
+        {
+            _A = value;
+        }
+    }
+
+    Public Trusted Function u32 ToColorRef()
+    {
+        Return [u32](R) | ([u32](G) << 8) | ([u32](B) << 16);
+    }
+
+    Public Static Function Color FromRgb(u8 r, u8 g, u8 b)
+    {
+        Return New Color(r, g, b, 255);
+    }
+
+    Public Static Function Color Black()
+    {
+        Return New Color(0, 0, 0);
+    }
+
+    Public Static Function Color White()
+    {
+        Return New Color(255, 255, 255);
+    }
+
+    Public Static Function Color Gray()
+    {
+        Return New Color(160, 160, 160);
+    }
+
+    Public Static Function Color Blue()
+    {
+        Return New Color(0, 120, 215);
+    }
+}
+
+Public Class Font
+{
+    Private string _Family;
+    Private int _Size;
+    Private FontWeight _Weight;
+    Private bool _Italic;
+    Private bool _Underline;
+    Private bool _StrikeOut;
+
+    Public Constructor(string family = "Segoe UI", int size = 16, FontWeight weight = FontWeight.Normal,
+                       bool italic = false, bool underline = false, bool strikeOut = false)
+    {
+        _Family = family;
+        _Size = size;
+        _Weight = weight;
+        _Italic = italic;
+        _Underline = underline;
+        _StrikeOut = strikeOut;
+    }
+
+    Public Property string Family
+    {
+        Get
+        {
+            Return _Family;
+        }
+        Set
+        {
+            _Family = value;
+        }
+    }
+
+    Public Property int Size
+    {
+        Get
+        {
+            Return _Size;
+        }
+        Set
+        {
+            _Size = value;
+        }
+    }
+
+    Public Property FontWeight Weight
+    {
+        Get
+        {
+            Return _Weight;
+        }
+        Set
+        {
+            _Weight = value;
+        }
+    }
+
+    Public Property bool Italic
+    {
+        Get
+        {
+            Return _Italic;
+        }
+        Set
+        {
+            _Italic = value;
+        }
+    }
+
+    Public Property bool Underline
+    {
+        Get
+        {
+            Return _Underline;
+        }
+        Set
+        {
+            _Underline = value;
+        }
+    }
+
+    Public Property bool StrikeOut
+    {
+        Get
+        {
+            Return _StrikeOut;
+        }
+        Set
+        {
+            _StrikeOut = value;
+        }
+    }
+}
+
+Public Class EventArgs
+{
+    Private EventKind _Kind;
+    Private usize _WParam;
+    Private isize _LParam;
+    Private bool _Handled;
+
+    Public Constructor(EventKind kind = EventKind.OnClick, usize wParam = 0, isize lParam = 0)
+    {
+        _Kind = kind;
+        _WParam = wParam;
+        _LParam = lParam;
+        _Handled = false;
+    }
+
+    Public Property EventKind Kind
+    {
+        Get
+        {
+            Return _Kind;
+        }
+        Set
+        {
+            _Kind = value;
+        }
+    }
+
+    Public Property usize WParam
+    {
+        Get
+        {
+            Return _WParam;
+        }
+        Set
+        {
+            _WParam = value;
+        }
+    }
+
+    Public Property isize LParam
+    {
+        Get
+        {
+            Return _LParam;
+        }
+        Set
+        {
+            _LParam = value;
+        }
+    }
+
+    Public Property bool Handled
+    {
+        Get
+        {
+            Return _Handled;
+        }
+        Set
+        {
+            _Handled = value;
+        }
+    }
+}
+
+Public Class Event
+{
+    Private EventKind _Kind;
+    Private IO.Type.Object.Function _Handler;
+
+    Public Constructor(EventKind kind, IO.Type.Object.Function handler)
+    {
+        _Kind = kind;
+        _Handler = handler;
+    }
+
+    Public Property EventKind Kind
+    {
+        Get
+        {
+            Return _Kind;
+        }
+        Set
+        {
+            _Kind = value;
+        }
+    }
+
+    Public Property IO.Type.Object.Function Handler
+    {
+        Get
+        {
+            Return _Handler;
+        }
+        Set
+        {
+            _Handler = value;
+        }
+    }
+
+    Public Trusted Function void Invoke(IO.Type.Object.Class sender, EventArgs args)
+    {
+        If (Handler != null)
+        {
+            IO.Type.Object.Function fn = Handler;
+            fn(sender, args);
+        }
+    }
+}
+
+Static Class MessageBox
+{
+    Public Trusted Function int Show(string text, string caption = "",
+                                     MessageBoxButtons buttons = MessageBoxButtons.OK,
+                                     MessageBoxIcon icon = MessageBoxIcon.None)
+    {
+        int style = [int](buttons) | [int](icon);
+        Return __UIHost.ShowMessageBox(text, caption, style);
+    }
+
+    Public Trusted Function int ShowInfo(string text, string caption = "")
+    {
+        Return MessageBox.Show(text, caption, MessageBoxButtons.OK, MessageBoxIcon.Info);
+    }
+
+    Public Trusted Function int ShowError(string text, string caption = "")
+    {
+        Return MessageBox.Show(text, caption, MessageBoxButtons.OK, MessageBoxIcon.Error);
+    }
+}

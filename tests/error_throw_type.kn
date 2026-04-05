@@ -1,0 +1,9 @@
+Unit App.Bad;
+
+Static Function int Main() {
+    Try {
+        Throw 123;
+    } Catch (string e) {
+    }
+    Return 0;
+}

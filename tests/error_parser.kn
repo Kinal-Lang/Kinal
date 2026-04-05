@@ -1,0 +1,5 @@
+Unit Tests.ErrorParser;
+
+Static Function int Main() {
+    Return 0
+}

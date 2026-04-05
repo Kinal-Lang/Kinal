@@ -1,0 +1,25 @@
+Unit Tests.StdlibDirectoryMore;
+
+Get Console By IO.Console;
+Get IO.Directory;
+
+Static Function int Main()
+{
+    string base = "out/test/stdlib_dir_more";
+    string child = "out/test/stdlib_dir_more/a";
+    string nested = "out/test/stdlib_dir_more/a/b";
+
+    Console.PrintLine(IO.Directory.DeleteIfExists(nested));
+    Console.PrintLine(IO.Directory.DeleteIfExists(child));
+    Console.PrintLine(IO.Directory.DeleteIfExists(base));
+    Console.PrintLine(IO.Directory.Exists(base));
+    Console.PrintLine(IO.Directory.Create(base));
+    Console.PrintLine(IO.Directory.Exists(base));
+    Console.PrintLine(IO.Directory.Create(base));
+    Console.PrintLine(IO.Directory.Ensure(nested));
+    Console.PrintLine(IO.Directory.Exists(nested));
+    Console.PrintLine(IO.Directory.Delete(nested));
+    Console.PrintLine(IO.Directory.DeleteIfExists(child));
+    Console.PrintLine(IO.Directory.DeleteIfExists(base));
+    Return 0;
+}

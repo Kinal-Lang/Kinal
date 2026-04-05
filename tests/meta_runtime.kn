@@ -1,0 +1,38 @@
+Unit Tests.MetaRuntime;
+Get Console By IO.Console;
+Get IO.Meta;
+
+Meta Route(string path, string method = "GET")
+{
+    On @function;
+    Keep @runtime;
+}
+
+Meta Tag(string value)
+{
+    On @function;
+    Keep @runtime;
+    Repeatable;
+}
+
+[Route("/hello")]
+[Tag("api")]
+[Tag("public")]
+Static Function int Main()
+{
+    list own = IO.Meta.Of(Main);
+    dict route = IO.Meta.Find(Main, "Route");
+    list tags = IO.Meta.Query("Tag");
+
+    Console.PrintLine(own.Count());
+    Console.PrintLine(IO.Meta.Has(Main, "Route"));
+    Console.PrintLine(IO.Meta.Has(Main, "Missing"));
+    Console.PrintLine([string](route.Fetch("owner")));
+    Console.PrintLine([string](route.Fetch("module")));
+    Console.PrintLine([string](route.Fetch("meta")));
+    Console.PrintLine([string](route.Fetch("name")));
+    Console.PrintLine([string](route.Fetch("arg.path")));
+    Console.PrintLine([string](route.Fetch("arg.method")));
+    Console.PrintLine(tags.Count());
+    Return 0;
+}

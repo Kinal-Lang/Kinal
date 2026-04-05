@@ -1,0 +1,9 @@
+Unit MiniLang.Lexer;
+
+Get MiniLang.Token;
+
+Class Lexer {
+    Public Function Token NextToken() {
+        Return New Token("bad");
+    }
+}

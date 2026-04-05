@@ -1,0 +1,6 @@
+Get IO.UI By UI;
+
+Static Function int Main()
+{
+    Return 0;
+}

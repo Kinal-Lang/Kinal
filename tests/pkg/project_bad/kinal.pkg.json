@@ -1,0 +1,9 @@
+{
+  "kind": "project",
+  "name": "PkgProjectBad",
+  "version": "0.1.0",
+  "entry": "src/Main.kn",
+  "package_roots": [
+    "../local-bad"
+  ]
+}

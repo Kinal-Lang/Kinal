@@ -1,0 +1,405 @@
+Unit IO.Kinal.VM.Bytecode;
+
+Enum OpCode By u8
+{
+    LoadInt,
+    LoadFloat,
+    LoadBool,
+    LoadString,
+    LoadChar,
+    Move,
+    AddInt,
+    SubInt,
+    MulInt,
+    DivInt,
+    AddFloat,
+    SubFloat,
+    MulFloat,
+    DivFloat,
+    NegInt,
+    NegFloat,
+    Eq,
+    Ne,
+    LtInt,
+    LeInt,
+    GtInt,
+    GeInt,
+    LtFloat,
+    LeFloat,
+    GtFloat,
+    GeFloat,
+    NotBool,
+    BitAndInt,
+    BitOrInt,
+    BitXorInt,
+    ShlInt,
+    ShrInt,
+    BitNotInt,
+    IntToString,
+    BoolToString,
+    CharToString,
+    StringToInt,
+    StringToBool,
+    CharToInt,
+    IntToChar,
+    StringToChar,
+    JumpOp,
+    JumpIfFalse,
+    JumpIfTrue,
+    CallBuiltin,
+    CallFunc,
+    NewObject,
+    NewArray,
+    LoadField,
+    StoreField,
+    LoadIndex,
+    StoreIndex,
+    ArrayLength,
+    ArrayAdd,
+    CallVirt,
+    IsType,
+    LoadGlobal,
+    StoreGlobal,
+    Ret,
+    Halt,
+    MakeFunc,
+    CallClosure,
+    NewCell,
+    LoadCell,
+    StoreCell,
+    LoadCapture,
+    StoreCapture,
+    LoadCaptureCell,
+    PushTry,
+    PopTry,
+    ThrowOp,
+    MakePtrLocal,
+    MakePtrGlobal,
+    MakePtrIndex,
+    MakePtrField,
+    MakePtrFunc,
+    MakePtrCell,
+    LoadPtr,
+    StorePtr,
+    AddPtr,
+    LoopIntLtInc,
+    LoopIntLeInc,
+    LoopIntGtDec,
+    LoopIntGeDec,
+    LoopIntEqInc,
+    LoopIntNeInc,
+    LoopIntEqDec,
+    LoopIntNeDec,
+    JumpIfIntLtFalse,
+    JumpIfIntLeFalse,
+    JumpIfIntGtFalse,
+    JumpIfIntGeFalse,
+    JumpIfIntEqFalse,
+    JumpIfIntNeFalse,
+    IncInt,
+    DecInt,
+    IntToFloat,
+    FloatToInt,
+    FloatToString,
+    StringToFloat,
+    BoolToInt,
+    BoolToFloat,
+    FloatToBool,
+    LoopBackIntLtInc,
+    LoopBackIntLeInc,
+    LoopBackIntGtDec,
+    LoopBackIntGeDec,
+    LoopBackIntEqInc,
+    LoopBackIntNeInc,
+    LoopBackIntEqDec,
+    LoopBackIntNeDec
+}
+
+Enum ValueKind By u8
+{
+    Null,
+    Int,
+    Float,
+    Bool,
+    String,
+    Char,
+    Array,
+    Object,
+    Pointer
+}
+
+Enum PointerKind By u8
+{
+    FrameReg,
+    Global,
+    ArrayElem,
+    ObjectField,
+    Func,
+    StringChar,
+    Cell
+}
+
+Public Class TypeInfo
+{
+    Public int Kind;
+    Public int FieldCount;
+    Public int BaseType;
+    Public string Name;
+    Public int[] VTable;
+    Public int[] InterfaceTypes;
+
+    Public Constructor()
+    {
+        This.Kind = 0;
+        This.FieldCount = 0;
+        This.BaseType = -1;
+        This.Name = "";
+        This.VTable = {};
+        This.InterfaceTypes = {};
+    }
+}
+
+Enum IsTargetKind By u8
+{
+    Any,
+    Bool,
+    Char,
+    Int,
+    Float,
+    String,
+    Type
+}
+
+Enum BuiltinId By u16
+{
+    ConsolePrintLine = 0,
+    ConsolePrint = 1,
+    ConsoleReadLine = 2,
+    ConsoleWrite = 3,
+    ConsoleWriteLine = 4,
+    ConsolePrintInt = 5,
+    ConsolePrintBool = 6,
+    ConsolePrintChar = 7,
+    ConsolePrintLineInt = 8,
+    ConsolePrintLineBool = 9,
+    ConsolePrintLineChar = 10,
+    ConsoleWriteInt = 11,
+    ConsoleWriteBool = 12,
+    ConsoleWriteChar = 13,
+    TimeNow = 14,
+    TimeGetTick = 15,
+    TimeSleep = 16,
+    TimeGetNanoTick = 17,
+    TimeFormat = 18,
+    StringLength = 19,
+    StringConcat = 20,
+    StringEquals = 21,
+    StringToChars = 22,
+    FileCreate = 85,
+    FileTouch = 86,
+    FileReadAllText = 87,
+    FileReadFirstLine = 88,
+    FileWriteAllText = 89,
+    FileAppendAllText = 90,
+    FileAppendLine = 91,
+    FileDelete = 92,
+    FileDeleteIfExists = 93,
+    FileSize = 94,
+    FileIsEmpty = 95,
+    FileCopy = 96,
+    FileMove = 97,
+    FileReadOrDefault = 98,
+    FileReadIfExists = 99,
+    FileReadOr = 100,
+    FileReplaceText = 103,
+    AnyIsNull = 130,
+    AnyToString = 131,
+    AnyEquals = 132,
+    AnyTypeName = 134,
+    AnyIsNumber = 135,
+    AnyIsPointer = 136,
+    AnyIsInt = 137,
+    AnyIsFloat = 138,
+    AnyIsString = 139,
+    AnyIsBool = 140,
+    AnyIsChar = 141,
+    AnyIsObject = 142,
+    SystemFileExists = 145,
+    TextContains = 146,
+    ErrorLastTrace = 147,
+    ErrorHas = 148,
+    ErrorClear = 149,
+    ErrorCurrent = 150,
+    GcCollect = 151
+}
+
+Public Class FunctionInfo
+{
+    Public int ParamCount;
+    Public int RegisterCount;
+    Public int ReturnKind;
+    Public string Name;
+    Public byte[] Code;
+
+    Public Constructor()
+    {
+        This.ParamCount = 0;
+        This.RegisterCount = 0;
+        This.ReturnKind = 0;
+        This.Name = "";
+        This.Code = {};
+    }
+}
+
+Public Class Program
+{
+    Public int EntryFunction;
+    Public FunctionInfo[] Functions;
+    Public int[] IntConstants;
+    Public float[] FloatConstants;
+    Public string[] StringConstants;
+    Public int GlobalCount;
+    Public TypeInfo[] Types;
+
+    Public Constructor()
+    {
+        This.EntryFunction = 0;
+        This.Functions = {};
+        This.IntConstants = {};
+        This.FloatConstants = {};
+        This.StringConstants = {};
+        This.GlobalCount = 0;
+        This.Types = {};
+    }
+
+    Public Static Function int InstructionSize(int op)
+    {
+        Switch(op)
+        {
+            Case([int](OpCode.LoadInt))      { Return 4; }
+            Case([int](OpCode.LoadFloat))    { Return 4; }
+            Case([int](OpCode.LoadBool))     { Return 3; }
+            Case([int](OpCode.LoadString))   { Return 4; }
+            Case([int](OpCode.LoadChar))     { Return 4; }
+            Case([int](OpCode.Move))         { Return 3; }
+            Case([int](OpCode.AddInt))       { Return 4; }
+            Case([int](OpCode.SubInt))       { Return 4; }
+            Case([int](OpCode.MulInt))       { Return 4; }
+            Case([int](OpCode.DivInt))       { Return 4; }
+            Case([int](OpCode.AddFloat))     { Return 4; }
+            Case([int](OpCode.SubFloat))     { Return 4; }
+            Case([int](OpCode.MulFloat))     { Return 4; }
+            Case([int](OpCode.DivFloat))     { Return 4; }
+            Case([int](OpCode.NegInt))       { Return 3; }
+            Case([int](OpCode.NegFloat))     { Return 3; }
+            Case([int](OpCode.Eq))           { Return 4; }
+            Case([int](OpCode.Ne))           { Return 4; }
+            Case([int](OpCode.LtInt))        { Return 4; }
+            Case([int](OpCode.LeInt))        { Return 4; }
+            Case([int](OpCode.GtInt))        { Return 4; }
+            Case([int](OpCode.GeInt))        { Return 4; }
+            Case([int](OpCode.LtFloat))      { Return 4; }
+            Case([int](OpCode.LeFloat))      { Return 4; }
+            Case([int](OpCode.GtFloat))      { Return 4; }
+            Case([int](OpCode.GeFloat))      { Return 4; }
+            Case([int](OpCode.NotBool))      { Return 3; }
+            Case([int](OpCode.BitAndInt))    { Return 4; }
+            Case([int](OpCode.BitOrInt))     { Return 4; }
+            Case([int](OpCode.BitXorInt))    { Return 4; }
+            Case([int](OpCode.ShlInt))       { Return 4; }
+            Case([int](OpCode.ShrInt))       { Return 4; }
+            Case([int](OpCode.BitNotInt))    { Return 3; }
+            Case([int](OpCode.IntToString))  { Return 3; }
+            Case([int](OpCode.BoolToString)) { Return 3; }
+            Case([int](OpCode.CharToString)) { Return 3; }
+            Case([int](OpCode.StringToInt))  { Return 3; }
+            Case([int](OpCode.StringToBool)) { Return 3; }
+            Case([int](OpCode.CharToInt))    { Return 3; }
+            Case([int](OpCode.IntToChar))    { Return 3; }
+            Case([int](OpCode.StringToChar)) { Return 3; }
+            Case([int](OpCode.JumpOp))       { Return 3; }
+            Case([int](OpCode.JumpIfFalse))  { Return 4; }
+            Case([int](OpCode.JumpIfTrue))   { Return 4; }
+            Case([int](OpCode.CallBuiltin))  { Return 9; }
+            Case([int](OpCode.CallFunc))     { Return 9; }
+            Case([int](OpCode.NewObject))    { Return 4; }
+            Case([int](OpCode.NewArray))     { Return 4; }
+            Case([int](OpCode.LoadField))    { Return 5; }
+            Case([int](OpCode.StoreField))   { Return 5; }
+            Case([int](OpCode.LoadIndex))    { Return 4; }
+            Case([int](OpCode.StoreIndex))   { Return 4; }
+            Case([int](OpCode.ArrayLength))  { Return 3; }
+            Case([int](OpCode.ArrayAdd))     { Return 4; }
+            Case([int](OpCode.CallVirt))     { Return 9; }
+            Case([int](OpCode.IsType))       { Return 6; }
+            Case([int](OpCode.LoadGlobal))   { Return 4; }
+            Case([int](OpCode.StoreGlobal))  { Return 4; }
+            Case([int](OpCode.Ret))          { Return 2; }
+            Case([int](OpCode.Halt))         { Return 1; }
+            Case([int](OpCode.MakeFunc))     { Return 8; }
+            Case([int](OpCode.CallClosure))  { Return 8; }
+            Case([int](OpCode.NewCell))      { Return 3; }
+            Case([int](OpCode.LoadCell))     { Return 3; }
+            Case([int](OpCode.StoreCell))    { Return 3; }
+            Case([int](OpCode.LoadCapture))  { Return 4; }
+            Case([int](OpCode.StoreCapture)) { Return 4; }
+            Case([int](OpCode.LoadCaptureCell)) { Return 4; }
+            Case([int](OpCode.PushTry))      { Return 7; }
+            Case([int](OpCode.PopTry))       { Return 1; }
+            Case([int](OpCode.ThrowOp))      { Return 2; }
+            Case([int](OpCode.MakePtrLocal)) { Return 3; }
+            Case([int](OpCode.MakePtrGlobal)) { Return 4; }
+            Case([int](OpCode.MakePtrIndex)) { Return 4; }
+            Case([int](OpCode.MakePtrField)) { Return 5; }
+            Case([int](OpCode.MakePtrFunc))  { Return 4; }
+            Case([int](OpCode.MakePtrCell))  { Return 3; }
+            Case([int](OpCode.LoadPtr))      { Return 3; }
+            Case([int](OpCode.StorePtr))     { Return 3; }
+            Case([int](OpCode.AddPtr))       { Return 4; }
+            Case([int](OpCode.LoopIntLtInc)) { Return 3; }
+            Case([int](OpCode.LoopIntLeInc)) { Return 3; }
+            Case([int](OpCode.LoopIntGtDec)) { Return 3; }
+            Case([int](OpCode.LoopIntGeDec)) { Return 3; }
+            Case([int](OpCode.LoopIntEqInc)) { Return 3; }
+            Case([int](OpCode.LoopIntNeInc)) { Return 3; }
+            Case([int](OpCode.LoopIntEqDec)) { Return 3; }
+            Case([int](OpCode.LoopIntNeDec)) { Return 3; }
+            Case([int](OpCode.JumpIfIntLtFalse)) { Return 5; }
+            Case([int](OpCode.JumpIfIntLeFalse)) { Return 5; }
+            Case([int](OpCode.JumpIfIntGtFalse)) { Return 5; }
+            Case([int](OpCode.JumpIfIntGeFalse)) { Return 5; }
+            Case([int](OpCode.JumpIfIntEqFalse)) { Return 5; }
+            Case([int](OpCode.JumpIfIntNeFalse)) { Return 5; }
+            Case([int](OpCode.IncInt)) { Return 2; }
+            Case([int](OpCode.DecInt)) { Return 2; }
+            Case([int](OpCode.IntToFloat)) { Return 3; }
+            Case([int](OpCode.FloatToInt)) { Return 3; }
+            Case([int](OpCode.FloatToString)) { Return 3; }
+            Case([int](OpCode.StringToFloat)) { Return 3; }
+            Case([int](OpCode.BoolToInt)) { Return 3; }
+            Case([int](OpCode.BoolToFloat)) { Return 3; }
+            Case([int](OpCode.FloatToBool)) { Return 3; }
+            Case([int](OpCode.LoopBackIntLtInc)) { Return 5; }
+            Case([int](OpCode.LoopBackIntLeInc)) { Return 5; }
+            Case([int](OpCode.LoopBackIntGtDec)) { Return 5; }
+            Case([int](OpCode.LoopBackIntGeDec)) { Return 5; }
+            Case([int](OpCode.LoopBackIntEqInc)) { Return 5; }
+            Case([int](OpCode.LoopBackIntNeInc)) { Return 5; }
+            Case([int](OpCode.LoopBackIntEqDec)) { Return 5; }
+            Case([int](OpCode.LoopBackIntNeDec)) { Return 5; }
+            Case(default)                    { Throw "Unknown KNC opcode: " + [string](op); }
+        }
+
+        Throw "Unknown KNC opcode: " + [string](op);
+    }
+
+    Public Static Function int ReadU8(byte[] code, int pc)
+    {
+        Return [int](code[pc]);
+    }
+
+    Public Static Function int ReadU16(byte[] code, int pc)
+    {
+        Return [int](code[pc]) | ([int](code[pc + 1]) << 8);
+    }
+}

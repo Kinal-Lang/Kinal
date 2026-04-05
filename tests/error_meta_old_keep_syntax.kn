@@ -1,0 +1,12 @@
+Unit Tests.ErrorMetaOldKeepSyntax;
+
+Meta Demo(string value)
+{
+    On @function;
+    Keep Runtime;
+}
+
+Static Function int Main()
+{
+    Return 0;
+}

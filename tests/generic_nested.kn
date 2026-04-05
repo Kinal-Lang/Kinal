@@ -1,0 +1,19 @@
+﻿Unit Tests.GenericNested;
+
+Get IO.Console;
+
+Function T Identity<T>(T value) {
+    Return value;
+}
+
+Function T Forward<T>(T value) {
+    Return Identity<T>(value);
+}
+
+Static Function int Main() {
+    int x = Forward<int>(42);
+    string y = Forward<string>("nest");
+    IO.Console.PrintLine(x);
+    IO.Console.PrintLine(y);
+    Return 0;
+}

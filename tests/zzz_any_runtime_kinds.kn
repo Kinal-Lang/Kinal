@@ -1,0 +1,21 @@
+Unit Tests.AnyMore;
+
+Get Console By IO.Console;
+
+Static Function int Main() {
+    any a = 7;
+    any b = 7.5f;
+    any c = "x";
+    any d = true;
+    any e = [char](65);
+    list lst = list.Create();
+    any o = lst;
+
+    Console.PrintLine(a.IsInt());
+    Console.PrintLine(b.IsFloat());
+    Console.PrintLine(c.IsString());
+    Console.PrintLine(d.IsBool());
+    Console.PrintLine(e.IsChar());
+    Console.PrintLine(o.IsObject());
+    Return 0;
+}

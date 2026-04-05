@@ -1,0 +1,7 @@
+Unit Tests.ExternSystem;
+
+Extern Function int MessageBoxA(int hWnd, string text, string caption, int style) By System;
+
+Static Function int Main() {
+    Return 0;
+}

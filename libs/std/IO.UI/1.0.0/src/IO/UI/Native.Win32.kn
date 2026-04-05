@@ -1,0 +1,172 @@
+Unit IO.__UI;
+
+Static Class Win32
+{
+    Public Static u32 WM_DESTROY = 0x0002;
+    Public Static u32 WM_MOVE = 0x0003;
+    Public Static u32 WM_SIZE = 0x0005;
+    Public Static u32 WM_SETFOCUS = 0x0007;
+    Public Static u32 WM_KILLFOCUS = 0x0008;
+    Public Static u32 WM_COMMAND = 0x0111;
+    Public Static u32 WM_ERASEBKGND = 0x0014;
+    Public Static u32 WM_CTLCOLORBTN = 0x0135;
+    Public Static u32 WM_CTLCOLORSTATIC = 0x0138;
+    Public Static u32 WM_CTLCOLOREDIT = 0x0133;
+    Public Static u32 WM_CTLCOLORLISTBOX = 0x0134;
+    Public Static u32 WM_SETFONT = 0x0030;
+    Public Static u32 WM_KEYDOWN = 0x0100;
+    Public Static u32 WM_KEYUP = 0x0101;
+    Public Static u32 WM_MOUSEMOVE = 0x0200;
+    Public Static u32 WM_LBUTTONDOWN = 0x0201;
+    Public Static u32 WM_LBUTTONUP = 0x0202;
+    Public Static u32 WM_MOUSELEAVE = 0x02A3;
+    Public Static u32 WM_HSCROLL = 0x0114;
+    Public Static int BN_CLICKED = 0;
+    Public Static int EN_CHANGE = 0x0300;
+    Public Static int EN_SETFOCUS = 0x0100;
+    Public Static int EN_KILLFOCUS = 0x0200;
+    Public Static int CBN_SELCHANGE = 1;
+    Public Static int CBN_SETFOCUS = 3;
+    Public Static int CBN_KILLFOCUS = 4;
+    Public Static u32 WS_CHILD = 0x40000000;
+    Public Static u32 WS_VISIBLE = 0x10000000;
+    Public Static u32 WS_OVERLAPPEDWINDOW = 0x00CF0000;
+    Public Static u32 WS_VSCROLL = 0x00200000;
+    Public Static u32 WS_HSCROLL = 0x00100000;
+    Public Static u32 WS_BORDER = 0x00800000;
+    Public Static u32 WS_GROUP = 0x00020000;
+    Public Static u32 WS_TABSTOP = 0x00010000;
+    Public Static u32 WS_CLIPCHILDREN = 0x02000000;
+    Public Static u32 BS_PUSHBUTTON = 0x00000000;
+    Public Static u32 BS_GROUPBOX = 0x00000007;
+    Public Static u32 BS_AUTOCHECKBOX = 0x00000003;
+    Public Static u32 BS_AUTORADIOBUTTON = 0x00000009;
+    Public Static u32 ES_MULTILINE = 0x0004;
+    Public Static u32 ES_AUTOVSCROLL = 0x0040;
+    Public Static u32 ES_AUTOHSCROLL = 0x0080;
+    Public Static u32 ES_PASSWORD = 0x0020;
+    Public Static u32 ES_READONLY = 0x0800;
+    Public Static u32 CBS_DROPDOWNLIST = 0x0003;
+    Public Static u32 CBS_DROPDOWN = 0x0002;
+    Public Static u32 CBS_HASSTRINGS = 0x0200;
+    Public Static u32 CB_ADDSTRING = 0x0143;
+    Public Static u32 CB_GETCURSEL = 0x0147;
+    Public Static u32 CB_SETCURSEL = 0x014E;
+    Public Static u32 CB_RESETCONTENT = 0x014B;
+    Public Static u32 BM_GETCHECK = 0x00F0;
+    Public Static u32 BM_SETCHECK = 0x00F1;
+    Public Static u32 BST_CHECKED = 1;
+    Public Static u32 BST_UNCHECKED = 0;
+    Public Static u32 PBM_SETRANGE = 0x0401;
+    Public Static u32 PBM_SETPOS = 0x0402;
+    Public Static u32 PBM_SETSTEP = 0x0404;
+    Public Static u32 PBM_STEPIT = 0x0405;
+    Public Static int SW_SHOW = 5;
+    Public Static usize IDC_ARROW = 32512;
+    Public Static int DEFAULT_CHARSET = 1;
+    Public Static int GWLP_WNDPROC = -4;
+
+    Public Trusted Function int LowWord(usize value)
+    {
+        Return [int]([u64](value) & 0xFFFF);
+    }
+
+    Public Trusted Function int HighWord(usize value)
+    {
+        Return [int](([u64](value) >> 16) & 0xFFFF);
+    }
+
+    Public Trusted Function int SignedLowWord(usize value)
+    {
+        int raw = [int]([u64](value) & 0xFFFF);
+        If (raw >= 32768)
+        {
+            Return raw - 65536;
+        }
+        Return raw;
+    }
+
+    Public Trusted Function int SignedHighWord(usize value)
+    {
+        int raw = [int](([u64](value) >> 16) & 0xFFFF);
+        If (raw >= 32768)
+        {
+            Return raw - 65536;
+        }
+        Return raw;
+    }
+}
+
+Struct MSG By Align(8)
+{
+    byte* HWnd;
+    u32 Message;
+    usize WParam;
+    isize LParam;
+    u32 Time;
+    i32 PointX;
+    i32 PointY;
+    i32 LPrivate;
+}
+
+Struct WNDCLASSW By Align(8)
+{
+    u32 Style;
+    byte* WndProc;
+    i32 ClassExtra;
+    i32 WindowExtra;
+    byte* Instance;
+    byte* Icon;
+    byte* Cursor;
+    byte* BackgroundBrush;
+    u16* MenuName;
+    u16* ClassName;
+}
+
+Struct RECT By Align(8)
+{
+    i32 Left;
+    i32 Top;
+    i32 Right;
+    i32 Bottom;
+}
+
+Extern Function byte* GetModuleHandleA(char* moduleName) By System;
+Extern Function u32 GetLastError() By System;
+Extern Function u16 RegisterClassW(WNDCLASSW* windowClass) By System;
+Extern Function byte* CreateWindowExW(u32 exStyle, u16* className, u16* windowName, u32 style,
+                                      i32 x, i32 y, i32 width, i32 height,
+                                      byte* parent, byte* menu, byte* instance, byte* param) By System;
+Extern Function bool ShowWindow(byte* hWnd, i32 showCommand) By System;
+Extern Function bool UpdateWindow(byte* hWnd) By System;
+Extern Function i32 GetMessageW(MSG* message, byte* hWnd, u32 minFilter, u32 maxFilter) By System;
+Extern Function bool TranslateMessage(MSG* message) By System;
+Extern Function isize DispatchMessageW(MSG* message) By System;
+Extern Function isize DefWindowProcW(byte* hWnd, u32 message, usize wParam, isize lParam) By System;
+Extern Function void PostQuitMessage(i32 exitCode) By System;
+Extern Function byte* LoadCursorW(byte* instance, u16* cursorName) By System;
+Extern Function isize SendMessageW(byte* hWnd, u32 message, usize wParam, isize lParam) By System;
+Extern Function bool SetWindowTextW(byte* hWnd, u16* text) By System;
+Extern Function bool MoveWindow(byte* hWnd, i32 x, i32 y, i32 width, i32 height, bool repaint) By System;
+Extern Function bool InvalidateRect(byte* hWnd, RECT* rect, bool erase) By System;
+Extern Function bool GetClientRect(byte* hWnd, RECT* rect) By System;
+Extern Function i32 FillRect(byte* hdc, RECT* rect, byte* brush) By System;
+Extern Function u32 SetTextColor(byte* hdc, u32 color) By System;
+Extern Function u32 SetBkColor(byte* hdc, u32 color) By System;
+Extern Function byte* CreateSolidBrush(u32 color) By System;
+Extern Function bool DeleteObject(byte* objectHandle) By System;
+Extern Function byte* CreateFontW(i32 height, i32 width, i32 escapement, i32 orientation, i32 weight,
+                                  u32 italic, u32 underline, u32 strikeOut, u32 charSet,
+                                  u32 outputPrecision, u32 clipPrecision, u32 quality,
+                                  u32 pitchAndFamily, u16* faceName) By System;
+Extern Function i32 MessageBoxW(i32 hWnd, u16* text, u16* caption, u32 style) By System;
+Extern Function bool SetFocus(byte* hWnd) By System;
+Extern Function byte* SetCapture(byte* hWnd) By System;
+Extern Function bool ReleaseCapture() By System;
+Extern Function bool EnableWindow(byte* hWnd, bool enable) By System;
+Extern Function isize SetWindowLongPtrW(byte* hWnd, i32 index, byte* newValue) By System;
+Extern Function isize CallWindowProcW(byte* previousProc, byte* hWnd, u32 message, usize wParam, isize lParam) By System;
+Extern Function byte* GetParent(byte* hWnd) By System;
+Extern Function bool InitCommonControlsEx(byte* icc) By System;
+Extern Function u16* __kn_win_utf16(string text) By C;
+Extern Function string __kn_win_get_text(byte* hWnd) By C;

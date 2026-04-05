@@ -1,0 +1,1210 @@
+Unit IO.Kinal.VM.Context;
+
+Get Bytecode By IO.Kinal.VM.Bytecode;
+
+Public Class VMValue
+{
+    Public int Kind;
+    Public int IntValue;
+    Public float FloatValue;
+    Public bool BoolValue;
+    Public string StringValue;
+
+    Public Constructor()
+    {
+        This.Kind = [int](Bytecode.ValueKind.Null);
+        This.IntValue = 0;
+        This.FloatValue = 0.0;
+        This.BoolValue = false;
+        This.StringValue = "";
+    }
+
+    Public Static Function VMValue NullValue()
+    {
+        Return New VMValue();
+    }
+
+    Public Static Function VMValue FromInt(int value)
+    {
+        VMValue cell = New VMValue();
+        cell.Kind = [int](Bytecode.ValueKind.Int);
+        cell.IntValue = value;
+        Return cell;
+    }
+
+    Public Static Function VMValue FromFloat(float value)
+    {
+        VMValue cell = New VMValue();
+        cell.Kind = [int](Bytecode.ValueKind.Float);
+        cell.FloatValue = value;
+        Return cell;
+    }
+
+    Public Static Function VMValue FromBool(bool value)
+    {
+        VMValue cell = New VMValue();
+        cell.Kind = [int](Bytecode.ValueKind.Bool);
+        cell.BoolValue = value;
+        Return cell;
+    }
+
+    Public Static Function VMValue FromString(string value)
+    {
+        VMValue cell = New VMValue();
+        cell.Kind = [int](Bytecode.ValueKind.String);
+        cell.StringValue = value;
+        Return cell;
+    }
+
+    Public Static Function VMValue FromChar(char value)
+    {
+        VMValue cell = New VMValue();
+        cell.Kind = [int](Bytecode.ValueKind.Char);
+        cell.IntValue = [int](value);
+        Return cell;
+    }
+
+    Public Static Function VMValue FromArray(int handle)
+    {
+        VMValue cell = New VMValue();
+        cell.Kind = [int](Bytecode.ValueKind.Array);
+        cell.IntValue = handle;
+        Return cell;
+    }
+
+    Public Static Function VMValue FromObject(int handle)
+    {
+        VMValue cell = New VMValue();
+        cell.Kind = [int](Bytecode.ValueKind.Object);
+        cell.IntValue = handle;
+        Return cell;
+    }
+
+    Public Static Function VMValue FromPointer(int handle)
+    {
+        VMValue cell = New VMValue();
+        cell.Kind = [int](Bytecode.ValueKind.Pointer);
+        cell.IntValue = handle;
+        Return cell;
+    }
+}
+
+Public Class HeapArray
+{
+    Public int ElementKind;
+    Public VMValue[] Items;
+
+    Public Constructor()
+    {
+        This.ElementKind = [int](Bytecode.ValueKind.Null);
+        This.Items = {};
+    }
+}
+
+Public Class HeapObject
+{
+    Public int TypeIndex;
+    Public VMValue[] Fields;
+
+    Public Constructor()
+    {
+        This.TypeIndex = -1;
+        This.Fields = {};
+    }
+}
+
+Public Class PointerInfo
+{
+    Public int Kind;
+    Public int A;
+    Public int B;
+    Public string TextValue;
+
+    Public Constructor()
+    {
+        This.Kind = [int](Bytecode.PointerKind.FrameReg);
+        This.A = 0;
+        This.B = 0;
+        This.TextValue = "";
+    }
+}
+
+Public Class TryHandler
+{
+    Public int CatchPc;
+    Public int CatchKind;
+    Public int CatchPayload;
+    Public int CatchReg;
+
+    Public Constructor()
+    {
+        This.CatchPc = 0;
+        This.CatchKind = [int](Bytecode.IsTargetKind.Any);
+        This.CatchPayload = 0;
+        This.CatchReg = 255;
+    }
+}
+
+Public Class FunctionFrame
+{
+    Public Bytecode.FunctionInfo FnInfo;
+    Public int FunctionIndex;
+    Public int EnvHandle;
+    Public int Pc;
+    Public int ReturnPc;
+    Public int ReturnReg;
+    Public int[] Kinds;
+    Public int[] IntRegisters;
+    Public float[] FloatRegisters;
+    Public bool[] BoolRegisters;
+    Public string[] StringRegisters;
+    Public TryHandler[] Handlers;
+    Public int HandlerCount;
+
+    Public Constructor(Bytecode.FunctionInfo functionInfo, int functionIndex, int returnPc, int returnReg)
+    {
+        This.FnInfo = functionInfo;
+        This.FunctionIndex = functionIndex;
+        This.EnvHandle = -1;
+        This.Pc = 0;
+        This.ReturnPc = returnPc;
+        This.ReturnReg = returnReg;
+        This.Kinds = {};
+        This.IntRegisters = {};
+        This.FloatRegisters = {};
+        This.BoolRegisters = {};
+        This.StringRegisters = {};
+        This.Handlers = {};
+        This.HandlerCount = 0;
+
+        int slots = functionInfo.RegisterCount + 8;
+        For (int i = 0; i < slots; i = i + 1)
+        {
+            This.Kinds = This.Kinds.Add([int](Bytecode.ValueKind.Null));
+            This.IntRegisters = This.IntRegisters.Add(0);
+            This.FloatRegisters = This.FloatRegisters.Add(0.0);
+            This.BoolRegisters = This.BoolRegisters.Add(false);
+            This.StringRegisters = This.StringRegisters.Add("");
+        }
+    }
+
+    Public Function void PushHandler(TryHandler handler)
+    {
+        If (This.HandlerCount < This.Handlers.Length())
+        {
+            This.Handlers[This.HandlerCount] = handler;
+        }
+        Else
+        {
+            This.Handlers = This.Handlers.Add(handler);
+        }
+        This.HandlerCount = This.HandlerCount + 1;
+    }
+
+    Public Function void PopHandler()
+    {
+        If (This.HandlerCount > 0)
+        {
+            This.HandlerCount = This.HandlerCount - 1;
+        }
+    }
+
+    Public Function TryHandler LastHandler()
+    {
+        If (This.HandlerCount <= 0)
+        {
+            Throw "Try handler stack is empty";
+        }
+        Return This.Handlers[This.HandlerCount - 1];
+    }
+
+    Public Function void SetNull(int reg)
+    {
+        This.Kinds[reg] = [int](Bytecode.ValueKind.Null);
+        This.IntRegisters[reg] = 0;
+        This.FloatRegisters[reg] = 0.0;
+        This.BoolRegisters[reg] = false;
+        This.StringRegisters[reg] = "";
+    }
+
+    Public Function void CopyValue(int dst, int src)
+    {
+        This.Kinds[dst] = This.Kinds[src];
+        This.IntRegisters[dst] = This.IntRegisters[src];
+        This.FloatRegisters[dst] = This.FloatRegisters[src];
+        This.BoolRegisters[dst] = This.BoolRegisters[src];
+        This.StringRegisters[dst] = This.StringRegisters[src];
+    }
+
+    Public Function void CopyValueFrom(FunctionFrame other, int dst, int src)
+    {
+        This.Kinds[dst] = other.Kinds[src];
+        This.IntRegisters[dst] = other.IntRegisters[src];
+        This.FloatRegisters[dst] = other.FloatRegisters[src];
+        This.BoolRegisters[dst] = other.BoolRegisters[src];
+        This.StringRegisters[dst] = other.StringRegisters[src];
+    }
+
+    Public Function VMValue ExportValue(int reg)
+    {
+        Return Switch(This.Kinds[reg])
+        {
+            Case([int](Bytecode.ValueKind.Int))    { VMValue.FromInt(This.IntRegisters[reg]) }
+            Case([int](Bytecode.ValueKind.Float))  { VMValue.FromFloat(This.FloatRegisters[reg]) }
+            Case([int](Bytecode.ValueKind.Bool))   { VMValue.FromBool(This.BoolRegisters[reg]) }
+            Case([int](Bytecode.ValueKind.String)) { VMValue.FromString(This.StringRegisters[reg]) }
+            Case([int](Bytecode.ValueKind.Char))   { VMValue.FromChar([char](This.IntRegisters[reg])) }
+            Case([int](Bytecode.ValueKind.Array))  { VMValue.FromArray(This.IntRegisters[reg]) }
+            Case([int](Bytecode.ValueKind.Object)) { VMValue.FromObject(This.IntRegisters[reg]) }
+            Case([int](Bytecode.ValueKind.Pointer)) { VMValue.FromPointer(This.IntRegisters[reg]) }
+            Case(default)                          { VMValue.NullValue() }
+        };
+    }
+
+    Public Function void ImportValue(int reg, VMValue value)
+    {
+        Switch(value.Kind)
+        {
+            Case([int](Bytecode.ValueKind.Int))    { This.SetInt(reg, value.IntValue); }
+            Case([int](Bytecode.ValueKind.Float))  { This.SetFloat(reg, value.FloatValue); }
+            Case([int](Bytecode.ValueKind.Bool))   { This.SetBool(reg, value.BoolValue); }
+            Case([int](Bytecode.ValueKind.String)) { This.SetString(reg, value.StringValue); }
+            Case([int](Bytecode.ValueKind.Char))   { This.SetChar(reg, [char](value.IntValue)); }
+            Case([int](Bytecode.ValueKind.Array))
+            {
+                This.Kinds[reg] = [int](Bytecode.ValueKind.Array);
+                This.IntRegisters[reg] = value.IntValue;
+            }
+            Case([int](Bytecode.ValueKind.Object))
+            {
+                This.Kinds[reg] = [int](Bytecode.ValueKind.Object);
+                This.IntRegisters[reg] = value.IntValue;
+            }
+            Case([int](Bytecode.ValueKind.Pointer))
+            {
+                This.Kinds[reg] = [int](Bytecode.ValueKind.Pointer);
+                This.IntRegisters[reg] = value.IntValue;
+            }
+            Case(default)
+            {
+                This.SetNull(reg);
+            }
+        }
+    }
+
+    Public Function void SetInt(int reg, int value)
+    {
+        This.Kinds[reg] = [int](Bytecode.ValueKind.Int);
+        This.IntRegisters[reg] = value;
+    }
+
+    Public Function void SetBool(int reg, bool value)
+    {
+        This.Kinds[reg] = [int](Bytecode.ValueKind.Bool);
+        This.BoolRegisters[reg] = value;
+    }
+
+    Public Function void SetFloat(int reg, float value)
+    {
+        This.Kinds[reg] = [int](Bytecode.ValueKind.Float);
+        This.FloatRegisters[reg] = value;
+    }
+
+    Public Function void SetString(int reg, string value)
+    {
+        This.Kinds[reg] = [int](Bytecode.ValueKind.String);
+        This.StringRegisters[reg] = value;
+    }
+
+    Public Function void SetChar(int reg, char value)
+    {
+        This.Kinds[reg] = [int](Bytecode.ValueKind.Char);
+        This.IntRegisters[reg] = [int](value);
+    }
+
+    Public Function void SetPointer(int reg, int handle)
+    {
+        This.Kinds[reg] = [int](Bytecode.ValueKind.Pointer);
+        This.IntRegisters[reg] = handle;
+    }
+
+    Public Function int GetInt(int reg)
+    {
+        If (This.Kinds[reg] != [int](Bytecode.ValueKind.Int))
+        {
+            Throw "Expected int register at r" + [string](reg);
+        }
+        Return This.IntRegisters[reg];
+    }
+
+    Public Function bool GetBool(int reg)
+    {
+        If (This.Kinds[reg] != [int](Bytecode.ValueKind.Bool))
+        {
+            Throw "Expected bool register at r" + [string](reg);
+        }
+        Return This.BoolRegisters[reg];
+    }
+
+    Public Function float GetFloat(int reg)
+    {
+        If (This.Kinds[reg] != [int](Bytecode.ValueKind.Float))
+        {
+            Throw "Expected float register at r" + [string](reg);
+        }
+        Return This.FloatRegisters[reg];
+    }
+
+    Public Function string GetString(int reg)
+    {
+        If (This.Kinds[reg] != [int](Bytecode.ValueKind.String))
+        {
+            Throw "Expected string register at r" + [string](reg);
+        }
+        Return This.StringRegisters[reg];
+    }
+
+    Public Function char GetChar(int reg)
+    {
+        If (This.Kinds[reg] != [int](Bytecode.ValueKind.Char))
+        {
+            Throw "Expected char register at r" + [string](reg);
+        }
+        Return [char](This.IntRegisters[reg]);
+    }
+
+    Public Function int GetPointer(int reg)
+    {
+        If (This.Kinds[reg] != [int](Bytecode.ValueKind.Pointer))
+        {
+            Throw "Expected pointer register at r" + [string](reg);
+        }
+        Return This.IntRegisters[reg];
+    }
+
+    Public Function string Stringify(int reg)
+    {
+        Return Switch(This.Kinds[reg])
+        {
+            Case([int](Bytecode.ValueKind.Int))    { [string](This.IntRegisters[reg]) }
+            Case([int](Bytecode.ValueKind.Float))  { [string](This.FloatRegisters[reg]) }
+            Case([int](Bytecode.ValueKind.Bool))   { [string](This.BoolRegisters[reg]) }
+            Case([int](Bytecode.ValueKind.String)) { This.StringRegisters[reg] }
+            Case([int](Bytecode.ValueKind.Char))   { [string]([char](This.IntRegisters[reg])) }
+            Case([int](Bytecode.ValueKind.Array))  { "<array>" }
+            Case([int](Bytecode.ValueKind.Object)) { "<object>" }
+            Case([int](Bytecode.ValueKind.Pointer)) { "<pointer>" }
+            Case(default)                          { "<null>" }
+        };
+    }
+
+    Public Function bool ValueEquals(int left, int right)
+    {
+        If (This.Kinds[left] != This.Kinds[right])
+        {
+            Return false;
+        }
+
+        Return Switch(This.Kinds[left])
+        {
+            Case([int](Bytecode.ValueKind.Null))   { true }
+            Case([int](Bytecode.ValueKind.Int))    { This.IntRegisters[left] == This.IntRegisters[right] }
+            Case([int](Bytecode.ValueKind.Float))  { This.FloatRegisters[left] == This.FloatRegisters[right] }
+            Case([int](Bytecode.ValueKind.Bool))   { This.BoolRegisters[left] == This.BoolRegisters[right] }
+            Case([int](Bytecode.ValueKind.String)) { This.StringRegisters[left] == This.StringRegisters[right] }
+            Case([int](Bytecode.ValueKind.Char))   { This.IntRegisters[left] == This.IntRegisters[right] }
+            Case([int](Bytecode.ValueKind.Array))  { This.IntRegisters[left] == This.IntRegisters[right] }
+            Case([int](Bytecode.ValueKind.Object)) { This.IntRegisters[left] == This.IntRegisters[right] }
+            Case([int](Bytecode.ValueKind.Pointer)) { This.IntRegisters[left] == This.IntRegisters[right] }
+            Case(default)                          { false }
+        };
+    }
+}
+
+Public Class ExecutionContext
+{
+    Public Bytecode.Program Program;
+    Public bool Halted;
+    Public int ExitCode;
+    Public FunctionFrame[] Frames;
+    Public int FrameCount;
+    Public VMValue[] Globals;
+    Public VMValue[] Cells;
+    Public HeapArray[] Arrays;
+    Public HeapObject[] Objects;
+    Public PointerInfo[] Pointers;
+    Public VMValue CurrentException;
+    Public VMValue LastException;
+    Public string CurrentTrace;
+    Public string LastTrace;
+    Public bool HasUnhandledException;
+
+    Public Constructor(Bytecode.Program program)
+    {
+        This.Program = program;
+        This.Halted = false;
+        This.ExitCode = 0;
+        This.Frames = {};
+        This.FrameCount = 0;
+        This.Globals = {};
+        This.Cells = {};
+        This.Pointers = {};
+        This.CurrentException = VMValue.NullValue();
+        This.LastException = VMValue.NullValue();
+        This.CurrentTrace = "";
+        This.LastTrace = "";
+        This.HasUnhandledException = false;
+        For (int i = 0; i < program.GlobalCount; i = i + 1)
+        {
+            This.Globals = This.Globals.Add(VMValue.NullValue());
+        }
+        This.Arrays = {};
+        This.Objects = {};
+    }
+
+    Public Function int FindTypeByName(string name)
+    {
+        For (int i = 0; i < This.Program.Types.Length(); i = i + 1)
+        {
+            If (This.Program.Types[i].Name == name)
+            {
+                Return i;
+            }
+        }
+        Return -1;
+    }
+
+    Public Function string BuildTrace()
+    {
+        string trace = "";
+        For (int i = This.FrameCount - 1; i >= 0; i = i - 1)
+        {
+            string name = This.Program.Functions[This.Frames[i].FunctionIndex].Name;
+            If (name == "")
+            {
+                name = "<fn#" + [string](This.Frames[i].FunctionIndex) + ">";
+            }
+            If (trace == "")
+            {
+                trace = name;
+            }
+            Else
+            {
+                trace = trace + " -> " + name;
+            }
+        }
+        Return trace;
+    }
+
+    Public Function bool ValueMatchesCatch(VMValue value, int kind, int payload)
+    {
+        int errorType = This.FindTypeByName("IO.Error");
+        Return Switch(kind)
+        {
+            Case([int](Bytecode.IsTargetKind.Any))    { true }
+            Case([int](Bytecode.IsTargetKind.Bool))   { value.Kind == [int](Bytecode.ValueKind.Bool) }
+            Case([int](Bytecode.IsTargetKind.Char))   { value.Kind == [int](Bytecode.ValueKind.Char) }
+            Case([int](Bytecode.IsTargetKind.Int))    { value.Kind == [int](Bytecode.ValueKind.Int) }
+            Case([int](Bytecode.IsTargetKind.Float))  { value.Kind == [int](Bytecode.ValueKind.Float) }
+            Case([int](Bytecode.IsTargetKind.String))
+            {
+                value.Kind == [int](Bytecode.ValueKind.String) ||
+                (errorType >= 0 &&
+                 value.Kind == [int](Bytecode.ValueKind.Object) &&
+                 This.ObjectIsType(value.IntValue, errorType))
+            }
+            Case([int](Bytecode.IsTargetKind.Type))
+            {
+                value.Kind == [int](Bytecode.ValueKind.Object) &&
+                This.ObjectIsType(value.IntValue, payload)
+            }
+            Case(default) { false }
+        };
+    }
+
+    Public Function void ClearException()
+    {
+        If (This.CurrentException.Kind != [int](Bytecode.ValueKind.Null))
+        {
+            This.LastException = This.CurrentException;
+            This.LastTrace = This.CurrentTrace;
+        }
+        This.CurrentException = VMValue.NullValue();
+        This.CurrentTrace = "";
+        This.HasUnhandledException = false;
+    }
+
+    Public Function bool HasActiveException()
+    {
+        Return This.CurrentException.Kind != [int](Bytecode.ValueKind.Null);
+    }
+
+    Public Function string LastTraceValue()
+    {
+        If (This.CurrentTrace != "")
+        {
+            Return This.CurrentTrace;
+        }
+        Return This.LastTrace;
+    }
+
+    Public Function VMValue CurrentOrLastException()
+    {
+        If (This.CurrentException.Kind != [int](Bytecode.ValueKind.Null))
+        {
+            Return This.CurrentException;
+        }
+        Return This.LastException;
+    }
+
+    Private Function VMValue CatchBindValue(VMValue value, int kind)
+    {
+        int errorType = This.FindTypeByName("IO.Error");
+        If (kind == [int](Bytecode.IsTargetKind.String) &&
+            errorType >= 0 &&
+            value.Kind == [int](Bytecode.ValueKind.Object) &&
+            This.ObjectIsType(value.IntValue, errorType))
+        {
+            VMValue message = This.ObjectGetValue(value.IntValue, 1);
+            If (message.Kind == [int](Bytecode.ValueKind.String))
+            {
+                Return message;
+            }
+            Return VMValue.FromString(This.ExceptionMessage());
+        }
+        Return value;
+    }
+
+    Private Function void AttachExceptionMetadata(VMValue value, VMValue previous, string trace)
+    {
+        int errorType = This.FindTypeByName("IO.Error");
+        If (errorType < 0 || value.Kind != [int](Bytecode.ValueKind.Object) || !This.ObjectIsType(value.IntValue, errorType))
+        {
+            Return;
+        }
+
+        This.ObjectSetValue(value.IntValue, 3, VMValue.FromString(trace));
+        If (previous.Kind == [int](Bytecode.ValueKind.Object) && This.ObjectIsType(previous.IntValue, errorType))
+        {
+            VMValue inner = This.ObjectGetValue(value.IntValue, 2);
+            If (inner.Kind == [int](Bytecode.ValueKind.Null))
+            {
+                This.ObjectSetValue(value.IntValue, 2, previous);
+            }
+        }
+    }
+
+    Public Function bool RaiseException(VMValue value)
+    {
+        VMValue previous = This.CurrentException;
+        string trace = This.BuildTrace();
+
+        This.CurrentException = value;
+        This.CurrentTrace = trace;
+        This.HasUnhandledException = false;
+        This.AttachExceptionMetadata(value, previous, trace);
+
+        For (int frameIndex = This.FrameCount - 1; frameIndex >= 0; frameIndex = frameIndex - 1)
+        {
+            FunctionFrame frame = This.Frames[frameIndex];
+            While (frame.HandlerCount > 0)
+            {
+                TryHandler handler = frame.LastHandler();
+                frame.PopHandler();
+                If (This.ValueMatchesCatch(value, handler.CatchKind, handler.CatchPayload))
+                {
+                    VMValue bindValue = This.CatchBindValue(value, handler.CatchKind);
+                    This.FrameCount = frameIndex + 1;
+                    frame.Pc = handler.CatchPc;
+                    If (handler.CatchReg != 255)
+                    {
+                        frame.ImportValue(handler.CatchReg, bindValue);
+                    }
+                    This.ClearException();
+                    Return true;
+                }
+            }
+        }
+
+        This.Halted = true;
+        This.ExitCode = 1;
+        This.HasUnhandledException = true;
+        Return false;
+    }
+
+    Public Function string ExceptionMessage()
+    {
+        int errorType = This.FindTypeByName("IO.Error");
+        If (This.CurrentException.Kind == [int](Bytecode.ValueKind.String))
+        {
+            Return This.CurrentException.StringValue;
+        }
+        If (errorType >= 0 && This.CurrentException.Kind == [int](Bytecode.ValueKind.Object) &&
+            This.ObjectIsType(This.CurrentException.IntValue, errorType))
+        {
+            VMValue title = This.ObjectGetValue(This.CurrentException.IntValue, 0);
+            VMValue message = This.ObjectGetValue(This.CurrentException.IntValue, 1);
+            If (title.Kind == [int](Bytecode.ValueKind.String) && title.StringValue != "")
+            {
+                Return title.StringValue;
+            }
+            If (message.Kind == [int](Bytecode.ValueKind.String))
+            {
+                Return message.StringValue;
+            }
+        }
+        Return "<exception>";
+    }
+
+    Private Function VMValue DefaultValueForKind(int kind)
+    {
+        Return Switch(kind)
+        {
+            Case([int](Bytecode.ValueKind.Int))    { VMValue.FromInt(0) }
+            Case([int](Bytecode.ValueKind.Float))  { VMValue.FromFloat(0.0) }
+            Case([int](Bytecode.ValueKind.Bool))   { VMValue.FromBool(false) }
+            Case([int](Bytecode.ValueKind.String)) { VMValue.FromString("") }
+            Case([int](Bytecode.ValueKind.Char))   { VMValue.FromChar([char](0)) }
+            Case(default)                          { VMValue.NullValue() }
+        };
+    }
+
+    Private Function int AddPointerRecord(PointerInfo info)
+    {
+        This.Pointers = This.Pointers.Add(info);
+        Return This.Pointers.Length() - 1;
+    }
+
+    Public Function int NewFramePointer(int frameIndex, int reg)
+    {
+        PointerInfo info = New PointerInfo();
+        info.Kind = [int](Bytecode.PointerKind.FrameReg);
+        info.A = frameIndex;
+        info.B = reg;
+        Return This.AddPointerRecord(info);
+    }
+
+    Public Function int NewGlobalPointer(int slot)
+    {
+        PointerInfo info = New PointerInfo();
+        info.Kind = [int](Bytecode.PointerKind.Global);
+        info.A = slot;
+        Return This.AddPointerRecord(info);
+    }
+
+    Public Function int NewArrayPointer(int handle, int index)
+    {
+        PointerInfo info = New PointerInfo();
+        info.Kind = [int](Bytecode.PointerKind.ArrayElem);
+        info.A = handle;
+        info.B = index;
+        Return This.AddPointerRecord(info);
+    }
+
+    Public Function int NewObjectPointer(int handle, int fieldIndex)
+    {
+        PointerInfo info = New PointerInfo();
+        info.Kind = [int](Bytecode.PointerKind.ObjectField);
+        info.A = handle;
+        info.B = fieldIndex;
+        Return This.AddPointerRecord(info);
+    }
+
+    Public Function int NewFunctionPointer(int functionIndex)
+    {
+        PointerInfo info = New PointerInfo();
+        info.Kind = [int](Bytecode.PointerKind.Func);
+        info.A = functionIndex;
+        Return This.AddPointerRecord(info);
+    }
+
+    Public Function int NewStringPointer(string text, int index)
+    {
+        PointerInfo info = New PointerInfo();
+        info.Kind = [int](Bytecode.PointerKind.StringChar);
+        info.B = index;
+        info.TextValue = text;
+        Return This.AddPointerRecord(info);
+    }
+
+    Public Function int NewCellPointer(int handle)
+    {
+        PointerInfo info = New PointerInfo();
+        info.Kind = [int](Bytecode.PointerKind.Cell);
+        info.A = handle;
+        Return This.AddPointerRecord(info);
+    }
+
+    Private Function PointerInfo GetPointerInfo(int handle)
+    {
+        If (handle < 0 || handle >= This.Pointers.Length())
+        {
+            Throw "Pointer handle out of range";
+        }
+        Return This.Pointers[handle];
+    }
+
+    Private Function FunctionFrame FrameAt(int frameIndex)
+    {
+        If (frameIndex < 0 || frameIndex >= This.FrameCount)
+        {
+            Throw "Pointer frame is no longer active";
+        }
+        Return This.Frames[frameIndex];
+    }
+
+    Private Function string StringTail(string text, int start)
+    {
+        string result = "";
+        For (int i = start; i < text.Length(); i = i + 1)
+        {
+            result = result + [string](text[i]);
+        }
+        Return result;
+    }
+
+    Public Function VMValue PointerLoadValue(int handle)
+    {
+        PointerInfo info = This.GetPointerInfo(handle);
+        Switch(info.Kind)
+        {
+            Case([int](Bytecode.PointerKind.FrameReg)) { Return This.FrameAt(info.A).ExportValue(info.B); }
+            Case([int](Bytecode.PointerKind.Global))   { Return This.GetGlobalValue(info.A); }
+            Case([int](Bytecode.PointerKind.ArrayElem)) { Return This.ArrayGetValue(info.A, info.B); }
+            Case([int](Bytecode.PointerKind.ObjectField)) { Return This.ObjectGetValue(info.A, info.B); }
+            Case([int](Bytecode.PointerKind.Cell)) { Return This.GetCellValue(info.A); }
+            Case([int](Bytecode.PointerKind.StringChar))
+            {
+                If (info.B < 0 || info.B >= info.TextValue.Length())
+                {
+                    Throw "String pointer index out of range";
+                }
+                Return VMValue.FromChar(info.TextValue[info.B]);
+            }
+            Case(default)
+            {
+                Throw "Cannot dereference this pointer kind";
+            }
+        }
+        Return VMValue.NullValue();
+    }
+
+    Public Function void PointerStoreValue(int handle, VMValue value)
+    {
+        PointerInfo info = This.GetPointerInfo(handle);
+        Switch(info.Kind)
+        {
+            Case([int](Bytecode.PointerKind.FrameReg))
+            {
+                This.FrameAt(info.A).ImportValue(info.B, value);
+            }
+            Case([int](Bytecode.PointerKind.Global))
+            {
+                This.SetGlobalValue(info.A, value);
+            }
+            Case([int](Bytecode.PointerKind.ArrayElem))
+            {
+                This.ArraySetValue(info.A, info.B, value);
+            }
+            Case([int](Bytecode.PointerKind.ObjectField))
+            {
+                This.ObjectSetValue(info.A, info.B, value);
+            }
+            Case([int](Bytecode.PointerKind.Cell))
+            {
+                This.SetCellValue(info.A, value);
+            }
+            Case(default)
+            {
+                Throw "Cannot write through this pointer kind";
+            }
+        }
+    }
+
+    Public Function int PointerAdd(int handle, int delta)
+    {
+        PointerInfo info = This.GetPointerInfo(handle);
+        Switch(info.Kind)
+        {
+            Case([int](Bytecode.PointerKind.ArrayElem)) { Return This.NewArrayPointer(info.A, info.B + delta); }
+            Case([int](Bytecode.PointerKind.StringChar)) { Return This.NewStringPointer(info.TextValue, info.B + delta); }
+            Case(default)
+            {
+                Throw "Pointer arithmetic is only supported for array and string-backed pointers";
+            }
+        }
+        Return handle;
+    }
+
+    Public Function string PointerString(int handle)
+    {
+        PointerInfo info = This.GetPointerInfo(handle);
+        Return Switch(info.Kind)
+        {
+            Case([int](Bytecode.PointerKind.StringChar)) { This.StringTail(info.TextValue, info.B) }
+            Case([int](Bytecode.PointerKind.Func)) { "<fn#" + [string](info.A) + ">" }
+            Case(default) { "<pointer>" }
+        };
+    }
+
+    Public Function int NewArray(int length, int elementKind)
+    {
+        HeapArray arr = New HeapArray();
+        arr.ElementKind = elementKind;
+        For (int i = 0; i < length; i = i + 1)
+        {
+            arr.Items = arr.Items.Add(This.DefaultValueForKind(elementKind));
+        }
+        This.Arrays = This.Arrays.Add(arr);
+        Return This.Arrays.Length() - 1;
+    }
+
+    Public Function int NewCell(VMValue value)
+    {
+        This.Cells = This.Cells.Add(value);
+        Return This.Cells.Length() - 1;
+    }
+
+    Public Function VMValue GetCellValue(int handle)
+    {
+        If (handle < 0 || handle >= This.Cells.Length())
+        {
+            Throw "Cell handle out of range";
+        }
+        Return This.Cells[handle];
+    }
+
+    Public Function void SetCellValue(int handle, VMValue value)
+    {
+        If (handle < 0 || handle >= This.Cells.Length())
+        {
+            Throw "Cell handle out of range";
+        }
+        This.Cells[handle] = value;
+    }
+
+    Public Function int NewObject(int typeIndex)
+    {
+        If (typeIndex < 0 || typeIndex >= This.Program.Types.Length())
+        {
+            Throw "Type index out of range";
+        }
+
+        HeapObject obj = New HeapObject();
+        obj.TypeIndex = typeIndex;
+        int fieldCount = This.Program.Types[typeIndex].FieldCount;
+        For (int i = 0; i < fieldCount; i = i + 1)
+        {
+            obj.Fields = obj.Fields.Add(VMValue.NullValue());
+        }
+        This.Objects = This.Objects.Add(obj);
+        Return This.Objects.Length() - 1;
+    }
+
+    Public Function VMValue ArrayGetValue(int handle, int index)
+    {
+        If (handle < 0 || handle >= This.Arrays.Length())
+        {
+            Throw "Array handle out of range";
+        }
+        HeapArray arr = This.Arrays[handle];
+        If (index < 0 || index >= arr.Items.Length())
+        {
+            Throw "Array index out of range";
+        }
+        Return arr.Items[index];
+    }
+
+    Public Function void ArraySetValue(int handle, int index, VMValue value)
+    {
+        If (handle < 0 || handle >= This.Arrays.Length())
+        {
+            Throw "Array handle out of range";
+        }
+        HeapArray arr = This.Arrays[handle];
+        If (index < 0 || index >= arr.Items.Length())
+        {
+            Throw "Array index out of range";
+        }
+        arr.Items[index] = value;
+    }
+
+    Public Function int ArrayLengthOf(int handle)
+    {
+        If (handle < 0 || handle >= This.Arrays.Length())
+        {
+            Throw "Array handle out of range";
+        }
+        Return This.Arrays[handle].Items.Length();
+    }
+
+    Public Function int ArrayAddValue(int handle, VMValue value)
+    {
+        If (handle < 0 || handle >= This.Arrays.Length())
+        {
+            Throw "Array handle out of range";
+        }
+        HeapArray arr = This.Arrays[handle];
+        arr.Items = arr.Items.Add(value);
+        Return handle;
+    }
+
+    Public Function VMValue ObjectGetValue(int handle, int fieldIndex)
+    {
+        If (handle < 0 || handle >= This.Objects.Length())
+        {
+            Throw "Object handle out of range";
+        }
+        HeapObject obj = This.Objects[handle];
+        If (fieldIndex < 0 || fieldIndex >= obj.Fields.Length())
+        {
+            Throw "Field index out of range";
+        }
+        Return obj.Fields[fieldIndex];
+    }
+
+    Public Function void ObjectSetValue(int handle, int fieldIndex, VMValue value)
+    {
+        If (handle < 0 || handle >= This.Objects.Length())
+        {
+            Throw "Object handle out of range";
+        }
+        HeapObject obj = This.Objects[handle];
+        If (fieldIndex < 0 || fieldIndex >= obj.Fields.Length())
+        {
+            Throw "Field index out of range";
+        }
+        obj.Fields[fieldIndex] = value;
+    }
+
+    Public Function int ResolveVirtualFunction(int objectHandle, int slot)
+    {
+        If (objectHandle < 0 || objectHandle >= This.Objects.Length())
+        {
+            Throw "Object handle out of range";
+        }
+        HeapObject obj = This.Objects[objectHandle];
+        Bytecode.TypeInfo info = This.Program.Types[obj.TypeIndex];
+        If (slot < 0 || slot >= info.VTable.Length())
+        {
+            Throw "Virtual slot out of range";
+        }
+        Return info.VTable[slot];
+    }
+
+    Public Function VMValue GetGlobalValue(int slot)
+    {
+        If (slot < 0 || slot >= This.Globals.Length())
+        {
+            Throw "Global slot out of range";
+        }
+        Return This.Globals[slot];
+    }
+
+    Public Function void SetGlobalValue(int slot, VMValue value)
+    {
+        If (slot < 0 || slot >= This.Globals.Length())
+        {
+            Throw "Global slot out of range";
+        }
+        This.Globals[slot] = value;
+    }
+
+    Public Function bool ObjectIsType(int objectHandle, int targetTypeIndex)
+    {
+        If (objectHandle < 0 || objectHandle >= This.Objects.Length())
+        {
+            Return false;
+        }
+        If (targetTypeIndex < 0 || targetTypeIndex >= This.Program.Types.Length())
+        {
+            Return false;
+        }
+
+        int typeIndex = This.Objects[objectHandle].TypeIndex;
+        While (typeIndex >= 0 && typeIndex < This.Program.Types.Length())
+        {
+            Bytecode.TypeInfo info = This.Program.Types[typeIndex];
+            If (typeIndex == targetTypeIndex)
+            {
+                Return true;
+            }
+            For (int i = 0; i < info.InterfaceTypes.Length(); i = i + 1)
+            {
+                If (info.InterfaceTypes[i] == targetTypeIndex)
+                {
+                    Return true;
+                }
+            }
+            typeIndex = info.BaseType;
+        }
+        Return false;
+    }
+
+    Public Function FunctionFrame CurrentFrame()
+    {
+        If (This.FrameCount <= 0)
+        {
+            Throw "VM frame stack is empty";
+        }
+        Return This.Frames[This.FrameCount - 1];
+    }
+
+    Private Function void PushFrame(FunctionFrame frame)
+    {
+        If (This.FrameCount < This.Frames.Length())
+        {
+            This.Frames[This.FrameCount] = frame;
+        }
+        Else
+        {
+            This.Frames = This.Frames.Add(frame);
+        }
+        This.FrameCount = This.FrameCount + 1;
+    }
+
+    Public Function void PushEntry(int functionIndex)
+    {
+        This.PushFrame(New FunctionFrame(This.Program.Functions[functionIndex], functionIndex, 0, 255));
+    }
+
+    Public Function void PushCall(int functionIndex, int envHandle, int returnPc, int returnReg, FunctionFrame caller,
+                                  int argCount, int arg0, int arg1, int arg2, int arg3)
+    {
+        FunctionFrame frame = New FunctionFrame(This.Program.Functions[functionIndex], functionIndex, returnPc, returnReg);
+        frame.EnvHandle = envHandle;
+        If (argCount > 0) { frame.CopyValueFrom(caller, 0, arg0); }
+        If (argCount > 1) { frame.CopyValueFrom(caller, 1, arg1); }
+        If (argCount > 2) { frame.CopyValueFrom(caller, 2, arg2); }
+        If (argCount > 3) { frame.CopyValueFrom(caller, 3, arg3); }
+        This.PushFrame(frame);
+    }
+
+    Public Function void ReturnFromCurrent(int reg)
+    {
+        FunctionFrame current = This.CurrentFrame();
+        VMValue value = reg == 255 ? VMValue.FromInt(0) : current.ExportValue(reg);
+
+        If (This.FrameCount == 1)
+        {
+            If (reg == 255)
+            {
+                This.ExitCode = 0;
+            }
+            Else If (value.Kind == [int](Bytecode.ValueKind.Int))
+            {
+                This.ExitCode = value.IntValue;
+            }
+            Else
+            {
+                This.ExitCode = 0;
+            }
+            This.Halted = true;
+            Return;
+        }
+
+        int returnPc = current.ReturnPc;
+        int returnReg = current.ReturnReg;
+        This.FrameCount = This.FrameCount - 1;
+        FunctionFrame caller = This.CurrentFrame();
+        caller.Pc = returnPc;
+
+        If (returnReg == 255)
+        {
+            Return;
+        }
+
+        caller.ImportValue(returnReg, value);
+    }
+
+    Public Function void CopyValue(int dst, int src)
+    {
+        This.CurrentFrame().CopyValue(dst, src);
+    }
+
+    Public Function void SetInt(int reg, int value)
+    {
+        This.CurrentFrame().SetInt(reg, value);
+    }
+
+    Public Function void SetBool(int reg, bool value)
+    {
+        This.CurrentFrame().SetBool(reg, value);
+    }
+
+    Public Function void SetFloat(int reg, float value)
+    {
+        This.CurrentFrame().SetFloat(reg, value);
+    }
+
+    Public Function void SetString(int reg, string value)
+    {
+        This.CurrentFrame().SetString(reg, value);
+    }
+
+    Public Function void SetChar(int reg, char value)
+    {
+        This.CurrentFrame().SetChar(reg, value);
+    }
+
+    Public Function void SetPointer(int reg, int handle)
+    {
+        This.CurrentFrame().SetPointer(reg, handle);
+    }
+
+    Public Function int GetInt(int reg)
+    {
+        Return This.CurrentFrame().GetInt(reg);
+    }
+
+    Public Function bool GetBool(int reg)
+    {
+        Return This.CurrentFrame().GetBool(reg);
+    }
+
+    Public Function float GetFloat(int reg)
+    {
+        Return This.CurrentFrame().GetFloat(reg);
+    }
+
+    Public Function string GetString(int reg)
+    {
+        Return This.CurrentFrame().GetString(reg);
+    }
+
+    Public Function char GetChar(int reg)
+    {
+        Return This.CurrentFrame().GetChar(reg);
+    }
+
+    Public Function string Stringify(int reg)
+    {
+        If (This.KindAt(reg) == [int](Bytecode.ValueKind.Object))
+        {
+            int handle = This.CurrentFrame().IntRegisters[reg];
+            If (handle >= 0 && handle < This.Objects.Length())
+            {
+                int typeIndex = This.Objects[handle].TypeIndex;
+                If (typeIndex >= 0 && typeIndex < This.Program.Types.Length())
+                {
+                    Return This.Program.Types[typeIndex].Name;
+                }
+            }
+        }
+        If (This.KindAt(reg) == [int](Bytecode.ValueKind.Pointer))
+        {
+            Return This.PointerString(This.CurrentFrame().IntRegisters[reg]);
+        }
+        Return This.CurrentFrame().Stringify(reg);
+    }
+
+    Public Function int KindAt(int reg)
+    {
+        Return This.CurrentFrame().Kinds[reg];
+    }
+
+    Public Function bool ValueEquals(int left, int right)
+    {
+        Return This.CurrentFrame().ValueEquals(left, right);
+    }
+}

@@ -1,0 +1,42 @@
+Unit Tests.NestedTypesInClass;
+
+Get Console By IO.Console;
+
+Class Outer
+{
+    Public Enum Kind
+    {
+        Zero,
+        One
+    }
+
+    Public Struct Pair
+    {
+        int Left;
+        int Right;
+    }
+
+    Public Class Box
+    {
+        Public int Value;
+
+        Constructor(int value)
+        {
+            Value = value;
+        }
+    }
+}
+
+Static Function int Main()
+{
+    Outer.Pair pair;
+    pair.Left = 20;
+    pair.Right = 22;
+
+    Outer.Box box = New Outer.Box(9);
+
+    Console.PrintLine([int](Outer.Kind.One));
+    Console.PrintLine(pair.Left + pair.Right);
+    Console.PrintLine(box.Value);
+    Return 0;
+}

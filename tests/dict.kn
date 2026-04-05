@@ -1,0 +1,21 @@
+Unit Tests.Dict;
+
+Get Console By IO.Console;
+
+Static Function int Main() {
+    dict d = dict.Create();
+    d.Set("name", "kinal");
+    d.Set("n", 123);
+
+    Console.PrintLine(d.Contains("name"));
+    Console.PrintLine(d.Count());
+    Console.PrintLine([int](d.Fetch("n")));
+
+    dict.Set(d, "flag", true);
+    Console.PrintLine(dict.Contains(d, "flag"));
+    Console.PrintLine([string](dict.Fetch(d, "name")));
+    Console.PrintLine([string](d.Fetch("missing")));
+    Return 0;
+}
+
+

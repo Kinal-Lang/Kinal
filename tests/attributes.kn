@@ -1,0 +1,15 @@
+Unit Tests.Attr;
+Get Console By IO.Console;
+
+Meta Demo(string value)
+{
+    On @function;
+    Keep @compile;
+}
+
+[Demo("ok")]
+Static Function int Main() {
+    Console.PrintLine("ok");
+    Return 0;
+}
+

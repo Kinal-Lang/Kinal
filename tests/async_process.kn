@@ -1,0 +1,39 @@
+Unit Tests.AsyncProcess;
+
+Get Console By IO.Console;
+Get IO.Async;
+Get IO.Target;
+
+Static Function string SlowCommand()
+{
+    If (IO.Target == IO.Target.Windows)
+    {
+        Return "cmd /c ping 127.0.0.1 -n 2 > nul";
+    }
+    Return "sh -c \"sleep 1\"";
+}
+
+Static Function string FailCommand()
+{
+    If (IO.Target == IO.Target.Windows)
+    {
+        Return "cmd /c exit 7";
+    }
+    Return "sh -c \"exit 7\"";
+}
+
+Static Function int Main()
+{
+    byte* slow = IO.Async.Spawn(SlowCommand());
+    Console.PrintLine(IO.Async.Wait(slow, 0));
+    Console.PrintLine(IO.Async.IsCompleted(slow));
+    Console.PrintLine(IO.Async.Wait(slow, 3000));
+    Console.PrintLine(IO.Async.ExitCode(slow));
+    Console.PrintLine(IO.Async.Close(slow));
+
+    byte* fast = IO.Async.Spawn(FailCommand());
+    Console.PrintLine(IO.Async.Wait(fast, 3000));
+    Console.PrintLine(IO.Async.ExitCode(fast));
+    Console.PrintLine(IO.Async.Close(fast));
+    Return 0;
+}

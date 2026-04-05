@@ -1,0 +1,10 @@
+﻿Unit Tests.BlockSafeError;
+
+Static Function int Main() {
+    Block Bad </
+    If (false) {
+        Record A;
+    }
+    />
+    Return 0;
+}

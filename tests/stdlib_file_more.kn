@@ -1,0 +1,37 @@
+Unit Tests.StdlibFileMore;
+
+Get Console By IO.Console;
+Get IO.Directory;
+Get IO.File;
+Get IO.Text;
+
+Static Function int Main()
+{
+    string dir = "out/test";
+    string a = "out/test/stdlib_file_more_a.txt";
+    string b = "out/test/stdlib_file_more_b.txt";
+    string c = "out/test/stdlib_file_more_c.txt";
+
+    Console.PrintLine(IO.Directory.Ensure(dir));
+    Console.PrintLine(IO.File.DeleteIfExists(a));
+    Console.PrintLine(IO.File.DeleteIfExists(b));
+    Console.PrintLine(IO.File.DeleteIfExists(c));
+    Console.PrintLine(IO.File.Create(a));
+    Console.PrintLine(IO.File.IsEmpty(a));
+    Console.PrintLine(IO.File.Touch(a));
+    Console.PrintLine(IO.File.AppendLine(a, "alpha"));
+    Console.PrintLine(IO.File.AppendLine(a, "beta"));
+    Console.PrintLine(IO.File.IsEmpty(a));
+    Console.PrintLine(IO.File.ReadFirstLine(a));
+    Console.PrintLine(IO.File.ReplaceText(a, "beta", "gamma"));
+    Console.PrintLine(IO.Text.Contains(IO.File.ReadAllText(a), "gamma"));
+    Console.PrintLine(IO.Text.Contains(IO.File.ReadAllText(a), "beta"));
+    Console.PrintLine(IO.File.Copy(a, b));
+    Console.PrintLine(IO.Text.Contains(IO.File.ReadAllText(b), "gamma"));
+    Console.PrintLine(IO.File.Move(b, c));
+    Console.PrintLine(IO.File.Exists(b));
+    Console.PrintLine(IO.File.Exists(c));
+    Console.PrintLine(IO.File.DeleteIfExists(a));
+    Console.PrintLine(IO.File.DeleteIfExists(c));
+    Return 0;
+}

@@ -1,0 +1,1263 @@
+Unit IO.Web;
+
+Get IO.Error;
+Get IO.Meta;
+Get IO.Text;
+Get Native By IO.__Web;
+
+Enum HttpMethod By int
+{
+    Unknown = 0,
+    GET = 1,
+    POST = 2,
+    PUT = 3,
+    DELETE = 4,
+    PATCH = 5,
+    HEAD = 6,
+    OPTIONS = 7
+}
+
+Meta Route(string path, IO.Web.HttpMethod method = IO.Web.HttpMethod.GET)
+{
+    On @function, @method;
+    Keep @runtime;
+}
+
+Meta __Dispatcher()
+{
+    On @function;
+    Keep @runtime;
+}
+
+Trusted Function void __WebThrow(string message)
+{
+    Throw New IO.Error("IO.Web", message);
+}
+
+Trusted Function void __WebThrowNative(string action, byte* handle)
+{
+    string detail = Native.ServerLastError(handle);
+    If (detail == null || detail == "")
+    {
+        __WebThrow(action);
+    }
+    __WebThrow(action + ": " + detail);
+}
+
+Safe Function string __WebBoolText(bool value)
+{
+    If (value)
+    {
+        Return "true";
+    }
+    Return "false";
+}
+
+Trusted Function IO.Web.HttpMethod __WebParseMethod(string method)
+{
+    string value = IO.Text.Trim(method);
+    If (value == null || value == "")
+    {
+        Return IO.Web.HttpMethod.Unknown;
+    }
+    value = IO.Text.ToUpper(value);
+    If (value == "GET")
+    {
+        Return IO.Web.HttpMethod.GET;
+    }
+    If (value == "POST")
+    {
+        Return IO.Web.HttpMethod.POST;
+    }
+    If (value == "PUT")
+    {
+        Return IO.Web.HttpMethod.PUT;
+    }
+    If (value == "DELETE")
+    {
+        Return IO.Web.HttpMethod.DELETE;
+    }
+    If (value == "PATCH")
+    {
+        Return IO.Web.HttpMethod.PATCH;
+    }
+    If (value == "HEAD")
+    {
+        Return IO.Web.HttpMethod.HEAD;
+    }
+    If (value == "OPTIONS")
+    {
+        Return IO.Web.HttpMethod.OPTIONS;
+    }
+    Return IO.Web.HttpMethod.Unknown;
+}
+
+Trusted Function string __WebMethodText(int method)
+{
+    If (method == [int](IO.Web.HttpMethod.GET))
+    {
+        Return "GET";
+    }
+    If (method == [int](IO.Web.HttpMethod.POST))
+    {
+        Return "POST";
+    }
+    If (method == [int](IO.Web.HttpMethod.PUT))
+    {
+        Return "PUT";
+    }
+    If (method == [int](IO.Web.HttpMethod.DELETE))
+    {
+        Return "DELETE";
+    }
+    If (method == [int](IO.Web.HttpMethod.PATCH))
+    {
+        Return "PATCH";
+    }
+    If (method == [int](IO.Web.HttpMethod.HEAD))
+    {
+        Return "HEAD";
+    }
+    If (method == [int](IO.Web.HttpMethod.OPTIONS))
+    {
+        Return "OPTIONS";
+    }
+    Return "UNKNOWN";
+}
+
+Trusted Function string __WebNormalizePath(string path)
+{
+    string value = IO.Text.Trim(path);
+    If (value == null || value == "")
+    {
+        Return "/";
+    }
+    If (!IO.Text.StartsWith(value, "/"))
+    {
+        value = "/" + value;
+    }
+    While (IO.Text.Length(value) > 1 && IO.Text.EndsWith(value, "/"))
+    {
+        value = IO.Text.Slice(value, 0, IO.Text.Length(value) - 1);
+    }
+    Return value;
+}
+
+Trusted Function string __WebRouteKey(int method, string path)
+{
+    Return __WebMethodText(method) + " " + __WebNormalizePath(path);
+}
+
+Trusted Function void __WebEnsureUserPath(string path)
+{
+    string value = __WebNormalizePath(path);
+    If (value == "/__kinal" || IO.Text.StartsWith(value, "/__kinal/"))
+    {
+        __WebThrow("The '/__kinal' prefix is reserved for IO.Web internal endpoints");
+    }
+}
+
+Trusted Function string __WebEscapeHtml(string text)
+{
+    string value = text;
+    If (value == null)
+    {
+        Return "";
+    }
+    value = IO.Text.Replace(value, "&", "&amp;");
+    value = IO.Text.Replace(value, "<", "&lt;");
+    value = IO.Text.Replace(value, ">", "&gt;");
+    value = IO.Text.Replace(value, "\"", "&quot;");
+    value = IO.Text.Replace(value, "'", "&#39;");
+    Return value;
+}
+
+Public Class RouteDefinition
+{
+    Public int Method;
+    Public string Path;
+    Public string Owner;
+    Public int ParamCount;
+    Public IO.Type.Object.Function Handler;
+
+    Public Constructor(int method, string path, string owner,
+                       int paramCount, IO.Type.Object.Function handler)
+    {
+        Method = method;
+        Path = __WebNormalizePath(path);
+        Owner = owner;
+        ParamCount = paramCount;
+        Handler = handler;
+    }
+
+    Public Safe Function string Key()
+    {
+        Return __WebRouteKey(Method, Path);
+    }
+
+    Public Trusted Function void Invoke(Context ctx)
+    {
+        IO.Type.Object.Function fn = Handler;
+        If (ParamCount == 0)
+        {
+            fn();
+            Return;
+        }
+        If (ParamCount == 1)
+        {
+            fn(ctx);
+            Return;
+        }
+        __WebThrow("Route handler must declare 0 or 1 parameters: " + Owner);
+    }
+}
+
+Public Class StaticMount
+{
+    Public string Prefix;
+    Public string Directory;
+    Public string DefaultFile;
+
+    Public Constructor(string prefix, string directory, string defaultFile = "index.html")
+    {
+        Prefix = __WebNormalizePath(prefix);
+        Directory = directory;
+        DefaultFile = defaultFile;
+        If (Directory == null || IO.Text.Trim(Directory) == "")
+        {
+            __WebThrow("Static mount directory cannot be empty");
+        }
+        __WebEnsureUserPath(Prefix);
+    }
+}
+
+Public Class Request
+{
+    Public Constructor()
+    {
+    }
+
+    Public Trusted Property IO.Web.HttpMethod Method
+    {
+        Get
+        {
+            Return __WebParseMethod(Native.CurrentMethod());
+        }
+    }
+
+    Public Trusted Property string MethodText
+    {
+        Get
+        {
+            Return __WebMethodText([int](Method));
+        }
+    }
+
+    Public Trusted Property string Path
+    {
+        Get
+        {
+            Return __WebNormalizePath(Native.CurrentUri());
+        }
+    }
+
+    Public Trusted Property string RawPath
+    {
+        Get
+        {
+            Return Native.CurrentUri();
+        }
+    }
+
+    Public Trusted Property string QueryText
+    {
+        Get
+        {
+            Return Native.CurrentQuery();
+        }
+    }
+
+    Public Trusted Property string ContentType
+    {
+        Get
+        {
+            Return Header("Content-Type");
+        }
+    }
+
+    Public Trusted Property int ContentLength
+    {
+        Get
+        {
+            Return Native.CurrentContentLength();
+        }
+    }
+
+    Public Trusted Function string QueryValue(string name)
+    {
+        Return Native.CurrentQueryValue(name);
+    }
+
+    Public Trusted Function string Header(string name)
+    {
+        Return Native.CurrentHeader(name);
+    }
+
+    Public Trusted Function string BodyText()
+    {
+        Return Native.CurrentBodyText();
+    }
+}
+
+Public Class Response
+{
+    Private int _StatusCode;
+    Private string _ContentType;
+
+    Public Constructor()
+    {
+        _StatusCode = 200;
+        _ContentType = "text/plain; charset=utf-8";
+    }
+
+    Public Property int StatusCode
+    {
+        Get
+        {
+            Return _StatusCode;
+        }
+        Set
+        {
+            _StatusCode = value;
+        }
+    }
+
+    Public Property string ContentType
+    {
+        Get
+        {
+            Return _ContentType;
+        }
+        Set
+        {
+            If (value == null || value == "")
+            {
+                _ContentType = "text/plain; charset=utf-8";
+            }
+            Else
+            {
+                _ContentType = value;
+            }
+        }
+    }
+
+    Public Trusted Property bool HasSent
+    {
+        Get
+        {
+            Return Native.CurrentReplied() != 0;
+        }
+    }
+
+    Public Trusted Function void Send(string body,
+                                      int status = 0,
+                                      string contentType = null)
+    {
+        int wantStatus = status;
+        string wantContentType = contentType;
+
+        If (wantStatus <= 0)
+        {
+            wantStatus = _StatusCode;
+        }
+        Else
+        {
+            _StatusCode = wantStatus;
+        }
+
+        If (wantContentType == null || wantContentType == "")
+        {
+            wantContentType = _ContentType;
+        }
+        Else
+        {
+            _ContentType = wantContentType;
+        }
+
+        If (Native.ReplyText(wantStatus, wantContentType, body) == 0)
+        {
+            __WebThrow("No active web request is available");
+        }
+    }
+
+    Public Trusted Function void Text(string body, int status = 200)
+    {
+        Send(body, status, "text/plain; charset=utf-8");
+    }
+
+    Public Trusted Function void Html(string body, int status = 200)
+    {
+        Send(body, status, "text/html; charset=utf-8");
+    }
+
+    Public Trusted Function void Json(string body, int status = 200)
+    {
+        Send(body, status, "application/json; charset=utf-8");
+    }
+
+    Public Trusted Function void JavaScript(string body, int status = 200)
+    {
+        Send(body, status, "application/javascript; charset=utf-8");
+    }
+}
+
+Public Class Context
+{
+    Private Server _Server;
+    Private Request _Request;
+    Private Response _Response;
+
+    Public Constructor(Server server)
+    {
+        _Server = server;
+        _Request = New Request();
+        _Response = New Response();
+    }
+
+    Public Property Server Server
+    {
+        Get
+        {
+            Return _Server;
+        }
+    }
+
+    Public Property Request Request
+    {
+        Get
+        {
+            Return _Request;
+        }
+    }
+
+    Public Property Response Response
+    {
+        Get
+        {
+            Return _Response;
+        }
+    }
+}
+
+Static Class __WebHost
+{
+    Public Static bool Ready;
+    Public Static byte* DispatcherPtr;
+    Public Static Server[] Servers;
+
+    Public Trusted Function void EnsureInit()
+    {
+        If (!Ready)
+        {
+            Servers = {};
+            Ready = true;
+        }
+        If (DispatcherPtr != null)
+        {
+            Return;
+        }
+
+        dict meta = IO.Meta.Find(__WebDispatchCurrent, "IO.Web.__Dispatcher");
+        DispatcherPtr = [byte*](meta.Fetch("owner_ptr"));
+        If (DispatcherPtr == null)
+        {
+            __WebThrow("IO.Web dispatcher pointer is unavailable");
+        }
+    }
+
+    Public Trusted Function byte* DispatcherPointer()
+    {
+        EnsureInit();
+        Return DispatcherPtr;
+    }
+
+    Public Trusted Function void RegisterServer(Server server)
+    {
+        int i = 0;
+        EnsureInit();
+        While (i < Servers.Length())
+        {
+            If (Servers[i].Handle == server.Handle)
+            {
+                Servers[i] = server;
+                Return;
+            }
+            i++;
+        }
+        Servers = Servers.Add(server);
+    }
+
+    Public Trusted Function Server FindServer(byte* handle)
+    {
+        int i = 0;
+        If (handle == null)
+        {
+            Return default;
+        }
+        EnsureInit();
+        While (i < Servers.Length())
+        {
+            If (Servers[i].Handle == handle)
+            {
+                Return Servers[i];
+            }
+            i++;
+        }
+        Return default;
+    }
+
+    Public Trusted Function Server ResolveCurrentServer()
+    {
+        Return FindServer(Native.CurrentServer());
+    }
+}
+
+[__Dispatcher()]
+Trusted Function void __WebDispatchCurrent()
+{
+    Server server = __WebHost.ResolveCurrentServer();
+    If (server == null)
+    {
+        Native.ReplyText(500, "text/plain; charset=utf-8", "IO.Web server context is unavailable");
+        Return;
+    }
+
+    Try
+    {
+        server.DispatchCurrentRequest();
+    }
+    Catch (IO.Error e)
+    {
+        server.HandleCurrentError(e);
+    }
+}
+
+Static Class Http
+{
+    Public Trusted Function Server CurrentServer()
+    {
+        Server server = __WebHost.ResolveCurrentServer();
+        If (server == null)
+        {
+            __WebThrow("No active web request is available");
+        }
+        Return server;
+    }
+
+    Public Trusted Function Context Current()
+    {
+        Return New Context(CurrentServer());
+    }
+
+    Public Trusted Function Request Request()
+    {
+        Return New Request();
+    }
+
+    Public Trusted Function Response Response()
+    {
+        Return New Response();
+    }
+}
+
+Public Class Server
+{
+    Private string _Host;
+    Private int _Port;
+    Public byte* Handle;
+    Private bool _Started;
+    Private bool _RoutesLoaded;
+    Private bool _Debug;
+    Private bool _LiveReload;
+    Private RouteDefinition[] _Routes;
+    Private StaticMount[] _StaticMounts;
+
+    Public Constructor(int port = 8080, string host = "0.0.0.0")
+    {
+        _Host = host;
+        _Port = port;
+        Handle = null;
+        _Started = false;
+        _RoutesLoaded = false;
+        _Debug = false;
+        _LiveReload = false;
+        _Routes = {};
+        _StaticMounts = {};
+    }
+
+    Public Property string Host
+    {
+        Get
+        {
+            Return _Host;
+        }
+        Set
+        {
+            If (Handle != null)
+            {
+                __WebThrow("Host cannot change after the native server handle is created");
+            }
+            _Host = value;
+        }
+    }
+
+    Public Property int Port
+    {
+        Get
+        {
+            Return _Port;
+        }
+        Set
+        {
+            If (Handle != null)
+            {
+                __WebThrow("Port cannot change after the native server handle is created");
+            }
+            _Port = value;
+        }
+    }
+
+    Public Property bool Debug
+    {
+        Get
+        {
+            Return _Debug;
+        }
+        Set
+        {
+            _Debug = value;
+        }
+    }
+
+    Public Property bool LiveReload
+    {
+        Get
+        {
+            Return _LiveReload;
+        }
+        Set
+        {
+            _LiveReload = value;
+        }
+    }
+
+    Public Safe Function bool IsStarted()
+    {
+        Return _Started;
+    }
+
+    Public Safe Function bool HasRoutes()
+    {
+        Return _RoutesLoaded && _Routes.Length() > 0;
+    }
+
+    Public Function Server EnableDebug(bool enabled = true)
+    {
+        Debug = enabled;
+        Return This;
+    }
+
+    Public Function Server EnableLiveReload(bool enabled = true)
+    {
+        LiveReload = enabled;
+        Return This;
+    }
+
+    Public Safe Function string Url()
+    {
+        string host = _Host;
+        If (host == "0.0.0.0" || host == "::")
+        {
+            host = "127.0.0.1";
+        }
+        Return "http://" + host + ":" + [string](_Port);
+    }
+
+    Public Safe Function string ReloadVersionPath()
+    {
+        Return "/__kinal/reload/version";
+    }
+
+    Public Safe Function string DebugRoutesPath()
+    {
+        Return "/__kinal/debug/routes";
+    }
+
+    Public Safe Function string DebugServerPath()
+    {
+        Return "/__kinal/debug/server";
+    }
+
+    Private Trusted Function void EnsureHandle()
+    {
+        int i = 0;
+        If (Handle != null)
+        {
+            Return;
+        }
+        If (_Port <= 0 || _Port > 65535)
+        {
+            __WebThrow("Port must be in the range 1..65535");
+        }
+        If (_Host == null || IO.Text.Trim(_Host) == "")
+        {
+            _Host = "0.0.0.0";
+        }
+
+        Handle = Native.ServerCreate(_Host, _Port);
+        If (Handle == null)
+        {
+            __WebThrow("Failed to create the IO.Web native server");
+        }
+
+        If (Native.ServerSetDispatcher(Handle, __WebHost.DispatcherPointer()) == 0)
+        {
+            __WebThrowNative("Failed to configure the IO.Web dispatcher", Handle);
+        }
+
+        While (i < _StaticMounts.Length())
+        {
+            StaticMount mount = _StaticMounts[i];
+            If (Native.ServerMount(Handle, mount.Prefix, mount.Directory, mount.DefaultFile) == 0)
+            {
+                __WebThrowNative("Failed to register static mount " + mount.Prefix, Handle);
+            }
+            i++;
+        }
+
+        __WebHost.RegisterServer(This);
+    }
+
+    Public Trusted Function Server UseStatic(string prefix, string directory, string defaultFile = "index.html")
+    {
+        Return UseStaticMount(New StaticMount(prefix, directory, defaultFile));
+    }
+
+    Public Trusted Function Server UseStaticMount(StaticMount mount)
+    {
+        If (mount == null)
+        {
+            __WebThrow("Static mount cannot be null");
+        }
+
+        _StaticMounts = _StaticMounts.Add(mount);
+        If (Handle != null)
+        {
+            If (Native.ServerMount(Handle, mount.Prefix, mount.Directory, mount.DefaultFile) == 0)
+            {
+                __WebThrowNative("Failed to register static mount " + mount.Prefix, Handle);
+            }
+        }
+        Return This;
+    }
+
+    Public Trusted Function Server RefreshRoutes()
+    {
+        list owners = IO.Meta.Query("IO.Web.Route");
+        int i = 0;
+
+        _Routes = {};
+
+        While (i < owners.Count())
+        {
+            string ownerName = [string](owners.Fetch(i));
+            dict route = IO.Meta.Find(ownerName, "IO.Web.Route");
+            int paramCount = [int](route.Fetch("owner_param_count"));
+            int rawMethod = [int](route.Fetch("arg.method"));
+            byte* ownerPtr = [byte*](route.Fetch("owner_ptr"));
+            string path = __WebNormalizePath([string](route.Fetch("arg.path")));
+            int method = rawMethod;
+            string key = __WebRouteKey(method, path);
+            RouteDefinition entry;
+
+            __WebEnsureUserPath(path);
+
+            If (ownerPtr == null)
+            {
+                __WebThrow("Route handler pointer is unavailable (only functions and static methods can be routes): " + ownerName);
+            }
+            If (paramCount < 0 || paramCount > 1)
+            {
+                __WebThrow("Route handler must declare 0 or 1 parameters: " + ownerName);
+            }
+            If (method == [int](IO.Web.HttpMethod.Unknown))
+            {
+                __WebThrow("Route method is invalid or unsupported: " + ownerName);
+            }
+            If (FindRouteLoaded(method, path) != null)
+            {
+                __WebThrow("Duplicate route registration: " + key);
+            }
+
+            entry = New RouteDefinition(method, path, ownerName, paramCount, [Object.Function](ownerPtr));
+            _Routes = _Routes.Add(entry);
+            i++;
+        }
+
+        _RoutesLoaded = true;
+        Return This;
+    }
+
+    Private Safe Function RouteDefinition FindRouteLoaded(int method, string path)
+    {
+        int i = 0;
+        string key = __WebRouteKey(method, path);
+        While (i < _Routes.Length())
+        {
+            If (_Routes[i].Key() == key)
+            {
+                Return _Routes[i];
+            }
+            i++;
+        }
+        Return default;
+    }
+
+    Public Trusted Function Server UseRoutes()
+    {
+        If (!_RoutesLoaded)
+        {
+            RefreshRoutes();
+        }
+        Return This;
+    }
+
+    Public Trusted Function RouteDefinition FindRoute(int method, string path)
+    {
+        If (!_RoutesLoaded)
+        {
+            UseRoutes();
+        }
+        Return FindRouteLoaded(method, path);
+    }
+
+    Public Trusted Function bool HasAnyRouteForPath(string path)
+    {
+        int i = 0;
+        string want = __WebNormalizePath(path);
+        While (i < _Routes.Length())
+        {
+            If (_Routes[i].Path == want)
+            {
+                Return true;
+            }
+            i++;
+        }
+        Return false;
+    }
+
+    Public Trusted Function int ReloadVersion()
+    {
+        If (Handle == null)
+        {
+            Return 0;
+        }
+        Return Native.ServerReloadVersion(Handle);
+    }
+
+    Public Trusted Function string LiveReloadScript()
+    {
+        If (!_LiveReload)
+        {
+            Return "";
+        }
+        Return "<script>(function(){var v='';async function p(){try{var r=await fetch('" +
+               ReloadVersionPath() +
+               "',{cache:'no-store'});var t=(await r.text()).trim();if(v&&t!==v){location.reload();return;}v=t;}catch(_){ }setTimeout(p,1000);}p();})();</script>";
+    }
+
+    Public Trusted Function string InjectLiveReload(string html)
+    {
+        string script = LiveReloadScript();
+        If (script == "")
+        {
+            Return html;
+        }
+        If (html == null)
+        {
+            html = "";
+        }
+        If (IO.Text.Contains(html, "</body>"))
+        {
+            Return IO.Text.Replace(html, "</body>", script + "</body>");
+        }
+        Return html + script;
+    }
+
+    Public Trusted Function string BuildRoutesDebugText()
+    {
+        string text = "URL: " + Url() + "\n" +
+                      "Debug: " + __WebBoolText(_Debug) + "\n" +
+                      "LiveReload: " + __WebBoolText(_LiveReload) + "\n" +
+                      "RouteCount: " + [string](_Routes.Length()) + "\n" +
+                      "StaticMountCount: " + [string](_StaticMounts.Length()) + "\n\nRoutes:\n";
+        int i = 0;
+
+        If (_Routes.Length() == 0)
+        {
+            text = text + "(none)\n";
+        }
+        Else
+        {
+            While (i < _Routes.Length())
+            {
+                RouteDefinition route = _Routes[i];
+                text = text + __WebMethodText(route.Method) + " " + route.Path +
+                       " -> " + route.Owner +
+                       " (params=" + [string](route.ParamCount) + ")\n";
+                i++;
+            }
+        }
+
+        text = text + "\nStatic Mounts:\n";
+        i = 0;
+        If (_StaticMounts.Length() == 0)
+        {
+            text = text + "(none)\n";
+        }
+        Else
+        {
+            While (i < _StaticMounts.Length())
+            {
+                StaticMount mount = _StaticMounts[i];
+                text = text + mount.Prefix + " -> " + mount.Directory +
+                       " (default=" + mount.DefaultFile + ")\n";
+                i++;
+            }
+        }
+
+        If (_LiveReload)
+        {
+            text = text + "\nReloadVersion: " + [string](ReloadVersion()) + "\n";
+        }
+        Return text;
+    }
+
+    Private Trusted Function string CurrentTrace(IO.Error err)
+    {
+        string trace = IO.Error.LastTrace();
+        If (err != null && err.Trace != null && err.Trace != "")
+        {
+            trace = err.Trace;
+        }
+        If (trace == null || trace == "")
+        {
+            Return "at <no stack trace available>";
+        }
+        Return trace;
+    }
+
+    Private Trusted Function string BuildErrorChainHtml(IO.Error err)
+    {
+        IO.Error current = err;
+        int depth = 0;
+        string html = "";
+
+        If (current == null)
+        {
+            Return "<article class=\"error-card\"><span class=\"error-tag\">Unhandled</span><h2>IO.Web Error</h2><p>No additional error details are available.</p></article>";
+        }
+
+        While (current != null)
+        {
+            string title = current.Title;
+            string message = current.Message;
+            string tag = "Caused by";
+
+            If (title == null || title == "")
+            {
+                title = "IO.Error";
+            }
+            If (message == null || message == "")
+            {
+                message = "No error message was provided.";
+            }
+            If (depth == 0)
+            {
+                tag = "Unhandled";
+            }
+
+            html = html +
+                   "<article class=\"error-card\">" +
+                   "<span class=\"error-tag\">" + __WebEscapeHtml(tag) + "</span>" +
+                   "<h2>" + __WebEscapeHtml(title) + "</h2>" +
+                   "<p>" + __WebEscapeHtml(message) + "</p>" +
+                   "</article>";
+
+            current = current.Inner;
+            depth++;
+        }
+
+        Return html;
+    }
+
+    Private Trusted Function bool WantsHtmlErrorPage(Request request)
+    {
+        string accept;
+        string path;
+
+        If (request == null)
+        {
+            Return true;
+        }
+
+        accept = IO.Text.ToLower(request.Header("Accept"));
+        path = request.Path;
+        If (accept != null && IO.Text.Contains(accept, "text/html"))
+        {
+            Return true;
+        }
+        If (path == null || !IO.Text.StartsWith(path, "/api/"))
+        {
+            Return true;
+        }
+        Return false;
+    }
+
+    Public Trusted Function string BuildDebugErrorPage(IO.Error err)
+    {
+        Request request = New Request();
+        string title = "IO.Web Developer Error";
+        string trace = CurrentTrace(err);
+        string requestLine = request.MethodText + " " + request.RawPath;
+        string requestMeta = "Content-Type: " + __WebEscapeHtml(request.ContentType) +
+                             "<br>Content-Length: " + [string](request.ContentLength);
+
+        Return InjectLiveReload(
+            "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><title>" +
+            __WebEscapeHtml(title) +
+            "</title><style>:root{--bg:#08111a;--bg2:#14283a;--panel:rgba(9,20,31,.88);--line:rgba(162,211,255,.14);--ink:#e7f4ff;--muted:#97b7cf;--accent:#6ee7c8;--warn:#ffcf7d;--danger:#ff8b8b;--trace:#081018;}*{box-sizing:border-box;}body{margin:0;min-height:100vh;color:var(--ink);font-family:\"Segoe UI Variable Text\",\"IBM Plex Sans\",\"Segoe UI\",sans-serif;background:radial-gradient(circle at top left,rgba(110,231,200,.16),transparent 26%),radial-gradient(circle at top right,rgba(255,139,139,.18),transparent 22%),linear-gradient(160deg,var(--bg),var(--bg2));}main{width:min(1180px,calc(100vw - 32px));margin:0 auto;padding:28px 0 40px;}header{padding:28px;border:1px solid var(--line);border-radius:28px;background:linear-gradient(180deg,rgba(255,255,255,.04),rgba(255,255,255,.02));backdrop-filter:blur(16px);box-shadow:0 24px 80px rgba(0,0,0,.28);}header p{margin:10px 0 0;color:var(--muted);line-height:1.7;}h1{margin:0;font-size:clamp(30px,5vw,52px);line-height:.95;letter-spacing:-.04em;}section{margin-top:18px;padding:20px 22px;border:1px solid var(--line);border-radius:22px;background:var(--panel);box-shadow:0 20px 60px rgba(0,0,0,.18);}section h2{margin:0 0 14px;font-size:15px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);}pre{margin:0;padding:18px;border-radius:18px;background:var(--trace);color:#d8eeff;font-family:\"Cascadia Code\",\"Fira Code\",Consolas,monospace;font-size:13px;line-height:1.6;white-space:pre-wrap;word-break:break-word;border:1px solid rgba(255,255,255,.06);}code{font-family:\"Cascadia Code\",\"Fira Code\",Consolas,monospace;}a{color:#8be0ff;} .error-grid{display:grid;gap:14px;} .error-card{padding:16px 18px;border-radius:18px;background:linear-gradient(180deg,rgba(255,139,139,.12),rgba(255,255,255,.02));border:1px solid rgba(255,139,139,.18);} .error-card h2{margin:8px 0 10px;font-size:24px;text-transform:none;letter-spacing:-.02em;color:var(--ink);} .error-card p{margin:0;color:#f6d9d9;line-height:1.7;} .error-tag{display:inline-flex;padding:6px 10px;border-radius:999px;background:rgba(255,207,125,.12);color:var(--warn);font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;} .request-grid{display:grid;grid-template-columns:2fr 1fr;gap:14px;} .info-card{padding:16px 18px;border-radius:18px;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.06);} .info-card strong{display:block;margin-bottom:8px;color:var(--accent);font-size:12px;letter-spacing:.08em;text-transform:uppercase;} .info-card span{display:block;color:var(--ink);line-height:1.7;word-break:break-word;} @media (max-width:820px){main{width:min(100vw - 20px,1180px);padding:18px 0 26px;}header,section{border-radius:20px;padding:18px;} .request-grid{grid-template-columns:1fr;}}</style></head><body><main><header><h1>" +
+            __WebEscapeHtml(title) +
+            "</h1><p>IO.Web captured an unhandled request failure and rendered the developer diagnostics page. The request, error chain, and formatted Kinal stack are shown below.</p></header><section><h2>Error Chain</h2><div class=\"error-grid\">" +
+            BuildErrorChainHtml(err) +
+            "</div></section><section><h2>Request</h2><div class=\"request-grid\"><div class=\"info-card\"><strong>Request Line</strong><span>" +
+            __WebEscapeHtml(requestLine) +
+            "</span></div><div class=\"info-card\"><strong>Links</strong><span><a href=\"" +
+            __WebEscapeHtml(DebugRoutesPath()) +
+            "\">Routes</a><br><a href=\"" +
+            __WebEscapeHtml(DebugServerPath()) +
+            "\">Server Context</a></span></div><div class=\"info-card\"><strong>Headers</strong><span>" +
+            requestMeta +
+            "</span></div><div class=\"info-card\"><strong>Query</strong><span>" +
+            __WebEscapeHtml(request.QueryText) +
+            "</span></div></div></section><section><h2>Stack Trace</h2><pre>" +
+            __WebEscapeHtml(trace) +
+            "</pre></section></main></body></html>"
+        );
+    }
+
+    Public Trusted Function string BuildProductionErrorPage()
+    {
+        Request request = New Request();
+        string title = "Internal Server Error";
+        string message = "The request could not be completed.";
+
+        Return "<!DOCTYPE html><html><head><meta charset=\"utf-8\"><title>" +
+               __WebEscapeHtml(title) +
+               "</title><style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:linear-gradient(160deg,#f3eadf,#d8e5f1);font-family:\"Segoe UI Variable Text\",\"IBM Plex Sans\",\"Segoe UI\",sans-serif;color:#172532;}main{width:min(680px,calc(100vw - 28px));padding:28px;border-radius:28px;background:rgba(255,255,255,.82);box-shadow:0 24px 80px rgba(23,37,50,.14);border:1px solid rgba(23,37,50,.08);}h1{margin:0;font-size:clamp(28px,4vw,42px);line-height:1;letter-spacing:-.04em;}p{margin:14px 0 0;color:#4b5d6c;line-height:1.7;}pre{margin:18px 0 0;padding:16px;border-radius:18px;background:#0e1822;color:#d8eeff;font-family:\"Cascadia Code\",\"Fira Code\",Consolas,monospace;white-space:pre-wrap;word-break:break-word;}@media (max-width:720px){main{padding:22px;border-radius:22px;}}</style></head><body><main><h1>" +
+               __WebEscapeHtml(title) +
+               "</h1><p>" +
+               __WebEscapeHtml(message) +
+               "</p><pre>" +
+               __WebEscapeHtml(request.MethodText + " " + request.RawPath) +
+               "</pre></main></body></html>";
+    }
+
+    Private Trusted Function string BuildPlainDebugErrorText(IO.Error err)
+    {
+        string text = "IO.Web request failed";
+        string trace = CurrentTrace(err);
+
+        If (err != null)
+        {
+            If (err.Title != null && err.Title != "")
+            {
+                text = err.Title;
+            }
+            If (err.Message != null && err.Message != "")
+            {
+                text = text + ": " + err.Message;
+            }
+        }
+
+        Return text + "\n\n" + trace;
+    }
+
+    Public Trusted Function void HandleCurrentError(IO.Error err)
+    {
+        Response response = New Response();
+        Request request = New Request();
+
+        If (response.HasSent)
+        {
+            Return;
+        }
+        If (_Debug)
+        {
+            If (WantsHtmlErrorPage(request))
+            {
+                response.Html(BuildDebugErrorPage(err), 500);
+            }
+            Else
+            {
+                response.Text(BuildPlainDebugErrorText(err), 500);
+            }
+            Return;
+        }
+        If (WantsHtmlErrorPage(request))
+        {
+            response.Html(BuildProductionErrorPage(), 500);
+            Return;
+        }
+        response.Text("Internal Server Error", 500);
+    }
+
+    Private Trusted Function bool HandleInternalRequest(Context ctx, int method, string path)
+    {
+        If (method != [int](IO.Web.HttpMethod.GET))
+        {
+            Return false;
+        }
+
+        If (path == ReloadVersionPath())
+        {
+            If (!_LiveReload)
+            {
+                ctx.Response.Text("Not Found", 404);
+                Return true;
+            }
+            ctx.Response.Text([string](ReloadVersion()));
+            Return true;
+        }
+
+        If (path == DebugRoutesPath())
+        {
+            If (!_Debug)
+            {
+                ctx.Response.Text("Not Found", 404);
+                Return true;
+            }
+            ctx.Response.Text(BuildRoutesDebugText());
+            Return true;
+        }
+
+        If (path == DebugServerPath())
+        {
+            If (!_Debug)
+            {
+                ctx.Response.Text("Not Found", 404);
+                Return true;
+            }
+            ctx.Response.Json(Native.ServerContextInfo(Handle));
+            Return true;
+        }
+
+        Return false;
+    }
+
+    Public Trusted Function void DispatchCurrentRequest()
+    {
+        Context ctx = New Context(This);
+        int method;
+        string path;
+        RouteDefinition route;
+
+        If (!_RoutesLoaded)
+        {
+            UseRoutes();
+        }
+
+        method = [int](ctx.Request.Method);
+        path = ctx.Request.Path;
+
+        If (HandleInternalRequest(ctx, method, path))
+        {
+            Return;
+        }
+
+        route = FindRoute(method, path);
+        If (route != null)
+        {
+            route.Invoke(ctx);
+            If (!ctx.Response.HasSent)
+            {
+                ctx.Response.Text("", 204);
+            }
+            Return;
+        }
+
+        If (Native.ServerTryServeStatic(Handle) != 0)
+        {
+            Return;
+        }
+
+        If (HasAnyRouteForPath(path))
+        {
+            ctx.Response.Text("Method Not Allowed", 405);
+            Return;
+        }
+
+        ctx.Response.Text("Not Found", 404);
+    }
+
+    Public Trusted Function Server Start()
+    {
+        EnsureHandle();
+        UseRoutes();
+        If (_Started)
+        {
+            Return This;
+        }
+        If (Native.ServerStart(Handle) == 0)
+        {
+            __WebThrowNative("Failed to start the IO.Web server", Handle);
+        }
+        _Started = true;
+        Return This;
+    }
+
+    Public Trusted Function Server Wait()
+    {
+        If (!_Started)
+        {
+            Start();
+        }
+        Native.ServerWait(Handle);
+        Return This;
+    }
+
+    Public Trusted Function Server Stop()
+    {
+        If (Handle != null)
+        {
+            Native.ServerStop(Handle);
+        }
+        _Started = false;
+        Return This;
+    }
+
+    Public Trusted Function void Run()
+    {
+        Start();
+        Wait();
+    }
+}
+
+Static Class Host
+{
+    Public Trusted Function void Run(int port = 8080, string host = "0.0.0.0")
+    {
+        Server server = New Server(port, host);
+        server.Run();
+    }
+}

@@ -1,0 +1,233 @@
+Unit IO.Kinal.VM.Loader;
+
+Get Binary By IO.Kinal.VM.Binary;
+Get Bytecode By IO.Kinal.VM.Bytecode;
+
+Public Class KNCLoader
+{
+    Public Unsafe Static Function Bytecode.Program Load(string path)
+    {
+        Binary.BlobReader reader = New Binary.BlobReader(Binary.BinaryFile.ReadAllBytes(path));
+        Bytecode.Program program = New Bytecode.Program();
+
+        KNCLoader.ExpectMagic(reader);
+
+        int version = reader.ReadU16();
+        int flags = reader.ReadU16();
+
+        If (version != 2)
+        {
+            Throw "Unsupported .knc version: " + [string](version);
+        }
+
+        If (flags != 0)
+        {
+            Throw "Unsupported .knc flags: " + [string](flags);
+        }
+
+        program.EntryFunction = reader.ReadI32();
+        program.GlobalCount = reader.ReadI32();
+
+        int intCount = reader.ReadI32();
+        int floatCount = reader.ReadI32();
+        int stringCount = reader.ReadI32();
+        int typeCount = reader.ReadI32();
+        int funcCount = reader.ReadI32();
+
+        If (intCount < 0 || floatCount < 0 || stringCount < 0 || typeCount < 0 || funcCount < 0)
+        {
+            Throw "Invalid KNC2 table count";
+        }
+
+        For (int intIndex = 0; intIndex < intCount; intIndex = intIndex + 1)
+        {
+            program.IntConstants = program.IntConstants.Add(reader.ReadI32());
+        }
+
+        For (int floatIndex = 0; floatIndex < floatCount; floatIndex = floatIndex + 1)
+        {
+            program.FloatConstants = program.FloatConstants.Add(reader.ReadF64());
+        }
+
+        For (int stringIndex = 0; stringIndex < stringCount; stringIndex = stringIndex + 1)
+        {
+            program.StringConstants = program.StringConstants.Add(reader.ReadString());
+        }
+
+        For (int typeIndex = 0; typeIndex < typeCount; typeIndex = typeIndex + 1)
+        {
+            Bytecode.TypeInfo info = New Bytecode.TypeInfo();
+            int vCount;
+            int interfaceCount;
+
+            info.Kind = reader.ReadU8();
+            reader.ReadU8();
+            reader.ReadU16();
+            info.FieldCount = reader.ReadI32();
+            info.BaseType = reader.ReadI32();
+            vCount = reader.ReadI32();
+            interfaceCount = reader.ReadI32();
+            info.Name = reader.ReadString();
+
+            If (vCount < 0 || interfaceCount < 0)
+            {
+                Throw "Invalid KNC2 type table";
+            }
+
+            For (int vi = 0; vi < vCount; vi = vi + 1)
+            {
+                info.VTable = info.VTable.Add(reader.ReadI32());
+            }
+
+            For (int ii = 0; ii < interfaceCount; ii = ii + 1)
+            {
+                info.InterfaceTypes = info.InterfaceTypes.Add(reader.ReadI32());
+            }
+
+            program.Types = program.Types.Add(info);
+        }
+
+        For (int funcIndex = 0; funcIndex < funcCount; funcIndex = funcIndex + 1)
+        {
+            Bytecode.FunctionInfo info = New Bytecode.FunctionInfo();
+            int codeCount;
+
+            info.ParamCount = reader.ReadI32();
+            info.RegisterCount = reader.ReadI32();
+            info.ReturnKind = reader.ReadI32();
+            info.Name = reader.ReadString();
+            codeCount = reader.ReadI32();
+
+            If (codeCount < 0)
+            {
+                Throw "Invalid KNC2 function body length";
+            }
+
+            info.Code = reader.ReadBytes(codeCount);
+            program.Functions = program.Functions.Add(info);
+        }
+
+        If (reader.Remaining() != 0)
+        {
+            Throw "Trailing bytes after KNC2 payload";
+        }
+
+        Return program;
+    }
+
+    Private Static Function void ExpectMagic(Binary.BlobReader reader)
+    {
+        If (reader.ReadU8() != [int]('K') ||
+            reader.ReadU8() != [int]('N') ||
+            reader.ReadU8() != [int]('C') ||
+            reader.ReadU8() != [int]('2'))
+        {
+            Throw "Invalid .knc header";
+        }
+    }
+
+    Public Unsafe Static Function Bytecode.Program LoadFromBytes(byte[] data)
+    {
+        Binary.BlobReader reader = New Binary.BlobReader(data);
+        Bytecode.Program program = New Bytecode.Program();
+
+        KNCLoader.ExpectMagic(reader);
+
+        int version = reader.ReadU16();
+        int flags = reader.ReadU16();
+
+        If (version != 2)
+        {
+            Throw "Unsupported .knc version: " + [string](version);
+        }
+
+        If (flags != 0)
+        {
+            Throw "Unsupported .knc flags: " + [string](flags);
+        }
+
+        program.EntryFunction = reader.ReadI32();
+        program.GlobalCount = reader.ReadI32();
+
+        int intCount = reader.ReadI32();
+        int floatCount = reader.ReadI32();
+        int stringCount = reader.ReadI32();
+        int typeCount = reader.ReadI32();
+        int funcCount = reader.ReadI32();
+
+        If (intCount < 0 || floatCount < 0 || stringCount < 0 || typeCount < 0 || funcCount < 0)
+        {
+            Throw "Invalid KNC2 table count";
+        }
+
+        For (int intIndex = 0; intIndex < intCount; intIndex = intIndex + 1)
+        {
+            program.IntConstants = program.IntConstants.Add(reader.ReadI32());
+        }
+
+        For (int floatIndex = 0; floatIndex < floatCount; floatIndex = floatIndex + 1)
+        {
+            program.FloatConstants = program.FloatConstants.Add(reader.ReadF64());
+        }
+
+        For (int stringIndex = 0; stringIndex < stringCount; stringIndex = stringIndex + 1)
+        {
+            program.StringConstants = program.StringConstants.Add(reader.ReadString());
+        }
+
+        For (int typeIndex = 0; typeIndex < typeCount; typeIndex = typeIndex + 1)
+        {
+            Bytecode.TypeInfo info = New Bytecode.TypeInfo();
+            int vCount;
+            int interfaceCount;
+
+            info.Kind = reader.ReadU8();
+            reader.ReadU8();
+            reader.ReadU16();
+            info.FieldCount = reader.ReadI32();
+            info.BaseType = reader.ReadI32();
+            vCount = reader.ReadI32();
+            interfaceCount = reader.ReadI32();
+            info.Name = reader.ReadString();
+
+            If (vCount < 0 || interfaceCount < 0)
+            {
+                Throw "Invalid KNC2 type table";
+            }
+
+            For (int vi = 0; vi < vCount; vi = vi + 1)
+            {
+                info.VTable = info.VTable.Add(reader.ReadI32());
+            }
+
+            For (int ii = 0; ii < interfaceCount; ii = ii + 1)
+            {
+                info.InterfaceTypes = info.InterfaceTypes.Add(reader.ReadI32());
+            }
+
+            program.Types = program.Types.Add(info);
+        }
+
+        For (int funcIndex = 0; funcIndex < funcCount; funcIndex = funcIndex + 1)
+        {
+            Bytecode.FunctionInfo info = New Bytecode.FunctionInfo();
+            int codeCount;
+
+            info.ParamCount = reader.ReadI32();
+            info.RegisterCount = reader.ReadI32();
+            info.ReturnKind = reader.ReadI32();
+            info.Name = reader.ReadString();
+            codeCount = reader.ReadI32();
+
+            If (codeCount < 0)
+            {
+                Throw "Invalid KNC2 function body length";
+            }
+
+            info.Code = reader.ReadBytes(codeCount);
+            program.Functions = program.Functions.Add(info);
+        }
+
+        Return program;
+    }
+}

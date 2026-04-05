@@ -1,0 +1,6 @@
+Unit Acme.Greeter;
+
+Safe Function string Text()
+{
+    Return "greeter";
+}

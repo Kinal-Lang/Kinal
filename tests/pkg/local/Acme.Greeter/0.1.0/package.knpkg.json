@@ -1,0 +1,8 @@
+{
+  "kind": "package",
+  "name": "Acme.Greeter",
+  "version": "0.1.0",
+  "summary": "Local manual package fixture for package manager tests.",
+  "source_root": "src",
+  "entry": "src/Acme/Greeter.kn"
+}

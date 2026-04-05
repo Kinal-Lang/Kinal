@@ -1,0 +1,9 @@
+{
+  "kind": "package",
+  "name": "IO.Cat",
+  "version": "2020.8.31",
+  "summary": "Rommy's Animal Feeding Simulator",
+  "source_root": "src",
+  "klib": "lib/IO.Cat.klib",
+  "entry": "src/IO/Cat.kn"
+}

@@ -1,0 +1,6 @@
+Unit Tests.ErrorGetPosition;
+
+Static Function int Main() {
+    Get IO.Console;
+    Return 0;
+}

@@ -1,0 +1,10 @@
+Unit Tests.FfiHostedAuto;
+Get Console By IO.Console;
+
+Extern Function int kn_hosted_probe() By C;
+
+Trusted Static Function int Main()
+{
+    Console.PrintLine(kn_hosted_probe());
+    Return 0;
+}

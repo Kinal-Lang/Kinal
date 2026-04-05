@@ -1,0 +1,22 @@
+Unit Tests.RecursionStatic;
+
+Get Console By IO.Console;
+
+Class Math
+{
+    Public Static Function int SumTo(int n)
+    {
+        If (n <= 0)
+        {
+            Return 0;
+        }
+
+        Return n + SumTo(n - 1);
+    }
+}
+
+Safe Static Function int Main()
+{
+    Console.PrintLine(Math.SumTo(5));
+    Return 0;
+}

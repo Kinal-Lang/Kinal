@@ -1,0 +1,10 @@
+﻿Unit Tests.ErrorGenericMissingArgs;
+
+Function T Identity<T>(T value) {
+    Return value;
+}
+
+Static Function int Main() {
+    int x = Identity(1);
+    Return x;
+}

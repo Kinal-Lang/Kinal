@@ -1,0 +1,12 @@
+{
+  "kind": "package",
+  "name": "IO.Web",
+  "version": "1.0.0",
+  "summary": "Official web package bundled with Kinal.",
+  "source_root": "src",
+  "klib": "lib/IO.Web.klib",
+  "entry": "src/IO/Web/Server.kn",
+  "dependencies": [
+    "IO.Core"
+  ]
+}

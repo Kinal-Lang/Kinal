@@ -1,0 +1,9 @@
+Unit Tests.SameUnitAutolink;
+
+Static Class Tools
+{
+    Public Static Function string Message()
+    {
+        Return "ok";
+    }
+}

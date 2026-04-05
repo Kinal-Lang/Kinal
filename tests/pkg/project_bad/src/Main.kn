@@ -1,0 +1,8 @@
+Unit Tests.PackageBad;
+Get Console By IO.Console;
+
+Static Function int Main()
+{
+    Console.PrintLine("bad");
+    Return 0;
+}

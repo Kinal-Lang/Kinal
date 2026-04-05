@@ -1,0 +1,7 @@
+Unit Tests.ErrorPointer;
+
+Static Safe Function int Main(string args[]) {
+    int x = 1;
+    int* p = &x;
+    Return *p;
+}

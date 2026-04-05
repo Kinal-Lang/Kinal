@@ -1,0 +1,15 @@
+Unit MiniLang.Token;
+
+Enum TokenType By u8 {
+    Literal
+}
+
+Public Class Token {
+    Public TokenType Type;
+    Public string Value;
+
+    Public Function Token(TokenType type, string value) {
+        This.Type = type;
+        This.Value = value;
+    }
+}

@@ -1,0 +1,59 @@
+﻿Unit Tests.BlockFeatures;
+Get Console By IO.Console;
+
+Static Function int Main() {
+    Block JumpDemo </
+    Jump B;
+    Console.PrintLine("jump-1");
+    Record A
+    Console.PrintLine("jump-2");
+    Record B
+    Console.PrintLine("jump-3");
+    />
+
+    IO.Type.Object.Block flow = Block Flow </
+    Console.PrintLine("flow-1");
+    Record A
+    Console.PrintLine("flow-2");
+    Record B
+    Console.PrintLine("flow-3");
+    />;
+
+    JumpDemo.Run();
+    flow.RunUntil(flow.B);
+    flow.Jump(flow.B);
+    flow.JumpAndRunUntil(flow.A, flow.B);
+    Console.PrintLine(flow.B);
+
+    IO.Type.Object.Block blocks[1] = { flow };
+    blocks[0].JumpAndRunUntil(1, 2);
+
+    Var msg = "before";
+    IO.Type.Object.Block cap = Block </
+    Console.PrintLine(msg);
+    />;
+    msg = "after";
+    cap.Run();
+
+    Block ScopeDecl </
+    Class Temp {
+    }
+    Struct Pair {
+        int A;
+        int B;
+    }
+    Enum Flag {
+        Off,
+        On
+    }
+    Interface ITemp {
+        Function void Touch();
+    }
+    Function int LocalAdd(int a, int b) {
+        Return a + b;
+    }
+    Console.PrintLine(LocalAdd(3, 4));
+    />
+    ScopeDecl.Run();
+    Return 0;
+}

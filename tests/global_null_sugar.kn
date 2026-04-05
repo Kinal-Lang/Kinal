@@ -1,0 +1,23 @@
+Unit Tests.GlobalNullSugar;
+Get Console By IO.Console;
+
+Object.Function gfn = Function int () {
+};
+
+int gCount = 41;
+Object.Block gblk = Block </
+Console.PrintLine("blk");
+/>;
+char* gp = null;
+Object.Class gc = gblk;
+
+Static Function int Main() {
+    Console.PrintLine(gCount);
+    Console.PrintLine(gfn());
+    If (gp == null) {
+        Console.PrintLine("null");
+    }
+    gblk.Run();
+    Console.PrintLine(gc.TypeOf());
+    Return 0;
+}

@@ -1,0 +1,71 @@
+Unit IO.Kinal.VM.Main;
+
+Get Console By IO.Console;
+Get Bytecode By IO.Kinal.VM.Bytecode;
+Get Loader By IO.Kinal.VM.Loader;
+Get VM By IO.Kinal.VM.VM;
+Get Stdlib By IO.Kinal.VM.Stdlib;
+Get Binary By IO.Kinal.VM.Binary;
+
+Trusted Static Function int Main(string[] args)
+{
+    Return Run(args);
+}
+
+Unsafe Static Function Bytecode.Program TryLoadEmbedded()
+{
+    string exePath = Binary.BinaryFile.GetExePath();
+    int fileSize = Binary.BinaryFile.FileSize(exePath);
+    If (fileSize < 8)
+    {
+        Return null;
+    }
+
+    byte[] trailer = Binary.BinaryFile.ReadBytesRange(exePath, fileSize - 8, 8);
+
+    If ([int](trailer[4]) != [int]('K') ||
+        [int](trailer[5]) != [int]('N') ||
+        [int](trailer[6]) != [int]('C') ||
+        [int](trailer[7]) != [int]('E'))
+    {
+        Return null;
+    }
+
+    int kncSize = [int](trailer[0]) |
+                  ([int](trailer[1]) << 8) |
+                  ([int](trailer[2]) << 16) |
+                  ([int](trailer[3]) << 24);
+
+    If (kncSize <= 0 || kncSize > fileSize - 8)
+    {
+        Return null;
+    }
+
+    int kncOffset = fileSize - 8 - kncSize;
+    byte[] kncData = Binary.BinaryFile.ReadBytesRange(exePath, kncOffset, kncSize);
+    Return Loader.KNCLoader.LoadFromBytes(kncData);
+}
+
+Unsafe Static Function int Run(string[] args)
+{
+    If (args.Length() >= 1 && (args[0] == "--version" || args[0] == "-V"))
+    {
+        Console.PrintLine([f]"KinalVM {IO.Version}");
+        Return 0;
+    }
+    Bytecode.Program program = TryLoadEmbedded();
+
+    If (program == null)
+    {
+        If (args.Length() < 1)
+        {
+            Console.PrintLine("usage: kinalvm <file.knc>");
+            Return 1;
+        }
+        program = Loader.KNCLoader.Load(args[0]);
+    }
+
+    Stdlib.StdlibRegistry registry = Stdlib.StdlibRegistry.BuildDefault();
+    VM.VirtualMachine vm = New VM.VirtualMachine(registry);
+    Return vm.Execute(program);
+}

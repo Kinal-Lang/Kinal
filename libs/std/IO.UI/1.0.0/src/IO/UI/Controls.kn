@@ -1,0 +1,1098 @@
+Unit IO.UI;
+
+Public Class Component
+{
+    Protected string _Text;
+    Protected int _X;
+    Protected int _Y;
+    Protected int _Width;
+    Protected int _Height;
+    Protected byte* _Handle;
+    Protected Color _BackColor;
+    Protected Color _ForeColor;
+    Protected Font _Font;
+    Protected byte* _NativeBrush;
+    Protected byte* _NativeFont;
+    Protected byte* _NativeProc;
+    Protected Window _Owner;
+    Protected Event[] _Events;
+
+    Public Constructor(string text = "", int x = 0, int y = 0, int width = 120, int height = 24)
+    {
+        _Text = text;
+        _X = x;
+        _Y = y;
+        _Width = width;
+        _Height = height;
+        _Handle = null;
+        _BackColor = default;
+        _ForeColor = default;
+        _Font = default;
+        _NativeBrush = null;
+        _NativeFont = null;
+        _NativeProc = null;
+        _Owner = default;
+        _Events = {};
+    }
+
+    Public Property string Text
+    {
+        Get
+        {
+            Return _Text;
+        }
+        Set
+        {
+            _Text = value;
+            If (Handle != null)
+            {
+                __UIHost.SetComponentText(This, value);
+            }
+        }
+    }
+
+    Public Property int X
+    {
+        Get
+        {
+            Return _X;
+        }
+        Set
+        {
+            _X = value;
+            If (Handle != null)
+            {
+                __UIHost.UpdateComponentBounds(This);
+            }
+        }
+    }
+
+    Public Property int Y
+    {
+        Get
+        {
+            Return _Y;
+        }
+        Set
+        {
+            _Y = value;
+            If (Handle != null)
+            {
+                __UIHost.UpdateComponentBounds(This);
+            }
+        }
+    }
+
+    Public Property int Width
+    {
+        Get
+        {
+            Return _Width;
+        }
+        Set
+        {
+            _Width = value;
+            If (Handle != null)
+            {
+                __UIHost.UpdateComponentBounds(This);
+            }
+        }
+    }
+
+    Public Property int Height
+    {
+        Get
+        {
+            Return _Height;
+        }
+        Set
+        {
+            _Height = value;
+            If (Handle != null)
+            {
+                __UIHost.UpdateComponentBounds(This);
+            }
+        }
+    }
+
+    Public Property Color BackColor
+    {
+        Get
+        {
+            Return _BackColor;
+        }
+        Set
+        {
+            _BackColor = value;
+            __UIHost.ApplyComponentStyle(This);
+        }
+    }
+
+    Public Property Color ForeColor
+    {
+        Get
+        {
+            Return _ForeColor;
+        }
+        Set
+        {
+            _ForeColor = value;
+            __UIHost.ApplyComponentStyle(This);
+        }
+    }
+
+    Public Property Font Font
+    {
+        Get
+        {
+            Return _Font;
+        }
+        Set
+        {
+            _Font = value;
+            __UIHost.ApplyComponentStyle(This);
+        }
+    }
+
+    Public Property byte* Handle
+    {
+        Get
+        {
+            Return _Handle;
+        }
+        Set
+        {
+            _Handle = value;
+        }
+    }
+
+    Public Property byte* NativeBrush
+    {
+        Get
+        {
+            Return _NativeBrush;
+        }
+        Set
+        {
+            _NativeBrush = value;
+        }
+    }
+
+    Public Property byte* NativeFont
+    {
+        Get
+        {
+            Return _NativeFont;
+        }
+        Set
+        {
+            _NativeFont = value;
+        }
+    }
+
+    Public Property byte* NativeProc
+    {
+        Get
+        {
+            Return _NativeProc;
+        }
+        Set
+        {
+            _NativeProc = value;
+        }
+    }
+
+    Public Property Window Owner
+    {
+        Get
+        {
+            Return _Owner;
+        }
+        Set
+        {
+            _Owner = value;
+        }
+    }
+
+    Public Property Event[] Events
+    {
+        Get
+        {
+            Return _Events;
+        }
+        Set
+        {
+            _Events = value;
+        }
+    }
+
+    Public Virtual Safe Function bool SupportsEvent(EventKind kind)
+    {
+        Return false;
+    }
+
+    Public Safe Function bool HasEvent(EventKind kind)
+    {
+        int i = 0;
+        While (i < Events.Length())
+        {
+            If (Events[i].Kind == kind)
+            {
+                Return true;
+            }
+            i++;
+        }
+        Return false;
+    }
+
+    Public Virtual Safe Function string KindName()
+    {
+        Return "IO.UI.Component";
+    }
+
+    Public Trusted Function Color EffectiveBackColor()
+    {
+        If (BackColor != null)
+        {
+            Return BackColor;
+        }
+        If (Owner != null)
+        {
+            Return Owner.BackColor;
+        }
+        Return default;
+    }
+
+    Public Trusted Function Color EffectiveForeColor()
+    {
+        If (ForeColor != null)
+        {
+            Return ForeColor;
+        }
+        If (Owner != null)
+        {
+            Return Owner.ForeColor;
+        }
+        Return default;
+    }
+
+    Public Trusted Function Font EffectiveFont()
+    {
+        If (Font != null)
+        {
+            Return Font;
+        }
+        If (Owner != null)
+        {
+            Return Owner.Font;
+        }
+        Return default;
+    }
+
+    Public Trusted Function void __InternalSetText(string value)
+    {
+        _Text = value;
+    }
+
+    Public Function Component SetBackColor(Color color)
+    {
+        BackColor = color;
+        Return This;
+    }
+
+    Public Function Component SetForeColor(Color color)
+    {
+        ForeColor = color;
+        Return This;
+    }
+
+    Public Function Component SetFont(Font font)
+    {
+        Font = font;
+        Return This;
+    }
+
+    Public Function Component AddEvent(Event event)
+    {
+        If (event == null)
+        {
+            Throw New IO.Error("IO.UI", "Event cannot be null");
+        }
+        If (!SupportsEvent(event.Kind))
+        {
+            __UI_ThrowUnsupportedEvent(KindName(), event.Kind);
+        }
+        Events = Events.Add(event);
+        Return This;
+    }
+
+    Public Function Component RemoveEvent(Event event)
+    {
+        If (event == null)
+        {
+            Return This;
+        }
+
+        Event[] kept = {};
+        int i = 0;
+        While (i < Events.Length())
+        {
+            Event current = Events[i];
+            If (current != event)
+            {
+                kept = kept.Add(current);
+            }
+            i++;
+        }
+        Events = kept;
+        Return This;
+    }
+
+    Public Trusted Function void TriggerEvent(EventKind kind, usize wParam = 0, isize lParam = 0)
+    {
+        EventArgs args = New EventArgs(kind, wParam, lParam);
+        int i = 0;
+        While (i < Events.Length())
+        {
+            Event current = Events[i];
+            If (current.Kind == kind)
+            {
+                current.Invoke(This, args);
+            }
+            i++;
+        }
+    }
+}
+
+Public Class Label By Component
+{
+    Public Constructor(string text, int x, int y, int width = 160, int height = 24)
+    {
+        _Text = text;
+        _X = x;
+        _Y = y;
+        _Width = width;
+        _Height = height;
+        _Handle = null;
+        _BackColor = default;
+        _ForeColor = default;
+        _Font = default;
+        _NativeBrush = null;
+        _NativeFont = null;
+        _Owner = default;
+        _Events = {};
+    }
+
+    Public Override Safe Function string KindName()
+    {
+        Return "IO.UI.Label";
+    }
+
+    Public Trusted Function byte* CreateNative(byte* parent, byte* instance)
+    {
+        Handle = __UIHost.CreateLabelHandle(This, parent, instance);
+        __UIHost.ApplyComponentStyle(This);
+        Return Handle;
+    }
+}
+
+Public Class Button By Component
+{
+    Private int _Id;
+
+    Public Constructor(string text, int x, int y, int width = 120, int height = 28)
+    {
+        _Text = text;
+        _X = x;
+        _Y = y;
+        _Width = width;
+        _Height = height;
+        _Handle = null;
+        _BackColor = default;
+        _ForeColor = default;
+        _Font = default;
+        _NativeBrush = null;
+        _NativeFont = null;
+        _Owner = default;
+        _Events = {};
+        _Id = 0;
+    }
+
+    Public Property int Id
+    {
+        Get
+        {
+            Return _Id;
+        }
+        Set
+        {
+            _Id = value;
+        }
+    }
+
+    Public Override Safe Function bool SupportsEvent(EventKind kind)
+    {
+        Return kind == EventKind.OnClick || kind == EventKind.OnMouseDown ||
+               kind == EventKind.OnMouseMove || kind == EventKind.OnMouseUp;
+    }
+
+    Public Override Safe Function string KindName()
+    {
+        Return "IO.UI.Button";
+    }
+
+    Public Trusted Function byte* CreateNative(byte* parent, byte* instance)
+    {
+        If (Id == 0)
+        {
+            Id = __UIHost.AllocateControlId();
+        }
+
+        Handle = __UIHost.CreateButtonHandle(This, parent, instance);
+        __UIHost.AttachButtonProc(This);
+        __UIHost.ApplyComponentStyle(This);
+        Return Handle;
+    }
+
+    Public Trusted Function void TriggerClick()
+    {
+        TriggerEvent(EventKind.OnClick, [usize](Id), 0);
+    }
+}
+
+Public Class Input By Component
+{
+    Private int _Id;
+    Private bool _Multiline;
+    Private bool _ReadOnly;
+    Private bool _Password;
+    Private int _MaxLength;
+    Private string _PlaceholderText;
+
+    Public Constructor(string text = "", int x = 0, int y = 0, int width = 200, int height = 24)
+    {
+        _Text = text;
+        _X = x;
+        _Y = y;
+        _Width = width;
+        _Height = height;
+        _Handle = null;
+        _BackColor = default;
+        _ForeColor = default;
+        _Font = default;
+        _NativeBrush = null;
+        _NativeFont = null;
+        _Owner = default;
+        _Events = {};
+        _Id = 0;
+        _Multiline = false;
+        _ReadOnly = false;
+        _Password = false;
+        _MaxLength = 0;
+        _PlaceholderText = "";
+    }
+
+    Public Property int Id
+    {
+        Get
+        {
+            Return _Id;
+        }
+        Set
+        {
+            _Id = value;
+        }
+    }
+
+    Public Property bool Multiline
+    {
+        Get
+        {
+            Return _Multiline;
+        }
+        Set
+        {
+            _Multiline = value;
+        }
+    }
+
+    Public Property bool ReadOnly
+    {
+        Get
+        {
+            Return _ReadOnly;
+        }
+        Set
+        {
+            _ReadOnly = value;
+        }
+    }
+
+    Public Property bool Password
+    {
+        Get
+        {
+            Return _Password;
+        }
+        Set
+        {
+            _Password = value;
+        }
+    }
+
+    Public Property int MaxLength
+    {
+        Get
+        {
+            Return _MaxLength;
+        }
+        Set
+        {
+            _MaxLength = value;
+        }
+    }
+
+    Public Property string PlaceholderText
+    {
+        Get
+        {
+            Return _PlaceholderText;
+        }
+        Set
+        {
+            _PlaceholderText = value;
+        }
+    }
+
+    Public Override Safe Function bool SupportsEvent(EventKind kind)
+    {
+        Return kind == EventKind.OnTextChanged || kind == EventKind.OnFocus ||
+               kind == EventKind.OnBlur || kind == EventKind.OnKeyDown || kind == EventKind.OnKeyUp;
+    }
+
+    Public Override Safe Function string KindName()
+    {
+        Return "IO.UI.Input";
+    }
+
+    Public Function Input SetMultiline(bool multiline)
+    {
+        Multiline = multiline;
+        Return This;
+    }
+
+    Public Function Input SetReadOnly(bool readOnly)
+    {
+        ReadOnly = readOnly;
+        Return This;
+    }
+
+    Public Function Input SetPassword(bool password)
+    {
+        Password = password;
+        Return This;
+    }
+
+    Public Function Input SetMaxLength(int maxLength)
+    {
+        MaxLength = maxLength;
+        Return This;
+    }
+
+    Public Trusted Function byte* CreateNative(byte* parent, byte* instance)
+    {
+        If (Id == 0)
+        {
+            Id = __UIHost.AllocateControlId();
+        }
+        Handle = __UIHost.CreateInputHandle(This, parent, instance);
+        __UIHost.ApplyComponentStyle(This);
+        Return Handle;
+    }
+}
+
+Public Class CheckBox By Component
+{
+    Private int _Id;
+    Private bool _Checked;
+
+    Public Constructor(string text, int x, int y, int width = 160, int height = 24)
+    {
+        _Text = text;
+        _X = x;
+        _Y = y;
+        _Width = width;
+        _Height = height;
+        _Handle = null;
+        _BackColor = default;
+        _ForeColor = default;
+        _Font = default;
+        _NativeBrush = null;
+        _NativeFont = null;
+        _Owner = default;
+        _Events = {};
+        _Id = 0;
+        _Checked = false;
+    }
+
+    Public Property int Id
+    {
+        Get
+        {
+            Return _Id;
+        }
+        Set
+        {
+            _Id = value;
+        }
+    }
+
+    Public Property bool Checked
+    {
+        Get
+        {
+            Return _Checked;
+        }
+        Set
+        {
+            _Checked = value;
+            If (Handle != null)
+            {
+                __UIHost.SetCheckState(This, value);
+            }
+        }
+    }
+
+    Public Override Safe Function bool SupportsEvent(EventKind kind)
+    {
+        Return kind == EventKind.OnCheckedChanged || kind == EventKind.OnClick ||
+               kind == EventKind.OnFocus || kind == EventKind.OnBlur;
+    }
+
+    Public Override Safe Function string KindName()
+    {
+        Return "IO.UI.CheckBox";
+    }
+
+    Public Trusted Function void __InternalSetChecked(bool value)
+    {
+        _Checked = value;
+    }
+
+    Public Trusted Function byte* CreateNative(byte* parent, byte* instance)
+    {
+        If (Id == 0)
+        {
+            Id = __UIHost.AllocateControlId();
+        }
+        Handle = __UIHost.CreateCheckBoxHandle(This, parent, instance);
+        __UIHost.ApplyComponentStyle(This);
+        Return Handle;
+    }
+}
+
+Public Class RadioButton By Component
+{
+    Private int _Id;
+    Private bool _Checked;
+    Private string _GroupName;
+
+    Public Constructor(string text, int x, int y, int width = 160, int height = 24)
+    {
+        _Text = text;
+        _X = x;
+        _Y = y;
+        _Width = width;
+        _Height = height;
+        _Handle = null;
+        _BackColor = default;
+        _ForeColor = default;
+        _Font = default;
+        _NativeBrush = null;
+        _NativeFont = null;
+        _Owner = default;
+        _Events = {};
+        _Id = 0;
+        _Checked = false;
+        _GroupName = "";
+    }
+
+    Public Property int Id
+    {
+        Get
+        {
+            Return _Id;
+        }
+        Set
+        {
+            _Id = value;
+        }
+    }
+
+    Public Property bool Checked
+    {
+        Get
+        {
+            Return _Checked;
+        }
+        Set
+        {
+            _Checked = value;
+            If (Handle != null)
+            {
+                __UIHost.SetCheckState(This, value);
+            }
+        }
+    }
+
+    Public Property string GroupName
+    {
+        Get
+        {
+            Return _GroupName;
+        }
+        Set
+        {
+            _GroupName = value;
+        }
+    }
+
+    Public Override Safe Function bool SupportsEvent(EventKind kind)
+    {
+        Return kind == EventKind.OnCheckedChanged || kind == EventKind.OnClick ||
+               kind == EventKind.OnFocus || kind == EventKind.OnBlur;
+    }
+
+    Public Override Safe Function string KindName()
+    {
+        Return "IO.UI.RadioButton";
+    }
+
+    Public Trusted Function void __InternalSetChecked(bool value)
+    {
+        _Checked = value;
+    }
+
+    Public Trusted Function byte* CreateNative(byte* parent, byte* instance)
+    {
+        If (Id == 0)
+        {
+            Id = __UIHost.AllocateControlId();
+        }
+        Handle = __UIHost.CreateRadioButtonHandle(This, parent, instance);
+        __UIHost.ApplyComponentStyle(This);
+        Return Handle;
+    }
+}
+
+Public Class ComboBox By Component
+{
+    Private int _Id;
+    Private string[] _Items;
+    Private int _SelectedIndex;
+    Private bool _Editable;
+
+    Public Constructor(int x, int y, int width = 160, int height = 200)
+    {
+        _Text = "";
+        _X = x;
+        _Y = y;
+        _Width = width;
+        _Height = height;
+        _Handle = null;
+        _BackColor = default;
+        _ForeColor = default;
+        _Font = default;
+        _NativeBrush = null;
+        _NativeFont = null;
+        _Owner = default;
+        _Events = {};
+        _Id = 0;
+        _Items = {};
+        _SelectedIndex = -1;
+        _Editable = false;
+    }
+
+    Public Property int Id
+    {
+        Get
+        {
+            Return _Id;
+        }
+        Set
+        {
+            _Id = value;
+        }
+    }
+
+    Public Property string[] Items
+    {
+        Get
+        {
+            Return _Items;
+        }
+        Set
+        {
+            _Items = value;
+        }
+    }
+
+    Public Property int SelectedIndex
+    {
+        Get
+        {
+            Return _SelectedIndex;
+        }
+        Set
+        {
+            _SelectedIndex = value;
+            If (Handle != null)
+            {
+                __UIHost.SetComboBoxSelectedIndex(This, value);
+            }
+        }
+    }
+
+    Public Property bool Editable
+    {
+        Get
+        {
+            Return _Editable;
+        }
+        Set
+        {
+            _Editable = value;
+        }
+    }
+
+    Public Function ComboBox AddItem(string item)
+    {
+        Items = Items.Add(item);
+        If (Handle != null)
+        {
+            __UIHost.ComboBoxAddItem(This, item);
+        }
+        Return This;
+    }
+
+    Public Function ComboBox ClearItems()
+    {
+        Items = {};
+        SelectedIndex = -1;
+        If (Handle != null)
+        {
+            __UIHost.ComboBoxClear(This);
+        }
+        Return This;
+    }
+
+    Public Override Safe Function bool SupportsEvent(EventKind kind)
+    {
+        Return kind == EventKind.OnSelectedChanged || kind == EventKind.OnFocus || kind == EventKind.OnBlur;
+    }
+
+    Public Override Safe Function string KindName()
+    {
+        Return "IO.UI.ComboBox";
+    }
+
+    Public Trusted Function void __InternalSetSelectedIndex(int index)
+    {
+        _SelectedIndex = index;
+    }
+
+    Public Trusted Function byte* CreateNative(byte* parent, byte* instance)
+    {
+        If (Id == 0)
+        {
+            Id = __UIHost.AllocateControlId();
+        }
+        Handle = __UIHost.CreateComboBoxHandle(This, parent, instance);
+        __UIHost.ApplyComponentStyle(This);
+        Return Handle;
+    }
+}
+
+Public Class ProgressBar By Component
+{
+    Private int _Minimum;
+    Private int _Maximum;
+    Private int _Value;
+    Private int _Step;
+
+    Public Constructor(int x, int y, int width = 200, int height = 24)
+    {
+        _Text = "";
+        _X = x;
+        _Y = y;
+        _Width = width;
+        _Height = height;
+        _Handle = null;
+        _BackColor = default;
+        _ForeColor = default;
+        _Font = default;
+        _NativeBrush = null;
+        _NativeFont = null;
+        _Owner = default;
+        _Events = {};
+        _Minimum = 0;
+        _Maximum = 100;
+        _Value = 0;
+        _Step = 10;
+    }
+
+    Public Property int Minimum
+    {
+        Get
+        {
+            Return _Minimum;
+        }
+        Set
+        {
+            _Minimum = value;
+            If (Handle != null)
+            {
+                __UIHost.SetProgressBarRange(This);
+            }
+        }
+    }
+
+    Public Property int Maximum
+    {
+        Get
+        {
+            Return _Maximum;
+        }
+        Set
+        {
+            _Maximum = value;
+            If (Handle != null)
+            {
+                __UIHost.SetProgressBarRange(This);
+            }
+        }
+    }
+
+    Public Property int Value
+    {
+        Get
+        {
+            Return _Value;
+        }
+        Set
+        {
+            _Value = value;
+            If (Handle != null)
+            {
+                __UIHost.SetProgressBarValue(This);
+            }
+        }
+    }
+
+    Public Property int Step
+    {
+        Get
+        {
+            Return _Step;
+        }
+        Set
+        {
+            _Step = value;
+            If (Handle != null)
+            {
+                __UIHost.SetProgressBarStep(This);
+            }
+        }
+    }
+
+    Public Trusted Function void PerformStep()
+    {
+        If (Handle != null)
+        {
+            __UIHost.ProgressBarStepIt(This);
+        }
+        _Value = _Value + Step;
+        If (_Value > Maximum)
+        {
+            _Value = Maximum;
+        }
+    }
+
+    Public Override Safe Function string KindName()
+    {
+        Return "IO.UI.ProgressBar";
+    }
+
+    Public Trusted Function byte* CreateNative(byte* parent, byte* instance)
+    {
+        Handle = __UIHost.CreateProgressBarHandle(This, parent, instance);
+        Return Handle;
+    }
+}
+
+Public Class GroupBox By Component
+{
+    Private Component[] _Children;
+
+    Public Constructor(string text, int x, int y, int width = 300, int height = 200)
+    {
+        _Text = text;
+        _X = x;
+        _Y = y;
+        _Width = width;
+        _Height = height;
+        _Handle = null;
+        _BackColor = default;
+        _ForeColor = default;
+        _Font = default;
+        _NativeBrush = null;
+        _NativeFont = null;
+        _Owner = default;
+        _Events = {};
+        _Children = {};
+    }
+
+    Public Property Component[] Children
+    {
+        Get
+        {
+            Return _Children;
+        }
+        Set
+        {
+            _Children = value;
+        }
+    }
+
+    Public Function GroupBox Add(Component child)
+    {
+        If (child == null)
+        {
+            Throw New IO.Error("IO.UI", "Child component cannot be null");
+        }
+        Children = Children.Add(child);
+        Return This;
+    }
+
+    Public Override Safe Function string KindName()
+    {
+        Return "IO.UI.GroupBox";
+    }
+
+    Public Trusted Function byte* CreateNative(byte* parent, byte* instance)
+    {
+        Handle = __UIHost.CreateGroupBoxHandle(This, parent, instance);
+        __UIHost.AttachGroupBoxProc(This);
+        __UIHost.ApplyComponentStyle(This);
+
+        int i = 0;
+        While (i < Children.Length())
+        {
+            Component child = Children[i];
+            child.Owner = Owner;
+            __UIHost.CreateChildNative(child, Handle, instance);
+            i++;
+        }
+        Return Handle;
+    }
+}

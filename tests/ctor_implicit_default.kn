@@ -1,0 +1,15 @@
+Unit Tests.CtorImplicitDefault;
+
+Get Console By IO.Console;
+
+Class Empty {
+    Public Safe Function int Value() {
+        Return 7;
+    }
+}
+
+Static Safe Function int Main(string args[]) {
+    Empty e = New Empty();
+    Console.PrintLine([string](e.Value()));
+    Return 0;
+}

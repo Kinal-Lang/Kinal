@@ -1,0 +1,9 @@
+Unit IO.Bad;
+
+Static Class Bad
+{
+    Public Safe Function int Value()
+    {
+        Return 7;
+    }
+}

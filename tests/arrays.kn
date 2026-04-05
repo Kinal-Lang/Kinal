@@ -1,0 +1,24 @@
+Unit Tests.Arrays;
+
+Get Console By IO.Console;
+
+Static Function int Main() {
+    int a[3] = { 1, 2, 3 };
+    int b[5] = { 1, 2 };
+    int c[] = { 1, 2, 3, 4 };
+
+    a[1] = 5;
+    Var sum = a[0] + a[1] + a[2];
+
+    Var la = a.Length();
+    Var lb = b.Length();
+    Var lc = c.Length();
+
+    If (la == 3 && lb == 5 && lc == 4 && sum == 9) {
+        Console.PrintLine("ok");
+    } Else {
+        Console.PrintLine("bad");
+    }
+    Return 0;
+}
+

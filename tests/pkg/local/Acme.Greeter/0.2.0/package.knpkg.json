@@ -1,0 +1,8 @@
+{
+  "kind": "package",
+  "name": "Acme.Greeter",
+  "version": "0.2.0",
+  "summary": "Higher-version manual package fixture for local package resolution tests.",
+  "source_root": "src",
+  "entry": "src/Acme/Greeter.kn"
+}

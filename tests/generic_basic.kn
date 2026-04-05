@@ -1,0 +1,24 @@
+﻿Unit Tests.GenericBasic;
+
+Get IO.Console;
+
+Function T Identity<T>(T value) {
+    Return value;
+}
+
+Function T First<T>(T a, T b) {
+    Return a;
+}
+
+Static Function int Main() {
+    int i = Identity<int>(7);
+    string s = Identity<string>("ok");
+    int f = First<int>(3, 9);
+    If (i != 7) { Return 1; }
+    If (f != 3) { Return 2; }
+    If (s != "ok") { Return 3; }
+    IO.Console.PrintLine(i);
+    IO.Console.PrintLine(s);
+    IO.Console.PrintLine(f);
+    Return 0;
+}

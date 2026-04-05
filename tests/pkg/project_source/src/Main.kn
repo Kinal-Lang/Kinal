@@ -1,0 +1,11 @@
+Unit Tests.PackageSource;
+Get Console By IO.Console;
+Get IO;
+Get Greeter By Acme.Greeter;
+
+Static Function int Main()
+{
+    Console.PrintLine(Greeter.Text());
+    Console.PrintLine(IO.Char.ToUpper('a'));
+    Return 0;
+}

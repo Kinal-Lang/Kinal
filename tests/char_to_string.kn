@@ -1,0 +1,20 @@
+Unit Tests.CharToString;
+
+Get IO.Console;
+
+Function void PrintText(string s)
+{
+    IO.Console.PrintLine(s);
+}
+
+Safe Static Function int Main()
+{
+    char c = 'a';
+    string s = c;
+
+    PrintText(c);
+    IO.Console.PrintLine("x" + c);
+    IO.Console.PrintLine(c + "y");
+    IO.Console.PrintLine(s);
+    Return 0;
+}

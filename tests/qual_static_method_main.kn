@@ -1,0 +1,10 @@
+Unit Tests.QualStatic.Main;
+
+Get Console By IO.Console;
+Get Tests.QualStatic.Target;
+
+Static Function int Main(string[] args)
+{
+    Console.PrintLine(Tests.QualStatic.Target.Printer.Print());
+    Return 0;
+}

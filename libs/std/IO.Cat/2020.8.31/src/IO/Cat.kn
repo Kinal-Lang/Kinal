@@ -1,0 +1,32 @@
+Unit IO.Cat;
+
+Public Class Rommy
+{
+    Public Constructor(bool i_know_this_is_just_a_clone_of_Rommy,bool i_will_be_good_to_Rommy)
+    {
+        If (!(i_know_this_is_just_a_clone_of_Rommy && i_will_be_good_to_Rommy))
+        {
+            Throw New IO.Error("YiYi","You must know that this is just a clone of Rommy; I will not hand over the real one to you! And you must treat her well.");
+        }
+    }
+
+    Public Function string Speak(string something)
+    {
+        Return [f]"Rommy listened to \"{something}\" and replied: \"Meow~\"";
+    }
+
+    Public Function string Touch()
+    {
+        Return "Rommy: \"Purr~\"";
+    }
+    
+    Public Function string Feed()
+    {
+        Return "Rommy: \"Meow~ MEOW!!!\"";
+    }
+
+    Public Function string Play()
+    {
+        Return "Rommy: \"Meow~ Meow~ Meow~\"";
+    }
+}

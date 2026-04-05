@@ -1,0 +1,47 @@
+Unit IO;
+
+Static Class Char
+{
+    Public Safe Function bool IsDigit(char value)
+    {
+        Return value >= '0' && value <= '9';
+    }
+
+    Public Safe Function bool IsLower(char value)
+    {
+        Return value >= 'a' && value <= 'z';
+    }
+
+    Public Safe Function bool IsUpper(char value)
+    {
+        Return value >= 'A' && value <= 'Z';
+    }
+
+    Public Safe Function bool IsLetter(char value)
+    {
+        Return IsLower(value) || IsUpper(value);
+    }
+
+    Public Safe Function bool IsWhitespace(char value)
+    {
+        Return value == ' ' || value == '\t' || value == '\n' || value == '\r';
+    }
+
+    Public Safe Function char ToLower(char value)
+    {
+        If (IsUpper(value))
+        {
+            Return [char]([int](value) + 32);
+        }
+        Return value;
+    }
+
+    Public Safe Function char ToUpper(char value)
+    {
+        If (IsLower(value))
+        {
+            Return [char]([int](value) - 32);
+        }
+        Return value;
+    }
+}

@@ -1,0 +1,12 @@
+Unit Tests.FfiDll;
+
+Get Console By IO.Console;
+
+Extern Function int kn_native_mul(int a, int b) By C;
+Extern Function string kn_native_hello() By C;
+
+Trusted Static Function int Main() {
+    Console.PrintLine(kn_native_mul(6, 7));
+    Console.PrintLine(kn_native_hello());
+    Return 0;
+}

@@ -1,0 +1,18 @@
+Unit Tests.AsyncSleep;
+
+Get Console By IO.Console;
+Get IO.Async;
+
+Static Async Function int DelayValue(int value)
+{
+    Await IO.Async.Yield();
+    Await IO.Async.Sleep(1);
+    Return value;
+}
+
+Static Function int Main()
+{
+    int value = IO.Async.Run(DelayValue(7));
+    Console.PrintLine(value);
+    Return 0;
+}

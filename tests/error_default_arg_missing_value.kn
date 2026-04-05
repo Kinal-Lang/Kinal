@@ -1,0 +1,10 @@
+Unit App.BadDefaultArg;
+
+Static Safe Function int Need(int value) {
+    Return value;
+}
+
+Static Safe Function int Main(string args[]) {
+    Var x = Need(default);
+    Return x;
+}

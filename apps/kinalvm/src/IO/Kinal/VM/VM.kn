@@ -1,0 +1,1958 @@
+Unit IO.Kinal.VM.VM;
+
+Get Bytecode By IO.Kinal.VM.Bytecode;
+Get Context By IO.Kinal.VM.Context;
+Get Stdlib By IO.Kinal.VM.Stdlib;
+Get Console By IO.Console;
+
+Public Class VirtualMachine
+{
+    Private Stdlib.StdlibRegistry Registry;
+
+    Public Constructor(Stdlib.StdlibRegistry registry)
+    {
+        This.Registry = registry;
+    }
+
+    Public Unsafe Function int Execute(Bytecode.Program program)
+    {
+        Context.ExecutionContext ctx = New Context.ExecutionContext(program);
+        int[] dispatchTargets = {};
+        Stdlib.StdlibRegistry registry = This.Registry;
+
+        ctx.PushEntry(program.EntryFunction);
+
+        Unsafe Block Dispatch
+        </
+            Record LoopStart
+            If (ctx.Halted || ctx.FrameCount <= 0)
+            {
+                Jump Halt;
+            }
+
+            Context.FunctionFrame frame = ctx.CurrentFrame();
+            byte[] code = frame.FnInfo.Code;
+            int codeLength = code.Length();
+
+            If (frame.Pc < 0 || frame.Pc >= codeLength)
+            {
+                Throw "Instruction pointer out of range";
+            }
+
+            int op = [int](code[frame.Pc]);
+            If (op < 0 || op >= dispatchTargets.Length())
+            {
+                Throw "Unknown KNC opcode: " + [string](op);
+            }
+
+            Jump dispatchTargets[op];
+
+            Record OpLoadInt
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                frame.SetInt(
+                    [int](code[frame.Pc + 1]),
+                    program.IntConstants[Bytecode.Program.ReadU16(code, frame.Pc + 2)]
+                );
+                frame.Pc = frame.Pc + 4;
+                Jump LoopStart;
+            }
+
+            Record OpLoadFloat
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                frame.SetFloat(
+                    [int](code[frame.Pc + 1]),
+                    program.FloatConstants[Bytecode.Program.ReadU16(code, frame.Pc + 2)]
+                );
+                frame.Pc = frame.Pc + 4;
+                Jump LoopStart;
+            }
+
+            Record OpLoadBool
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                frame.SetBool([int](code[frame.Pc + 1]), [int](code[frame.Pc + 2]) != 0);
+                frame.Pc = frame.Pc + 3;
+                Jump LoopStart;
+            }
+
+            Record OpLoadString
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                frame.SetString(
+                    [int](code[frame.Pc + 1]),
+                    program.StringConstants[Bytecode.Program.ReadU16(code, frame.Pc + 2)]
+                );
+                frame.Pc = frame.Pc + 4;
+                Jump LoopStart;
+            }
+
+            Record OpLoadChar
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                frame.SetChar(
+                    [int](code[frame.Pc + 1]),
+                    [char](program.IntConstants[Bytecode.Program.ReadU16(code, frame.Pc + 2)])
+                );
+                frame.Pc = frame.Pc + 4;
+                Jump LoopStart;
+            }
+
+            Record OpMove
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                frame.CopyValue([int](code[frame.Pc + 1]), [int](code[frame.Pc + 2]));
+                frame.Pc = frame.Pc + 3;
+                Jump LoopStart;
+            }
+
+            Record OpAddInt
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                int[] kinds = frame.Kinds;
+                int[] intRegisters = frame.IntRegisters;
+                int dst = [int](code[frame.Pc + 1]);
+                int lhs = [int](code[frame.Pc + 2]);
+                int rhs = [int](code[frame.Pc + 3]);
+                If (kinds[lhs] != [int](Bytecode.ValueKind.Int) || kinds[rhs] != [int](Bytecode.ValueKind.Int))
+                {
+                    Throw "Expected int registers";
+                }
+                kinds[dst] = [int](Bytecode.ValueKind.Int);
+                intRegisters[dst] = intRegisters[lhs] + intRegisters[rhs];
+                frame.Pc = frame.Pc + 4;
+                Jump LoopStart;
+            }
+
+            Record OpSubInt
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                int[] kinds = frame.Kinds;
+                int[] intRegisters = frame.IntRegisters;
+                int dst = [int](code[frame.Pc + 1]);
+                int lhs = [int](code[frame.Pc + 2]);
+                int rhs = [int](code[frame.Pc + 3]);
+                If (kinds[lhs] != [int](Bytecode.ValueKind.Int) || kinds[rhs] != [int](Bytecode.ValueKind.Int))
+                {
+                    Throw "Expected int registers";
+                }
+                kinds[dst] = [int](Bytecode.ValueKind.Int);
+                intRegisters[dst] = intRegisters[lhs] - intRegisters[rhs];
+                frame.Pc = frame.Pc + 4;
+                Jump LoopStart;
+            }
+
+            Record OpMulInt
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                frame.SetInt(
+                    [int](code[frame.Pc + 1]),
+                    frame.GetInt([int](code[frame.Pc + 2])) * frame.GetInt([int](code[frame.Pc + 3]))
+                );
+                frame.Pc = frame.Pc + 4;
+                Jump LoopStart;
+            }
+
+            Record OpDivInt
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                frame.SetInt(
+                    [int](code[frame.Pc + 1]),
+                    frame.GetInt([int](code[frame.Pc + 2])) / frame.GetInt([int](code[frame.Pc + 3]))
+                );
+                frame.Pc = frame.Pc + 4;
+                Jump LoopStart;
+            }
+
+            Record OpAddFloat
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                frame.SetFloat(
+                    [int](code[frame.Pc + 1]),
+                    frame.GetFloat([int](code[frame.Pc + 2])) + frame.GetFloat([int](code[frame.Pc + 3]))
+                );
+                frame.Pc = frame.Pc + 4;
+                Jump LoopStart;
+            }
+
+            Record OpSubFloat
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                frame.SetFloat(
+                    [int](code[frame.Pc + 1]),
+                    frame.GetFloat([int](code[frame.Pc + 2])) - frame.GetFloat([int](code[frame.Pc + 3]))
+                );
+                frame.Pc = frame.Pc + 4;
+                Jump LoopStart;
+            }
+
+            Record OpMulFloat
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                frame.SetFloat(
+                    [int](code[frame.Pc + 1]),
+                    frame.GetFloat([int](code[frame.Pc + 2])) * frame.GetFloat([int](code[frame.Pc + 3]))
+                );
+                frame.Pc = frame.Pc + 4;
+                Jump LoopStart;
+            }
+
+            Record OpDivFloat
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                frame.SetFloat(
+                    [int](code[frame.Pc + 1]),
+                    frame.GetFloat([int](code[frame.Pc + 2])) / frame.GetFloat([int](code[frame.Pc + 3]))
+                );
+                frame.Pc = frame.Pc + 4;
+                Jump LoopStart;
+            }
+
+            Record OpNegInt
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                frame.SetInt([int](code[frame.Pc + 1]), -frame.GetInt([int](code[frame.Pc + 2])));
+                frame.Pc = frame.Pc + 3;
+                Jump LoopStart;
+            }
+
+            Record OpNegFloat
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                frame.SetFloat([int](code[frame.Pc + 1]), -frame.GetFloat([int](code[frame.Pc + 2])));
+                frame.Pc = frame.Pc + 3;
+                Jump LoopStart;
+            }
+
+            Record OpEq
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                frame.SetBool([int](code[frame.Pc + 1]), frame.ValueEquals([int](code[frame.Pc + 2]), [int](code[frame.Pc + 3])));
+                frame.Pc = frame.Pc + 4;
+                Jump LoopStart;
+            }
+
+            Record OpNe
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                frame.SetBool([int](code[frame.Pc + 1]), !frame.ValueEquals([int](code[frame.Pc + 2]), [int](code[frame.Pc + 3])));
+                frame.Pc = frame.Pc + 4;
+                Jump LoopStart;
+            }
+
+            Record OpLtInt
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                frame.SetBool(
+                    [int](code[frame.Pc + 1]),
+                    frame.GetInt([int](code[frame.Pc + 2])) < frame.GetInt([int](code[frame.Pc + 3]))
+                );
+                frame.Pc = frame.Pc + 4;
+                Jump LoopStart;
+            }
+
+            Record OpLeInt
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                frame.SetBool(
+                    [int](code[frame.Pc + 1]),
+                    frame.GetInt([int](code[frame.Pc + 2])) <= frame.GetInt([int](code[frame.Pc + 3]))
+                );
+                frame.Pc = frame.Pc + 4;
+                Jump LoopStart;
+            }
+
+            Record OpGtInt
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                frame.SetBool(
+                    [int](code[frame.Pc + 1]),
+                    frame.GetInt([int](code[frame.Pc + 2])) > frame.GetInt([int](code[frame.Pc + 3]))
+                );
+                frame.Pc = frame.Pc + 4;
+                Jump LoopStart;
+            }
+
+            Record OpGeInt
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                frame.SetBool(
+                    [int](code[frame.Pc + 1]),
+                    frame.GetInt([int](code[frame.Pc + 2])) >= frame.GetInt([int](code[frame.Pc + 3]))
+                );
+                frame.Pc = frame.Pc + 4;
+                Jump LoopStart;
+            }
+
+            Record OpLtFloat
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                frame.SetBool(
+                    [int](code[frame.Pc + 1]),
+                    frame.GetFloat([int](code[frame.Pc + 2])) < frame.GetFloat([int](code[frame.Pc + 3]))
+                );
+                frame.Pc = frame.Pc + 4;
+                Jump LoopStart;
+            }
+
+            Record OpLeFloat
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                frame.SetBool(
+                    [int](code[frame.Pc + 1]),
+                    frame.GetFloat([int](code[frame.Pc + 2])) <= frame.GetFloat([int](code[frame.Pc + 3]))
+                );
+                frame.Pc = frame.Pc + 4;
+                Jump LoopStart;
+            }
+
+            Record OpGtFloat
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                frame.SetBool(
+                    [int](code[frame.Pc + 1]),
+                    frame.GetFloat([int](code[frame.Pc + 2])) > frame.GetFloat([int](code[frame.Pc + 3]))
+                );
+                frame.Pc = frame.Pc + 4;
+                Jump LoopStart;
+            }
+
+            Record OpGeFloat
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                frame.SetBool(
+                    [int](code[frame.Pc + 1]),
+                    frame.GetFloat([int](code[frame.Pc + 2])) >= frame.GetFloat([int](code[frame.Pc + 3]))
+                );
+                frame.Pc = frame.Pc + 4;
+                Jump LoopStart;
+            }
+
+            Record OpNotBool
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                frame.SetBool([int](code[frame.Pc + 1]), !frame.GetBool([int](code[frame.Pc + 2])));
+                frame.Pc = frame.Pc + 3;
+                Jump LoopStart;
+            }
+
+            Record OpBitAndInt
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                frame.SetInt(
+                    [int](code[frame.Pc + 1]),
+                    frame.GetInt([int](code[frame.Pc + 2])) & frame.GetInt([int](code[frame.Pc + 3]))
+                );
+                frame.Pc = frame.Pc + 4;
+                Jump LoopStart;
+            }
+
+            Record OpBitOrInt
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                frame.SetInt(
+                    [int](code[frame.Pc + 1]),
+                    frame.GetInt([int](code[frame.Pc + 2])) | frame.GetInt([int](code[frame.Pc + 3]))
+                );
+                frame.Pc = frame.Pc + 4;
+                Jump LoopStart;
+            }
+
+            Record OpBitXorInt
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                frame.SetInt(
+                    [int](code[frame.Pc + 1]),
+                    frame.GetInt([int](code[frame.Pc + 2])) ^ frame.GetInt([int](code[frame.Pc + 3]))
+                );
+                frame.Pc = frame.Pc + 4;
+                Jump LoopStart;
+            }
+
+            Record OpShlInt
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                frame.SetInt(
+                    [int](code[frame.Pc + 1]),
+                    frame.GetInt([int](code[frame.Pc + 2])) << frame.GetInt([int](code[frame.Pc + 3]))
+                );
+                frame.Pc = frame.Pc + 4;
+                Jump LoopStart;
+            }
+
+            Record OpShrInt
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                frame.SetInt(
+                    [int](code[frame.Pc + 1]),
+                    frame.GetInt([int](code[frame.Pc + 2])) >> frame.GetInt([int](code[frame.Pc + 3]))
+                );
+                frame.Pc = frame.Pc + 4;
+                Jump LoopStart;
+            }
+
+            Record OpBitNotInt
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                frame.SetInt([int](code[frame.Pc + 1]), ~frame.GetInt([int](code[frame.Pc + 2])));
+                frame.Pc = frame.Pc + 3;
+                Jump LoopStart;
+            }
+
+            Record OpIntToString
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                frame.SetString([int](code[frame.Pc + 1]), [string](frame.GetInt([int](code[frame.Pc + 2]))));
+                frame.Pc = frame.Pc + 3;
+                Jump LoopStart;
+            }
+
+            Record OpBoolToString
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                frame.SetString([int](code[frame.Pc + 1]), [string](frame.GetBool([int](code[frame.Pc + 2]))));
+                frame.Pc = frame.Pc + 3;
+                Jump LoopStart;
+            }
+
+            Record OpCharToString
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                frame.SetString([int](code[frame.Pc + 1]), [string](frame.GetChar([int](code[frame.Pc + 2]))));
+                frame.Pc = frame.Pc + 3;
+                Jump LoopStart;
+            }
+
+            Record OpStringToInt
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                frame.SetInt([int](code[frame.Pc + 1]), [int](frame.GetString([int](code[frame.Pc + 2]))));
+                frame.Pc = frame.Pc + 3;
+                Jump LoopStart;
+            }
+
+            Record OpStringToBool
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                frame.SetBool([int](code[frame.Pc + 1]), [bool](frame.GetString([int](code[frame.Pc + 2]))));
+                frame.Pc = frame.Pc + 3;
+                Jump LoopStart;
+            }
+
+            Record OpCharToInt
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                frame.SetInt([int](code[frame.Pc + 1]), [int](frame.GetChar([int](code[frame.Pc + 2]))));
+                frame.Pc = frame.Pc + 3;
+                Jump LoopStart;
+            }
+
+            Record OpIntToChar
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                frame.SetChar([int](code[frame.Pc + 1]), [char](frame.GetInt([int](code[frame.Pc + 2]))));
+                frame.Pc = frame.Pc + 3;
+                Jump LoopStart;
+            }
+
+            Record OpStringToChar
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                frame.SetChar([int](code[frame.Pc + 1]), [char](frame.GetString([int](code[frame.Pc + 2]))));
+                frame.Pc = frame.Pc + 3;
+                Jump LoopStart;
+            }
+
+            Record OpJump
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                frame.Pc = Bytecode.Program.ReadU16(code, frame.Pc + 1);
+                Jump LoopStart;
+            }
+
+            Record OpJumpIfFalse
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                int[] kinds = frame.Kinds;
+                bool[] boolRegisters = frame.BoolRegisters;
+                int cond = [int](code[frame.Pc + 1]);
+                If (kinds[cond] != [int](Bytecode.ValueKind.Bool))
+                {
+                    Throw "Expected bool register";
+                }
+                If (!boolRegisters[cond])
+                {
+                    frame.Pc = Bytecode.Program.ReadU16(code, frame.Pc + 2);
+                }
+                Else
+                {
+                    frame.Pc = frame.Pc + 4;
+                }
+                Jump LoopStart;
+            }
+
+            Record OpJumpIfTrue
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                int[] kinds = frame.Kinds;
+                bool[] boolRegisters = frame.BoolRegisters;
+                int cond = [int](code[frame.Pc + 1]);
+                If (kinds[cond] != [int](Bytecode.ValueKind.Bool))
+                {
+                    Throw "Expected bool register";
+                }
+                If (boolRegisters[cond])
+                {
+                    frame.Pc = Bytecode.Program.ReadU16(code, frame.Pc + 2);
+                }
+                Else
+                {
+                    frame.Pc = frame.Pc + 4;
+                }
+                Jump LoopStart;
+            }
+
+            Record OpJumpIfIntLtFalse
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                int[] kinds = frame.Kinds;
+                int[] intRegisters = frame.IntRegisters;
+                int lhs = [int](code[frame.Pc + 1]);
+                int rhs = [int](code[frame.Pc + 2]);
+                If (kinds[lhs] != [int](Bytecode.ValueKind.Int) || kinds[rhs] != [int](Bytecode.ValueKind.Int))
+                {
+                    Throw "Expected int registers";
+                }
+                If (!(intRegisters[lhs] < intRegisters[rhs]))
+                {
+                    frame.Pc = Bytecode.Program.ReadU16(code, frame.Pc + 3);
+                }
+                Else
+                {
+                    frame.Pc = frame.Pc + 5;
+                }
+                Jump LoopStart;
+            }
+
+            Record OpJumpIfIntLeFalse
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                int[] kinds = frame.Kinds;
+                int[] intRegisters = frame.IntRegisters;
+                int lhs = [int](code[frame.Pc + 1]);
+                int rhs = [int](code[frame.Pc + 2]);
+                If (kinds[lhs] != [int](Bytecode.ValueKind.Int) || kinds[rhs] != [int](Bytecode.ValueKind.Int))
+                {
+                    Throw "Expected int registers";
+                }
+                If (!(intRegisters[lhs] <= intRegisters[rhs]))
+                {
+                    frame.Pc = Bytecode.Program.ReadU16(code, frame.Pc + 3);
+                }
+                Else
+                {
+                    frame.Pc = frame.Pc + 5;
+                }
+                Jump LoopStart;
+            }
+
+            Record OpJumpIfIntGtFalse
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                int[] kinds = frame.Kinds;
+                int[] intRegisters = frame.IntRegisters;
+                int lhs = [int](code[frame.Pc + 1]);
+                int rhs = [int](code[frame.Pc + 2]);
+                If (kinds[lhs] != [int](Bytecode.ValueKind.Int) || kinds[rhs] != [int](Bytecode.ValueKind.Int))
+                {
+                    Throw "Expected int registers";
+                }
+                If (!(intRegisters[lhs] > intRegisters[rhs]))
+                {
+                    frame.Pc = Bytecode.Program.ReadU16(code, frame.Pc + 3);
+                }
+                Else
+                {
+                    frame.Pc = frame.Pc + 5;
+                }
+                Jump LoopStart;
+            }
+
+            Record OpJumpIfIntGeFalse
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                int[] kinds = frame.Kinds;
+                int[] intRegisters = frame.IntRegisters;
+                int lhs = [int](code[frame.Pc + 1]);
+                int rhs = [int](code[frame.Pc + 2]);
+                If (kinds[lhs] != [int](Bytecode.ValueKind.Int) || kinds[rhs] != [int](Bytecode.ValueKind.Int))
+                {
+                    Throw "Expected int registers";
+                }
+                If (!(intRegisters[lhs] >= intRegisters[rhs]))
+                {
+                    frame.Pc = Bytecode.Program.ReadU16(code, frame.Pc + 3);
+                }
+                Else
+                {
+                    frame.Pc = frame.Pc + 5;
+                }
+                Jump LoopStart;
+            }
+
+            Record OpJumpIfIntEqFalse
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                int[] kinds = frame.Kinds;
+                int[] intRegisters = frame.IntRegisters;
+                int lhs = [int](code[frame.Pc + 1]);
+                int rhs = [int](code[frame.Pc + 2]);
+                If (kinds[lhs] != [int](Bytecode.ValueKind.Int) || kinds[rhs] != [int](Bytecode.ValueKind.Int))
+                {
+                    Throw "Expected int registers";
+                }
+                If (!(intRegisters[lhs] == intRegisters[rhs]))
+                {
+                    frame.Pc = Bytecode.Program.ReadU16(code, frame.Pc + 3);
+                }
+                Else
+                {
+                    frame.Pc = frame.Pc + 5;
+                }
+                Jump LoopStart;
+            }
+
+            Record OpJumpIfIntNeFalse
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                int[] kinds = frame.Kinds;
+                int[] intRegisters = frame.IntRegisters;
+                int lhs = [int](code[frame.Pc + 1]);
+                int rhs = [int](code[frame.Pc + 2]);
+                If (kinds[lhs] != [int](Bytecode.ValueKind.Int) || kinds[rhs] != [int](Bytecode.ValueKind.Int))
+                {
+                    Throw "Expected int registers";
+                }
+                If (!(intRegisters[lhs] != intRegisters[rhs]))
+                {
+                    frame.Pc = Bytecode.Program.ReadU16(code, frame.Pc + 3);
+                }
+                Else
+                {
+                    frame.Pc = frame.Pc + 5;
+                }
+                Jump LoopStart;
+            }
+
+            Record OpIncInt
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                int[] kinds = frame.Kinds;
+                int[] intRegisters = frame.IntRegisters;
+                int reg = [int](code[frame.Pc + 1]);
+                If (kinds[reg] != [int](Bytecode.ValueKind.Int))
+                {
+                    Throw "Expected int register";
+                }
+                intRegisters[reg] = intRegisters[reg] + 1;
+                frame.Pc = frame.Pc + 2;
+                Jump LoopStart;
+            }
+
+            Record OpDecInt
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                int[] kinds = frame.Kinds;
+                int[] intRegisters = frame.IntRegisters;
+                int reg = [int](code[frame.Pc + 1]);
+                If (kinds[reg] != [int](Bytecode.ValueKind.Int))
+                {
+                    Throw "Expected int register";
+                }
+                intRegisters[reg] = intRegisters[reg] - 1;
+                frame.Pc = frame.Pc + 2;
+                Jump LoopStart;
+            }
+
+            Record OpIntToFloat
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                int[] kinds = frame.Kinds;
+                int[] intRegisters = frame.IntRegisters;
+                float[] floatRegisters = frame.FloatRegisters;
+                int dst = [int](code[frame.Pc + 1]);
+                int src = [int](code[frame.Pc + 2]);
+                If (kinds[src] != [int](Bytecode.ValueKind.Int))
+                {
+                    Throw "Expected int register";
+                }
+                kinds[dst] = [int](Bytecode.ValueKind.Float);
+                floatRegisters[dst] = [float](intRegisters[src]);
+                frame.Pc = frame.Pc + 3;
+                Jump LoopStart;
+            }
+
+            Record OpFloatToInt
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                int[] kinds = frame.Kinds;
+                int[] intRegisters = frame.IntRegisters;
+                float[] floatRegisters = frame.FloatRegisters;
+                int dst = [int](code[frame.Pc + 1]);
+                int src = [int](code[frame.Pc + 2]);
+                If (kinds[src] != [int](Bytecode.ValueKind.Float))
+                {
+                    Throw "Expected float register";
+                }
+                kinds[dst] = [int](Bytecode.ValueKind.Int);
+                intRegisters[dst] = [int](floatRegisters[src]);
+                frame.Pc = frame.Pc + 3;
+                Jump LoopStart;
+            }
+
+            Record OpFloatToString
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                int[] kinds = frame.Kinds;
+                float[] floatRegisters = frame.FloatRegisters;
+                string[] stringRegisters = frame.StringRegisters;
+                int dst = [int](code[frame.Pc + 1]);
+                int src = [int](code[frame.Pc + 2]);
+                If (kinds[src] != [int](Bytecode.ValueKind.Float))
+                {
+                    Throw "Expected float register";
+                }
+                kinds[dst] = [int](Bytecode.ValueKind.String);
+                stringRegisters[dst] = [string](floatRegisters[src]);
+                frame.Pc = frame.Pc + 3;
+                Jump LoopStart;
+            }
+
+            Record OpStringToFloat
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                int[] kinds = frame.Kinds;
+                float[] floatRegisters = frame.FloatRegisters;
+                string[] stringRegisters = frame.StringRegisters;
+                int dst = [int](code[frame.Pc + 1]);
+                int src = [int](code[frame.Pc + 2]);
+                If (kinds[src] != [int](Bytecode.ValueKind.String))
+                {
+                    Throw "Expected string register";
+                }
+                kinds[dst] = [int](Bytecode.ValueKind.Float);
+                floatRegisters[dst] = [float](stringRegisters[src]);
+                frame.Pc = frame.Pc + 3;
+                Jump LoopStart;
+            }
+
+            Record OpBoolToInt
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                int[] kinds = frame.Kinds;
+                int[] intRegisters = frame.IntRegisters;
+                bool[] boolRegisters = frame.BoolRegisters;
+                int dst = [int](code[frame.Pc + 1]);
+                int src = [int](code[frame.Pc + 2]);
+                If (kinds[src] != [int](Bytecode.ValueKind.Bool))
+                {
+                    Throw "Expected bool register";
+                }
+                kinds[dst] = [int](Bytecode.ValueKind.Int);
+                If (boolRegisters[src])
+                {
+                    intRegisters[dst] = 1;
+                }
+                Else
+                {
+                    intRegisters[dst] = 0;
+                }
+                frame.Pc = frame.Pc + 3;
+                Jump LoopStart;
+            }
+
+            Record OpBoolToFloat
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                int[] kinds = frame.Kinds;
+                float[] floatRegisters = frame.FloatRegisters;
+                bool[] boolRegisters = frame.BoolRegisters;
+                int dst = [int](code[frame.Pc + 1]);
+                int src = [int](code[frame.Pc + 2]);
+                If (kinds[src] != [int](Bytecode.ValueKind.Bool))
+                {
+                    Throw "Expected bool register";
+                }
+                kinds[dst] = [int](Bytecode.ValueKind.Float);
+                If (boolRegisters[src])
+                {
+                    floatRegisters[dst] = 1.0;
+                }
+                Else
+                {
+                    floatRegisters[dst] = 0.0;
+                }
+                frame.Pc = frame.Pc + 3;
+                Jump LoopStart;
+            }
+
+            Record OpFloatToBool
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                int[] kinds = frame.Kinds;
+                float[] floatRegisters = frame.FloatRegisters;
+                bool[] boolRegisters = frame.BoolRegisters;
+                int dst = [int](code[frame.Pc + 1]);
+                int src = [int](code[frame.Pc + 2]);
+                If (kinds[src] != [int](Bytecode.ValueKind.Float))
+                {
+                    Throw "Expected float register";
+                }
+                kinds[dst] = [int](Bytecode.ValueKind.Bool);
+                boolRegisters[dst] = floatRegisters[src] != 0.0;
+                frame.Pc = frame.Pc + 3;
+                Jump LoopStart;
+            }
+
+            Record OpCallBuiltin
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                registry.Invoke(
+                    ctx,
+                    Bytecode.Program.ReadU16(code, frame.Pc + 2),
+                    [int](code[frame.Pc + 1]),
+                    [int](code[frame.Pc + 5]),
+                    [int](code[frame.Pc + 6]),
+                    [int](code[frame.Pc + 7]),
+                    [int](code[frame.Pc + 8])
+                );
+                frame.Pc = frame.Pc + 9;
+                Jump LoopStart;
+            }
+
+            Record OpCallFunc
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                int nextPc = frame.Pc + 9;
+                ctx.PushCall(
+                    Bytecode.Program.ReadU16(code, frame.Pc + 2),
+                    -1,
+                    nextPc,
+                    [int](code[frame.Pc + 1]),
+                    frame,
+                    [int](code[frame.Pc + 4]),
+                    [int](code[frame.Pc + 5]),
+                    [int](code[frame.Pc + 6]),
+                    [int](code[frame.Pc + 7]),
+                    [int](code[frame.Pc + 8])
+                );
+                Jump LoopStart;
+            }
+
+            Record OpNewObject
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                frame.ImportValue(
+                    [int](code[frame.Pc + 1]),
+                    Context.VMValue.FromObject(ctx.NewObject(Bytecode.Program.ReadU16(code, frame.Pc + 2)))
+                );
+                frame.Pc = frame.Pc + 4;
+                Jump LoopStart;
+            }
+
+            Record OpNewArray
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                int handle = ctx.NewArray(
+                    frame.GetInt([int](code[frame.Pc + 2])),
+                    [int](code[frame.Pc + 3])
+                );
+                frame.ImportValue([int](code[frame.Pc + 1]), Context.VMValue.FromArray(handle));
+                frame.Pc = frame.Pc + 4;
+                Jump LoopStart;
+            }
+
+            Record OpLoadField
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                Context.VMValue value = ctx.ObjectGetValue(
+                    frame.IntRegisters[[int](code[frame.Pc + 2])],
+                    Bytecode.Program.ReadU16(code, frame.Pc + 3)
+                );
+                frame.ImportValue([int](code[frame.Pc + 1]), value);
+                frame.Pc = frame.Pc + 5;
+                Jump LoopStart;
+            }
+
+            Record OpStoreField
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                ctx.ObjectSetValue(
+                    frame.IntRegisters[[int](code[frame.Pc + 1])],
+                    Bytecode.Program.ReadU16(code, frame.Pc + 3),
+                    frame.ExportValue([int](code[frame.Pc + 2]))
+                );
+                frame.Pc = frame.Pc + 5;
+                Jump LoopStart;
+            }
+
+            Record OpLoadIndex
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                int recv = [int](code[frame.Pc + 2]);
+                int index = frame.GetInt([int](code[frame.Pc + 3]));
+
+                If (frame.Kinds[recv] == [int](Bytecode.ValueKind.String))
+                {
+                    string text = frame.GetString(recv);
+                    frame.SetChar([int](code[frame.Pc + 1]), text[index]);
+                }
+                Else
+                {
+                    frame.ImportValue(
+                        [int](code[frame.Pc + 1]),
+                        ctx.ArrayGetValue(frame.IntRegisters[recv], index)
+                    );
+                }
+                frame.Pc = frame.Pc + 4;
+                Jump LoopStart;
+            }
+
+            Record OpStoreIndex
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                ctx.ArraySetValue(
+                    frame.IntRegisters[[int](code[frame.Pc + 1])],
+                    frame.GetInt([int](code[frame.Pc + 2])),
+                    frame.ExportValue([int](code[frame.Pc + 3]))
+                );
+                frame.Pc = frame.Pc + 4;
+                Jump LoopStart;
+            }
+
+            Record OpArrayLength
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                frame.SetInt(
+                    [int](code[frame.Pc + 1]),
+                    ctx.ArrayLengthOf(frame.IntRegisters[[int](code[frame.Pc + 2])])
+                );
+                frame.Pc = frame.Pc + 3;
+                Jump LoopStart;
+            }
+
+            Record OpArrayAdd
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                int handle = ctx.ArrayAddValue(
+                    frame.IntRegisters[[int](code[frame.Pc + 2])],
+                    frame.ExportValue([int](code[frame.Pc + 3]))
+                );
+                frame.ImportValue([int](code[frame.Pc + 1]), Context.VMValue.FromArray(handle));
+                frame.Pc = frame.Pc + 4;
+                Jump LoopStart;
+            }
+
+            Record OpCallVirt
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                int nextPc = frame.Pc + 9;
+                int recv = [int](code[frame.Pc + 2]);
+                int functionIndex = ctx.ResolveVirtualFunction(
+                    frame.IntRegisters[recv],
+                    Bytecode.Program.ReadU16(code, frame.Pc + 3)
+                );
+                ctx.PushCall(
+                    functionIndex,
+                    -1,
+                    nextPc,
+                    [int](code[frame.Pc + 1]),
+                    frame,
+                    [int](code[frame.Pc + 5]) + 1,
+                    recv,
+                    [int](code[frame.Pc + 6]),
+                    [int](code[frame.Pc + 7]),
+                    [int](code[frame.Pc + 8])
+                );
+                Jump LoopStart;
+            }
+
+            Record OpIsType
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                int dst = [int](code[frame.Pc + 1]);
+                int src = [int](code[frame.Pc + 2]);
+                int targetKind = [int](code[frame.Pc + 3]);
+                int targetPayload = Bytecode.Program.ReadU16(code, frame.Pc + 4);
+                bool result = false;
+
+                result = Switch(targetKind)
+                {
+                    Case([int](Bytecode.IsTargetKind.Bool))   { frame.Kinds[src] == [int](Bytecode.ValueKind.Bool) }
+                    Case([int](Bytecode.IsTargetKind.Char))   { frame.Kinds[src] == [int](Bytecode.ValueKind.Char) }
+                    Case([int](Bytecode.IsTargetKind.Int))    { frame.Kinds[src] == [int](Bytecode.ValueKind.Int) }
+                    Case([int](Bytecode.IsTargetKind.Float))  { frame.Kinds[src] == [int](Bytecode.ValueKind.Float) }
+                    Case([int](Bytecode.IsTargetKind.String)) { frame.Kinds[src] == [int](Bytecode.ValueKind.String) }
+                    Case([int](Bytecode.IsTargetKind.Type))
+                    {
+                        frame.Kinds[src] == [int](Bytecode.ValueKind.Object) &&
+                        ctx.ObjectIsType(frame.IntRegisters[src], targetPayload)
+                    }
+                    Case(default) { false }
+                };
+
+                frame.SetBool(dst, result);
+                frame.Pc = frame.Pc + 6;
+                Jump LoopStart;
+            }
+
+            Record OpLoadGlobal
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                int slot = Bytecode.Program.ReadU16(code, frame.Pc + 2);
+                frame.ImportValue([int](code[frame.Pc + 1]), ctx.GetGlobalValue(slot));
+                frame.Pc = frame.Pc + 4;
+                Jump LoopStart;
+            }
+
+            Record OpStoreGlobal
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                int slot = Bytecode.Program.ReadU16(code, frame.Pc + 2);
+                ctx.SetGlobalValue(slot, frame.ExportValue([int](code[frame.Pc + 1])));
+                frame.Pc = frame.Pc + 4;
+                Jump LoopStart;
+            }
+
+            Record OpMakeFunc
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                int dst = [int](code[frame.Pc + 1]);
+                int typeIndex = Bytecode.Program.ReadU16(code, frame.Pc + 2);
+                int targetKind = [int](code[frame.Pc + 4]);
+                int targetIndex = Bytecode.Program.ReadU16(code, frame.Pc + 5);
+                int envReg = [int](code[frame.Pc + 7]);
+                int handle = ctx.NewObject(typeIndex);
+                int encoded = targetIndex;
+
+                If (targetKind != 0)
+                {
+                    encoded = -(targetIndex + 1);
+                }
+
+                ctx.ObjectSetValue(handle, 0, Context.VMValue.FromInt(encoded));
+                If (envReg == 255)
+                {
+                    ctx.ObjectSetValue(handle, 1, Context.VMValue.NullValue());
+                }
+                Else
+                {
+                    ctx.ObjectSetValue(handle, 1, frame.ExportValue(envReg));
+                }
+
+                frame.ImportValue(dst, Context.VMValue.FromObject(handle));
+                frame.Pc = frame.Pc + 8;
+                Jump LoopStart;
+            }
+
+            Record OpCallClosure
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                int dst = [int](code[frame.Pc + 1]);
+                int calleeReg = [int](code[frame.Pc + 2]);
+                int argCount = [int](code[frame.Pc + 3]);
+                int nextPc = frame.Pc + 8;
+                int handle = frame.IntRegisters[calleeReg];
+                Context.VMValue targetValue = ctx.ObjectGetValue(handle, 0);
+                Context.VMValue envValue = ctx.ObjectGetValue(handle, 1);
+                int encoded = targetValue.IntValue;
+                int envHandle = -1;
+
+                If (encoded < 0)
+                {
+                    registry.Invoke(
+                        ctx,
+                        -encoded - 1,
+                        dst,
+                        [int](code[frame.Pc + 4]),
+                        [int](code[frame.Pc + 5]),
+                        [int](code[frame.Pc + 6]),
+                        [int](code[frame.Pc + 7])
+                    );
+                    frame.Pc = nextPc;
+                    Jump LoopStart;
+                }
+
+                If (envValue.Kind == [int](Bytecode.ValueKind.Array))
+                {
+                    envHandle = envValue.IntValue;
+                }
+
+                ctx.PushCall(
+                    encoded,
+                    envHandle,
+                    nextPc,
+                    dst,
+                    frame,
+                    argCount,
+                    [int](code[frame.Pc + 4]),
+                    [int](code[frame.Pc + 5]),
+                    [int](code[frame.Pc + 6]),
+                    [int](code[frame.Pc + 7])
+                );
+                Jump LoopStart;
+            }
+
+            Record OpNewCell
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                frame.SetInt([int](code[frame.Pc + 1]), ctx.NewCell(frame.ExportValue([int](code[frame.Pc + 2]))));
+                frame.Pc = frame.Pc + 3;
+                Jump LoopStart;
+            }
+
+            Record OpLoadCell
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                frame.ImportValue([int](code[frame.Pc + 1]), ctx.GetCellValue(frame.GetInt([int](code[frame.Pc + 2]))));
+                frame.Pc = frame.Pc + 3;
+                Jump LoopStart;
+            }
+
+            Record OpStoreCell
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                ctx.SetCellValue(frame.GetInt([int](code[frame.Pc + 1])), frame.ExportValue([int](code[frame.Pc + 2])));
+                frame.Pc = frame.Pc + 3;
+                Jump LoopStart;
+            }
+
+            Record OpLoadCapture
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                int slot = Bytecode.Program.ReadU16(code, frame.Pc + 2);
+                Context.VMValue cellRef = ctx.ArrayGetValue(frame.EnvHandle, slot);
+                frame.ImportValue([int](code[frame.Pc + 1]), ctx.GetCellValue(cellRef.IntValue));
+                frame.Pc = frame.Pc + 4;
+                Jump LoopStart;
+            }
+
+            Record OpStoreCapture
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                int slot = Bytecode.Program.ReadU16(code, frame.Pc + 2);
+                Context.VMValue cellRef = ctx.ArrayGetValue(frame.EnvHandle, slot);
+                ctx.SetCellValue(cellRef.IntValue, frame.ExportValue([int](code[frame.Pc + 1])));
+                frame.Pc = frame.Pc + 4;
+                Jump LoopStart;
+            }
+
+            Record OpLoadCaptureCell
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                int slot = Bytecode.Program.ReadU16(code, frame.Pc + 2);
+                Context.VMValue cellRef = ctx.ArrayGetValue(frame.EnvHandle, slot);
+                frame.SetInt([int](code[frame.Pc + 1]), cellRef.IntValue);
+                frame.Pc = frame.Pc + 4;
+                Jump LoopStart;
+            }
+
+            Record OpPushTry
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                Context.TryHandler handler = New Context.TryHandler();
+                handler.CatchReg = [int](code[frame.Pc + 1]);
+                handler.CatchKind = [int](code[frame.Pc + 2]);
+                handler.CatchPayload = Bytecode.Program.ReadU16(code, frame.Pc + 3);
+                handler.CatchPc = Bytecode.Program.ReadU16(code, frame.Pc + 5);
+                frame.PushHandler(handler);
+                frame.Pc = frame.Pc + 7;
+                Jump LoopStart;
+            }
+
+            Record OpPopTry
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                frame.PopHandler();
+                frame.Pc = frame.Pc + 1;
+                Jump LoopStart;
+            }
+
+            Record OpThrow
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                Context.VMValue value = frame.ExportValue([int](code[frame.Pc + 1]));
+                If (!ctx.RaiseException(value))
+                {
+                    Jump Halt;
+                }
+                Jump LoopStart;
+            }
+
+            Record OpMakePtrLocal
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                frame.SetPointer(
+                    [int](code[frame.Pc + 1]),
+                    ctx.NewFramePointer(ctx.FrameCount - 1, [int](code[frame.Pc + 2]))
+                );
+                frame.Pc = frame.Pc + 3;
+                Jump LoopStart;
+            }
+
+            Record OpMakePtrGlobal
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                frame.SetPointer(
+                    [int](code[frame.Pc + 1]),
+                    ctx.NewGlobalPointer(Bytecode.Program.ReadU16(code, frame.Pc + 2))
+                );
+                frame.Pc = frame.Pc + 4;
+                Jump LoopStart;
+            }
+
+            Record OpMakePtrIndex
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                int dst = [int](code[frame.Pc + 1]);
+                int recv = [int](code[frame.Pc + 2]);
+                int index = frame.GetInt([int](code[frame.Pc + 3]));
+                If (frame.Kinds[recv] == [int](Bytecode.ValueKind.String))
+                {
+                    frame.SetPointer(dst, ctx.NewStringPointer(frame.GetString(recv), index));
+                }
+                Else
+                {
+                    frame.SetPointer(dst, ctx.NewArrayPointer(frame.IntRegisters[recv], index));
+                }
+                frame.Pc = frame.Pc + 4;
+                Jump LoopStart;
+            }
+
+            Record OpMakePtrField
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                frame.SetPointer(
+                    [int](code[frame.Pc + 1]),
+                    ctx.NewObjectPointer(
+                        frame.IntRegisters[[int](code[frame.Pc + 2])],
+                        Bytecode.Program.ReadU16(code, frame.Pc + 3)
+                    )
+                );
+                frame.Pc = frame.Pc + 5;
+                Jump LoopStart;
+            }
+
+            Record OpMakePtrFunc
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                frame.SetPointer(
+                    [int](code[frame.Pc + 1]),
+                    ctx.NewFunctionPointer(Bytecode.Program.ReadU16(code, frame.Pc + 2))
+                );
+                frame.Pc = frame.Pc + 4;
+                Jump LoopStart;
+            }
+
+            Record OpMakePtrCell
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                frame.SetPointer(
+                    [int](code[frame.Pc + 1]),
+                    ctx.NewCellPointer(frame.GetInt([int](code[frame.Pc + 2])))
+                );
+                frame.Pc = frame.Pc + 3;
+                Jump LoopStart;
+            }
+
+            Record OpLoadPtr
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                int dst = [int](code[frame.Pc + 1]);
+                int src = [int](code[frame.Pc + 2]);
+                If (frame.Kinds[src] == [int](Bytecode.ValueKind.Pointer))
+                {
+                    frame.ImportValue(dst, ctx.PointerLoadValue(frame.GetPointer(src)));
+                }
+                Else If (frame.Kinds[src] == [int](Bytecode.ValueKind.String))
+                {
+                    string text = frame.GetString(src);
+                    If (text.Length() <= 0)
+                    {
+                        Throw "Cannot dereference empty string-backed pointer";
+                    }
+                    frame.SetChar(dst, text[0]);
+                }
+                Else
+                {
+                    Throw "Expected pointer register";
+                }
+                frame.Pc = frame.Pc + 3;
+                Jump LoopStart;
+            }
+
+            Record OpStorePtr
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                int ptrReg = [int](code[frame.Pc + 1]);
+                int src = [int](code[frame.Pc + 2]);
+                If (frame.Kinds[ptrReg] != [int](Bytecode.ValueKind.Pointer))
+                {
+                    Throw "Expected pointer register";
+                }
+                ctx.PointerStoreValue(frame.GetPointer(ptrReg), frame.ExportValue(src));
+                frame.Pc = frame.Pc + 3;
+                Jump LoopStart;
+            }
+
+            Record OpAddPtr
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                int dst = [int](code[frame.Pc + 1]);
+                int src = [int](code[frame.Pc + 2]);
+                int delta = frame.GetInt([int](code[frame.Pc + 3]));
+                If (frame.Kinds[src] == [int](Bytecode.ValueKind.Pointer))
+                {
+                    frame.SetPointer(dst, ctx.PointerAdd(frame.GetPointer(src), delta));
+                }
+                Else If (frame.Kinds[src] == [int](Bytecode.ValueKind.String))
+                {
+                    frame.SetPointer(dst, ctx.NewStringPointer(frame.GetString(src), delta));
+                }
+                Else
+                {
+                    Throw "Pointer arithmetic requires pointer or string-backed pointer";
+                }
+                frame.Pc = frame.Pc + 4;
+                Jump LoopStart;
+            }
+
+            Record OpLoopIntLtInc
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                int[] kinds = frame.Kinds;
+                int[] intRegisters = frame.IntRegisters;
+                int counterReg = [int](code[frame.Pc + 1]);
+                int limitReg = [int](code[frame.Pc + 2]);
+                int counterValue;
+                int limitValue;
+                If (kinds[counterReg] != [int](Bytecode.ValueKind.Int) || kinds[limitReg] != [int](Bytecode.ValueKind.Int))
+                {
+                    Throw "Superloop requires int registers";
+                }
+                counterValue = intRegisters[counterReg];
+                limitValue = intRegisters[limitReg];
+                While (counterValue < limitValue)
+                {
+                    counterValue = counterValue + 1;
+                }
+                intRegisters[counterReg] = counterValue;
+                frame.Pc = frame.Pc + 3;
+                Jump LoopStart;
+            }
+
+            Record OpLoopIntLeInc
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                int[] kinds = frame.Kinds;
+                int[] intRegisters = frame.IntRegisters;
+                int counterReg = [int](code[frame.Pc + 1]);
+                int limitReg = [int](code[frame.Pc + 2]);
+                int counterValue;
+                int limitValue;
+                If (kinds[counterReg] != [int](Bytecode.ValueKind.Int) || kinds[limitReg] != [int](Bytecode.ValueKind.Int))
+                {
+                    Throw "Superloop requires int registers";
+                }
+                counterValue = intRegisters[counterReg];
+                limitValue = intRegisters[limitReg];
+                While (counterValue <= limitValue)
+                {
+                    counterValue = counterValue + 1;
+                }
+                intRegisters[counterReg] = counterValue;
+                frame.Pc = frame.Pc + 3;
+                Jump LoopStart;
+            }
+
+            Record OpLoopIntGtDec
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                int[] kinds = frame.Kinds;
+                int[] intRegisters = frame.IntRegisters;
+                int counterReg = [int](code[frame.Pc + 1]);
+                int limitReg = [int](code[frame.Pc + 2]);
+                int counterValue;
+                int limitValue;
+                If (kinds[counterReg] != [int](Bytecode.ValueKind.Int) || kinds[limitReg] != [int](Bytecode.ValueKind.Int))
+                {
+                    Throw "Superloop requires int registers";
+                }
+                counterValue = intRegisters[counterReg];
+                limitValue = intRegisters[limitReg];
+                While (counterValue > limitValue)
+                {
+                    counterValue = counterValue - 1;
+                }
+                intRegisters[counterReg] = counterValue;
+                frame.Pc = frame.Pc + 3;
+                Jump LoopStart;
+            }
+
+            Record OpLoopIntGeDec
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                int[] kinds = frame.Kinds;
+                int[] intRegisters = frame.IntRegisters;
+                int counterReg = [int](code[frame.Pc + 1]);
+                int limitReg = [int](code[frame.Pc + 2]);
+                int counterValue;
+                int limitValue;
+                If (kinds[counterReg] != [int](Bytecode.ValueKind.Int) || kinds[limitReg] != [int](Bytecode.ValueKind.Int))
+                {
+                    Throw "Superloop requires int registers";
+                }
+                counterValue = intRegisters[counterReg];
+                limitValue = intRegisters[limitReg];
+                While (counterValue >= limitValue)
+                {
+                    counterValue = counterValue - 1;
+                }
+                intRegisters[counterReg] = counterValue;
+                frame.Pc = frame.Pc + 3;
+                Jump LoopStart;
+            }
+
+            Record OpLoopIntEqInc
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                int[] kinds = frame.Kinds;
+                int[] intRegisters = frame.IntRegisters;
+                int counterReg = [int](code[frame.Pc + 1]);
+                int limitReg = [int](code[frame.Pc + 2]);
+                int counterValue;
+                int limitValue;
+                If (kinds[counterReg] != [int](Bytecode.ValueKind.Int) || kinds[limitReg] != [int](Bytecode.ValueKind.Int))
+                {
+                    Throw "Superloop requires int registers";
+                }
+                counterValue = intRegisters[counterReg];
+                limitValue = intRegisters[limitReg];
+                While (counterValue == limitValue)
+                {
+                    counterValue = counterValue + 1;
+                }
+                intRegisters[counterReg] = counterValue;
+                frame.Pc = frame.Pc + 3;
+                Jump LoopStart;
+            }
+
+            Record OpLoopIntNeInc
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                int[] kinds = frame.Kinds;
+                int[] intRegisters = frame.IntRegisters;
+                int counterReg = [int](code[frame.Pc + 1]);
+                int limitReg = [int](code[frame.Pc + 2]);
+                int counterValue;
+                int limitValue;
+                If (kinds[counterReg] != [int](Bytecode.ValueKind.Int) || kinds[limitReg] != [int](Bytecode.ValueKind.Int))
+                {
+                    Throw "Superloop requires int registers";
+                }
+                counterValue = intRegisters[counterReg];
+                limitValue = intRegisters[limitReg];
+                While (counterValue != limitValue)
+                {
+                    counterValue = counterValue + 1;
+                }
+                intRegisters[counterReg] = counterValue;
+                frame.Pc = frame.Pc + 3;
+                Jump LoopStart;
+            }
+
+            Record OpLoopIntEqDec
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                int[] kinds = frame.Kinds;
+                int[] intRegisters = frame.IntRegisters;
+                int counterReg = [int](code[frame.Pc + 1]);
+                int limitReg = [int](code[frame.Pc + 2]);
+                int counterValue;
+                int limitValue;
+                If (kinds[counterReg] != [int](Bytecode.ValueKind.Int) || kinds[limitReg] != [int](Bytecode.ValueKind.Int))
+                {
+                    Throw "Superloop requires int registers";
+                }
+                counterValue = intRegisters[counterReg];
+                limitValue = intRegisters[limitReg];
+                While (counterValue == limitValue)
+                {
+                    counterValue = counterValue - 1;
+                }
+                intRegisters[counterReg] = counterValue;
+                frame.Pc = frame.Pc + 3;
+                Jump LoopStart;
+            }
+
+            Record OpLoopIntNeDec
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                int[] kinds = frame.Kinds;
+                int[] intRegisters = frame.IntRegisters;
+                int counterReg = [int](code[frame.Pc + 1]);
+                int limitReg = [int](code[frame.Pc + 2]);
+                int counterValue;
+                int limitValue;
+                If (kinds[counterReg] != [int](Bytecode.ValueKind.Int) || kinds[limitReg] != [int](Bytecode.ValueKind.Int))
+                {
+                    Throw "Superloop requires int registers";
+                }
+                counterValue = intRegisters[counterReg];
+                limitValue = intRegisters[limitReg];
+                While (counterValue != limitValue)
+                {
+                    counterValue = counterValue - 1;
+                }
+                intRegisters[counterReg] = counterValue;
+                frame.Pc = frame.Pc + 3;
+                Jump LoopStart;
+            }
+
+            Record OpLoopBackIntLtInc
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                int[] kinds = frame.Kinds;
+                int[] intRegisters = frame.IntRegisters;
+                int counterReg = [int](code[frame.Pc + 1]);
+                int limitReg = [int](code[frame.Pc + 2]);
+                If (kinds[counterReg] != [int](Bytecode.ValueKind.Int) || kinds[limitReg] != [int](Bytecode.ValueKind.Int))
+                {
+                    Throw "LoopBackIntLtInc requires int registers";
+                }
+                intRegisters[counterReg] = intRegisters[counterReg] + 1;
+                If (intRegisters[counterReg] < intRegisters[limitReg])
+                {
+                    frame.Pc = Bytecode.Program.ReadU16(code, frame.Pc + 3);
+                }
+                Else
+                {
+                    frame.Pc = frame.Pc + 5;
+                }
+                Jump LoopStart;
+            }
+
+            Record OpLoopBackIntLeInc
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                int[] kinds = frame.Kinds;
+                int[] intRegisters = frame.IntRegisters;
+                int counterReg = [int](code[frame.Pc + 1]);
+                int limitReg = [int](code[frame.Pc + 2]);
+                If (kinds[counterReg] != [int](Bytecode.ValueKind.Int) || kinds[limitReg] != [int](Bytecode.ValueKind.Int))
+                {
+                    Throw "LoopBackIntLeInc requires int registers";
+                }
+                intRegisters[counterReg] = intRegisters[counterReg] + 1;
+                If (intRegisters[counterReg] <= intRegisters[limitReg])
+                {
+                    frame.Pc = Bytecode.Program.ReadU16(code, frame.Pc + 3);
+                }
+                Else
+                {
+                    frame.Pc = frame.Pc + 5;
+                }
+                Jump LoopStart;
+            }
+
+            Record OpLoopBackIntGtDec
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                int[] kinds = frame.Kinds;
+                int[] intRegisters = frame.IntRegisters;
+                int counterReg = [int](code[frame.Pc + 1]);
+                int limitReg = [int](code[frame.Pc + 2]);
+                If (kinds[counterReg] != [int](Bytecode.ValueKind.Int) || kinds[limitReg] != [int](Bytecode.ValueKind.Int))
+                {
+                    Throw "LoopBackIntGtDec requires int registers";
+                }
+                intRegisters[counterReg] = intRegisters[counterReg] - 1;
+                If (intRegisters[counterReg] > intRegisters[limitReg])
+                {
+                    frame.Pc = Bytecode.Program.ReadU16(code, frame.Pc + 3);
+                }
+                Else
+                {
+                    frame.Pc = frame.Pc + 5;
+                }
+                Jump LoopStart;
+            }
+
+            Record OpLoopBackIntGeDec
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                int[] kinds = frame.Kinds;
+                int[] intRegisters = frame.IntRegisters;
+                int counterReg = [int](code[frame.Pc + 1]);
+                int limitReg = [int](code[frame.Pc + 2]);
+                If (kinds[counterReg] != [int](Bytecode.ValueKind.Int) || kinds[limitReg] != [int](Bytecode.ValueKind.Int))
+                {
+                    Throw "LoopBackIntGeDec requires int registers";
+                }
+                intRegisters[counterReg] = intRegisters[counterReg] - 1;
+                If (intRegisters[counterReg] >= intRegisters[limitReg])
+                {
+                    frame.Pc = Bytecode.Program.ReadU16(code, frame.Pc + 3);
+                }
+                Else
+                {
+                    frame.Pc = frame.Pc + 5;
+                }
+                Jump LoopStart;
+            }
+
+            Record OpLoopBackIntEqInc
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                int[] kinds = frame.Kinds;
+                int[] intRegisters = frame.IntRegisters;
+                int counterReg = [int](code[frame.Pc + 1]);
+                int limitReg = [int](code[frame.Pc + 2]);
+                If (kinds[counterReg] != [int](Bytecode.ValueKind.Int) || kinds[limitReg] != [int](Bytecode.ValueKind.Int))
+                {
+                    Throw "LoopBackIntEqInc requires int registers";
+                }
+                intRegisters[counterReg] = intRegisters[counterReg] + 1;
+                If (intRegisters[counterReg] == intRegisters[limitReg])
+                {
+                    frame.Pc = Bytecode.Program.ReadU16(code, frame.Pc + 3);
+                }
+                Else
+                {
+                    frame.Pc = frame.Pc + 5;
+                }
+                Jump LoopStart;
+            }
+
+            Record OpLoopBackIntNeInc
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                int[] kinds = frame.Kinds;
+                int[] intRegisters = frame.IntRegisters;
+                int counterReg = [int](code[frame.Pc + 1]);
+                int limitReg = [int](code[frame.Pc + 2]);
+                If (kinds[counterReg] != [int](Bytecode.ValueKind.Int) || kinds[limitReg] != [int](Bytecode.ValueKind.Int))
+                {
+                    Throw "LoopBackIntNeInc requires int registers";
+                }
+                intRegisters[counterReg] = intRegisters[counterReg] + 1;
+                If (intRegisters[counterReg] != intRegisters[limitReg])
+                {
+                    frame.Pc = Bytecode.Program.ReadU16(code, frame.Pc + 3);
+                }
+                Else
+                {
+                    frame.Pc = frame.Pc + 5;
+                }
+                Jump LoopStart;
+            }
+
+            Record OpLoopBackIntEqDec
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                int[] kinds = frame.Kinds;
+                int[] intRegisters = frame.IntRegisters;
+                int counterReg = [int](code[frame.Pc + 1]);
+                int limitReg = [int](code[frame.Pc + 2]);
+                If (kinds[counterReg] != [int](Bytecode.ValueKind.Int) || kinds[limitReg] != [int](Bytecode.ValueKind.Int))
+                {
+                    Throw "LoopBackIntEqDec requires int registers";
+                }
+                intRegisters[counterReg] = intRegisters[counterReg] - 1;
+                If (intRegisters[counterReg] == intRegisters[limitReg])
+                {
+                    frame.Pc = Bytecode.Program.ReadU16(code, frame.Pc + 3);
+                }
+                Else
+                {
+                    frame.Pc = frame.Pc + 5;
+                }
+                Jump LoopStart;
+            }
+
+            Record OpLoopBackIntNeDec
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                int[] kinds = frame.Kinds;
+                int[] intRegisters = frame.IntRegisters;
+                int counterReg = [int](code[frame.Pc + 1]);
+                int limitReg = [int](code[frame.Pc + 2]);
+                If (kinds[counterReg] != [int](Bytecode.ValueKind.Int) || kinds[limitReg] != [int](Bytecode.ValueKind.Int))
+                {
+                    Throw "LoopBackIntNeDec requires int registers";
+                }
+                intRegisters[counterReg] = intRegisters[counterReg] - 1;
+                If (intRegisters[counterReg] != intRegisters[limitReg])
+                {
+                    frame.Pc = Bytecode.Program.ReadU16(code, frame.Pc + 3);
+                }
+                Else
+                {
+                    frame.Pc = frame.Pc + 5;
+                }
+                Jump LoopStart;
+            }
+
+            Record OpRet
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                ctx.ReturnFromCurrent([int](code[frame.Pc + 1]));
+                Jump LoopStart;
+            }
+
+            Record OpHalt
+            {
+                ctx.Halted = true;
+                Jump Halt;
+            }
+
+            Record Halt
+        />
+
+        dispatchTargets = {
+            Dispatch.OpLoadInt,
+            Dispatch.OpLoadFloat,
+            Dispatch.OpLoadBool,
+            Dispatch.OpLoadString,
+            Dispatch.OpLoadChar,
+            Dispatch.OpMove,
+            Dispatch.OpAddInt,
+            Dispatch.OpSubInt,
+            Dispatch.OpMulInt,
+            Dispatch.OpDivInt,
+            Dispatch.OpAddFloat,
+            Dispatch.OpSubFloat,
+            Dispatch.OpMulFloat,
+            Dispatch.OpDivFloat,
+            Dispatch.OpNegInt,
+            Dispatch.OpNegFloat,
+            Dispatch.OpEq,
+            Dispatch.OpNe,
+            Dispatch.OpLtInt,
+            Dispatch.OpLeInt,
+            Dispatch.OpGtInt,
+            Dispatch.OpGeInt,
+            Dispatch.OpLtFloat,
+            Dispatch.OpLeFloat,
+            Dispatch.OpGtFloat,
+            Dispatch.OpGeFloat,
+            Dispatch.OpNotBool,
+            Dispatch.OpBitAndInt,
+            Dispatch.OpBitOrInt,
+            Dispatch.OpBitXorInt,
+            Dispatch.OpShlInt,
+            Dispatch.OpShrInt,
+            Dispatch.OpBitNotInt,
+            Dispatch.OpIntToString,
+            Dispatch.OpBoolToString,
+            Dispatch.OpCharToString,
+            Dispatch.OpStringToInt,
+            Dispatch.OpStringToBool,
+            Dispatch.OpCharToInt,
+            Dispatch.OpIntToChar,
+            Dispatch.OpStringToChar,
+            Dispatch.OpJump,
+            Dispatch.OpJumpIfFalse,
+            Dispatch.OpJumpIfTrue,
+            Dispatch.OpCallBuiltin,
+            Dispatch.OpCallFunc,
+            Dispatch.OpNewObject,
+            Dispatch.OpNewArray,
+            Dispatch.OpLoadField,
+            Dispatch.OpStoreField,
+            Dispatch.OpLoadIndex,
+            Dispatch.OpStoreIndex,
+            Dispatch.OpArrayLength,
+            Dispatch.OpArrayAdd,
+            Dispatch.OpCallVirt,
+            Dispatch.OpIsType,
+            Dispatch.OpLoadGlobal,
+            Dispatch.OpStoreGlobal,
+            Dispatch.OpRet,
+            Dispatch.OpHalt,
+            Dispatch.OpMakeFunc,
+            Dispatch.OpCallClosure,
+            Dispatch.OpNewCell,
+            Dispatch.OpLoadCell,
+            Dispatch.OpStoreCell,
+            Dispatch.OpLoadCapture,
+            Dispatch.OpStoreCapture,
+            Dispatch.OpLoadCaptureCell,
+            Dispatch.OpPushTry,
+            Dispatch.OpPopTry,
+            Dispatch.OpThrow,
+            Dispatch.OpMakePtrLocal,
+            Dispatch.OpMakePtrGlobal,
+            Dispatch.OpMakePtrIndex,
+            Dispatch.OpMakePtrField,
+            Dispatch.OpMakePtrFunc,
+            Dispatch.OpMakePtrCell,
+            Dispatch.OpLoadPtr,
+            Dispatch.OpStorePtr,
+            Dispatch.OpAddPtr,
+            Dispatch.OpLoopIntLtInc,
+            Dispatch.OpLoopIntLeInc,
+            Dispatch.OpLoopIntGtDec,
+            Dispatch.OpLoopIntGeDec,
+            Dispatch.OpLoopIntEqInc,
+            Dispatch.OpLoopIntNeInc,
+            Dispatch.OpLoopIntEqDec,
+            Dispatch.OpLoopIntNeDec,
+            Dispatch.OpJumpIfIntLtFalse,
+            Dispatch.OpJumpIfIntLeFalse,
+            Dispatch.OpJumpIfIntGtFalse,
+            Dispatch.OpJumpIfIntGeFalse,
+            Dispatch.OpJumpIfIntEqFalse,
+            Dispatch.OpJumpIfIntNeFalse,
+            Dispatch.OpIncInt,
+            Dispatch.OpDecInt,
+            Dispatch.OpIntToFloat,
+            Dispatch.OpFloatToInt,
+            Dispatch.OpFloatToString,
+            Dispatch.OpStringToFloat,
+            Dispatch.OpBoolToInt,
+            Dispatch.OpBoolToFloat,
+            Dispatch.OpFloatToBool,
+            Dispatch.OpLoopBackIntLtInc,
+            Dispatch.OpLoopBackIntLeInc,
+            Dispatch.OpLoopBackIntGtDec,
+            Dispatch.OpLoopBackIntGeDec,
+            Dispatch.OpLoopBackIntEqInc,
+            Dispatch.OpLoopBackIntNeInc,
+            Dispatch.OpLoopBackIntEqDec,
+            Dispatch.OpLoopBackIntNeDec
+        };
+
+        Dispatch.Run();
+
+        If (ctx.HasUnhandledException)
+        {
+            Console.PrintLine(ctx.ExceptionMessage());
+            If (ctx.CurrentTrace != "")
+            {
+                Console.PrintLine(ctx.CurrentTrace);
+            }
+        }
+        Return ctx.ExitCode;
+    }
+}

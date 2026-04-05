@@ -1,0 +1,505 @@
+Unit IO.Kinal.VM.Stdlib;
+
+Get Bytecode By IO.Kinal.VM.Bytecode;
+Get Console By IO.Console;
+Get File By IO.File;
+Get Meta By IO.Meta;
+Get Time By IO.Time;
+Get IO.Type.string;
+Get Context By IO.Kinal.VM.Context;
+
+Meta VmBuiltin(int id, string name)
+{
+    On @function;
+    Keep @runtime;
+}
+
+Static Function bool AnyEquals(Context.ExecutionContext ctx, int a, int b)
+{
+    Context.FunctionFrame frame = ctx.CurrentFrame();
+
+    If (frame.Kinds[a] != frame.Kinds[b])
+    {
+        Return false;
+    }
+
+    Return Switch(frame.Kinds[a])
+    {
+        Case([int](Bytecode.ValueKind.Null))   { true }
+        Case([int](Bytecode.ValueKind.Int))    { frame.IntRegisters[a] == frame.IntRegisters[b] }
+        Case([int](Bytecode.ValueKind.Float))  { frame.FloatRegisters[a] == frame.FloatRegisters[b] }
+        Case([int](Bytecode.ValueKind.Bool))   { frame.BoolRegisters[a] == frame.BoolRegisters[b] }
+        Case([int](Bytecode.ValueKind.String)) { frame.StringRegisters[a] == frame.StringRegisters[b] }
+        Case([int](Bytecode.ValueKind.Char))   { frame.IntRegisters[a] == frame.IntRegisters[b] }
+        Case([int](Bytecode.ValueKind.Array))  { frame.IntRegisters[a] == frame.IntRegisters[b] }
+        Case([int](Bytecode.ValueKind.Object)) { frame.IntRegisters[a] == frame.IntRegisters[b] }
+        Case(default)                   { false }
+    };
+}
+
+Static Function string AnyTypeName(Context.ExecutionContext ctx, int reg)
+{
+    Context.FunctionFrame frame = ctx.CurrentFrame();
+
+    Return Switch(frame.Kinds[reg])
+    {
+        Case([int](Bytecode.ValueKind.Null))   { "null" }
+        Case([int](Bytecode.ValueKind.Int))    { "int" }
+        Case([int](Bytecode.ValueKind.Float))  { "float" }
+        Case([int](Bytecode.ValueKind.Bool))   { "bool" }
+        Case([int](Bytecode.ValueKind.String)) { "string" }
+        Case([int](Bytecode.ValueKind.Char))   { "char" }
+        Case([int](Bytecode.ValueKind.Array))  { "array" }
+        Case([int](Bytecode.ValueKind.Object)) { ctx.Stringify(reg) }
+        Case([int](Bytecode.ValueKind.Pointer)) { "pointer" }
+        Case(default)                   { "unknown" }
+    };
+}
+
+Static Function bool TextContains(string text, string needle)
+{
+    char[] haystack = text.ToChars();
+    char[] pattern = needle.ToChars();
+    int hayLength = haystack.Length();
+    int patternLength = pattern.Length();
+
+    If (patternLength <= 0)
+    {
+        Return true;
+    }
+    If (hayLength < patternLength)
+    {
+        Return false;
+    }
+
+    For (int i = 0; i <= hayLength - patternLength; i = i + 1)
+    {
+        bool matched = true;
+        For (int j = 0; j < patternLength; j = j + 1)
+        {
+            If (haystack.Index(i + j) != pattern.Index(j))
+            {
+                matched = false;
+                Break;
+            }
+        }
+        If (matched)
+        {
+            Return true;
+        }
+    }
+
+    Return false;
+}
+
+Public Class StdlibRegistry
+{
+    Public IO.Type.Object.Function[] Handlers;
+    Public bool[] Present;
+    Public string[] Names;
+
+    Public Constructor()
+    {
+        This.Handlers = {};
+        This.Present = {};
+        This.Names = {};
+
+        IO.Type.Object.Function empty = null;
+        For (int i = 0; i < 256; i = i + 1)
+        {
+            This.Handlers = This.Handlers.Add(empty);
+            This.Present = This.Present.Add(false);
+            This.Names = This.Names.Add("");
+        }
+    }
+
+    Public Unsafe Static Function StdlibRegistry BuildDefault()
+    {
+        StdlibRegistry registry = New StdlibRegistry();
+        list owners = Meta.Query("VmBuiltin");
+        For (int i = 0; i < owners.Count(); i = i + 1)
+        {
+            dict item = Meta.Find([string](owners.Fetch(i)), "VmBuiltin");
+            registry.RegisterMeta(item);
+        }
+        Return registry;
+    }
+
+    Private Unsafe Function void RegisterMeta(dict item)
+    {
+        int id = [int](item.Fetch("arg.id"));
+        byte* owner = [byte*](item.Fetch("owner_ptr"));
+        IO.Type.Object.Function fn = [Object.Function](owner);
+
+        If (id < 0 || id >= This.Handlers.Length())
+        {
+            Throw "VmBuiltin id out of range: " + [string](id);
+        }
+
+        This.Handlers[id] = fn;
+        This.Present[id] = true;
+        This.Names[id] = [string](item.Fetch("arg.name"));
+    }
+
+    Public Function void Invoke(Context.ExecutionContext ctx, int builtinId, int dst, int a0, int a1, int a2, int a3)
+    {
+        If (builtinId < 0 || builtinId >= This.Handlers.Length() || !This.Present[builtinId])
+        {
+            Throw "Unregistered builtin: " + [string](builtinId);
+        }
+
+        IO.Type.Object.Function fn = This.Handlers[builtinId];
+        fn(ctx, dst, a0, a1, a2, a3);
+    }
+}
+
+[VmBuiltin(0, "IO.Console.PrintLine")]
+Static Function void BuiltinConsolePrintLine(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    Console.PrintLine(ctx.Stringify(a0));
+}
+
+[VmBuiltin(1, "IO.Console.Print")]
+Static Function void BuiltinConsolePrint(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    Console.Print(ctx.Stringify(a0));
+}
+
+[VmBuiltin(3, "IO.Console.Write")]
+Static Function void BuiltinConsoleWrite(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    Console.Print(ctx.Stringify(a0));
+}
+
+[VmBuiltin(4, "IO.Console.WriteLine")]
+Static Function void BuiltinConsoleWriteLine(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    Console.PrintLine(ctx.Stringify(a0));
+}
+
+[VmBuiltin(2, "IO.Console.ReadLine")]
+Static Function void BuiltinConsoleReadLine(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    ctx.SetString(dst, Console.ReadLine());
+}
+
+[VmBuiltin(5, "IO.Console.PrintInt")]
+Static Function void BuiltinConsolePrintInt(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    Console.PrintLine(ctx.GetInt(a0));
+}
+
+[VmBuiltin(6, "IO.Console.PrintBool")]
+Static Function void BuiltinConsolePrintBool(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    Console.PrintLine(ctx.GetBool(a0));
+}
+
+[VmBuiltin(7, "IO.Console.PrintChar")]
+Static Function void BuiltinConsolePrintChar(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    Console.PrintLine(ctx.GetChar(a0));
+}
+
+[VmBuiltin(8, "IO.Console.PrintLineInt")]
+Static Function void BuiltinConsolePrintLineInt(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    Console.PrintLine(ctx.GetInt(a0));
+}
+
+[VmBuiltin(9, "IO.Console.PrintLineBool")]
+Static Function void BuiltinConsolePrintLineBool(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    Console.PrintLine(ctx.GetBool(a0));
+}
+
+[VmBuiltin(10, "IO.Console.PrintLineChar")]
+Static Function void BuiltinConsolePrintLineChar(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    Console.PrintLine(ctx.GetChar(a0));
+}
+
+[VmBuiltin(11, "IO.Console.WriteInt")]
+Static Function void BuiltinConsoleWriteInt(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    Console.Print(ctx.GetInt(a0));
+}
+
+[VmBuiltin(12, "IO.Console.WriteBool")]
+Static Function void BuiltinConsoleWriteBool(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    Console.Print(ctx.GetBool(a0));
+}
+
+[VmBuiltin(13, "IO.Console.WriteChar")]
+Static Function void BuiltinConsoleWriteChar(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    Console.Print(ctx.GetChar(a0));
+}
+
+[VmBuiltin(15, "IO.Time.GetTick")]
+Static Function void BuiltinTimeGetTick(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    ctx.SetInt(dst, Time.GetTick());
+}
+
+[VmBuiltin(16, "IO.Time.Sleep")]
+Static Function void BuiltinTimeSleep(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    Time.Sleep(ctx.GetInt(a0));
+}
+
+[VmBuiltin(17, "IO.Time.GetNanoTick")]
+Static Function void BuiltinTimeGetNanoTick(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    ctx.SetInt(dst, Time.GetNanoTick());
+}
+
+[VmBuiltin(19, "IO.Type.string.Length")]
+Static Function void BuiltinStringLength(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    ctx.SetInt(dst, ctx.GetString(a0).Length());
+}
+
+[VmBuiltin(20, "IO.Type.string.Concat")]
+Static Function void BuiltinStringConcat(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    ctx.SetString(dst, ctx.Stringify(a0) + ctx.Stringify(a1));
+}
+
+[VmBuiltin(21, "IO.Type.string.Equals")]
+Static Function void BuiltinStringEquals(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    ctx.SetBool(dst, ctx.GetString(a0) == ctx.GetString(a1));
+}
+
+[VmBuiltin(22, "IO.Type.string.ToChars")]
+Static Function void BuiltinStringToChars(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    char[] chars = ctx.GetString(a0).ToChars();
+    int handle = ctx.NewArray(chars.Length(), [int](Bytecode.ValueKind.Char));
+    For (int i = 0; i < chars.Length(); i = i + 1)
+    {
+        ctx.ArraySetValue(handle, i, Context.VMValue.FromChar(chars.Index(i)));
+    }
+    ctx.CurrentFrame().ImportValue(dst, Context.VMValue.FromArray(handle));
+}
+
+[VmBuiltin(85, "IO.File.Create")]
+Static Function void BuiltinFileCreate(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    ctx.SetBool(dst, File.Create(ctx.GetString(a0)));
+}
+
+[VmBuiltin(86, "IO.File.Touch")]
+Static Function void BuiltinFileTouch(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    ctx.SetBool(dst, File.Touch(ctx.GetString(a0)));
+}
+
+[VmBuiltin(87, "IO.File.ReadAllText")]
+Static Function void BuiltinFileReadAllText(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    ctx.SetString(dst, File.ReadAllText(ctx.GetString(a0)));
+}
+
+[VmBuiltin(88, "IO.File.ReadFirstLine")]
+Static Function void BuiltinFileReadFirstLine(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    ctx.SetString(dst, File.ReadFirstLine(ctx.GetString(a0)));
+}
+
+[VmBuiltin(89, "IO.File.WriteAllText")]
+Static Function void BuiltinFileWriteAllText(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    ctx.SetBool(dst, File.WriteAllText(ctx.GetString(a0), ctx.GetString(a1)));
+}
+
+[VmBuiltin(90, "IO.File.AppendAllText")]
+Static Function void BuiltinFileAppendAllText(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    ctx.SetBool(dst, File.AppendAllText(ctx.GetString(a0), ctx.GetString(a1)));
+}
+
+[VmBuiltin(91, "IO.File.AppendLine")]
+Static Function void BuiltinFileAppendLine(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    ctx.SetBool(dst, File.AppendLine(ctx.GetString(a0), ctx.GetString(a1)));
+}
+
+[VmBuiltin(92, "IO.File.Delete")]
+Static Function void BuiltinFileDelete(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    ctx.SetBool(dst, File.Delete(ctx.GetString(a0)));
+}
+
+[VmBuiltin(93, "IO.File.DeleteIfExists")]
+Static Function void BuiltinFileDeleteIfExists(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    ctx.SetBool(dst, File.DeleteIfExists(ctx.GetString(a0)));
+}
+
+[VmBuiltin(94, "IO.File.Size")]
+Static Function void BuiltinFileSize(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    ctx.SetInt(dst, File.Size(ctx.GetString(a0)));
+}
+
+[VmBuiltin(95, "IO.File.IsEmpty")]
+Static Function void BuiltinFileIsEmpty(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    ctx.SetBool(dst, File.IsEmpty(ctx.GetString(a0)));
+}
+
+[VmBuiltin(96, "IO.File.Copy")]
+Static Function void BuiltinFileCopy(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    ctx.SetBool(dst, File.Copy(ctx.GetString(a0), ctx.GetString(a1)));
+}
+
+[VmBuiltin(97, "IO.File.Move")]
+Static Function void BuiltinFileMove(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    ctx.SetBool(dst, File.Move(ctx.GetString(a0), ctx.GetString(a1)));
+}
+
+[VmBuiltin(98, "IO.File.ReadOrDefault")]
+Static Function void BuiltinFileReadOrDefault(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    ctx.SetString(dst, File.ReadOrDefault(ctx.GetString(a0), ctx.GetString(a1)));
+}
+
+[VmBuiltin(99, "IO.File.ReadIfExists")]
+Static Function void BuiltinFileReadIfExists(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    ctx.SetString(dst, File.ReadIfExists(ctx.GetString(a0)));
+}
+
+[VmBuiltin(100, "IO.File.ReadOr")]
+Static Function void BuiltinFileReadOr(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    ctx.SetString(dst, File.ReadOr(ctx.GetString(a0), ctx.GetString(a1)));
+}
+
+[VmBuiltin(103, "IO.File.ReplaceText")]
+Static Function void BuiltinFileReplaceText(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    ctx.SetBool(dst, File.ReplaceText(ctx.GetString(a0), ctx.GetString(a1), ctx.GetString(a2)));
+}
+
+[VmBuiltin(130, "IO.Type.any.IsNull")]
+Static Function void BuiltinAnyIsNull(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    ctx.SetBool(dst, ctx.KindAt(a0) == [int](Bytecode.ValueKind.Null));
+}
+
+[VmBuiltin(131, "IO.Type.any.ToString")]
+Static Function void BuiltinAnyToString(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    ctx.SetString(dst, ctx.Stringify(a0));
+}
+
+[VmBuiltin(132, "IO.Type.any.Equals")]
+Static Function void BuiltinAnyEquals(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    ctx.SetBool(dst, AnyEquals(ctx, a0, a1));
+}
+
+[VmBuiltin(134, "IO.Type.any.TypeName")]
+Static Function void BuiltinAnyTypeName(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    ctx.SetString(dst, AnyTypeName(ctx, a0));
+}
+
+[VmBuiltin(135, "IO.Type.any.IsNumber")]
+Static Function void BuiltinAnyIsNumber(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    int kind = ctx.KindAt(a0);
+    ctx.SetBool(dst, kind == [int](Bytecode.ValueKind.Int) || kind == [int](Bytecode.ValueKind.Float));
+}
+
+[VmBuiltin(136, "IO.Type.any.IsPointer")]
+Static Function void BuiltinAnyIsPointer(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    ctx.SetBool(dst, ctx.KindAt(a0) == [int](Bytecode.ValueKind.Pointer));
+}
+
+[VmBuiltin(137, "IO.Type.any.IsInt")]
+Static Function void BuiltinAnyIsInt(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    ctx.SetBool(dst, ctx.KindAt(a0) == [int](Bytecode.ValueKind.Int));
+}
+
+[VmBuiltin(138, "IO.Type.any.IsFloat")]
+Static Function void BuiltinAnyIsFloat(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    ctx.SetBool(dst, ctx.KindAt(a0) == [int](Bytecode.ValueKind.Float));
+}
+
+[VmBuiltin(139, "IO.Type.any.IsString")]
+Static Function void BuiltinAnyIsString(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    ctx.SetBool(dst, ctx.KindAt(a0) == [int](Bytecode.ValueKind.String));
+}
+
+[VmBuiltin(140, "IO.Type.any.IsBool")]
+Static Function void BuiltinAnyIsBool(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    ctx.SetBool(dst, ctx.KindAt(a0) == [int](Bytecode.ValueKind.Bool));
+}
+
+[VmBuiltin(141, "IO.Type.any.IsChar")]
+Static Function void BuiltinAnyIsChar(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    ctx.SetBool(dst, ctx.KindAt(a0) == [int](Bytecode.ValueKind.Char));
+}
+
+[VmBuiltin(142, "IO.Type.any.IsObject")]
+Static Function void BuiltinAnyIsObject(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    ctx.SetBool(dst, ctx.KindAt(a0) == [int](Bytecode.ValueKind.Object));
+}
+
+[VmBuiltin(145, "IO.File.Exists")]
+Static Function void BuiltinFileExists(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    ctx.SetBool(dst, File.Exists(ctx.GetString(a0)));
+}
+
+[VmBuiltin(146, "IO.Text.Contains")]
+Static Function void BuiltinTextContains(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    ctx.SetBool(dst, TextContains(ctx.GetString(a0), ctx.GetString(a1)));
+}
+
+[VmBuiltin(147, "IO.Error.LastTrace")]
+Static Function void BuiltinErrorLastTrace(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    ctx.SetString(dst, ctx.LastTraceValue());
+}
+
+[VmBuiltin(148, "IO.Error.HasException")]
+Static Function void BuiltinErrorHas(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    ctx.SetBool(dst, ctx.HasActiveException());
+}
+
+[VmBuiltin(149, "IO.Error.Clear")]
+Static Function void BuiltinErrorClear(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    ctx.ClearException();
+}
+
+[VmBuiltin(150, "IO.Error.Current")]
+Static Function void BuiltinErrorCurrent(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    Context.VMValue value = ctx.CurrentOrLastException();
+    Context.FunctionFrame frame = ctx.CurrentFrame();
+    frame.ImportValue(dst, value);
+}
+
+[VmBuiltin(151, "IO.GC.Collect")]
+Static Function void BuiltinGcCollect(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    // The bootstrap VM currently keeps heap objects alive for the whole run.
+}

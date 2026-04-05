@@ -1,0 +1,7 @@
+{
+  "kind": "package",
+  "name": "IO.Bad",
+  "version": "0.1.0",
+  "source_root": "src",
+  "entry": "src/IO/Bad.kn"
+}

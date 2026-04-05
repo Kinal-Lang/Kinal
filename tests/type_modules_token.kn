@@ -1,0 +1,9 @@
+Unit MiniLang.Token;
+
+Public Class Token {
+    Public string Value;
+
+    Public Function Token(string value) {
+        This.Value = value;
+    }
+}

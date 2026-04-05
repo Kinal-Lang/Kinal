@@ -1,0 +1,9 @@
+Unit Tests.Hello;
+
+Get Console By IO.Console;
+
+Static Function int Main() {
+    Console.PrintLine("hello");
+    Return 0;
+}
+

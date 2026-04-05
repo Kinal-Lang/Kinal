@@ -1,0 +1,30 @@
+Unit Tests.NestedInterfaceInClass;
+
+Get Console By IO.Console;
+
+Class Outer
+{
+    Public Interface IValue
+    {
+        Function int Fetch();
+    }
+
+    Public Class Box By Outer.IValue
+    {
+        Constructor()
+        {
+        }
+
+        Public Function int Fetch()
+        {
+            Return 7;
+        }
+    }
+}
+
+Static Function int Main()
+{
+    Outer.IValue value = New Outer.Box();
+    Console.PrintLine(value.Fetch());
+    Return 0;
+}

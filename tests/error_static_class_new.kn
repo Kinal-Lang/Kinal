@@ -1,0 +1,15 @@
+Unit Tests.ErrorStaticClassNew;
+
+Static Class Config
+{
+    Public Function int Value()
+    {
+        Return 1;
+    }
+}
+
+Safe Static Function int Main()
+{
+    Var cfg = New Config();
+    Return Config.Value();
+}

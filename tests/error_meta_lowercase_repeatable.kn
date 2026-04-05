@@ -1,0 +1,13 @@
+Unit Tests.ErrorMetaLowercaseRepeatable;
+
+Meta Demo(string value)
+{
+    On @function;
+    Keep @runtime;
+    repeatable;
+}
+
+Static Function int Main()
+{
+    Return 0;
+}

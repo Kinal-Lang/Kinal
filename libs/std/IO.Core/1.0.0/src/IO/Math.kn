@@ -1,0 +1,166 @@
+Unit IO;
+
+// ===== C-backed math functions (top-level Extern, linked from kn_math.obj) =====
+
+// Trigonometric
+Extern Unsafe Function f64 __kn_math_sin(f64 x) By C;
+Extern Unsafe Function f64 __kn_math_cos(f64 x) By C;
+Extern Unsafe Function f64 __kn_math_tan(f64 x) By C;
+Extern Unsafe Function f64 __kn_math_asin(f64 x) By C;
+Extern Unsafe Function f64 __kn_math_acos(f64 x) By C;
+Extern Unsafe Function f64 __kn_math_atan(f64 x) By C;
+Extern Unsafe Function f64 __kn_math_atan2(f64 y, f64 x) By C;
+
+// Hyperbolic
+Extern Unsafe Function f64 __kn_math_sinh(f64 x) By C;
+Extern Unsafe Function f64 __kn_math_cosh(f64 x) By C;
+Extern Unsafe Function f64 __kn_math_tanh(f64 x) By C;
+
+// Power / Exponential
+Extern Unsafe Function f64 __kn_math_sqrt(f64 x) By C;
+Extern Unsafe Function f64 __kn_math_cbrt(f64 x) By C;
+Extern Unsafe Function f64 __kn_math_pow(f64 base, f64 exponent) By C;
+Extern Unsafe Function f64 __kn_math_exp(f64 x) By C;
+Extern Unsafe Function f64 __kn_math_log(f64 x) By C;
+Extern Unsafe Function f64 __kn_math_log2(f64 x) By C;
+Extern Unsafe Function f64 __kn_math_log10(f64 x) By C;
+
+// Rounding
+Extern Unsafe Function f64 __kn_math_floor(f64 x) By C;
+Extern Unsafe Function f64 __kn_math_ceil(f64 x) By C;
+Extern Unsafe Function f64 __kn_math_round(f64 x) By C;
+Extern Unsafe Function f64 __kn_math_trunc(f64 x) By C;
+
+// Misc
+Extern Unsafe Function f64 __kn_math_fabs(f64 x) By C;
+Extern Unsafe Function f64 __kn_math_fmod(f64 x, f64 y) By C;
+Extern Unsafe Function f64 __kn_math_fmin(f64 x, f64 y) By C;
+Extern Unsafe Function f64 __kn_math_fmax(f64 x, f64 y) By C;
+Extern Unsafe Function f64 __kn_math_copysign(f64 x, f64 y) By C;
+Extern Unsafe Function int __kn_math_isinf(f64 x) By C;
+Extern Unsafe Function int __kn_math_isnan(f64 x) By C;
+
+// ===== Constants (accessible as IO.PI, IO.E, etc.) =====
+Const f64 PI      = 3.14159265358979323846;
+Const f64 E       = 2.71828182845904523536;
+Const f64 TAU     = 6.28318530717958647692;
+Const f64 DEG2RAD = 0.01745329251994329577;
+Const f64 RAD2DEG = 57.2957795130823208768;
+
+Static Class Math
+{
+    // ===== Public wrappers (Trusted: safe to call, C impl is verified) =====
+
+    // --- Trigonometric ---
+    Public Trusted Function f64 Sin(f64 x) { Return __kn_math_sin(x); }
+    Public Trusted Function f64 Cos(f64 x) { Return __kn_math_cos(x); }
+    Public Trusted Function f64 Tan(f64 x) { Return __kn_math_tan(x); }
+    Public Trusted Function f64 Asin(f64 x) { Return __kn_math_asin(x); }
+    Public Trusted Function f64 Acos(f64 x) { Return __kn_math_acos(x); }
+    Public Trusted Function f64 Atan(f64 x) { Return __kn_math_atan(x); }
+    Public Trusted Function f64 Atan2(f64 y, f64 x) { Return __kn_math_atan2(y, x); }
+
+    // --- Hyperbolic ---
+    Public Trusted Function f64 Sinh(f64 x) { Return __kn_math_sinh(x); }
+    Public Trusted Function f64 Cosh(f64 x) { Return __kn_math_cosh(x); }
+    Public Trusted Function f64 Tanh(f64 x) { Return __kn_math_tanh(x); }
+
+    // --- Power / Exponential ---
+    Public Trusted Function f64 Sqrt(f64 x) { Return __kn_math_sqrt(x); }
+    Public Trusted Function f64 Cbrt(f64 x) { Return __kn_math_cbrt(x); }
+    Public Trusted Function f64 Pow(f64 base, f64 exponent) { Return __kn_math_pow(base, exponent); }
+    Public Trusted Function f64 Exp(f64 x) { Return __kn_math_exp(x); }
+    Public Trusted Function f64 Log(f64 x) { Return __kn_math_log(x); }
+    Public Trusted Function f64 Log2(f64 x) { Return __kn_math_log2(x); }
+    Public Trusted Function f64 Log10(f64 x) { Return __kn_math_log10(x); }
+
+    // --- Rounding ---
+    Public Trusted Function f64 Floor(f64 x) { Return __kn_math_floor(x); }
+    Public Trusted Function f64 Ceil(f64 x) { Return __kn_math_ceil(x); }
+    Public Trusted Function f64 Round(f64 x) { Return __kn_math_round(x); }
+    Public Trusted Function f64 Trunc(f64 x) { Return __kn_math_trunc(x); }
+
+    // --- Misc ---
+    Public Trusted Function f64 FAbs(f64 x) { Return __kn_math_fabs(x); }
+    Public Trusted Function f64 FMod(f64 x, f64 y) { Return __kn_math_fmod(x, y); }
+    Public Trusted Function f64 FMin(f64 x, f64 y) { Return __kn_math_fmin(x, y); }
+    Public Trusted Function f64 FMax(f64 x, f64 y) { Return __kn_math_fmax(x, y); }
+    Public Trusted Function f64 CopySign(f64 x, f64 y) { Return __kn_math_copysign(x, y); }
+    Public Trusted Function bool IsInf(f64 x) { Return __kn_math_isinf(x) != 0; }
+    Public Trusted Function bool IsNaN(f64 x) { Return __kn_math_isnan(x) != 0; }
+
+    // --- f32 convenience overloads ---
+    Public Trusted Function f32 SinF(f32 x) { Return [f32](__kn_math_sin([f64](x))); }
+    Public Trusted Function f32 CosF(f32 x) { Return [f32](__kn_math_cos([f64](x))); }
+    Public Trusted Function f32 TanF(f32 x) { Return [f32](__kn_math_tan([f64](x))); }
+    Public Trusted Function f32 SqrtF(f32 x) { Return [f32](__kn_math_sqrt([f64](x))); }
+    Public Trusted Function f32 PowF(f32 base, f32 exponent) { Return [f32](__kn_math_pow([f64](base), [f64](exponent))); }
+    Public Trusted Function f32 FloorF(f32 x) { Return [f32](__kn_math_floor([f64](x))); }
+    Public Trusted Function f32 CeilF(f32 x) { Return [f32](__kn_math_ceil([f64](x))); }
+    Public Trusted Function f32 RoundF(f32 x) { Return [f32](__kn_math_round([f64](x))); }
+    Public Trusted Function f32 FAbsF(f32 x) { Return [f32](__kn_math_fabs([f64](x))); }
+    Public Trusted Function f32 Atan2F(f32 y, f32 x) { Return [f32](__kn_math_atan2([f64](y), [f64](x))); }
+
+    // ===== Integer helpers (pure Kinal) =====
+
+    Public Safe Function int Abs(int value)
+    {
+        If (value < 0) { Return -value; }
+        Return value;
+    }
+
+    Public Safe Function int Min(int left, int right)
+    {
+        If (left < right) { Return left; }
+        Return right;
+    }
+
+    Public Safe Function int Max(int left, int right)
+    {
+        If (left > right) { Return left; }
+        Return right;
+    }
+
+    Public Safe Function int Clamp(int value, int minValue, int maxValue)
+    {
+        If (value < minValue) { Return minValue; }
+        If (value > maxValue) { Return maxValue; }
+        Return value;
+    }
+
+    Public Safe Function int Sign(int value)
+    {
+        If (value > 0) { Return 1; }
+        If (value < 0) { Return -1; }
+        Return 0;
+    }
+
+    Public Trusted Function f64 Lerp(f64 a, f64 b, f64 t)
+    {
+        Return a + (b - a) * t;
+    }
+
+    Public Trusted Function f32 LerpF(f32 a, f32 b, f32 t)
+    {
+        Return a + (b - a) * t;
+    }
+
+    Public Trusted Function f64 ClampF64(f64 value, f64 minVal, f64 maxVal)
+    {
+        If (value < minVal) { Return minVal; }
+        If (value > maxVal) { Return maxVal; }
+        Return value;
+    }
+
+    Public Trusted Function f32 ClampF32(f32 value, f32 minVal, f32 maxVal)
+    {
+        If (value < minVal) { Return minVal; }
+        If (value > maxVal) { Return maxVal; }
+        Return value;
+    }
+
+    Public Trusted Function f64 Radians(f64 degrees) { Return degrees * DEG2RAD; }
+    Public Trusted Function f64 Degrees(f64 radians) { Return radians * RAD2DEG; }
+    Public Trusted Function f32 RadiansF(f32 degrees) { Return [f32]([f64](degrees) * DEG2RAD); }
+    Public Trusted Function f32 DegreesF(f32 radians) { Return [f32]([f64](radians) * RAD2DEG); }
+}

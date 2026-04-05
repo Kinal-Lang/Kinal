@@ -1,0 +1,15 @@
+Unit Tests.VmPerfLoop;
+
+Get Console By IO.Console;
+Get IO.Time;
+
+Static Function int Main()
+{
+    int start = IO.Time.GetNanoTick();
+    For (int i = 0; i < 10000000; i++)
+    {
+    }
+    int end = IO.Time.GetNanoTick();
+    Console.PrintLine("Time taken: " + (end - start) + " nanoseconds");
+    Return 0;
+}

@@ -1,0 +1,8 @@
+Unit Tests.ErrorFileWriteLinesType;
+
+Get IO.File;
+
+Static Function int Main() {
+    IO.File.WriteLines("tmp.txt", "x");
+    Return 0;
+}

@@ -1,0 +1,17 @@
+Unit Tests.FfiAttrLib;
+
+Get Console By IO.Console;
+
+[LinkLib("native_ffi")]
+[LinkName("kn_native_add")]
+Extern Function int NativeAdd(int a, int b) By C;
+
+[LinkLib("native_ffi")]
+[LinkName("kn_native_hello")]
+Extern Function string NativeHello() By C;
+
+Trusted Static Function int Main() {
+    Console.PrintLine(NativeAdd(10, 32));
+    Console.PrintLine(NativeHello());
+    Return 0;
+}

@@ -1,0 +1,1256 @@
+Unit IO.UI;
+
+Get Native By IO.__UI;
+
+Trusted Function byte* __UI_CreateBrush(Color color)
+{
+    If (color == null)
+    {
+        Return null;
+    }
+    Return Native.CreateSolidBrush(color.ToColorRef());
+}
+
+Trusted Function byte* __UI_CreateFont(Font font)
+{
+    If (font == null)
+    {
+        Return null;
+    }
+
+    i32 height = -[i32](font.Size);
+    i32 weight = [i32]([int](font.Weight));
+    u32 italic = 0;
+    u32 underline = 0;
+    u32 strikeOut = 0;
+    If (font.Italic)
+    {
+        italic = 1;
+    }
+    If (font.Underline)
+    {
+        underline = 1;
+    }
+    If (font.StrikeOut)
+    {
+        strikeOut = 1;
+    }
+
+    Return Native.CreateFontW(height, 0, 0, 0, weight,
+                              italic, underline, strikeOut, Native.Win32.DEFAULT_CHARSET,
+                              0, 0, 0, 0, Native.__kn_win_utf16(font.Family));
+}
+
+Trusted Function void __UI_DeleteNativeObject(byte* handle)
+{
+    If (handle != null)
+    {
+        Native.DeleteObject(handle);
+    }
+}
+
+Trusted Function void __UI_ApplyComponentStyle(Component component)
+{
+    If (component == null || component.Handle == null)
+    {
+        Return;
+    }
+
+    __UI_DeleteNativeObject(component.NativeFont);
+    __UI_DeleteNativeObject(component.NativeBrush);
+    component.NativeFont = __UI_CreateFont(component.EffectiveFont());
+    component.NativeBrush = __UI_CreateBrush(component.EffectiveBackColor());
+
+    If (component.NativeFont != null)
+    {
+        Native.SendMessageW(component.Handle, Native.Win32.WM_SETFONT, [usize](component.NativeFont), 1);
+    }
+
+    Native.InvalidateRect(component.Handle, null, true);
+}
+
+Trusted Function void __UI_ApplyWindowStyle(Window window)
+{
+    If (window == null)
+    {
+        Return;
+    }
+
+    __UI_DeleteNativeObject(window.NativeBrush);
+    window.NativeBrush = __UI_CreateBrush(window.BackColor);
+
+    If (window.Handle != null)
+    {
+        Native.InvalidateRect(window.Handle, null, true);
+    }
+
+    int i = 0;
+    While (i < window.Components.Length())
+    {
+        __UI_ApplyComponentStyle(window.Components[i]);
+        i++;
+    }
+}
+
+Static Class __UIHost
+{
+    Public Static bool Registered;
+    Public Static bool WindowsReady;
+    Public Static byte* InstanceHandle;
+    Public Static int NextControlId;
+    Public Static string WindowClassName;
+    Public Static Window[] Windows;
+
+    Public Trusted Function void EnsureInit()
+    {
+        If (!WindowsReady)
+        {
+            Windows = {};
+            WindowsReady = true;
+        }
+        If (InstanceHandle == null)
+        {
+            InstanceHandle = Native.GetModuleHandleA(null);
+        }
+        If (NextControlId == 0)
+        {
+            NextControlId = 1000;
+        }
+        If (WindowClassName == null)
+        {
+            WindowClassName = "KinalUIWindowClass";
+        }
+        If (Registered)
+        {
+            Return;
+        }
+
+        Native.WNDCLASSW wc;
+        wc.Style = 0;
+        wc.WndProc = &__IO_UI_WndProc;
+        wc.ClassExtra = 0;
+        wc.WindowExtra = 0;
+        wc.Instance = InstanceHandle;
+        wc.Icon = null;
+        wc.Cursor = Native.LoadCursorW(null, [u16*](Native.Win32.IDC_ARROW));
+        wc.BackgroundBrush = null;
+        wc.MenuName = null;
+        wc.ClassName = Native.__kn_win_utf16(WindowClassName);
+
+        u16 atom = Native.RegisterClassW(&wc);
+        If (atom == 0)
+        {
+            __UI_ThrowHostError("RegisterClassW", [int](Native.GetLastError()));
+        }
+        Registered = true;
+    }
+
+    Public Trusted Function int AllocateControlId()
+    {
+        int id = NextControlId;
+        NextControlId++;
+        Return id;
+    }
+
+    Public Trusted Function void RegisterWindow(Window window)
+    {
+        EnsureInit();
+        Windows = Windows.Add(window);
+    }
+
+    Public Trusted Function int ShowMessageBox(string text, string caption, int style)
+    {
+        Return [int](Native.MessageBoxW(0, Native.__kn_win_utf16(text), Native.__kn_win_utf16(caption), [u32](style)));
+    }
+
+    Public Trusted Function byte* CreateLabelHandle(Label label, byte* parent, byte* instance)
+    {
+        Return Native.CreateWindowExW(0, Native.__kn_win_utf16("STATIC"), Native.__kn_win_utf16(label.Text),
+                                      Native.Win32.WS_CHILD | Native.Win32.WS_VISIBLE,
+                                    [i32](label.X), [i32](label.Y), [i32](label.Width), [i32](label.Height),
+                                    parent, null, instance, null);
+    }
+
+    Public Trusted Function byte* CreateButtonHandle(Button button, byte* parent, byte* instance)
+    {
+        Return Native.CreateWindowExW(0, Native.__kn_win_utf16("BUTTON"), Native.__kn_win_utf16(button.Text),
+                                      Native.Win32.WS_CHILD | Native.Win32.WS_VISIBLE | Native.Win32.BS_PUSHBUTTON,
+                                    [i32](button.X), [i32](button.Y), [i32](button.Width), [i32](button.Height),
+                                    parent, [byte*](button.Id), instance, null);
+    }
+
+    Public Trusted Function void SetComponentText(Component component, string text)
+    {
+        If (component == null || component.Handle == null)
+        {
+            Return;
+        }
+        Native.SetWindowTextW(component.Handle, Native.__kn_win_utf16(text));
+        Native.InvalidateRect(component.Handle, null, true);
+        Native.UpdateWindow(component.Handle);
+    }
+
+    Public Trusted Function void SetWindowTitle(Window window, string title)
+    {
+        If (window == null || window.Handle == null)
+        {
+            Return;
+        }
+        Native.SetWindowTextW(window.Handle, Native.__kn_win_utf16(title));
+        Native.InvalidateRect(window.Handle, null, true);
+        Native.UpdateWindow(window.Handle);
+    }
+
+    Public Trusted Function void UpdateComponentBounds(Component component)
+    {
+        If (component == null || component.Handle == null)
+        {
+            Return;
+        }
+        Native.MoveWindow(component.Handle,
+                          [i32](component.X), [i32](component.Y),
+                          [i32](component.Width), [i32](component.Height), true);
+        byte* parentHWnd = Native.GetParent(component.Handle);
+        If (parentHWnd != null)
+        {
+            Native.InvalidateRect(parentHWnd, null, true);
+            Native.UpdateWindow(parentHWnd);
+        }
+    }
+
+    Public Trusted Function void AttachButtonProc(Button button)
+    {
+        If (button == null || button.Handle == null)
+        {
+            Return;
+        }
+        button.NativeProc = [byte*]([usize](Native.SetWindowLongPtrW(button.Handle,
+                                                                     Native.Win32.GWLP_WNDPROC,
+                                                                     &__IO_UI_ButtonProc)));
+    }
+
+    Public Trusted Function void AttachGroupBoxProc(GroupBox gb)
+    {
+        If (gb == null || gb.Handle == null)
+        {
+            Return;
+        }
+        gb.NativeProc = [byte*]([usize](Native.SetWindowLongPtrW(gb.Handle,
+                                                                  Native.Win32.GWLP_WNDPROC,
+                                                                  &__IO_UI_GroupBoxProc)));
+    }
+
+    Public Trusted Function byte* CreateInputHandle(Input input, byte* parent, byte* instance)
+    {
+        u32 style = Native.Win32.WS_CHILD | Native.Win32.WS_VISIBLE | Native.Win32.WS_BORDER |
+                    Native.Win32.WS_TABSTOP | Native.Win32.ES_AUTOHSCROLL;
+        If (input.Multiline)
+        {
+            style = style | Native.Win32.ES_MULTILINE | Native.Win32.ES_AUTOVSCROLL | Native.Win32.WS_VSCROLL;
+        }
+        If (input.ReadOnly)
+        {
+            style = style | Native.Win32.ES_READONLY;
+        }
+        If (input.Password && !input.Multiline)
+        {
+            style = style | Native.Win32.ES_PASSWORD;
+        }
+        Return Native.CreateWindowExW(0, Native.__kn_win_utf16("EDIT"), Native.__kn_win_utf16(input.Text),
+                                      style,
+                                    [i32](input.X), [i32](input.Y), [i32](input.Width), [i32](input.Height),
+                                    parent, [byte*](input.Id), instance, null);
+    }
+
+    Public Trusted Function byte* CreateCheckBoxHandle(CheckBox cb, byte* parent, byte* instance)
+    {
+        Return Native.CreateWindowExW(0, Native.__kn_win_utf16("BUTTON"), Native.__kn_win_utf16(cb.Text),
+                                      Native.Win32.WS_CHILD | Native.Win32.WS_VISIBLE | Native.Win32.BS_AUTOCHECKBOX |
+                                      Native.Win32.WS_TABSTOP,
+                                    [i32](cb.X), [i32](cb.Y), [i32](cb.Width), [i32](cb.Height),
+                                    parent, [byte*](cb.Id), instance, null);
+    }
+
+    Public Trusted Function byte* CreateRadioButtonHandle(RadioButton rb, byte* parent, byte* instance)
+    {
+        Return Native.CreateWindowExW(0, Native.__kn_win_utf16("BUTTON"), Native.__kn_win_utf16(rb.Text),
+                                      Native.Win32.WS_CHILD | Native.Win32.WS_VISIBLE | Native.Win32.BS_AUTORADIOBUTTON |
+                                      Native.Win32.WS_TABSTOP,
+                                    [i32](rb.X), [i32](rb.Y), [i32](rb.Width), [i32](rb.Height),
+                                    parent, [byte*](rb.Id), instance, null);
+    }
+
+    Public Trusted Function byte* CreateComboBoxHandle(ComboBox cb, byte* parent, byte* instance)
+    {
+        u32 style = Native.Win32.WS_CHILD | Native.Win32.WS_VISIBLE | Native.Win32.WS_TABSTOP |
+                    Native.Win32.CBS_HASSTRINGS;
+        If (cb.Editable)
+        {
+            style = style | Native.Win32.CBS_DROPDOWN;
+        }
+        Else
+        {
+            style = style | Native.Win32.CBS_DROPDOWNLIST;
+        }
+        byte* handle = Native.CreateWindowExW(0, Native.__kn_win_utf16("COMBOBOX"), Native.__kn_win_utf16(""),
+                                              style,
+                                            [i32](cb.X), [i32](cb.Y), [i32](cb.Width), [i32](cb.Height),
+                                            parent, [byte*](cb.Id), instance, null);
+
+        int i = 0;
+        While (i < cb.Items.Length())
+        {
+            Native.SendMessageW(handle, Native.Win32.CB_ADDSTRING, 0, [isize]([usize](Native.__kn_win_utf16(cb.Items[i]))));
+            i++;
+        }
+        If (cb.SelectedIndex >= 0)
+        {
+            Native.SendMessageW(handle, Native.Win32.CB_SETCURSEL, [usize](cb.SelectedIndex), 0);
+        }
+        Return handle;
+    }
+
+    Public Trusted Function byte* CreateProgressBarHandle(ProgressBar pb, byte* parent, byte* instance)
+    {
+        byte* handle = Native.CreateWindowExW(0, Native.__kn_win_utf16("msctls_progress32"), Native.__kn_win_utf16(""),
+                                              Native.Win32.WS_CHILD | Native.Win32.WS_VISIBLE,
+                                            [i32](pb.X), [i32](pb.Y), [i32](pb.Width), [i32](pb.Height),
+                                            parent, null, instance, null);
+        isize range = [isize](([u32](pb.Maximum) << 16) | [u32](pb.Minimum));
+        Native.SendMessageW(handle, Native.Win32.PBM_SETRANGE, 0, range);
+        Native.SendMessageW(handle, Native.Win32.PBM_SETPOS, [usize](pb.Value), 0);
+        Native.SendMessageW(handle, Native.Win32.PBM_SETSTEP, [usize](pb.Step), 0);
+        Return handle;
+    }
+
+    Public Trusted Function byte* CreateGroupBoxHandle(GroupBox gb, byte* parent, byte* instance)
+    {
+        Return Native.CreateWindowExW(0, Native.__kn_win_utf16("BUTTON"), Native.__kn_win_utf16(gb.Text),
+                                      Native.Win32.WS_CHILD | Native.Win32.WS_VISIBLE | Native.Win32.BS_GROUPBOX | Native.Win32.WS_CLIPCHILDREN,
+                                    [i32](gb.X), [i32](gb.Y), [i32](gb.Width), [i32](gb.Height),
+                                    parent, null, instance, null);
+    }
+
+    Public Trusted Function void CreateChildNative(Component child, byte* parent, byte* instance)
+    {
+        If (child Is Label label)
+        {
+            label.CreateNative(parent, instance);
+        }
+        Else If (child Is Button button)
+        {
+            button.CreateNative(parent, instance);
+        }
+        Else If (child Is Input input)
+        {
+            input.CreateNative(parent, instance);
+        }
+        Else If (child Is CheckBox checkBox)
+        {
+            checkBox.CreateNative(parent, instance);
+        }
+        Else If (child Is RadioButton radioButton)
+        {
+            radioButton.CreateNative(parent, instance);
+        }
+        Else If (child Is ComboBox comboBox)
+        {
+            comboBox.CreateNative(parent, instance);
+        }
+        Else If (child Is ProgressBar progressBar)
+        {
+            progressBar.CreateNative(parent, instance);
+        }
+        Else If (child Is GroupBox groupBox)
+        {
+            groupBox.CreateNative(parent, instance);
+        }
+    }
+
+    Public Trusted Function void SetCheckState(Component comp, bool checked)
+    {
+        If (comp == null || comp.Handle == null)
+        {
+            Return;
+        }
+        u32 state = Native.Win32.BST_UNCHECKED;
+        If (checked)
+        {
+            state = Native.Win32.BST_CHECKED;
+        }
+        Native.SendMessageW(comp.Handle, Native.Win32.BM_SETCHECK, [usize](state), 0);
+    }
+
+    Public Trusted Function void SetComboBoxSelectedIndex(ComboBox cb, int index)
+    {
+        If (cb == null || cb.Handle == null)
+        {
+            Return;
+        }
+        Native.SendMessageW(cb.Handle, Native.Win32.CB_SETCURSEL, [usize](index), 0);
+    }
+
+    Public Trusted Function void ComboBoxAddItem(ComboBox cb, string item)
+    {
+        If (cb == null || cb.Handle == null)
+        {
+            Return;
+        }
+        Native.SendMessageW(cb.Handle, Native.Win32.CB_ADDSTRING, 0, [isize]([usize](Native.__kn_win_utf16(item))));
+    }
+
+    Public Trusted Function void ComboBoxClear(ComboBox cb)
+    {
+        If (cb == null || cb.Handle == null)
+        {
+            Return;
+        }
+        Native.SendMessageW(cb.Handle, Native.Win32.CB_RESETCONTENT, 0, 0);
+    }
+
+    Public Trusted Function void SetProgressBarRange(ProgressBar pb)
+    {
+        If (pb == null || pb.Handle == null)
+        {
+            Return;
+        }
+        isize range = [isize](([u32](pb.Maximum) << 16) | [u32](pb.Minimum));
+        Native.SendMessageW(pb.Handle, Native.Win32.PBM_SETRANGE, 0, range);
+    }
+
+    Public Trusted Function void SetProgressBarValue(ProgressBar pb)
+    {
+        If (pb == null || pb.Handle == null)
+        {
+            Return;
+        }
+        Native.SendMessageW(pb.Handle, Native.Win32.PBM_SETPOS, [usize](pb.Value), 0);
+    }
+
+    Public Trusted Function void SetProgressBarStep(ProgressBar pb)
+    {
+        If (pb == null || pb.Handle == null)
+        {
+            Return;
+        }
+        Native.SendMessageW(pb.Handle, Native.Win32.PBM_SETSTEP, [usize](pb.Step), 0);
+    }
+
+    Public Trusted Function void ProgressBarStepIt(ProgressBar pb)
+    {
+        If (pb == null || pb.Handle == null)
+        {
+            Return;
+        }
+        Native.SendMessageW(pb.Handle, Native.Win32.PBM_STEPIT, 0, 0);
+    }
+
+    Public Trusted Function Component FindComponentByIdInComponent(Component component, int id)
+    {
+        If (component == null)
+        {
+            Return default;
+        }
+        If (component Is Button button)
+        {
+            If (button.Id == id)
+            {
+                Return button;
+            }
+        }
+        Else If (component Is CheckBox cb)
+        {
+            If (cb.Id == id)
+            {
+                Return cb;
+            }
+        }
+        Else If (component Is RadioButton rb)
+        {
+            If (rb.Id == id)
+            {
+                Return rb;
+            }
+        }
+        Else If (component Is Input inp)
+        {
+            If (inp.Id == id)
+            {
+                Return inp;
+            }
+        }
+        Else If (component Is ComboBox combo)
+        {
+            If (combo.Id == id)
+            {
+                Return combo;
+            }
+        }
+
+        If (component Is GroupBox gb)
+        {
+            int i = 0;
+            While (i < gb.Children.Length())
+            {
+                Component found = FindComponentByIdInComponent(gb.Children[i], id);
+                If (found != null)
+                {
+                    Return found;
+                }
+                i++;
+            }
+        }
+        Return default;
+    }
+
+    Public Trusted Function Component FindComponentByHandleInComponent(Component component, byte* handle)
+    {
+        If (component == null)
+        {
+            Return default;
+        }
+        If (component.Handle == handle)
+        {
+            Return component;
+        }
+        If (component Is GroupBox gb)
+        {
+            int i = 0;
+            While (i < gb.Children.Length())
+            {
+                Component found = FindComponentByHandleInComponent(gb.Children[i], handle);
+                If (found != null)
+                {
+                    Return found;
+                }
+                i++;
+            }
+        }
+        Return default;
+    }
+
+    Public Trusted Function Button FindButtonByIdInComponent(Component component, int id)
+    {
+        If (component == null)
+        {
+            Return default;
+        }
+        If (component Is Button button)
+        {
+            If (button.Id == id)
+            {
+                Return button;
+            }
+        }
+        If (component Is GroupBox gb)
+        {
+            int i = 0;
+            While (i < gb.Children.Length())
+            {
+                Button found = FindButtonByIdInComponent(gb.Children[i], id);
+                If (found != null)
+                {
+                    Return found;
+                }
+                i++;
+            }
+        }
+        Return default;
+    }
+
+    Public Trusted Function Component FindComponentByIdInAll(int id)
+    {
+        int i = 0;
+        While (i < Windows.Length())
+        {
+            Window window = Windows[i];
+            Component found = FindComponentByIdInWindow(window, id);
+            If (found != null)
+            {
+                Return found;
+            }
+            i++;
+        }
+        Return default;
+    }
+
+    Public Trusted Function Component FindComponentByIdInWindow(Window window, int id)
+    {
+        int j = 0;
+        While (j < window.Components.Length())
+        {
+            Component found = FindComponentByIdInComponent(window.Components[j], id);
+            If (found != null)
+            {
+                Return found;
+            }
+            j++;
+        }
+        Return default;
+    }
+
+    Public Trusted Function Component FindComponentByIdInGroupBox(GroupBox gb, int id)
+    {
+        int k = 0;
+        While (k < gb.Children.Length())
+        {
+            Component found = FindComponentByIdInComponent(gb.Children[k], id);
+            If (found != null)
+            {
+                Return found;
+            }
+            k++;
+        }
+        Return default;
+    }
+
+    Public Trusted Function void ApplyComponentStyle(Component component)
+    {
+        __UI_ApplyComponentStyle(component);
+    }
+
+    Public Trusted Function void ApplyWindowStyle(Window window)
+    {
+        __UI_ApplyWindowStyle(window);
+    }
+
+    Public Trusted Function Window FindWindowByHandle(byte* handle)
+    {
+        int i = 0;
+        While (i < Windows.Length())
+        {
+            Window window = Windows[i];
+            If (window.Handle == handle)
+            {
+                Return window;
+            }
+            i++;
+        }
+        Return default;
+    }
+
+    Public Trusted Function Component FindComponentByHandle(byte* handle)
+    {
+        int i = 0;
+        While (i < Windows.Length())
+        {
+            Window window = Windows[i];
+            int j = 0;
+            While (j < window.Components.Length())
+            {
+                Component found = FindComponentByHandleInComponent(window.Components[j], handle);
+                If (found != null)
+                {
+                    Return found;
+                }
+                j++;
+            }
+            i++;
+        }
+        Return default;
+    }
+
+    Public Trusted Function Button FindButtonById(int id)
+    {
+        int i = 0;
+        While (i < Windows.Length())
+        {
+            Window window = Windows[i];
+            int j = 0;
+            While (j < window.Components.Length())
+            {
+                Button found = FindButtonByIdInComponent(window.Components[j], id);
+                If (found != null)
+                {
+                    Return found;
+                }
+                j++;
+            }
+            i++;
+        }
+        Return default;
+    }
+}
+
+Trusted Function isize __IO_UI_ButtonProc(byte* hWnd, u32 message, usize wParam, isize lParam)
+{
+    Component comp = __UIHost.FindComponentByHandle(hWnd);
+    If (comp Is Button button)
+    {
+        If (message == Native.Win32.WM_LBUTTONDOWN)
+        {
+            If (button.HasEvent(EventKind.OnMouseDown))
+            {
+                Native.SetCapture(hWnd);
+            }
+            button.TriggerEvent(EventKind.OnMouseDown, wParam, lParam);
+        }
+        Else If (message == Native.Win32.WM_MOUSEMOVE)
+        {
+            button.TriggerEvent(EventKind.OnMouseMove, wParam, lParam);
+        }
+        Else If (message == Native.Win32.WM_LBUTTONUP)
+        {
+            If (button.HasEvent(EventKind.OnMouseUp))
+            {
+                Native.ReleaseCapture();
+            }
+            button.TriggerEvent(EventKind.OnMouseUp, wParam, lParam);
+        }
+
+        If (button.NativeProc != null)
+        {
+            Return Native.CallWindowProcW(button.NativeProc, hWnd, message, wParam, lParam);
+        }
+    }
+
+    Return Native.DefWindowProcW(hWnd, message, wParam, lParam);
+}
+
+Trusted Function isize __IO_UI_GroupBoxProc(byte* hWnd, u32 message, usize wParam, isize lParam)
+{
+    Component comp = __UIHost.FindComponentByHandle(hWnd);
+
+    If (message == Native.Win32.WM_ERASEBKGND)
+    {
+        If (comp != null && comp.Owner != null && comp.Owner.NativeBrush != null)
+        {
+            Native.RECT rect;
+            Native.GetClientRect(hWnd, &rect);
+            Native.FillRect([byte*](wParam), &rect, comp.Owner.NativeBrush);
+            Return 1;
+        }
+    }
+
+    If (message == Native.Win32.WM_COMMAND ||
+        message == Native.Win32.WM_CTLCOLORSTATIC ||
+        message == Native.Win32.WM_CTLCOLORBTN ||
+        message == Native.Win32.WM_CTLCOLOREDIT ||
+        message == Native.Win32.WM_CTLCOLORLISTBOX)
+    {
+        If (comp != null && comp.Owner != null && comp.Owner.Handle != null)
+        {
+            Return __IO_UI_WndProc(comp.Owner.Handle, message, wParam, lParam);
+        }
+    }
+
+    If (comp != null && comp.NativeProc != null)
+    {
+        Return Native.CallWindowProcW(comp.NativeProc, hWnd, message, wParam, lParam);
+    }
+    Return Native.DefWindowProcW(hWnd, message, wParam, lParam);
+}
+
+Trusted Function isize __IO_UI_WndProc(byte* hWnd, u32 message, usize wParam, isize lParam)
+{
+    If (message == Native.Win32.WM_COMMAND)
+    {
+        int notifyCode = Native.Win32.HighWord(wParam);
+        int controlId = Native.Win32.LowWord(wParam);
+        If (notifyCode == Native.Win32.BN_CLICKED)
+        {
+            Button button = __UIHost.FindButtonById(controlId);
+            If (button != null)
+            {
+                button.TriggerClick();
+                Return 0;
+            }
+            Component comp = __UIHost.FindComponentByIdInAll(controlId);
+            If (comp != null)
+            {
+                If (comp Is CheckBox cb)
+                {
+                    isize result = Native.SendMessageW(cb.Handle, Native.Win32.BM_GETCHECK, 0, 0);
+                    cb.__InternalSetChecked(result == [isize](Native.Win32.BST_CHECKED));
+                    cb.TriggerEvent(EventKind.OnCheckedChanged, wParam, lParam);
+                    cb.TriggerEvent(EventKind.OnClick, wParam, lParam);
+                    Return 0;
+                }
+                If (comp Is RadioButton rb)
+                {
+                    isize result = Native.SendMessageW(rb.Handle, Native.Win32.BM_GETCHECK, 0, 0);
+                    rb.__InternalSetChecked(result == [isize](Native.Win32.BST_CHECKED));
+                    rb.TriggerEvent(EventKind.OnCheckedChanged, wParam, lParam);
+                    rb.TriggerEvent(EventKind.OnClick, wParam, lParam);
+                    Return 0;
+                }
+            }
+        }
+        If (notifyCode == Native.Win32.EN_CHANGE)
+        {
+            Component comp = __UIHost.FindComponentByIdInAll(controlId);
+            If (comp != null)
+            {
+                If (comp Is Input inp)
+                {
+                    inp.__InternalSetText(Native.__kn_win_get_text(inp.Handle));
+                    inp.TriggerEvent(EventKind.OnTextChanged, wParam, lParam);
+                    Return 0;
+                }
+            }
+        }
+        If (notifyCode == Native.Win32.EN_SETFOCUS)
+        {
+            Component comp = __UIHost.FindComponentByIdInAll(controlId);
+            If (comp != null)
+            {
+                comp.TriggerEvent(EventKind.OnFocus, wParam, lParam);
+                Return 0;
+            }
+        }
+        If (notifyCode == Native.Win32.EN_KILLFOCUS)
+        {
+            Component comp = __UIHost.FindComponentByIdInAll(controlId);
+            If (comp != null)
+            {
+                comp.TriggerEvent(EventKind.OnBlur, wParam, lParam);
+                Return 0;
+            }
+        }
+        If (notifyCode == Native.Win32.CBN_SELCHANGE)
+        {
+            Component comp = __UIHost.FindComponentByIdInAll(controlId);
+            If (comp != null)
+            {
+                If (comp Is ComboBox cbox)
+                {
+                    isize sel = Native.SendMessageW(cbox.Handle, Native.Win32.CB_GETCURSEL, 0, 0);
+                    cbox.__InternalSetSelectedIndex([int](sel));
+                    cbox.TriggerEvent(EventKind.OnSelectedChanged, wParam, lParam);
+                    Return 0;
+                }
+            }
+        }
+        If (notifyCode == Native.Win32.CBN_SETFOCUS)
+        {
+            Component comp = __UIHost.FindComponentByIdInAll(controlId);
+            If (comp != null)
+            {
+                comp.TriggerEvent(EventKind.OnFocus, wParam, lParam);
+                Return 0;
+            }
+        }
+        If (notifyCode == Native.Win32.CBN_KILLFOCUS)
+        {
+            Component comp = __UIHost.FindComponentByIdInAll(controlId);
+            If (comp != null)
+            {
+                comp.TriggerEvent(EventKind.OnBlur, wParam, lParam);
+                Return 0;
+            }
+        }
+    }
+
+    If (message == Native.Win32.WM_SIZE)
+    {
+        Window window = __UIHost.FindWindowByHandle(hWnd);
+        If (window != null)
+        {
+            window.TriggerEvent(EventKind.OnResize, wParam, lParam);
+        }
+    }
+
+    If (message == Native.Win32.WM_MOVE)
+    {
+        Window window = __UIHost.FindWindowByHandle(hWnd);
+        If (window != null)
+        {
+            window.X = Native.Win32.LowWord([usize](lParam));
+            window.Y = Native.Win32.HighWord([usize](lParam));
+            window.TriggerEvent(EventKind.OnMove, wParam, lParam);
+        }
+    }
+
+    If (message == Native.Win32.WM_KEYDOWN)
+    {
+        Window window = __UIHost.FindWindowByHandle(hWnd);
+        If (window != null)
+        {
+            window.TriggerEvent(EventKind.OnKeyDown, wParam, lParam);
+        }
+    }
+
+    If (message == Native.Win32.WM_KEYUP)
+    {
+        Window window = __UIHost.FindWindowByHandle(hWnd);
+        If (window != null)
+        {
+            window.TriggerEvent(EventKind.OnKeyUp, wParam, lParam);
+        }
+    }
+
+    If (message == Native.Win32.WM_CTLCOLORSTATIC || message == Native.Win32.WM_CTLCOLORBTN ||
+        message == Native.Win32.WM_CTLCOLOREDIT || message == Native.Win32.WM_CTLCOLORLISTBOX)
+    {
+        Component component = __UIHost.FindComponentByHandle([byte*]([usize](lParam)));
+        If (component != null)
+        {
+            Color fore = component.EffectiveForeColor();
+            If (fore != null)
+            {
+                Native.SetTextColor([byte*](wParam), fore.ToColorRef());
+            }
+
+            Color back = component.EffectiveBackColor();
+            If (back != null)
+            {
+                Native.SetBkColor([byte*](wParam), back.ToColorRef());
+                If (component.NativeBrush == null)
+                {
+                    component.NativeBrush = __UI_CreateBrush(back);
+                }
+                If (component.NativeBrush != null)
+                {
+                    Return [isize]([usize](component.NativeBrush));
+                }
+            }
+        }
+    }
+
+    If (message == Native.Win32.WM_ERASEBKGND)
+    {
+        Window window = __UIHost.FindWindowByHandle(hWnd);
+        If (window != null && window.NativeBrush != null)
+        {
+            Native.RECT rect;
+            Native.GetClientRect(hWnd, &rect);
+            Native.FillRect([byte*](wParam), &rect, window.NativeBrush);
+            Return 1;
+        }
+    }
+
+    If (message == Native.Win32.WM_DESTROY)
+    {
+        Window window = __UIHost.FindWindowByHandle(hWnd);
+        If (window != null)
+        {
+            window.TriggerEvent(EventKind.OnClose, wParam, lParam);
+        }
+        Native.PostQuitMessage(0);
+        Return 0;
+    }
+
+    Return Native.DefWindowProcW(hWnd, message, wParam, lParam);
+}
+
+Public Class Window
+{
+    Private string _Title;
+    Private int _Width;
+    Private int _Height;
+    Private int _X;
+    Private int _Y;
+    Public byte* Handle;
+    Public Component[] Components;
+    Public Event[] Events;
+    Private Color _BackColor;
+    Private Color _ForeColor;
+    Private Font _Font;
+    Public byte* NativeBrush;
+
+    Public Constructor(string title = "Kinal Window", int width = 640, int height = 480, int x = 100, int y = 100)
+    {
+        _Title = title;
+        _Width = width;
+        _Height = height;
+        _X = x;
+        _Y = y;
+        Handle = null;
+        Components = {};
+        Events = {};
+        _BackColor = default;
+        _ForeColor = default;
+        _Font = default;
+        NativeBrush = null;
+    }
+
+    Public Property string Title
+    {
+        Get
+        {
+            Return _Title;
+        }
+        Set
+        {
+            _Title = value;
+            If (Handle != null)
+            {
+                __UIHost.SetWindowTitle(This, value);
+            }
+        }
+    }
+
+    Public Property int Width
+    {
+        Get
+        {
+            Return _Width;
+        }
+        Set
+        {
+            _Width = value;
+        }
+    }
+
+    Public Property int Height
+    {
+        Get
+        {
+            Return _Height;
+        }
+        Set
+        {
+            _Height = value;
+        }
+    }
+
+    Public Property int X
+    {
+        Get
+        {
+            Return _X;
+        }
+        Set
+        {
+            _X = value;
+        }
+    }
+
+    Public Property int Y
+    {
+        Get
+        {
+            Return _Y;
+        }
+        Set
+        {
+            _Y = value;
+        }
+    }
+
+    Public Property Color BackColor
+    {
+        Get
+        {
+            Return _BackColor;
+        }
+        Set
+        {
+            _BackColor = value;
+            __UIHost.ApplyWindowStyle(This);
+        }
+    }
+
+    Public Property Color ForeColor
+    {
+        Get
+        {
+            Return _ForeColor;
+        }
+        Set
+        {
+            _ForeColor = value;
+            __UIHost.ApplyWindowStyle(This);
+        }
+    }
+
+    Public Property Font Font
+    {
+        Get
+        {
+            Return _Font;
+        }
+        Set
+        {
+            _Font = value;
+            __UIHost.ApplyWindowStyle(This);
+        }
+    }
+
+    Public Function Window SetBackColor(Color color)
+    {
+        BackColor = color;
+        Return This;
+    }
+
+    Public Function Window SetForeColor(Color color)
+    {
+        ForeColor = color;
+        Return This;
+    }
+
+    Public Function Window SetFont(Font font)
+    {
+        Font = font;
+        Return This;
+    }
+
+    Public Function Window Add(Component component)
+    {
+        If (component == null)
+        {
+            Throw New IO.Error("IO.UI", "Component cannot be null");
+        }
+        component.Owner = This;
+        Components = Components.Add(component);
+        Return This;
+    }
+
+    Public Safe Function bool SupportsEvent(EventKind kind)
+    {
+        Return kind == EventKind.OnClose || kind == EventKind.OnShown ||
+               kind == EventKind.OnResize || kind == EventKind.OnMove ||
+               kind == EventKind.OnKeyDown ||
+               kind == EventKind.OnKeyUp;
+    }
+
+    Public Function Window AddEvent(Event event)
+    {
+        If (event == null)
+        {
+            Throw New IO.Error("IO.UI", "Event cannot be null");
+        }
+        If (!SupportsEvent(event.Kind))
+        {
+            __UI_ThrowUnsupportedEvent("IO.UI.Window", event.Kind);
+        }
+        Events = Events.Add(event);
+        Return This;
+    }
+
+    Public Function Window RemoveEvent(Event event)
+    {
+        If (event == null)
+        {
+            Return This;
+        }
+
+        Event[] kept = {};
+        int i = 0;
+        While (i < Events.Length())
+        {
+            Event current = Events[i];
+            If (current != event)
+            {
+                kept = kept.Add(current);
+            }
+            i++;
+        }
+        Events = kept;
+        Return This;
+    }
+
+    Public Trusted Function void TriggerEvent(EventKind kind, usize wParam = 0, isize lParam = 0)
+    {
+        EventArgs args = New EventArgs(kind, wParam, lParam);
+        int i = 0;
+        While (i < Events.Length())
+        {
+            Event current = Events[i];
+            If (current.Kind == kind)
+            {
+                current.Invoke(This, args);
+            }
+            i++;
+        }
+    }
+
+    Public Trusted Function byte* Create()
+    {
+        __UIHost.EnsureInit();
+        If (Handle != null)
+        {
+            Return Handle;
+        }
+
+        Handle = Native.CreateWindowExW(0, Native.__kn_win_utf16(__UIHost.WindowClassName), Native.__kn_win_utf16(Title),
+                                        Native.Win32.WS_OVERLAPPEDWINDOW,
+                                      [i32](X), [i32](Y), [i32](Width), [i32](Height),
+                                      null, null, __UIHost.InstanceHandle, null);
+        If (Handle == null)
+        {
+            __UI_ThrowHostError("CreateWindowExW", [int](Native.GetLastError()));
+        }
+
+        __UIHost.RegisterWindow(This);
+        __UIHost.ApplyWindowStyle(This);
+
+        int i = 0;
+        While (i < Components.Length())
+        {
+            Component component = Components[i];
+            component.Owner = This;
+            If (component Is Label label)
+            {
+                label.CreateNative(Handle, __UIHost.InstanceHandle);
+            }
+            Else If (component Is Button button)
+            {
+                button.CreateNative(Handle, __UIHost.InstanceHandle);
+            }
+            Else If (component Is Input input)
+            {
+                input.CreateNative(Handle, __UIHost.InstanceHandle);
+            }
+            Else If (component Is CheckBox checkBox)
+            {
+                checkBox.CreateNative(Handle, __UIHost.InstanceHandle);
+            }
+            Else If (component Is RadioButton radioButton)
+            {
+                radioButton.CreateNative(Handle, __UIHost.InstanceHandle);
+            }
+            Else If (component Is ComboBox comboBox)
+            {
+                comboBox.CreateNative(Handle, __UIHost.InstanceHandle);
+            }
+            Else If (component Is ProgressBar progressBar)
+            {
+                progressBar.CreateNative(Handle, __UIHost.InstanceHandle);
+            }
+            Else If (component Is GroupBox groupBox)
+            {
+                groupBox.CreateNative(Handle, __UIHost.InstanceHandle);
+            }
+            i++;
+        }
+
+        Return Handle;
+    }
+
+    Public Trusted Function void Show()
+    {
+        Create();
+        Native.ShowWindow(Handle, Native.Win32.SW_SHOW);
+        Native.InvalidateRect(Handle, null, true);
+        Native.UpdateWindow(Handle);
+
+        int i = 0;
+        While (i < Components.Length())
+        {
+            Component component = Components[i];
+            If (component.Handle != null)
+            {
+                Native.InvalidateRect(component.Handle, null, true);
+                Native.UpdateWindow(component.Handle);
+            }
+            i++;
+        }
+
+        TriggerEvent(EventKind.OnShown, 0, 0);
+    }
+
+    Public Trusted Function int Run()
+    {
+        Show();
+
+        Native.MSG message;
+        While (Native.GetMessageW(&message, null, 0, 0) > 0)
+        {
+            Native.TranslateMessage(&message);
+            Native.DispatchMessageW(&message);
+        }
+
+        Return [int](message.WParam);
+    }
+}

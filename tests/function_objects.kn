@@ -1,0 +1,30 @@
+﻿Unit Tests.FuncObjects;
+Get Console By IO.Console;
+
+Function int Add(int a, int b) {
+    Return a + b;
+}
+
+Static Function int Main() {
+    IO.Type.Object.Function fn = Add;
+    IO.Type.Object.Class cls = fn;
+    Var r1 = fn(2, 3);
+
+    Var base = 10;
+    IO.Type.Object.Function lam = Function int (int x) {
+        Return x + base;
+    };
+    base = 20;
+    Var r2 = lam(5);
+
+    IO.Type.Object.Function fns[2] = { Add, lam };
+    Var r3 = fns[0](7, 8);
+    Var r4 = fns[1](1);
+
+    Console.PrintLine(r1);
+    Console.PrintLine(r2);
+    Console.PrintLine(r3);
+    Console.PrintLine(r4);
+    Console.PrintLine(cls.TypeOf());
+    Return 0;
+}

@@ -1,0 +1,38 @@
+Unit Tests.PtrToFunctionCast;
+Get Console By IO.Console;
+
+Function int Add(int a, int b) {
+    Return a + b;
+}
+
+Function int Mul(int a, int b) {
+    Return a * b;
+}
+
+Delegate Function int c_add(int a, int b) By C;
+Delegate Function int kn_mul(int a, int b) By Kinal;
+Delegate Function int kn_op(int a, int b);
+
+Unsafe Static Function int Main()
+{
+    // By C: assign from Kinal function
+    c_add = Add;
+    Console.PrintLine(c_add(1, 2));
+
+    // Explicit Object.Function bridge coverage
+    byte* p = &Add;
+    c_add = [Object.Function](p);
+    Console.PrintLine(c_add(10, 20));
+
+    // By Kinal: assign from function reference
+    kn_mul = Mul;
+    Console.PrintLine(kn_mul(3, 4));
+
+    // Default Kinal: assign and reassign
+    kn_op = Add;
+    Console.PrintLine(kn_op(5, 6));
+    kn_op = Mul;
+    Console.PrintLine(kn_op(5, 6));
+
+    Return 0;
+}

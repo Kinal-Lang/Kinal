@@ -1,0 +1,17 @@
+Unit App.QualifiedTypes;
+Get Console By IO.Console;
+
+Function IO.Type.int Add(IO.Type.int a, IO.Type.int b) {
+    Return a + b;
+}
+
+Static Function int Main() {
+    IO.Type.int x = 2;
+    IO.Type.int y = 3;
+    IO.Type.int z = Add(x, y);
+    IO.Type.string msg = "ok";
+    Console.PrintLine(msg);
+    Console.PrintLine(z);
+    Return 0;
+}
+

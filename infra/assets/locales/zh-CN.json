@@ -1,0 +1,1033 @@
+{
+  "E-GEN-00001": {
+    "title": "抽象方法",
+    "detail": "类必须实现抽象基类方法"
+  },
+  "E-SEM-00001": {
+    "title": "访问违规",
+    "detail": "私有成员不可访问"
+  },
+  "E-SEM-00002": {
+    "title": "访问违规",
+    "detail": "受保护成员不可访问"
+  },
+  "E-RES-00001": {
+    "title": "函数歧义",
+    "detail": "多个函数匹配，请使用限定名称"
+  },
+  "E-ARG-00001": {
+    "title": "参数数量",
+    "detail": "参数数量不正确"
+  },
+  "E-ARG-00002": {
+    "title": "命名参数无效",
+    "detail": "位置参数不能出现在命名参数之后"
+  },
+  "E-ARG-00003": {
+    "title": "命名参数无效",
+    "detail": "此可调用对象不支持命名参数"
+  },
+  "E-ARG-00004": {
+    "title": "命名参数无效",
+    "detail": "构造函数不支持命名参数"
+  },
+  "E-ARG-00005": {
+    "title": "重复命名参数",
+    "detail": "命名参数重复"
+  },
+  "E-GEN-00002": {
+    "title": "数组长度",
+    "detail": "初始化器元素过多"
+  },
+  "E-GEN-00003": {
+    "title": "字节溢出",
+    "detail": "byte 的范围是 0..255"
+  },
+  "E-GEN-00004": {
+    "title": "常量赋值",
+    "detail": "不能给常量变量赋值"
+  },
+  "E-GEN-00005": {
+    "title": "常量赋值",
+    "detail": "不能修改常量变量"
+  },
+  "E-GEN-00006": {
+    "title": "常量需要初始化",
+    "detail": "常量变量必须有初始化器"
+  },
+  "E-GEN-00007": {
+    "title": "构造函数",
+    "detail": "未找到构造函数"
+  },
+  "E-GEN-00008": {
+    "title": "转换语法已更改",
+    "detail": "类型转换现在使用 [type](value) 语法而非 type(value)，例如：[int](\"123\") 而非 int(\"123\")"
+  },
+  "E-GEN-00009": {
+    "title": "转换语法已更改",
+    "detail": "类型转换现在使用 [type](value) 语法而非 type(value)"
+  },
+  "E-NAM-00001": {
+    "title": "类重复定义",
+    "detail": "类已定义"
+  },
+  "E-NAM-00002": {
+    "title": "构造函数重复定义",
+    "detail": "构造函数已定义"
+  },
+  "E-NAM-00003": {
+    "title": "枚举重复定义",
+    "detail": "枚举已定义"
+  },
+  "E-NAM-00004": {
+    "title": "枚举重复定义",
+    "detail": "枚举成员已定义"
+  },
+  "E-NAM-00005": {
+    "title": "字段重复定义",
+    "detail": "字段已定义"
+  },
+  "E-NAM-00006": {
+    "title": "函数重复定义",
+    "detail": "函数已定义"
+  },
+  "E-NAM-00007": {
+    "title": "接口重复定义",
+    "detail": "接口已定义"
+  },
+  "E-NAM-00008": {
+    "title": "接口重复定义",
+    "detail": "接口已列出"
+  },
+  "E-NAM-00009": {
+    "title": "方法重复定义",
+    "detail": "接口方法已定义"
+  },
+  "E-NAM-00010": {
+    "title": "方法重复定义",
+    "detail": "方法已定义"
+  },
+  "E-NAM-00011": {
+    "title": "结构体重复定义",
+    "detail": "结构体已定义"
+  },
+  "E-NAM-00012": {
+    "title": "符号重复定义",
+    "detail": "变量已在此作用域中定义"
+  },
+  "E-ENT-00001": {
+    "title": "入口点歧义",
+    "detail": "找到多个 Main 函数"
+  },
+  "E-ENT-00002": {
+    "title": "入口点签名",
+    "detail": "Main 必须是 Static"
+  },
+  "E-ENT-00003": {
+    "title": "入口点签名",
+    "detail": "Main 必须返回 int"
+  },
+  "E-ENT-00004": {
+    "title": "入口点签名",
+    "detail": "Main 必须接受零个或一个参数"
+  },
+  "E-ENT-00005": {
+    "title": "入口点签名",
+    "detail": "Main 参数必须是 string[]"
+  },
+  "E-SYN-00001": {
+    "title": "期望 '/>'",
+    "detail": "块体后缺少 '/>'"
+  },
+  "E-GEN-00010": {
+    "title": "泛型参数数量",
+    "detail": "泛型类型参数数量错误"
+  },
+  "E-GEN-00011": {
+    "title": "泛型函数",
+    "detail": "无法解析已实例化的泛型函数"
+  },
+  "E-GEN-00012": {
+    "title": "泛型函数",
+    "detail": "泛型调用需要显式类型参数"
+  },
+  "E-GEN-00013": {
+    "title": "泛型函数",
+    "detail": "泛型函数引用需要显式类型参数"
+  },
+  "E-GEN-00014": {
+    "title": "接口方法",
+    "detail": "类必须实现接口方法"
+  },
+  "E-GEN-00015": {
+    "title": "接口方法",
+    "detail": "接口实现必须是公开的"
+  },
+  "E-SEM-00003": {
+    "title": "抽象无效",
+    "detail": "抽象方法需要抽象类"
+  },
+  "E-SEM-00004": {
+    "title": "取地址无效",
+    "detail": "不支持对数组取地址"
+  },
+  "E-SEM-00005": {
+    "title": "取地址无效",
+    "detail": "取地址需要可赋值的表达式"
+  },
+  "E-SEM-00006": {
+    "title": "对齐无效",
+    "detail": "对齐值必须是 2 的幂"
+  },
+  "E-SEM-00007": {
+    "title": "赋值无效",
+    "detail": "不能给枚举常量赋值"
+  },
+  "E-SEM-00008": {
+    "title": "赋值无效",
+    "detail": "不能修改枚举常量"
+  },
+  "E-SEM-00009": {
+    "title": "赋值无效",
+    "detail": "自增/自减目标必须可赋值"
+  },
+  "E-SEM-00010": {
+    "title": "赋值无效",
+    "detail": "赋值左侧必须可赋值"
+  },
+  "E-SEM-00011": {
+    "title": "赋值无效",
+    "detail": "目标不可赋值"
+  },
+  "E-SEM-00012": {
+    "title": "特性无效",
+    "detail": "全局变量不支持特性"
+  },
+  "E-SEM-00013": {
+    "title": "Base 无效",
+    "detail": "Base 在静态上下文中不可用"
+  },
+  "E-SEM-00014": {
+    "title": "Base 无效",
+    "detail": "类没有基类型"
+  },
+  "E-SEM-00015": {
+    "title": "调用无效",
+    "detail": "Block 对象必须使用 Run/Jump API"
+  },
+  "E-SEM-00016": {
+    "title": "调用无效",
+    "detail": "调用目标不是函数对象"
+  },
+  "E-SEM-00017": {
+    "title": "调用无效",
+    "detail": "静态方法需要类名"
+  },
+  "E-TYP-00001": {
+    "title": "类型转换无效",
+    "detail": "不能转换 Object 值，请使用 Object 转换方法"
+  },
+  "E-TYP-00002": {
+    "title": "类型转换无效",
+    "detail": "不能转换为 Object 类型，请使用 Object 转换方法"
+  },
+  "E-SEM-00018": {
+    "title": "Catch 无效",
+    "detail": "Catch 参数必须是 string 或 IO.Error"
+  },
+  "E-SEM-00019": {
+    "title": "构造函数无效",
+    "detail": "构造函数不能是 static/virtual/override/abstract/sealed"
+  },
+  "E-CTL-00001": {
+    "title": "控制流无效",
+    "detail": "break/continue 不在循环中"
+  },
+  "E-SEM-00020": {
+    "title": "枚举无效",
+    "detail": "枚举底层类型必须是整数"
+  },
+  "E-SEM-00021": {
+    "title": "泛型调用无效",
+    "detail": "内置函数不接受泛型类型参数"
+  },
+  "E-SEM-00022": {
+    "title": "泛型调用无效",
+    "detail": "函数对象调用不接受泛型类型参数"
+  },
+  "E-SEM-00023": {
+    "title": "泛型调用无效",
+    "detail": "类型参数仅对泛型函数调用有效"
+  },
+  "E-SEM-00024": {
+    "title": "泛型调用无效",
+    "detail": "类型参数只能用于泛型函数"
+  },
+  "E-SEM-00025": {
+    "title": "Get 位置无效",
+    "detail": "Get 必须出现在顶层，位于 Unit 之后、声明之前"
+  },
+  "E-SEM-00026": {
+    "title": "全局声明无效",
+    "detail": "全局作用域只允许变量声明"
+  },
+  "E-SEM-00027": {
+    "title": "索引无效",
+    "detail": "索引需要数组、字符串或指针"
+  },
+  "E-SEM-00028": {
+    "title": "继承无效",
+    "detail": "不能继承 sealed 类"
+  },
+  "E-SEM-00029": {
+    "title": "继承无效",
+    "detail": "类不能继承自身"
+  },
+  "E-SEM-00030": {
+    "title": "接口无效",
+    "detail": "接口方法必须是抽象的"
+  },
+  "E-SEM-00031": {
+    "title": "成员无效",
+    "detail": "暂不支持接口成员"
+  },
+  "E-SEM-00032": {
+    "title": "成员无效",
+    "detail": "成员访问需要类实例"
+  },
+  "E-SEM-00033": {
+    "title": "成员无效",
+    "detail": "成员调用需要类实例"
+  },
+  "E-SEM-00034": {
+    "title": "修饰符无效",
+    "detail": "Sealed 仅对 override 方法有效"
+  },
+  "E-SEM-00035": {
+    "title": "修饰符无效",
+    "detail": "静态方法不能是 virtual/override/abstract"
+  },
+  "E-SEM-00036": {
+    "title": "New 无效",
+    "detail": "不能实例化抽象类"
+  },
+  "E-SEM-00037": {
+    "title": "运算符无效",
+    "detail": "未知的二元运算符"
+  },
+  "E-SEM-00038": {
+    "title": "运算符无效",
+    "detail": "未知的一元运算符"
+  },
+  "E-SEM-00039": {
+    "title": "Override 无效",
+    "detail": "基类方法是 sealed"
+  },
+  "E-SEM-00040": {
+    "title": "Override 无效",
+    "detail": "没有可 override 的虚基类方法"
+  },
+  "E-CTL-00002": {
+    "title": "Return 无效",
+    "detail": "Block 内不允许 Return"
+  },
+  "E-SEM-00041": {
+    "title": "This 无效",
+    "detail": "This 在静态上下文中不可用"
+  },
+  "E-CTL-00003": {
+    "title": "Throw 无效",
+    "detail": "Throw 表达式必须是 string 或 IO.Error"
+  },
+  "E-CTL-00004": {
+    "title": "Throw 无效",
+    "detail": "Throw 需要一个表达式"
+  },
+  "E-TYP-00003": {
+    "title": "类型无效",
+    "detail": "数组元素名称缺失"
+  },
+  "E-TYP-00004": {
+    "title": "类型无效",
+    "detail": "数组元素类型未知"
+  },
+  "E-TYP-00005": {
+    "title": "类型无效",
+    "detail": "未指定类型"
+  },
+  "E-TYP-00006": {
+    "title": "类型无效",
+    "detail": "此处不允许 void"
+  },
+  "E-TYP-00007": {
+    "title": "类型无效",
+    "detail": "any[] 需要显式长度"
+  },
+  "E-SEM-00042": {
+    "title": "缺少入口点",
+    "detail": "未找到 Main 函数"
+  },
+  "E-SEM-00043": {
+    "title": "缺少 Get",
+    "detail": "未导入标准模块，请添加 Get 语句"
+  },
+  "E-SEM-00044": {
+    "title": "缺少 Override",
+    "detail": "方法隐藏了虚基类方法"
+  },
+  "E-CTL-00005": {
+    "title": "缺少 Return",
+    "detail": "非 void 函数必须在所有路径上返回值"
+  },
+  "E-CTL-00006": {
+    "title": "缺少 Return",
+    "detail": "非 void 方法必须在所有路径上返回值"
+  },
+  "E-NAM-00013": {
+    "title": "名称冲突",
+    "detail": "类与枚举名称冲突"
+  },
+  "E-NAM-00014": {
+    "title": "名称冲突",
+    "detail": "类与接口名称冲突"
+  },
+  "E-NAM-00015": {
+    "title": "名称冲突",
+    "detail": "类与结构体名称冲突"
+  },
+  "E-NAM-00016": {
+    "title": "名称冲突",
+    "detail": "接口与枚举名称冲突"
+  },
+  "E-NAM-00017": {
+    "title": "名称冲突",
+    "detail": "接口与结构体名称冲突"
+  },
+  "E-NAM-00018": {
+    "title": "名称冲突",
+    "detail": "结构体与枚举名称冲突"
+  },
+  "E-CTL-00007": {
+    "title": "Return 在函数外",
+    "detail": "此处不允许 Return"
+  },
+  "E-CTL-00008": {
+    "title": "返回类型",
+    "detail": "非 void 函数必须返回值"
+  },
+  "E-CTL-00009": {
+    "title": "返回类型",
+    "detail": "void 函数不能返回值"
+  },
+  "E-GEN-00016": {
+    "title": "需要限定符号",
+    "detail": "导入的符号必须使用模块或别名限定符调用"
+  },
+  "E-CTL-00010": {
+    "title": "Throw 在函数外",
+    "detail": "此处不允许 Throw"
+  },
+  "E-TYP-00008": {
+    "title": "类型推断失败",
+    "detail": "数组元素类型需要初始化器"
+  },
+  "E-TYP-00009": {
+    "title": "类型推断失败",
+    "detail": "无法从空数组推断元素类型"
+  },
+  "E-TYP-00010": {
+    "title": "类型推断失败",
+    "detail": "var 需要初始化器"
+  },
+  "E-TYP-00011": {
+    "title": "类型不匹配",
+    "detail": "类型不匹配"
+  },
+  "E-SYN-00002": {
+    "title": "意外的 Token",
+    "detail": "表达式中出现意外的 token"
+  },
+  "E-RES-00002": {
+    "title": "未知基类",
+    "detail": "未找到基类"
+  },
+  "E-RES-00003": {
+    "title": "未知基类",
+    "detail": "未找到基类或接口"
+  },
+  "E-RES-00004": {
+    "title": "未知枚举成员",
+    "detail": "未找到枚举成员"
+  },
+  "E-RES-00005": {
+    "title": "未知表达式",
+    "detail": "不支持的表达式"
+  },
+  "E-RES-00006": {
+    "title": "未知外部绑定",
+    "detail": "支持的绑定为 C 和 System"
+  },
+  "E-RES-00007": {
+    "title": "未知字段",
+    "detail": "未找到字段"
+  },
+  "E-RES-00008": {
+    "title": "未知函数",
+    "detail": "未找到内置函数引用"
+  },
+  "E-RES-00009": {
+    "title": "未知函数",
+    "detail": "未找到函数"
+  },
+  "E-RES-00010": {
+    "title": "未知接口",
+    "detail": "未找到接口"
+  },
+  "E-RES-00011": {
+    "title": "未知方法",
+    "detail": "未找到接口方法"
+  },
+  "E-RES-00012": {
+    "title": "未知方法",
+    "detail": "未找到方法"
+  },
+  "E-RES-00013": {
+    "title": "未知方法",
+    "detail": "未找到静态方法"
+  },
+  "E-RES-00014": {
+    "title": "未知说明符",
+    "detail": "不支持的结构体说明符"
+  },
+  "E-RES-00015": {
+    "title": "未知符号",
+    "detail": "模块中未找到符号"
+  },
+  "E-RES-00016": {
+    "title": "未知类型",
+    "detail": "转换目标类型未知"
+  },
+  "E-RES-00017": {
+    "title": "未知类型",
+    "detail": "未找到类"
+  },
+  "E-RES-00018": {
+    "title": "未知类型",
+    "detail": "未找到类或接口"
+  },
+  "E-RES-00019": {
+    "title": "未知类型",
+    "detail": "未找到枚举"
+  },
+  "E-RES-00020": {
+    "title": "未知类型",
+    "detail": "未找到结构体"
+  },
+  "E-RES-00021": {
+    "title": "未知变量",
+    "detail": "未找到赋值目标"
+  },
+  "E-RES-00022": {
+    "title": "未知变量",
+    "detail": "变量未定义"
+  },
+  "E-RES-00023": {
+    "title": "未知参数",
+    "detail": "未知的命名参数"
+  },
+  "E-GEN-00017": {
+    "title": "不支持泛型方法",
+    "detail": "不支持泛型方法"
+  },
+  "E-SEM-00045": {
+    "title": "Unsafe Block",
+    "detail": "嵌套控制流中的 Record 需要 Unsafe Block"
+  },
+  "E-SEM-00046": {
+    "title": "Unsafe 调用",
+    "detail": "Safe 函数不能调用 Unsafe"
+  },
+  "E-TYP-00012": {
+    "title": "不支持的类型",
+    "detail": "暂不支持此类型"
+  },
+  "W-SAF-00001": {
+    "title": "入口点 Unsafe",
+    "detail": "入口点标记为 Unsafe，这将禁用整个程序的安全保障。建议使用 Safe Main，并将 Unsafe 块局部隔离。"
+  },
+  "W-SYN-00001": {
+    "title": "旧式数组语法",
+    "detail": "请使用 'Type[] name' 而非 'Type name[]'"
+  },
+  "W-SYN-00002": {
+    "title": "旧式构造函数语法",
+    "detail": "请使用 'Constructor(...)' 而非 'Function ClassName(...)'"
+  },
+  "W-LNT-00001": {
+    "title": "未使用的变量",
+    "detail": "变量从未使用"
+  },
+  "W-LNT-00002": {
+    "title": "不可达代码",
+    "detail": "不可达的代码"
+  },
+  "E-SYN-00003": {
+    "title": "期望 '('",
+    "detail": "缺少 '('"
+  },
+  "E-SYN-00004": {
+    "title": "期望 '('",
+    "detail": "Align 后缺少 '('"
+  },
+  "E-SYN-00005": {
+    "title": "期望 '('",
+    "detail": "Constructor 后缺少 '('"
+  },
+  "E-SYN-00006": {
+    "title": "期望 '('",
+    "detail": "If 后缺少 '('"
+  },
+  "E-SYN-00007": {
+    "title": "期望 '('",
+    "detail": "转换类型后缺少 '('"
+  },
+  "E-SYN-00008": {
+    "title": "期望 '('",
+    "detail": "类名后缺少 '('"
+  },
+  "E-SYN-00009": {
+    "title": "期望 '('",
+    "detail": "函数名后缺少 '('"
+  },
+  "E-SYN-00010": {
+    "title": "期望 '('",
+    "detail": "函数返回类型后缺少 '('"
+  },
+  "E-SYN-00011": {
+    "title": "期望 '('",
+    "detail": "方法名后缺少 '('"
+  },
+  "E-SYN-00012": {
+    "title": "期望 ')'",
+    "detail": "缺少 ')'"
+  },
+  "E-SYN-00013": {
+    "title": "期望 ')'",
+    "detail": "Align 后缺少 ')'"
+  },
+  "E-SYN-00014": {
+    "title": "期望 ')'",
+    "detail": "If 条件后缺少 ')'"
+  },
+  "E-SYN-00015": {
+    "title": "期望 ')'",
+    "detail": "catch 参数后缺少 ')'"
+  },
+  "E-SYN-00016": {
+    "title": "期望 ')'",
+    "detail": "for 子句后缺少 ')'"
+  },
+  "E-SYN-00017": {
+    "title": "期望 ')'",
+    "detail": "参数列表后缺少 ')'"
+  },
+  "E-SYN-00018": {
+    "title": "期望 ')'",
+    "detail": "特性中缺少 ')'"
+  },
+  "E-SYN-00019": {
+    "title": "期望 ')'",
+    "detail": "调用中缺少 ')'"
+  },
+  "E-SYN-00020": {
+    "title": "期望 ')'",
+    "detail": "转换表达式中缺少 ')'"
+  },
+  "E-SYN-00021": {
+    "title": "期望 ')'",
+    "detail": "构造函数调用中缺少 ')'"
+  },
+  "E-SYN-00022": {
+    "title": "期望 ')'",
+    "detail": "成员调用中缺少 ')'"
+  },
+  "E-SYN-00023": {
+    "title": "期望 '/'",
+    "detail": "块体后缺少 '/>'"
+  },
+  "E-SYN-00024": {
+    "title": "期望 '/'",
+    "detail": "块体前缺少 '</'"
+  },
+  "E-SYN-00025": {
+    "title": "期望 ':'",
+    "detail": "条件表达式中缺少 ':'"
+  },
+  "E-SYN-00026": {
+    "title": "期望 '<'",
+    "detail": "块体前缺少 '</'"
+  },
+  "E-SYN-00027": {
+    "title": "期望 '<'",
+    "detail": "泛型类型参数前缺少 '<'"
+  },
+  "E-SYN-00028": {
+    "title": "期望 '>'",
+    "detail": "块体后缺少 '/>'"
+  },
+  "E-SYN-00029": {
+    "title": "期望 '>'",
+    "detail": "泛型类型参数后缺少 '>'"
+  },
+  "E-SYN-00030": {
+    "title": "期望 '>'",
+    "detail": "泛型类型参数列表后缺少 '>'"
+  },
+  "E-SYN-00031": {
+    "title": "期望 '['",
+    "detail": "转换表达式中缺少 '['"
+  },
+  "E-SYN-00032": {
+    "title": "期望 ']'",
+    "detail": "缺少 ']'"
+  },
+  "E-SYN-00033": {
+    "title": "期望 ']'",
+    "detail": "特性后缺少 ']'"
+  },
+  "E-SYN-00034": {
+    "title": "期望 ']'",
+    "detail": "索引后缺少 ']'"
+  },
+  "E-SYN-00035": {
+    "title": "期望 ']'",
+    "detail": "转换表达式中缺少 ']'"
+  },
+  "E-SYN-00036": {
+    "title": "期望 '{'",
+    "detail": "缺少 '{'"
+  },
+  "E-SYN-00037": {
+    "title": "期望 '{'",
+    "detail": "Else 表达式中缺少 '{'"
+  },
+  "E-SYN-00038": {
+    "title": "期望 '{'",
+    "detail": "If 表达式中缺少 '{'"
+  },
+  "E-SYN-00039": {
+    "title": "期望 '{'",
+    "detail": "类中缺少 '{'"
+  },
+  "E-SYN-00040": {
+    "title": "期望 '{'",
+    "detail": "枚举中缺少 '{'"
+  },
+  "E-SYN-00041": {
+    "title": "期望 '{'",
+    "detail": "接口中缺少 '{'"
+  },
+  "E-SYN-00042": {
+    "title": "期望 '{'",
+    "detail": "结构体中缺少 '{'"
+  },
+  "E-SYN-00043": {
+    "title": "期望 '}'",
+    "detail": "缺少 '}'"
+  },
+  "E-SYN-00044": {
+    "title": "期望 '}'",
+    "detail": "Else 表达式中缺少 '}'"
+  },
+  "E-SYN-00045": {
+    "title": "期望 '}'",
+    "detail": "If 表达式中缺少 '}'"
+  },
+  "E-SYN-00046": {
+    "title": "期望 '}'",
+    "detail": "数组字面量中缺少 '}'"
+  },
+  "E-SYN-00047": {
+    "title": "期望 '}'",
+    "detail": "枚举中缺少 '}'"
+  },
+  "E-SYN-00048": {
+    "title": "意外的文件结尾",
+    "detail": "解析表达式时意外到达文件末尾"
+  },
+  "E-SYN-00049": {
+    "title": "意外的文件结尾",
+    "detail": "解析变量声明时意外到达文件末尾"
+  },
+  "E-SYN-00050": {
+    "title": "字符串字面量未终止",
+    "detail": "字符串字面量缺少结束引号"
+  },
+  "E-SYN-00051": {
+    "title": "期望 Block",
+    "detail": "期望 'Block' 关键字"
+  },
+  "E-SYN-00052": {
+    "title": "期望 Catch",
+    "detail": "Try 块后缺少 'Catch'"
+  },
+  "E-SYN-00053": {
+    "title": "期望 Class",
+    "detail": "期望 'Class' 关键字"
+  },
+  "E-SYN-00054": {
+    "title": "期望 Constructor",
+    "detail": "期望 'Constructor' 关键字"
+  },
+  "E-SYN-00055": {
+    "title": "期望 Else",
+    "detail": "If 表达式需要 Else 分支"
+  },
+  "E-SYN-00056": {
+    "title": "期望 Enum",
+    "detail": "期望 'Enum' 关键字"
+  },
+  "E-SYN-00057": {
+    "title": "期望 For",
+    "detail": "期望 'For' 关键字"
+  },
+  "E-SYN-00058": {
+    "title": "期望 Function",
+    "detail": "期望 'Function' 关键字"
+  },
+  "E-SYN-00059": {
+    "title": "期望 Get",
+    "detail": "期望 'Get' 关键字"
+  },
+  "E-SYN-00060": {
+    "title": "期望标识符",
+    "detail": "期望块名称"
+  },
+  "E-SYN-00061": {
+    "title": "期望标识符",
+    "detail": "期望块变量名称"
+  },
+  "E-SYN-00062": {
+    "title": "期望标识符",
+    "detail": "期望 catch 变量名称"
+  },
+  "E-SYN-00063": {
+    "title": "期望标识符",
+    "detail": "期望类名"
+  },
+  "E-SYN-00064": {
+    "title": "期望标识符",
+    "detail": "期望枚举成员"
+  },
+  "E-SYN-00065": {
+    "title": "期望标识符",
+    "detail": "期望枚举名"
+  },
+  "E-SYN-00066": {
+    "title": "期望标识符",
+    "detail": "期望字段名"
+  },
+  "E-SYN-00067": {
+    "title": "期望标识符",
+    "detail": "期望函数名"
+  },
+  "E-SYN-00068": {
+    "title": "期望标识符",
+    "detail": "期望泛型类型参数名"
+  },
+  "E-SYN-00069": {
+    "title": "期望标识符",
+    "detail": "期望接口名"
+  },
+  "E-SYN-00070": {
+    "title": "期望标识符",
+    "detail": "期望方法名"
+  },
+  "E-SYN-00071": {
+    "title": "期望标识符",
+    "detail": "期望名称"
+  },
+  "E-SYN-00072": {
+    "title": "期望标识符",
+    "detail": "期望参数名"
+  },
+  "E-SYN-00073": {
+    "title": "期望标识符",
+    "detail": "期望 record 名称"
+  },
+  "E-SYN-00074": {
+    "title": "期望标识符",
+    "detail": "期望 remote 名称"
+  },
+  "E-SYN-00075": {
+    "title": "期望标识符",
+    "detail": "期望说明符"
+  },
+  "E-SYN-00076": {
+    "title": "期望标识符",
+    "detail": "期望结构体名"
+  },
+  "E-SYN-00077": {
+    "title": "期望标识符",
+    "detail": "期望变量名"
+  },
+  "E-SYN-00078": {
+    "title": "期望标识符",
+    "detail": "外部绑定需要标识符（C/System）"
+  },
+  "E-SYN-00079": {
+    "title": "期望 If",
+    "detail": "期望 'If' 关键字"
+  },
+  "E-SYN-00080": {
+    "title": "期望 If",
+    "detail": "表达式中期望 'If' 关键字"
+  },
+  "E-SYN-00081": {
+    "title": "期望 Interface",
+    "detail": "期望 'Interface' 关键字"
+  },
+  "E-SYN-00082": {
+    "title": "期望 Jump",
+    "detail": "期望 'Jump' 关键字"
+  },
+  "E-SYN-00083": {
+    "title": "期望数字",
+    "detail": "Align 需要一个数字"
+  },
+  "E-SYN-00084": {
+    "title": "期望数字",
+    "detail": "枚举值需要一个数字"
+  },
+  "E-SYN-00085": {
+    "title": "期望 Record",
+    "detail": "期望 'Record' 关键字"
+  },
+  "E-SYN-00086": {
+    "title": "期望分号",
+    "detail": "抽象方法后需要 ';'"
+  },
+  "E-SYN-00087": {
+    "title": "期望分号",
+    "detail": "外部函数后需要 ';'"
+  },
+  "E-SYN-00088": {
+    "title": "期望分号",
+    "detail": "Get 后缺少 ';'"
+  },
+  "E-SYN-00089": {
+    "title": "期望分号",
+    "detail": "Jump 后缺少 ';'"
+  },
+  "E-SYN-00090": {
+    "title": "期望分号",
+    "detail": "Throw 后缺少 ';'"
+  },
+  "E-SYN-00091": {
+    "title": "期望分号",
+    "detail": "Unit 后缺少 ';'"
+  },
+  "E-SYN-00092": {
+    "title": "期望分号",
+    "detail": "break 后缺少 ';'"
+  },
+  "E-SYN-00093": {
+    "title": "期望分号",
+    "detail": "continue 后缺少 ';'"
+  },
+  "E-SYN-00094": {
+    "title": "期望分号",
+    "detail": "声明后缺少 ';'"
+  },
+  "E-SYN-00095": {
+    "title": "期望分号",
+    "detail": "表达式后缺少 ';'"
+  },
+  "E-SYN-00096": {
+    "title": "期望分号",
+    "detail": "字段后缺少 ';'"
+  },
+  "E-SYN-00097": {
+    "title": "期望分号",
+    "detail": "for 条件后缺少 ';'"
+  },
+  "E-SYN-00098": {
+    "title": "期望分号",
+    "detail": "return 后缺少 ';'"
+  },
+  "E-SYN-00099": {
+    "title": "期望分号",
+    "detail": "变量声明后缺少 ';'"
+  },
+  "E-SYN-00100": {
+    "title": "期望分号",
+    "detail": "for 初始化器中缺少 ';'"
+  },
+  "E-SYN-00101": {
+    "title": "期望 Struct",
+    "detail": "期望 'Struct' 关键字"
+  },
+  "E-SYN-00102": {
+    "title": "期望 Throw",
+    "detail": "期望 'Throw' 关键字"
+  },
+  "E-SYN-00103": {
+    "title": "期望 Try",
+    "detail": "期望 'Try' 关键字"
+  },
+  "E-SYN-00104": {
+    "title": "期望 While",
+    "detail": "期望 'While' 关键字"
+  },
+  "E-SYN-00105": {
+    "title": "期望 '}'",
+    "detail": "解析块时意外到达文件末尾"
+  },
+  "E-SEM-00047": {
+    "title": "泛型调用无效",
+    "detail": "泛型类型参数仅支持命名函数调用"
+  },
+  "E-SEM-00048": {
+    "title": "泛型函数无效",
+    "detail": "外部函数不能是泛型"
+  },
+  "E-SEM-00049": {
+    "title": "泛型成员无效",
+    "detail": "成员访问上的泛型类型参数需要调用"
+  },
+  "E-SEM-00050": {
+    "title": "泛型类型无效",
+    "detail": "期望一个类型参数"
+  },
+  "E-GEN-00018": {
+    "title": "不支持泛型局部函数",
+    "detail": "暂不支持泛型局部命名函数"
+  },
+  "E-GEN-00019": {
+    "title": "不支持泛型方法",
+    "detail": "暂不支持泛型方法"
+  },
+  "E-SYN-00106": {
+    "title": "意外的顶层 Token",
+    "detail": "期望顶层声明（Function/Class/Struct/Enum/Interface/变量声明）"
+  },
+  "ui.severity.error": { "text": "错误" },
+  "ui.severity.warning": { "text": "警告" },
+  "ui.diag.found_eof": { "text": "（遇到文件末尾）" },
+  "ui.diag.found_token": { "text": "（遇到 token '{0}'）" },
+  "ui.diag.location": { "text": "在 <{0}> 第 <{1}> 行，第 <{2}> 列" },
+  "ui.diag.summary": { "text": "[诊断] {0} 个错误，{1} 个警告" },
+  "ui.diag.too_many_parser_errors": { "text": "[诊断] 解析错误过多，提前停止" },
+  "ui.diag.too_many_errors": { "text": "[诊断] 错误过多，提前停止" },
+  "ui.diag.arg_count": { "text": "参数数量不匹配：{0} 期望 {1} 个参数" },
+  "ui.diag.type_mismatch": { "text": "类型不匹配：期望 {0}，得到 {1}" },
+  "ui.diag.type_mismatch.must_be": { "text": "类型不匹配：{0} 必须是 {1}" },
+  "ui.diag.type_mismatch.requires": { "text": "类型不匹配：{0} 需要 {1}" },
+  "ui.diag.type_mismatch.cast": { "text": "类型不匹配：无法将 {0} 转换为 {1}" },
+  "ui.diag.unused_var": { "text": "未使用的变量：{0}" },
+  "ui.diag.unreachable": { "text": "不可达代码：{0}" },
+  "ui.stage.parser": { "text": "解析器" },
+  "ui.stage.sema": { "text": "语义分析" },
+  "ui.stage.codegen": { "text": "代码生成" },
+  "ui.help.full": { "text": "Kinal 编译器\n用法：\n  kinal <子命令> [选项] [参数...]\n  kinal build [选项] <输入文件> [文件2 ...]\n  kinal run [选项] <file.kn> [-- 程序参数...]\n\n子命令：\n  build       将源文件编译为本机可执行文件、对象文件、汇编或 IR\n  run         将源文件编译为临时可执行文件并运行\n  fmt         格式化 .kn 源文件\n  vm          字节码操作（build、run、pack）\n  pkg         包管理（build、info、unpack）\n\nBuild 快速参考：\n输出：\n  -o, --output <file>  输出文件路径\n  --emit <bin|obj|asm|ir>  输出类型（默认：bin）\n  --kind <exe|static|shared>  输出产物类型（仅链接模式）\n\n目标：\n  --target <triple|alias>  目标三元组（默认：host）\n                     别名：win86、win64、linux64、linux-arm64、bare64、bare-arm64\n  --freestanding    宿主架构的独立核心模式快捷方式\n  --env <hosted|freestanding>  选择执行环境\n  --runtime <none|alloc|gc>  选择独立运行时配置文件\n  --panic <trap|loop>  独立模式 panic 行为\n  --entry <symbol>   覆盖可执行文件入口符号（默认：Main/KMain）\n\n项目：\n  --project <file|dir>  从项目清单（JSON）构建\n  --pkg-root <dir>  添加本地包根目录\n  --stdpkg-root <dir>  添加官方 stdpkg 根目录覆盖\n\n链接：\n  --crt <auto|dynamic|static>  托管 CRT 选择（默认：auto）\n  -L, --lib-dir <dir>  添加库搜索目录\n  -l, --lib <name>    按名称链接库\n  --link-file <file>  添加精确链接输入（.obj/.lib/.a）\n  --link-root <dir>   将依赖根目录展开为特定目标的搜索目录\n  --link-arg <arg>    向链接器后端传递原始参数\n  --link-script <file>  向独立链接器传递链接脚本\n  --no-crt          不链接 CRT 启动对象\n  --no-default-libs 不注入默认平台库\n  --linker <lld|zig|msvc>  选择链接器后端\n  --linker-path <file>  显式链接器可执行文件路径（需要 --linker）\n  --show-link      打印最终链接器命令\n  --show-link-search  打印展开的库搜索目录\n\n前端：\n  --no-module-discovery  禁用单输入构建的源/模块自动发现\n  --keep-temps     保留链接生成的中间输出\n  --lto[=off|full|thin]  启用链接时优化（默认：off）\n\n诊断：\n  --color <auto|always|never>  诊断颜色模式\n  --lang <en|zh>   诊断语言\n  --locale-file <file>  按代码的外部区域设置 JSON 映射\n  --Werror         将警告视为错误\n  --warn-level <n> 警告级别（0 禁用警告）\n\n开发者：\n  --dump-locale-en <file>  导出英文区域设置模板 JSON\n  --trace          打印编译阶段跟踪\n  --time           打印编译阶段耗时（毫秒）\n\nRun 快速参考：\n  kinal run [选项] <file.kn> [-- 程序参数...]\n  --keep-temps     执行后保留临时可执行文件\n  --pkg-root <dir>  添加本地包根目录\n  --stdpkg-root <dir>  添加官方 stdpkg 根目录覆盖\n  --color <auto|always|never>  诊断颜色模式\n  --lang <en|zh>   诊断语言\n  --locale-file <file>  外部区域设置 JSON 映射\n  --Werror         将警告视为错误\n  --warn-level <n> 警告级别（0 禁用警告）\n  .knc 文件：请使用 \"kinal vm run\"\n\nVM / 包快速参考：\n  kinal vm build <file.kn> -o <file.knc>\n  kinal vm run <file.kn|file.knc> [-- 程序参数...]\n  kinal vm pack <file.kn|file.knc> -o <file>\n  kinal pkg build --manifest <file|dir> -o <file.klib>\n  kinal pkg info <file.klib>\n  kinal pkg unpack <file.klib> -o <dir>\n\n输入类型：\n  .kn/.kinal/.fx   完整前端编译\n  .ll/.s/.asm      从中间文件继续并向前编译\n  .o/.obj          从对象文件继续并链接\n  .knc             使用 \"kinal vm run\" 或 \"kinal vm pack\"\n\n使用 \"kinal <子命令> --help\" 查看子命令的详细帮助。\n" }
+}

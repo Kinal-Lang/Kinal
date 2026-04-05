@@ -1,0 +1,9 @@
+{
+  "kind": "package",
+  "name": "IO.Core",
+  "version": "1.0.0",
+  "summary": "Official core std package bundled with Kinal.",
+  "source_root": "src",
+  "klib": "lib/IO.Core.klib",
+  "entry": "src/IO/Char.kn"
+}

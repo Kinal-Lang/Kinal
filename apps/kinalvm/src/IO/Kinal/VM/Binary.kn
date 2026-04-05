@@ -1,0 +1,251 @@
+Unit IO.Kinal.VM.Binary;
+
+Get Memory By IO.Memory;
+Get Volatile By IO.Volatile;
+
+Unsafe Extern Function byte* fopen(string path, string mode) By C;
+Unsafe Extern Function int fclose(byte* file) By C;
+Unsafe Extern Function int fseek(byte* file, int offset, int origin) By C;
+Unsafe Extern Function int ftell(byte* file) By C;
+Unsafe Extern Function usize fread(byte* buffer, usize size, usize count, byte* file) By C;
+Unsafe Extern Function byte* malloc(usize size) By C;
+Unsafe Extern Function void free(byte* buffer) By C;
+Unsafe Extern Function int GetModuleFileNameA(byte* module, byte* buf, int size) By C;
+
+Public Class BinaryFile
+{
+    Public Unsafe Static Function byte[] ReadAllBytes(string path)
+    {
+        byte* file = fopen(path, "rb");
+        If (file == null)
+        {
+            Throw "Cannot open file: " + path;
+        }
+
+        If (fseek(file, 0, 2) != 0)
+        {
+            fclose(file);
+            Throw "Cannot seek file: " + path;
+        }
+
+        int size = ftell(file);
+        If (size < 0)
+        {
+            fclose(file);
+            Throw "Cannot read file size: " + path;
+        }
+
+        If (fseek(file, 0, 0) != 0)
+        {
+            fclose(file);
+            Throw "Cannot rewind file: " + path;
+        }
+
+        If (size == 0)
+        {
+            fclose(file);
+            Return {};
+        }
+
+        byte* buffer = malloc([usize](size));
+        If (buffer == null)
+        {
+            fclose(file);
+            Throw "Out of memory while reading file: " + path;
+        }
+
+        usize readCount = fread(buffer, 1, [usize](size), file);
+        fclose(file);
+
+        If ([int](readCount) != size)
+        {
+            free(buffer);
+            Throw "Short read while reading file: " + path;
+        }
+
+        byte[] data = {};
+        For (int i = 0; i < size; i = i + 1)
+        {
+            data = data.Add([byte](Volatile.Read8([u8*](buffer + i))));
+        }
+
+        free(buffer);
+        Return data;
+    }
+
+    Public Unsafe Static Function int FileSize(string path)
+    {
+        byte* file = fopen(path, "rb");
+        If (file == null)
+        {
+            Return -1;
+        }
+        If (fseek(file, 0, 2) != 0)
+        {
+            fclose(file);
+            Return -1;
+        }
+        int size = ftell(file);
+        fclose(file);
+        Return size;
+    }
+
+    Public Unsafe Static Function byte[] ReadBytesRange(string path, int offset, int count)
+    {
+        byte* file = fopen(path, "rb");
+        If (file == null)
+        {
+            Throw "Cannot open file: " + path;
+        }
+        If (fseek(file, offset, 0) != 0)
+        {
+            fclose(file);
+            Throw "Cannot seek file: " + path;
+        }
+        byte* buffer = malloc([usize](count));
+        If (buffer == null)
+        {
+            fclose(file);
+            Throw "Out of memory while reading file: " + path;
+        }
+        usize read = fread(buffer, 1, [usize](count), file);
+        fclose(file);
+        If ([int](read) != count)
+        {
+            free(buffer);
+            Throw "Short read while reading file: " + path;
+        }
+        byte[] data = {};
+        For (int i = 0; i < count; i = i + 1)
+        {
+            data = data.Add([byte](Volatile.Read8([u8*](buffer + i))));
+        }
+        free(buffer);
+        Return data;
+    }
+
+    Public Unsafe Static Function string GetExePath()
+    {
+        byte* buf = malloc(1024);
+        If (buf == null)
+        {
+            Throw "Out of memory";
+        }
+        int len = GetModuleFileNameA(null, buf, 1024);
+        If (len <= 0)
+        {
+            free(buf);
+            Throw "Cannot get exe path";
+        }
+        string result = "";
+        For (int i = 0; i < len; i = i + 1)
+        {
+            result = result + [string]([char]([int](Volatile.Read8([u8*](buf + i)))));
+        }
+        free(buf);
+        Return result;
+    }
+}
+
+Public Class BlobReader
+{
+    Public byte[] Data;
+    Public int Offset;
+
+    Public Constructor(byte[] data)
+    {
+        This.Data = data;
+        This.Offset = 0;
+    }
+
+    Public Function int Remaining()
+    {
+        Return This.Data.Length() - This.Offset;
+    }
+
+    Public Function void Require(int count)
+    {
+        If (count < 0 || This.Offset < 0 || This.Offset + count > This.Data.Length())
+        {
+            Throw "Invalid or truncated KNC2 payload";
+        }
+    }
+
+    Public Function int ReadU8()
+    {
+        This.Require(1);
+        int value = [int](This.Data[This.Offset]);
+        This.Offset = This.Offset + 1;
+        Return value;
+    }
+
+    Public Function int ReadU16()
+    {
+        This.Require(2);
+        int value = [int](This.Data[This.Offset]) |
+                    ([int](This.Data[This.Offset + 1]) << 8);
+        This.Offset = This.Offset + 2;
+        Return value;
+    }
+
+    Public Function int ReadU32()
+    {
+        This.Require(4);
+        int value = [int](This.Data[This.Offset]) |
+                    ([int](This.Data[This.Offset + 1]) << 8) |
+                    ([int](This.Data[This.Offset + 2]) << 16) |
+                    ([int](This.Data[This.Offset + 3]) << 24);
+        This.Offset = This.Offset + 4;
+        Return value;
+    }
+
+    Public Function int ReadI32()
+    {
+        int value = This.ReadU32();
+        If ((value & 0x80000000) != 0)
+        {
+            Return value - 4294967296;
+        }
+        Return value;
+    }
+
+    Public Unsafe Function float ReadF64()
+    {
+        float value = 0.0;
+        This.Require(8);
+        Memory.Copy([byte*](&value), &This.Data[This.Offset], [usize](8));
+        This.Offset = This.Offset + 8;
+        Return value;
+    }
+
+    Public Function byte[] ReadBytes(int count)
+    {
+        byte[] data = {};
+        This.Require(count);
+        For (int i = 0; i < count; i = i + 1)
+        {
+            data = data.Add(This.Data[This.Offset + i]);
+        }
+        This.Offset = This.Offset + count;
+        Return data;
+    }
+
+    Public Function string ReadString()
+    {
+        int count = This.ReadU32();
+        string value = "";
+
+        If (count <= 0)
+        {
+            Return value;
+        }
+
+        This.Require(count);
+        For (int i = 0; i < count; i = i + 1)
+        {
+            value = value + [string]([char]([int](This.Data[This.Offset + i])));
+        }
+        This.Offset = This.Offset + count;
+        Return value;
+    }
+}

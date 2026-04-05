@@ -1,0 +1,9 @@
+Unit Tests.SameUnitScope;
+
+Get IO.Console;
+
+Static Function int Main()
+{
+    IO.Console.PrintLine(Tools.Ping());
+    Return 0;
+}

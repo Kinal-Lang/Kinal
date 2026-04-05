@@ -1,0 +1,12 @@
+Unit Tests.ErrorMetaLowercaseKeep;
+
+Meta Demo(string value)
+{
+    On @function;
+    keep @runtime;
+}
+
+Static Function int Main()
+{
+    Return 0;
+}

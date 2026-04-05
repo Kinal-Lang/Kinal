@@ -1,0 +1,9 @@
+Unit Tests.SameUnitScope;
+
+Class Tools
+{
+    Public Static Function string Ping()
+    {
+        Return "ok";
+    }
+}
