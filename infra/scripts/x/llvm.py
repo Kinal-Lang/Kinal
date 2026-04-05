@@ -35,7 +35,7 @@ def detect_llvm_dir() -> Path:
                 candidates.append(cand)
 
     if not is_windows():
-        for tool in ("llvm-config", "llvm-config-18", "llvm-config-19", "llvm-config-17"):
+        for tool in ("llvm-config", "llvm-config-21", "llvm-config-19", "llvm-config-18", "llvm-config-17"):
             tool_path = shutil.which(tool)
             if not tool_path:
                 continue
