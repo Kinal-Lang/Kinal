@@ -85,10 +85,10 @@ To build Kinal from source:
 
 ```bash
 # Configure
-cmake --preset <platform>
+cmake --preset host-debug
 
 # Build
-cmake --build build/ --target kinal kinalvm
+cmake --build --preset build-host-debug
 ```
 
 See `CMakePresets.json` for available preset names.

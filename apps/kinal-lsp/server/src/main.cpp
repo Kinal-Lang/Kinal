@@ -172,6 +172,7 @@ private:
 
     bool num(double &out) {
         size_t st = pos_;
+        if (pos_ >= src_.size()) return false;
         if (src_[pos_] == '-') ++pos_;
         if (pos_ >= src_.size()) return false;
         if (src_[pos_] == '0') {
@@ -1467,6 +1468,39 @@ std::optional<Json> read_json_file(const std::filesystem::path &p) {
     return j;
 }
 
+bool path_is_within(const std::filesystem::path &base, const std::filesystem::path &candidate) {
+    auto base_norm = base.lexically_normal();
+    auto candidate_norm = candidate.lexically_normal();
+    auto base_it = base_norm.begin();
+    auto candidate_it = candidate_norm.begin();
+    for (; base_it != base_norm.end() && candidate_it != candidate_norm.end(); ++base_it, ++candidate_it) {
+        if (*base_it != *candidate_it) return false;
+    }
+    return base_it == base_norm.end();
+}
+
+std::optional<std::filesystem::path> safe_extract_path(const std::filesystem::path &out_dir, std::string_view rel) {
+    if (rel.empty()) return std::nullopt;
+    std::filesystem::path rel_path(rel);
+    if (rel_path.is_absolute() || rel_path.has_root_name() || rel_path.has_root_directory()) return std::nullopt;
+    rel_path = rel_path.lexically_normal();
+    if (rel_path.empty()) return std::nullopt;
+    for (const auto &part : rel_path) {
+        if (part == "..") return std::nullopt;
+    }
+    std::filesystem::path out_path = (out_dir / rel_path).lexically_normal();
+    if (!path_is_within(out_dir, out_path)) return std::nullopt;
+    return out_path;
+}
+
+bool write_blob(std::ofstream &out, const std::vector<unsigned char> &data, size_t off, size_t len) {
+    if (len == 0) return true;
+    if (off > data.size() || len > data.size() - off) return false;
+    if (len > (size_t)std::numeric_limits<std::streamsize>::max()) return false;
+    out.write((const char *)(data.data() + off), (std::streamsize)len);
+    return (bool)out;
+}
+
 bool klib_extract_to_dir_lsp(const std::filesystem::path &klib_path, const std::filesystem::path &out_dir) {
     std::error_code ec;
     if (!std::filesystem::exists(klib_path, ec) || ec) return false;
@@ -1502,30 +1536,32 @@ bool klib_extract_to_dir_lsp(const std::filesystem::path &klib_path, const std::
     {
         std::ofstream mf(manifest_path, std::ios::binary);
         if (!mf) return false;
-        if (manifest_len > 0)
-            mf.write((const char *)(data.data() + off), (std::streamsize)manifest_len);
+        if (!write_blob(mf, data, off, (size_t)manifest_len)) return false;
         off += manifest_len;
     }
 
     for (uint32_t i = 0; i < source_count; ++i) {
         uint32_t rel_len = 0;
         uint64_t src_size = 0;
+        size_t src_size_sz = 0;
         if (!read_u32_le_bytes(data, off, rel_len) ||
-            !read_u64_le_bytes(data, off, src_size) ||
-            off + rel_len + src_size > data.size()) {
+            !read_u64_le_bytes(data, off, src_size)) {
             return false;
         }
+        if (src_size > (uint64_t)std::numeric_limits<size_t>::max()) return false;
+        src_size_sz = (size_t)src_size;
+        if (off > data.size() || rel_len > data.size() - off || src_size_sz > data.size() - off - rel_len) return false;
         std::string rel((const char *)(data.data() + off), (size_t)rel_len);
         off += rel_len;
         std::replace(rel.begin(), rel.end(), '/', (char)std::filesystem::path::preferred_separator);
-        std::filesystem::path out_path = out_dir / rel;
-        std::filesystem::create_directories(out_path.parent_path(), ec);
+        auto out_path = safe_extract_path(out_dir, rel);
+        if (!out_path) return false;
+        std::filesystem::create_directories(out_path->parent_path(), ec);
         if (ec) return false;
-        std::ofstream sf(out_path, std::ios::binary);
+        std::ofstream sf(*out_path, std::ios::binary);
         if (!sf) return false;
-        if (src_size > 0)
-            sf.write((const char *)(data.data() + off), (std::streamsize)src_size);
-        off += (size_t)src_size;
+        if (!write_blob(sf, data, off, src_size_sz)) return false;
+        off += src_size_sz;
     }
 
     return true;
