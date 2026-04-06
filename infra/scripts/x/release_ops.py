@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import shutil
 import stat
+import tarfile
 import zipfile
 from pathlib import Path
 
@@ -205,12 +206,41 @@ def stage_bundle(build_type: str, dest: Path) -> Path:
     return dest
 
 
-def zip_directory(src_dir: Path, zip_path: Path) -> Path:
+def zip_directory(src_dir: Path, zip_path: Path, root_name: str | None = None) -> Path:
     if zip_path.exists():
         zip_path.unlink()
+    archive_root = root_name or src_dir.name
     with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
         for path in sorted(src_dir.rglob("*")):
             if path.is_file():
-                arcname = str(Path(src_dir.name) / path.relative_to(src_dir)).replace("\\", "/")
+                arcname = str(Path(archive_root) / path.relative_to(src_dir)).replace("\\", "/")
                 zf.write(path, arcname=arcname)
     return zip_path
+
+
+def tar_directory(src_dir: Path, tar_path: Path, *, compression: str = "gz", root_name: str | None = None) -> Path:
+    if tar_path.exists():
+        tar_path.unlink()
+    archive_root = root_name or src_dir.name
+    if compression == "gz":
+        mode = "w:gz"
+    elif compression == "xz":
+        mode = "w:xz"
+    elif compression in ("", "none"):
+        mode = "w"
+    else:
+        raise ValueError(f"unsupported tar compression: {compression}")
+    with tarfile.open(tar_path, mode) as tf:
+        tf.add(src_dir, arcname=archive_root)
+    return tar_path
+
+
+def sha256_file(path: Path) -> str:
+    import hashlib
+
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+

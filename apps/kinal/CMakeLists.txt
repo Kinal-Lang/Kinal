@@ -55,6 +55,11 @@ if (NOT WIN32)
 endif()
 
 add_executable(kinal ${KINAL_COMPILER_SOURCES} ${KINAL_HOST_PLATFORM_SOURCES})
+if (WIN32)
+    target_sources(kinal PRIVATE
+        "${CMAKE_CURRENT_SOURCE_DIR}/resources/kinal.rc"
+    )
+endif()
 target_include_directories(kinal PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/include"
     "${CMAKE_CURRENT_SOURCE_DIR}/../../libs/runtime/include"
