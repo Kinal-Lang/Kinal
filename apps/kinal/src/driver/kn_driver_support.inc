@@ -1477,6 +1477,10 @@ static int embed_knc_into_exe(const char *exe_path, const char *knc_path, const 
         return 1;
     }
 
+#if !defined(_WIN32) && !defined(_WIN64)
+    chmod(out_path, 0755);
+#endif
+
     return 0;
 }
 

@@ -2,6 +2,7 @@
 #if !defined(_WIN32) && !defined(_WIN64)
 #include <unistd.h>
 #include <stdlib.h>
+#include <sys/stat.h>
 #endif
 #if defined(__APPLE__)
 #include <mach-o/dyld.h>
