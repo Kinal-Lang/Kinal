@@ -4,10 +4,10 @@ Get Console By IO.Console;
 
 Static Function int Main()
 {
-    string joined = "abc";
-    any boxed = joined;
-    int number = 42;
-    bool ready = false;
+    string joined= "abc";
+    any boxed= joined;
+    int number= 42;
+    bool ready= false;
 
     Console.PrintLine(joined.Length());
     Console.PrintLine(joined.Equals("abc"));

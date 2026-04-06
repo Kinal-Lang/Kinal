@@ -2,22 +2,28 @@ Unit Tests.Pointers;
 
 Get Console By IO.Console;
 
-Trusted Function int SumFirst(int arr[]) {
-    int* p = &arr[0];
-    int v = *p;
-    p = p + 1;
-    int v2 = *p;
-    Return v + v2;
+Trusted Function int SumFirst(int arr[])
+{
+    int*p= &arr[0];
+    int v= *p;
+    p= p+ 1;
+    int v2= *p;
+    Return v+ v2;
 }
 
-Static Safe Function int Main(string args[]) {
-    int a[] = { 10, 20, 30 };
-    Var s = SumFirst(a);
-    If (s == 30) {
+Static Safe Function int Main(string args[])
+{
+    int a[]= {
+        10, 20, 30
+    };
+    Var s= SumFirst(a);
+    If (s== 30)
+    {
         Console.PrintLine("ok");
-    } Else {
+    }
+    Else
+    {
         Console.PrintLine("bad");
     }
     Return 0;
 }
-

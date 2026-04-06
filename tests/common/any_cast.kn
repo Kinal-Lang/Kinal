@@ -1,8 +1,9 @@
 Unit Tests.AnyCast;
 Get Console By IO.Console;
 
-Static Function int Main() {
-    any a = 123;
+Static Function int Main()
+{
+    any a= 123;
     Console.PrintLine(a);
     Console.PrintLine([string](456));
     Console.PrintLine([IO.Type.string](true));
@@ -11,4 +12,3 @@ Static Function int Main() {
     Console.PrintLine([char](65));
     Return 0;
 }
-

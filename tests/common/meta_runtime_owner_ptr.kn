@@ -4,24 +4,23 @@ Get IO.Meta;
 
 Meta Route(string path)
 {
-    On @function;
-    Keep @runtime;
+    On@function;
+    Keep@runtime;
 }
 
-[Route("/hello")]
-Function string Hello()
+[Route("/hello")] Function string Hello()
 {
     Return "hello";
 }
 
 Unsafe Static Function int Main()
 {
-    dict route = IO.Meta.Find(Hello, "Route");
-    byte* owner = [byte*](route.Fetch("owner_ptr"));
-    int paramCount = [int](route.Fetch("owner_param_count"));
-    IO.Type.Object.Function fn = [Object.Function](owner);
+    dict route= IO.Meta.Find(Hello, "Route");
+    byte*owner=[byte*](route.Fetch("owner_ptr"));
+    int paramCount=[int](route.Fetch("owner_param_count"));
+    IO.Type.Object.Function fn=[Object.Function](owner);
 
-    Console.PrintLine(owner != null);
+    Console.PrintLine(owner!= null);
     Console.PrintLine(paramCount);
     Console.PrintLine([string](route.Fetch("arg.path")));
     Console.PrintLine(fn());

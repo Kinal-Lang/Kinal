@@ -4,8 +4,6 @@ Get IO.UI;
 
 Static Function int Main()
 {
-    IO.UI.MessageBox.Show("compile-only ok", "Kinal UI",
-                          IO.UI.MessageBoxButtons.OK,
-                          IO.UI.MessageBoxIcon.Info);
+    IO.UI.MessageBox.Show("compile-only ok", "Kinal UI", IO.UI.MessageBoxButtons.OK, IO.UI.MessageBoxIcon.Info);
     Return 0;
 }

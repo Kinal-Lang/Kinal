@@ -3,7 +3,8 @@ Unit Tests.PathPosix;
 Get Console By IO.Console;
 Get IO.Path;
 
-Static Function int Main() {
+Static Function int Main()
+{
     Console.PrintLine(IO.Path.Join("usr", "local"));
     Console.PrintLine(IO.Path.Join3("usr", "local", "bin"));
     Console.PrintLine(IO.Path.IsAbsolute("/usr/local"));

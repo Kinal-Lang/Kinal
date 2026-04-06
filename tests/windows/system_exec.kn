@@ -3,8 +3,9 @@ Unit Tests.SystemExec;
 Get IO.Console;
 Get IO.System;
 
-Static Function int Main() {
-    int exitCode = IO.System.Exec("cmd /c exit 7");
+Static Function int Main()
+{
+    int exitCode= IO.System.Exec("cmd /c exit 7");
     IO.Console.PrintLine(exitCode);
     Return 0;
 }

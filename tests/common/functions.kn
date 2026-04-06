@@ -2,17 +2,21 @@ Unit Tests.Funcs;
 
 Get Console By IO.Console;
 
-Function int Add(int a, int b) {
-    Return a + b;
+Function int Add(int a, int b)
+{
+    Return a+ b;
 }
 
-Static Function int Main() {
-    Var r = Add(2, 3);
-    If (r == 5) {
+Static Function int Main()
+{
+    Var r= Add(2, 3);
+    If (r== 5)
+    {
         Console.PrintLine("ok");
-    } Else {
+    }
+    Else
+    {
         Console.PrintLine("bad");
     }
     Return 0;
 }
-

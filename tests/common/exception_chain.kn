@@ -4,30 +4,37 @@ Get Console By IO.Console;
 Get IO.Error;
 Get IO.Text;
 
-Function void C() {
+Function void C()
+{
     Throw New IO.Error("T", "M");
 }
 
-Function void B() {
+Function void B()
+{
     C();
 }
 
-Function void A() {
+Function void A()
+{
     B();
 }
 
-Static Function int Main() {
-    Try {
+Static Function int Main()
+{
+    Try
+    {
         A();
-    } Catch (IO.Error e) {
+    }
+    Catch (IO.Error e)
+    {
         Console.PrintLine(e.Title);
         Console.PrintLine(e.Message);
         Console.PrintLine(IO.Error.HasException());
-        string trace = IO.Error.LastTrace();
+        string trace= IO.Error.LastTrace();
         Console.PrintLine(IO.Text.Contains(trace, "Tests.ExceptionChain.C"));
         Console.PrintLine(IO.Text.Contains(trace, "Tests.ExceptionChain.B"));
         Console.PrintLine(IO.Text.Contains(trace, "Tests.ExceptionChain.A"));
-        IO.Error cur = IO.Error.Current();
+        IO.Error cur= IO.Error.Current();
         Console.PrintLine(cur.Title);
     }
     Return 0;

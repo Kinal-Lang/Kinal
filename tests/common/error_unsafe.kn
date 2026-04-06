@@ -1,9 +1,11 @@
 Unit Tests.ErrorUnsafe;
 
-Unsafe Function int UnsafeAdd() {
+Unsafe Function int UnsafeAdd()
+{
     Return 1;
 }
 
-Static Safe Function int Main(string args[]) {
+Static Safe Function int Main(string args[])
+{
     Return UnsafeAdd();
 }

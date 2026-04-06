@@ -2,12 +2,15 @@ Unit MiniLang.Lexer;
 
 Get MiniLang.Token;
 
-Class Lexer {
-    Public Function Token NextToken() {
+Class Lexer
+{
+    Public Function Token NextToken()
+    {
         Return New Token("bad");
     }
 }
 
-Safe Static Function int Main() {
+Safe Static Function int Main()
+{
     Return 0;
 }

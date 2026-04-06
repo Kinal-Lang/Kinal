@@ -808,7 +808,8 @@ int kn_codegen(const char *out_path, MetaList *metas, FuncList *funcs, ImportLis
     else if (str_contains_ci(triple, "aarch64") || str_contains_ci(triple, "arm64"))
         cpu = "generic";
 
-    LLVMTargetMachineRef tm = LLVMCreateTargetMachine(target, triple, cpu, "", LLVMCodeGenLevelDefault, LLVMRelocDefault, LLVMCodeModelDefault);
+    LLVMRelocMode reloc_mode = (opts && opts->emit_pic) ? LLVMRelocPIC : LLVMRelocDefault;
+    LLVMTargetMachineRef tm = LLVMCreateTargetMachine(target, triple, cpu, "", LLVMCodeGenLevelDefault, reloc_mode, LLVMCodeModelDefault);
     if (!tm)
     {
         kn_write_str("LLVMCreateTargetMachine failed\n");

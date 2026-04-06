@@ -1,8 +1,8 @@
 Unit Tests.ErrorDictTryFetchKey;
 
-
-Static Function int Main() {
-    dict d = dict.Create();
-    any v = d.TryFetch(1, "x");
+Static Function int Main()
+{
+    dict d= dict.Create();
+    any v= d.TryFetch(1, "x");
     Return 0;
 }

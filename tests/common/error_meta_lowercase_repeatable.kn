@@ -2,8 +2,8 @@ Unit Tests.ErrorMetaLowercaseRepeatable;
 
 Meta Demo(string value)
 {
-    On @function;
-    Keep @runtime;
+    On@function;
+    Keep@runtime;
     repeatable;
 }
 

@@ -3,26 +3,34 @@ Unit Tests.ExceptionInner;
 Get Console By IO.Console;
 Get IO.Error;
 
-Function void Deep() {
+Function void Deep()
+{
     Throw New IO.Error("InnerT", "InnerM");
 }
 
-Function void Wrap() {
-    Try {
+Function void Wrap()
+{
+    Try
+    {
         Deep();
-    } Catch (IO.Error e) {
+    }
+    Catch (IO.Error e)
+    {
         Throw New IO.Error("OuterT", "OuterM");
     }
 }
 
-Static Function int Main() {
-    Try {
+Static Function int Main()
+{
+    Try
+    {
         Wrap();
-    } Catch (IO.Error e) {
+    }
+    Catch (IO.Error e)
+    {
         Console.PrintLine(e.Title);
         Console.PrintLine(e.Inner.Title);
         Console.PrintLine(e.Inner.Message);
     }
     Return 0;
 }
-

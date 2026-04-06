@@ -2,13 +2,11 @@ Unit Tests.ErrorMetaRepeatable;
 
 Meta Demo(string value)
 {
-    On @function;
-    Keep @compile;
+    On@function;
+    Keep@compile;
 }
 
-[Demo("a")]
-[Demo("b")]
-Static Function int Main()
+[Demo("a")][Demo("b")] Static Function int Main()
 {
     Return 0;
 }

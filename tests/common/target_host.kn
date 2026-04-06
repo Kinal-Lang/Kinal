@@ -6,42 +6,34 @@ Get IO.Host;
 
 Static Function bool IsKnownOS(int value)
 {
-    Return value == IO.Target.Windows ||
-           value == IO.Target.Linux ||
-           value == IO.Target.MacOS ||
-           value == IO.Target.Unknown;
+    Return value== IO.Target.Windows|| value== IO.Target.Linux|| value== IO.Target.MacOS|| value== IO.Target.Unknown;
 }
 
 Static Function bool IsKnownArch(int value)
 {
-    Return value == IO.Target.Arch.X86 ||
-           value == IO.Target.Arch.X64 ||
-           value == IO.Target.Arch.Arm64 ||
-           value == IO.Target.Arch.Unknown;
+    Return value== IO.Target.Arch.X86|| value== IO.Target.Arch.X64|| value== IO.Target.Arch.Arm64|| value== IO.Target.Arch.Unknown;
 }
 
 Static Function bool IsKnownEnv(int value)
 {
-    Return value == IO.Target.Env.Hosted ||
-           value == IO.Target.Env.Freestanding ||
-           value == IO.Target.Env.Unknown;
+    Return value== IO.Target.Env.Hosted|| value== IO.Target.Env.Freestanding|| value== IO.Target.Env.Unknown;
 }
 
 Static Function int Main()
 {
-    int target_os = IO.Target;
-    int host_os = IO.Host;
-    int target_arch = IO.Target.Arch;
-    int host_arch = IO.Host.Arch;
-    int target_env = IO.Target.Env;
-    int host_env = IO.Host.Env;
+    int target_os= IO.Target;
+    int host_os= IO.Host;
+    int target_arch= IO.Target.Arch;
+    int host_arch= IO.Host.Arch;
+    int target_env= IO.Target.Env;
+    int host_env= IO.Host.Env;
 
-    Console.PrintLine(target_os == IO.Target.OS.Current);
-    Console.PrintLine(host_os == IO.Host.OS.Current);
-    Console.PrintLine(target_arch == IO.Target.Arch.Current);
-    Console.PrintLine(host_arch == IO.Host.Arch.Current);
-    Console.PrintLine(target_env == IO.Target.Env.Current);
-    Console.PrintLine(host_env == IO.Host.Env.Current);
+    Console.PrintLine(target_os== IO.Target.OS.Current);
+    Console.PrintLine(host_os== IO.Host.OS.Current);
+    Console.PrintLine(target_arch== IO.Target.Arch.Current);
+    Console.PrintLine(host_arch== IO.Host.Arch.Current);
+    Console.PrintLine(target_env== IO.Target.Env.Current);
+    Console.PrintLine(host_env== IO.Host.Env.Current);
 
     Console.PrintLine(IsKnownOS(target_os));
     Console.PrintLine(IsKnownOS(host_os));
@@ -50,25 +42,25 @@ Static Function int Main()
     Console.PrintLine(IsKnownEnv(target_env));
     Console.PrintLine(IsKnownEnv(host_env));
 
-    Console.PrintLine(IO.Target.PointerBits == 0 || IO.Target.PointerBits == 32 || IO.Target.PointerBits == 64);
-    Console.PrintLine(IO.Host.PointerBits == 0 || IO.Host.PointerBits == 32 || IO.Host.PointerBits == 64);
+    Console.PrintLine(IO.Target.PointerBits== 0|| IO.Target.PointerBits== 32|| IO.Target.PointerBits== 64);
+    Console.PrintLine(IO.Host.PointerBits== 0|| IO.Host.PointerBits== 32|| IO.Host.PointerBits== 64);
 
-    Console.PrintLine((target_os == IO.Target.Windows) == (IO.Target.PathSeparator == "\\"));
-    Console.PrintLine((host_os == IO.Host.Windows) == (IO.Host.PathSeparator == "\\"));
+    Console.PrintLine((target_os== IO.Target.Windows)==(IO.Target.PathSeparator== "\\"));
+    Console.PrintLine((host_os== IO.Host.Windows)==(IO.Host.PathSeparator== "\\"));
 
-    Console.PrintLine((target_os == IO.Target.Windows) == (IO.Target.ExeSuffix == ".exe"));
-    Console.PrintLine((host_os == IO.Host.Windows) == (IO.Host.ExeSuffix == ".exe"));
+    Console.PrintLine((target_os== IO.Target.Windows)==(IO.Target.ExeSuffix== ".exe"));
+    Console.PrintLine((host_os== IO.Host.Windows)==(IO.Host.ExeSuffix== ".exe"));
 
-    Console.PrintLine((target_os == IO.Target.Windows) == (IO.Target.ObjectSuffix == ".obj"));
-    Console.PrintLine((host_os == IO.Host.Windows) == (IO.Host.ObjectSuffix == ".obj"));
+    Console.PrintLine((target_os== IO.Target.Windows)==(IO.Target.ObjectSuffix== ".obj"));
+    Console.PrintLine((host_os== IO.Host.Windows)==(IO.Host.ObjectSuffix== ".obj"));
 
-    Console.PrintLine((target_os == IO.Target.Windows) == (IO.Target.DynamicLibrarySuffix == ".dll"));
-    Console.PrintLine((host_os == IO.Host.Windows) == (IO.Host.DynamicLibrarySuffix == ".dll"));
+    Console.PrintLine((target_os== IO.Target.Windows)==(IO.Target.DynamicLibrarySuffix== ".dll"));
+    Console.PrintLine((host_os== IO.Host.Windows)==(IO.Host.DynamicLibrarySuffix== ".dll"));
 
-    Console.PrintLine((target_os == IO.Target.Windows) == (IO.Target.StaticLibrarySuffix == ".lib"));
-    Console.PrintLine((host_os == IO.Host.Windows) == (IO.Host.StaticLibrarySuffix == ".lib"));
+    Console.PrintLine((target_os== IO.Target.Windows)==(IO.Target.StaticLibrarySuffix== ".lib"));
+    Console.PrintLine((host_os== IO.Host.Windows)==(IO.Host.StaticLibrarySuffix== ".lib"));
 
-    Console.PrintLine((target_os == IO.Target.Windows) == (IO.Target.NewLine == "\r\n"));
-    Console.PrintLine((host_os == IO.Host.Windows) == (IO.Host.NewLine == "\r\n"));
+    Console.PrintLine((target_os== IO.Target.Windows)==(IO.Target.NewLine== "\r\n"));
+    Console.PrintLine((host_os== IO.Host.Windows)==(IO.Host.NewLine== "\r\n"));
     Return 0;
 }

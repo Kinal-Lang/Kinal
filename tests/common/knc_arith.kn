@@ -4,9 +4,9 @@ Get Console By IO.Console;
 
 Static Function int Main()
 {
-    Var left = 20;
-    Var right = 22;
-    Var sum = left + right;
+    Var left= 20;
+    Var right= 22;
+    Var sum= left+ right;
     Console.PrintLine(sum);
     Return 0;
 }

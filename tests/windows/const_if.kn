@@ -1,12 +1,15 @@
 Unit Tests.ConstIf;
 Get Console By IO.Console;
 
-Static Function int Main() {
-    If (IO.Target.OS == IO.Target.OS.Windows) {
+Static Function int Main()
+{
+    If (IO.Target.OS== IO.Target.OS.Windows)
+    {
         Console.PrintLine("win");
-    } Else {
+    }
+    Else
+    {
         UnknownCall();
     }
     Return 0;
 }
-

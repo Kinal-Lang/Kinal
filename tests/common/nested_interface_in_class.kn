@@ -24,7 +24,7 @@ Class Outer
 
 Static Function int Main()
 {
-    Outer.IValue value = New Outer.Box();
+    Outer.IValue value= New Outer.Box();
     Console.PrintLine(value.Fetch());
     Return 0;
 }

@@ -9,12 +9,12 @@ Function void PrintText(string s)
 
 Safe Static Function int Main()
 {
-    char c = 'a';
-    string s = c;
+    char c= 'a';
+    string s= c;
 
     PrintText(c);
-    IO.Console.PrintLine("x" + c);
-    IO.Console.PrintLine(c + "y");
+    IO.Console.PrintLine("x"+ c);
+    IO.Console.PrintLine(c+ "y");
     IO.Console.PrintLine(s);
     Return 0;
 }

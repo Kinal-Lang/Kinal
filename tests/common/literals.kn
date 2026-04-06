@@ -2,15 +2,18 @@ Unit Tests.Literals;
 
 Get Console By IO.Console;
 
-Static Function int Main() {
-    int h = 0x2A;
-    float f = 100f;
-    float g = 1.25F;
-    If (h == 42 && f == 100.0 && g == 1.25) {
+Static Function int Main()
+{
+    int h= 0x2A;
+    float f= 100f;
+    float g= 1.25F;
+    If (h== 42&& f== 100.0&& g== 1.25)
+    {
         Console.PrintLine("ok");
-    } Else {
+    }
+    Else
+    {
         Console.PrintLine("bad");
     }
     Return 0;
 }
-

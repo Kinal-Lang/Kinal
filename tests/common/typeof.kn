@@ -2,13 +2,15 @@ Unit Tests.TypeOf;
 
 Get Console By IO.Console;
 
-Static Function int Main() {
-    int a = 100;
-    int arr[] = { 1, 2 };
-    int* p = &a;
+Static Function int Main()
+{
+    int a= 100;
+    int arr[]= {
+        1, 2
+    };
+    int*p= &a;
     Console.PrintLine(a.TypeOf());
     Console.PrintLine(arr.TypeOf());
     Console.PrintLine(p.TypeOf());
     Return 0;
 }
-

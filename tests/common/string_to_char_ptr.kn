@@ -1,12 +1,14 @@
 Unit Tests.StringToCharPtr;
 Get Console By IO.Console;
 
-Function bool IsNull(char* s) {
-    Return s == null;
+Function bool IsNull(char*s)
+{
+    Return s== null;
 }
 
-Static Function int Main() {
-    char* s = "hello-char";
+Static Function int Main()
+{
+    char*s= "hello-char";
     Console.PrintLine(IsNull("direct"));
     Console.PrintLine(IsNull(s));
     Return 0;

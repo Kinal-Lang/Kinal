@@ -1,6 +1,7 @@
 Unit App.BadMemberAccess;
 
-Static Function int Main(string args[]) {
-    Var x = A.B;
+Static Function int Main(string args[])
+{
+    Var x= A.B;
     Return 0;
 }

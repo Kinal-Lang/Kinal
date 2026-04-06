@@ -5,21 +5,21 @@ Get IO.System;
 
 Unsafe Static Function int Main(string[] args)
 {
-    If (args.Length() == 0)
+    If (args.Length()== 0)
     {
         Console.PrintLine("missing-lib");
         Return 2;
     }
 
-    byte* lib = IO.System.LoadLibrary(args[0]);
-    If (lib == null)
+    byte*lib= IO.System.LoadLibrary(args[0]);
+    If (lib== null)
     {
         Console.PrintLine(IO.System.LastError());
         Return 3;
     }
 
-    list own = IO.Meta.Of("Tests.Dynamic.Shared.Hello");
-    dict item = IO.Meta.Find("Tests.Dynamic.Shared.Hello", "Exported");
+    list own= IO.Meta.Of("Tests.Dynamic.Shared.Hello");
+    dict item= IO.Meta.Find("Tests.Dynamic.Shared.Hello", "Exported");
 
     Console.PrintLine(IO.Meta.Has("Tests.Dynamic.Shared.Add", "Exported"));
     Console.PrintLine(own.Count());

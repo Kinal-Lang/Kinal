@@ -3,9 +3,9 @@ Unit App.Main;
 Get App.Util;
 Get Console By IO.Console;
 
-Static Safe Function int Main(string args[]) {
-    Var v = App.Util.Add(40, 2);
+Static Safe Function int Main(string args[])
+{
+    Var v= App.Util.Add(40, 2);
     Console.PrintLine("ok");
-    Return v - 42;
+    Return v- 42;
 }
-

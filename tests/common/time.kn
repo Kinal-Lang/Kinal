@@ -3,16 +3,19 @@ Unit Tests.Time;
 Get Console By IO.Console;
 Get IO.Time;
 
-Static Function int Main() {
+Static Function int Main()
+{
     IO.Time.Sleep(1);
-    int tick = IO.Time.GetTick();
-    IO.Time.DateTime now = IO.Time.Now();
-    string text = IO.Time.Format(now, "yyyy-MM-dd HH:mm:ss.fff");
-    If (tick >= 0 && now.Ticks >= 0 && text != "") {
+    int tick= IO.Time.GetTick();
+    IO.Time.DateTime now= IO.Time.Now();
+    string text= IO.Time.Format(now, "yyyy-MM-dd HH:mm:ss.fff");
+    If (tick>= 0&& now.Ticks>= 0&& text!= "")
+    {
         Console.PrintLine("ok");
-    } Else {
+    }
+    Else
+    {
         Console.PrintLine("bad");
     }
     Return 0;
 }
-

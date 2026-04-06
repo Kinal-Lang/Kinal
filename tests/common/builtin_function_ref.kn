@@ -1,14 +1,15 @@
 ﻿Unit Tests.BuiltinFunctionRef;
 Get Console By IO.Console;
 
-Static Function int Main() {
-    IO.Type.Object.Function p = Console.PrintLine;
+Static Function int Main()
+{
+    IO.Type.Object.Function p= Console.PrintLine;
     p("a");
 
-    Var q = p;
+    Var q= p;
     q("b");
 
-    IO.Type.Object.Class c = q;
+    IO.Type.Object.Class c= q;
     Console.PrintLine(c.TypeOf());
     Return 0;
 }

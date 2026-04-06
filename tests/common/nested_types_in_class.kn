@@ -6,8 +6,7 @@ Class Outer
 {
     Public Enum Kind
     {
-        Zero,
-        One
+        Zero, One
     }
 
     Public Struct Pair
@@ -22,7 +21,7 @@ Class Outer
 
         Constructor(int value)
         {
-            Value = value;
+            Value= value;
         }
     }
 }
@@ -30,13 +29,13 @@ Class Outer
 Static Function int Main()
 {
     Outer.Pair pair;
-    pair.Left = 20;
-    pair.Right = 22;
+    pair.Left= 20;
+    pair.Right= 22;
 
-    Outer.Box box = New Outer.Box(9);
+    Outer.Box box= New Outer.Box(9);
 
     Console.PrintLine([int](Outer.Kind.One));
-    Console.PrintLine(pair.Left + pair.Right);
+    Console.PrintLine(pair.Left+ pair.Right);
     Console.PrintLine(box.Value);
     Return 0;
 }

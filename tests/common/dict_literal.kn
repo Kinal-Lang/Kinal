@@ -2,9 +2,13 @@ Unit Tests.DictLiteral;
 
 Get Console By IO.Console;
 
-Static Function int Main() {
-    dict d = { "name": "kinal", "n": 123 };
-    dict empty = {};
+Static Function int Main()
+{
+    dict d= {
+        "name": "kinal", "n": 123
+    };
+    dict empty= {
+    };
     Console.PrintLine([string](d.Fetch("name")));
     Console.PrintLine([int](d.Fetch("n")));
     Console.PrintLine(empty.Count());

@@ -6,18 +6,18 @@ Class Math
 {
     Public Function int SumTo(int n)
     {
-        If (n <= 0)
+        If (n<= 0)
         {
             Return 0;
         }
 
-        Return n + SumTo(n - 1);
+        Return n+ SumTo(n- 1);
     }
 }
 
 Safe Static Function int Main()
 {
-    Math math = New Math();
+    Math math= New Math();
     Console.PrintLine(math.SumTo(5));
     Return 0;
 }

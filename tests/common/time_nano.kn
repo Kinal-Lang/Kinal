@@ -3,8 +3,9 @@ Unit Tests.TimeNano;
 Get Console By IO.Console;
 Get IO.Time;
 
-Static Function int Main() {
-    int t = IO.Time.GetNanoTick();
+Static Function int Main()
+{
+    int t= IO.Time.GetNanoTick();
     Console.PrintLine("ok");
     Return 0;
 }

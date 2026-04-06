@@ -1,0 +1,26 @@
+Unit MiniLang.Token;
+
+Enum TokenType By u8 {
+    Identifier,
+    Literal,
+    _If,
+    _Else,
+    _While
+}
+
+Enum TokenLiteralType By u8 {
+    None,
+    Boolean
+}
+
+Public Class Token {
+    Public TokenType Type;
+    Public string Value;
+    Public TokenLiteralType LiteralType;
+
+    Public Function Token(TokenType type, string value, TokenLiteralType literal = TokenLiteralType.None) {
+        This.Type = type;
+        This.Value = value;
+        This.LiteralType = literal;
+    }
+}

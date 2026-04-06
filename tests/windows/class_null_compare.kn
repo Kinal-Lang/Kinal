@@ -3,12 +3,12 @@ Get IO.Console;
 
 Static Function int Main()
 {
-    int i = 0;
-    int ok = 0;
-    While (i < 256)
+    int i= 0;
+    int ok= 0;
+    While (i< 256)
     {
-        IO.UI.Color color = IO.UI.Color.White();
-        If (color != null)
+        IO.UI.Color color= IO.UI.Color.White();
+        If (color!= null)
         {
             ok++;
         }

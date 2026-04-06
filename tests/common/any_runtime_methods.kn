@@ -2,19 +2,22 @@ Unit Tests.AnyMethods;
 
 Get Console By IO.Console;
 
-Class Box {
+Class Box
+{
     Public int Value;
 
-    Public Constructor(int value) {
-        Value = value;
+    Public Constructor(int value)
+    {
+        Value= value;
     }
 }
 
-Static Function int Main() {
-    int i = 42;
-    string s = null;
-    Box b = New Box(7);
-    any a = null;
+Static Function int Main()
+{
+    int i= 42;
+    string s= null;
+    Box b= New Box(7);
+    any a= null;
 
     Console.PrintLine(i.ToString());
     Console.PrintLine(i.TypeName());

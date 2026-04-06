@@ -2,17 +2,17 @@ Unit Tests.StdConsole;
 
 Get Console By IO.Console;
 
-Static Function int Main() {
+Static Function int Main()
+{
     Console.Print("A");
     Console.Print("B");
     Console.PrintLine("C");
     Console.PrintLine("D");
     Console.Print(42);
-    char ch = 33;
+    char ch= 33;
     Console.Print(ch);
-    bool b = 1 == 1;
+    bool b= 1== 1;
     Console.Print(b);
     Console.PrintLine("");
     Return 0;
 }
-

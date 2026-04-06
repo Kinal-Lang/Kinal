@@ -1,13 +1,16 @@
 Unit App.TryCatch;
 Get Console By IO.Console;
 
-Static Function int Main() {
-    Try {
+Static Function int Main()
+{
+    Try
+    {
         Throw "boom";
         Console.PrintLine("no");
-    } Catch (string e) {
+    }
+    Catch (string e)
+    {
         Console.PrintLine(e);
     }
     Return 0;
 }
-

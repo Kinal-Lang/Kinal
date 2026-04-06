@@ -2,11 +2,11 @@ Unit Tests.ConsoleVarargs;
 
 Get Console By IO.Console;
 
-Static Function int Main() {
+Static Function int Main()
+{
     Console.PrintLine();
     Console.PrintLine("A", 1, true);
     Console.Print("B", 2);
     Console.PrintLine();
     Return 0;
 }
-

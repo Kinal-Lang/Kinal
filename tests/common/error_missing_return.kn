@@ -1,9 +1,11 @@
 Unit App.Bad;
 
-Function int Foo() {
-    Var x = 1;
+Function int Foo()
+{
+    Var x= 1;
 }
 
-Static Function int Main() {
+Static Function int Main()
+{
     Return 0;
 }

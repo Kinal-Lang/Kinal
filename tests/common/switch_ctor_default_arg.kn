@@ -2,12 +2,20 @@ Unit MiniLang.Main;
 
 Get Token By MiniLang.Token;
 
-Safe Static Function int Main() {
-    string value = "true";
-    Token.Token type = Switch(value)
+Safe Static Function int Main()
+{
+    string value= "true";
+    Token.Token type= Switch (value)
     {
-        Case("true") { New Token.Token(Token.TokenType.Literal, value, Token.TokenLiteralType.Boolean) }
-        Case(default) { New Token.Token(Token.TokenType.Identifier, value) }
+        Case("true")
+        {
+            New Token.Token(Token.TokenType.Literal, value, Token.TokenLiteralType.Boolean)
+        }
+        Case(
+        default)
+        {
+            New Token.Token(Token.TokenType.Identifier, value)
+        }
     };
     Return 0;
 }

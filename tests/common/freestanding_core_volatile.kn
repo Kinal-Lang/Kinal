@@ -5,11 +5,11 @@ Get IO.Panic;
 
 Trusted Static Function void KMain()
 {
-    u32 slot = 0;
-    u32* ptr = &slot;
+    u32 slot= 0;
+    u32*ptr= &slot;
 
     IO.Volatile.Write32(ptr, 0x12345678);
-    If (IO.Volatile.Read32(ptr) != 0x12345678)
+    If (IO.Volatile.Read32(ptr)!= 0x12345678)
     {
         IO.Panic.Abort();
     }

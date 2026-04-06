@@ -2,8 +2,8 @@ Unit Tests.ErrorMetaLowercaseOn;
 
 Meta Demo(string value)
 {
-    on @function;
-    Keep @runtime;
+    on@function;
+    Keep@runtime;
 }
 
 Static Function int Main()

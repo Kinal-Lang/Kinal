@@ -2,44 +2,42 @@ Unit Tests.Dynamic.Loader;
 Get Console By IO.Console;
 Get IO.System;
 
-[SymbolName("Tests.Dynamic.Shared.Add")]
-Delegate Function int dyn_add(int a, int b) By C;
-[SymbolName("Tests.Dynamic.Shared.Hello")]
-Delegate Function string dyn_hello() By C;
+[SymbolName("Tests.Dynamic.Shared.Add")] Delegate Function int dyn_add(int a, int b) By C;
+[SymbolName("Tests.Dynamic.Shared.Hello")] Delegate Function string dyn_hello() By C;
 
 Unsafe Static Function int Main(string[] args)
 {
-    If (args.Length() == 0)
+    If (args.Length()== 0)
     {
         Console.PrintLine("missing-lib");
         Return 2;
     }
 
-    byte* lib = IO.System.LoadLibrary(args[0]);
-    If (lib == null)
+    byte*lib= IO.System.LoadLibrary(args[0]);
+    If (lib== null)
     {
         Console.PrintLine(IO.System.LastError());
         Return 3;
     }
 
-    byte* add_ptr = IO.System.GetSymbol(lib, dyn_add);
-    If (add_ptr == null)
+    byte*add_ptr= IO.System.GetSymbol(lib, dyn_add);
+    If (add_ptr== null)
     {
         Console.PrintLine(IO.System.LastError());
         IO.System.CloseLibrary(lib);
         Return 4;
     }
 
-    byte* hello_ptr = IO.System.GetSymbol(lib, dyn_hello);
-    If (hello_ptr == null)
+    byte*hello_ptr= IO.System.GetSymbol(lib, dyn_hello);
+    If (hello_ptr== null)
     {
         Console.PrintLine(IO.System.LastError());
         IO.System.CloseLibrary(lib);
         Return 5;
     }
 
-    dyn_add = add_ptr;
-    dyn_hello = hello_ptr;
+    dyn_add= add_ptr;
+    dyn_hello= hello_ptr;
 
     Console.PrintLine(dyn_add(20, 22));
     Console.PrintLine(dyn_hello());

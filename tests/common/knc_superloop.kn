@@ -4,14 +4,14 @@ Get Console By IO.Console;
 
 Static Function int Main()
 {
-    int i = 0;
-    For (i = 0; i < 5; i++)
+    int i= 0;
+    For (i= 0; i< 5; i++)
     {
     }
     Console.PrintLine(i);
 
-    int j = 5;
-    For (; j > 0; j--)
+    int j= 5;
+    For (; j> 0; j--)
     {
     }
     Console.PrintLine(j);

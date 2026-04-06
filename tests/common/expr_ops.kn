@@ -1,18 +1,22 @@
 ﻿Unit Tests.ExprOps;
 Get Console By IO.Console;
 
-Static Function int Main() {
-    int x = 1;
-    int a = x++;
-    int b = ++x;
-    x += 5;
-    x -= 2;
-    x *= 3;
-    x /= 2;
-    int c = x > 5 ? x : 5;
-    int d = If(a > b) {
+Static Function int Main()
+{
+    int x= 1;
+    int a= x++;
+    int b= ++x;
+    x+= 5;
+    x-= 2;
+    x*= 3;
+    x/= 2;
+    int c= x> 5?x: 5;
+    int d= If (a> b)
+    {
         a;
-    } Else {
+    }
+    Else
+    {
         b;
     };
     Console.PrintLine(a);

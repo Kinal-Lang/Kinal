@@ -4,7 +4,7 @@ Get Console By IO.Console;
 
 Static Function int Main()
 {
-    float f = [float](42);
+    float f=[float](42);
     Console.PrintLine([int](f));
     Console.PrintLine([int]([float]("2.5")));
     Console.PrintLine([int](true));

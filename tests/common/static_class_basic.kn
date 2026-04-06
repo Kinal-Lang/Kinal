@@ -8,7 +8,7 @@ Static Class Counter
 
     Public Function void Add(int delta)
     {
-        Value = Value + delta;
+        Value= Value+ delta;
     }
 
     Public Function int Read()

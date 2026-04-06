@@ -8,7 +8,7 @@ Class Box
 
     Public Function Box(int value)
     {
-        This.Value = value;
+        This.Value= value;
     }
 }
 
@@ -19,13 +19,17 @@ Class Probe
 
     Public Function Probe()
     {
-        This.Nums = {};
-        This.Nums = This.Nums.Add(1);
-        This.Nums = This.Nums.Add(2);
+        This.Nums= {
+        };
+        This.Nums= This.Nums.Add(1);
+        This.Nums= This.Nums.Add(2);
 
-        This.Boxes = {};
-        This.Boxes = { null };
-        This.Boxes = This.Boxes.Add(New Box(7));
+        This.Boxes= {
+        };
+        This.Boxes= {
+            null
+        };
+        This.Boxes= This.Boxes.Add(New Box(7));
     }
 
     Public Function void Print()
@@ -38,7 +42,7 @@ Class Probe
 
 Static Function int Main()
 {
-    Probe p = New Probe();
+    Probe p= New Probe();
     p.Print();
     Return 0;
 }

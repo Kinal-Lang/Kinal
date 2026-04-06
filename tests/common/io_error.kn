@@ -1,24 +1,30 @@
 Unit Tests.IOError;
 Get Console By IO.Console;
 
-Static Function int Main() {
-    IO.Error e = New IO.Error("Title", "Message");
+Static Function int Main()
+{
+    IO.Error e= New IO.Error("Title", "Message");
     Console.PrintLine(e.Title);
     Console.PrintLine(e.Message);
 
-    Try {
+    Try
+    {
         Throw e;
-    } Catch (string msg) {
+    }
+    Catch (string msg)
+    {
         Console.PrintLine(msg);
     }
 
-    Try {
+    Try
+    {
         Throw New IO.Error("T", "M");
-    } Catch (IO.Error err) {
+    }
+    Catch (IO.Error err)
+    {
         Console.PrintLine(err.Title);
         Console.PrintLine(err.Message);
     }
 
     Return 0;
 }
-

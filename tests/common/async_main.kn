@@ -3,9 +3,9 @@ Unit Tests.AsyncMain;
 Get Console By IO.Console;
 Get IO.Async;
 
-Static Async Function int Main()
+StaticAsyncFunction int Main()
 {
-    Await IO.Async.Yield();
+    AwaitIO.Async.Yield();
     Console.PrintLine("ok");
     Return 0;
 }

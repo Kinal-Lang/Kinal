@@ -2,8 +2,9 @@ Unit Tests.Dict;
 
 Get Console By IO.Console;
 
-Static Function int Main() {
-    dict d = dict.Create();
+Static Function int Main()
+{
+    dict d= dict.Create();
     d.Set("name", "kinal");
     d.Set("n", 123);
 
@@ -17,5 +18,3 @@ Static Function int Main() {
     Console.PrintLine([string](d.Fetch("missing")));
     Return 0;
 }
-
-

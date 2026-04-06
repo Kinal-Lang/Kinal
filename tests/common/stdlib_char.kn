@@ -1,7 +1,7 @@
 Unit Tests.StdlibChar;
 
 Get IO.Console;
-Get IO;
+Get IO.Char;
 
 Safe Static Function int Main()
 {

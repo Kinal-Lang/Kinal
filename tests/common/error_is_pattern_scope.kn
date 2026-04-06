@@ -1,17 +1,22 @@
 Unit Tests.ErrorIsPatternScope;
 
-Class Animal {
+Class Animal
+{
 }
 
-Class Dog By Animal {
-    Public Function string Name() {
+Class Dog By Animal
+{
+    Public Function string Name()
+    {
         Return "dog";
     }
 }
 
-Safe Static Function int Main(string[] args) {
-    Animal a = New Dog();
-    If (a Is Dog d) {
+Safe Static Function int Main(string[] args)
+{
+    Animal a= New Dog();
+    If (a Is Dog d)
+    {
         Return 0;
     }
     d.Name();

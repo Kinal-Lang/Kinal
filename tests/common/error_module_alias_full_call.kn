@@ -2,6 +2,7 @@ Unit App.Main;
 
 Get U By App.Util;
 
-Static Safe Function int Main(string args[]) {
+Static Safe Function int Main(string args[])
+{
     Return App.Util.Add(40, 2);
 }

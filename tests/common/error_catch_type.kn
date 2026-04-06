@@ -1,9 +1,13 @@
 Unit App.Bad;
 
-Static Function int Main() {
-    Try {
+Static Function int Main()
+{
+    Try
+    {
         Throw "x";
-    } Catch (int e) {
+    }
+    Catch (int e)
+    {
     }
     Return 0;
 }

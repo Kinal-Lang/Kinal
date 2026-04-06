@@ -2,7 +2,7 @@ Unit Tests.ErrorMetaOldKeepSyntax;
 
 Meta Demo(string value)
 {
-    On @function;
+    On@function;
     Keep Runtime;
 }
 

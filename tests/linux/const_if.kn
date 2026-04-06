@@ -1,10 +1,14 @@
 Unit Tests.ConstIf;
 Get Console By IO.Console;
 
-Static Function int Main() {
-    If (IO.Target.OS == IO.Target.OS.Linux) {
+Static Function int Main()
+{
+    If (IO.Target.OS== IO.Target.OS.Linux)
+    {
         Console.PrintLine("linux");
-    } Else {
+    }
+    Else
+    {
         UnknownCall();
     }
     Return 0;

@@ -1,11 +1,14 @@
 Unit App.BadCtor;
 
-Class NeedsArg {
-    Public Safe Function NeedsArg(int value) {
+Class NeedsArg
+{
+    Public Safe Function NeedsArg(int value)
+    {
     }
 }
 
-Static Function int Main() {
-    Var x = New NeedsArg();
+Static Function int Main()
+{
+    Var x= New NeedsArg();
     Return 0;
 }

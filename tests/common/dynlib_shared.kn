@@ -2,18 +2,16 @@ Unit Tests.Dynamic.Shared;
 
 Meta Exported(string name)
 {
-    On @function;
-    Keep @runtime;
+    On@function;
+    Keep@runtime;
 }
 
-[Exported("add")]
-Function int Add(int a, int b)
+[Exported("add")] Function int Add(int a, int b)
 {
-    Return a + b;
+    Return a+ b;
 }
 
-[Exported("hello")]
-Function string Hello()
+[Exported("hello")] Function string Hello()
 {
     Return "shared-hi";
 }

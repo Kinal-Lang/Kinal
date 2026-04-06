@@ -8,25 +8,26 @@ Get IO.Target;
 
 Static Function string AbsTestPath()
 {
-    If (IO.Target == IO.Target.Windows)
+    If (IO.Target== IO.Target.Windows)
     {
         Return "C:/a/b";
     }
     Return "/usr/bin";
 }
 
-Static Function int Main() {
-    list source = list.Create();
+Static Function int Main()
+{
+    list source= list.Create();
     source.Add("a");
     source.Add("b");
     source.Add("c");
     IO.File.WriteLines("out/test/tests_lines_in.txt", source);
-    string raw = IO.File.ReadAllText("out/test/tests_lines_in.txt");
-    list lines = IO.Text.Lines(raw);
+    string raw= IO.File.ReadAllText("out/test/tests_lines_in.txt");
+    list lines= IO.Text.Lines(raw);
     Console.PrintLine(lines.Count());
     Console.PrintLine(IO.Text.Join(lines, ","));
 
-    list split = IO.Text.Split("x::y::z", "::");
+    list split= IO.Text.Split("x::y::z", "::");
     Console.PrintLine(IO.Text.Join(split, "-"));
 
     Console.PrintLine(IO.Text.Count("aaaa", "aa"));
@@ -36,21 +37,21 @@ Static Function int Main() {
     Console.PrintLine(IO.Path.IsAbsolute(AbsTestPath()));
     Console.PrintLine(IO.Path.BaseName("folder/test.txt"));
 
-    dict d = dict.Create();
+    dict d= dict.Create();
     d.Set("k1", "v1");
     d.Set("k2", 2);
-    list ks = d.Keys();
-    list vs = d.Values();
+    list ks= d.Keys();
+    list vs= d.Values();
     Console.PrintLine(ks.Count());
     Console.PrintLine(vs.Count());
 
-    set st = set.Create();
+    set st= set.Create();
     st.Add("s1");
     st.Add("s2");
-    list sv = st.Values();
+    list sv= st.Values();
     Console.PrintLine(sv.Count());
 
-    list nums = list.Create();
+    list nums= list.Create();
     nums.Add(1);
     nums.Add(3);
     nums.Insert(1, 2);
@@ -58,7 +59,7 @@ Static Function int Main() {
     Console.PrintLine([int](nums.TryFetch(99, 42)));
 
     IO.File.WriteLines("out/test/tests_lines.txt", lines);
-    list fromFile = IO.File.ReadLines("out/test/tests_lines.txt");
+    list fromFile= IO.File.ReadLines("out/test/tests_lines.txt");
     Console.PrintLine(IO.Text.Join(fromFile, "|"));
     Return 0;
 }

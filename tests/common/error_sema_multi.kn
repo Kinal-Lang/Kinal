@@ -1,6 +1,6 @@
 Static Function int Main()
 {
-    int a = "x";
-    int b = "y";
+    int a= "x";
+    int b= "y";
     Return 0;
 }

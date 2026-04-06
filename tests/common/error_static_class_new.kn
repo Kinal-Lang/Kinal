@@ -10,6 +10,6 @@ Static Class Config
 
 Safe Static Function int Main()
 {
-    Var cfg = New Config();
+    Var cfg= New Config();
     Return Config.Value();
 }

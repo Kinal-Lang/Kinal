@@ -3,7 +3,7 @@ Unit Tests.ErrorMetaOldTargetSyntax;
 Meta Demo(string value)
 {
     On Function;
-    Keep @runtime;
+    Keep@runtime;
 }
 
 Static Function int Main()

@@ -2,46 +2,58 @@ Unit Tests.OOP;
 
 Get Console By IO.Console;
 
-Abstract Class BaseType {
+Abstract Class BaseType
+{
     Protected int value;
 
-    Public Safe Constructor(int start) {
-        This.value = start;
+    Public Safe Constructor(int start)
+    {
+        This.value= start;
     }
 
     Public Abstract Safe Function int Value();
-    Public Virtual Safe Function string Kind() {
+    Public Virtual Safe Function string Kind()
+    {
         Return "base";
     }
 }
 
-Class Derived By BaseType {
-    Public Safe Constructor(int start) {
-        This.value = start + 1;
+Class Derived By BaseType
+{
+    Public Safe Constructor(int start)
+    {
+        This.value= start+ 1;
     }
 
-    Public Override Safe Function int Value() {
+    Public Override Safe Function int Value()
+    {
         Return This.value;
     }
 
-    Public Override Safe Function string Kind() {
-        Return Base.Kind() + ":derived";
+    Public Override Safe Function string Kind()
+    {
+        Return Base.Kind()+ ":derived";
     }
 }
 
-Sealed Class Final By Derived {
-    Public Safe Constructor(int start) {
-        This.value = start + 2;
+Sealed Class Final By Derived
+{
+    Public Safe Constructor(int start)
+    {
+        This.value= start+ 2;
     }
 }
 
-Static Safe Function int Main(string args[]) {
-    BaseType b = New Derived(1);
-    If (b.Value() == 2) {
+Static Safe Function int Main(string args[])
+{
+    BaseType b= New Derived(1);
+    If (b.Value()== 2)
+    {
         Console.PrintLine(b.Kind());
-    } Else {
+    }
+    Else
+    {
         Console.PrintLine("bad");
     }
     Return 0;
 }
-

@@ -3,13 +3,16 @@ Unit App.Main;
 Get App.Util;
 Get Console By IO.Console;
 
-Static Safe Function int Main(string args[]) {
-    Var v = App.Util.Add(40, 2);
-    If (v == 42) {
+Static Safe Function int Main(string args[])
+{
+    Var v= App.Util.Add(40, 2);
+    If (v== 42)
+    {
         Console.PrintLine("ok");
-    } Else {
+    }
+    Else
+    {
         Console.PrintLine("bad");
     }
     Return 0;
 }
-

@@ -1,8 +1,12 @@
 Unit Tests.ErrorGetScope;
 
-Get IO.Console { PrintLine };
+Get IO.Console
+{
+    PrintLine
+};
 
-Static Function int Main() {
+Static Function int Main()
+{
     PrintLine("x");
     Return 0;
 }

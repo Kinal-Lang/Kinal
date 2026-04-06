@@ -7,10 +7,10 @@ Get IO.Text;
 
 Static Function int Main()
 {
-    string dir = "out/test";
-    string a = "out/test/stdlib_file_more_a.txt";
-    string b = "out/test/stdlib_file_more_b.txt";
-    string c = "out/test/stdlib_file_more_c.txt";
+    string dir= "out/test";
+    string a= "out/test/stdlib_file_more_a.txt";
+    string b= "out/test/stdlib_file_more_b.txt";
+    string c= "out/test/stdlib_file_more_c.txt";
 
     Console.PrintLine(IO.Directory.Ensure(dir));
     Console.PrintLine(IO.File.DeleteIfExists(a));

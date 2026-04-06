@@ -2,9 +2,9 @@ Unit Tests.Freestanding.CoreMin;
 
 Get IO.Panic;
 
-Trusted Static Function void KMain(byte* bootInfo)
+Trusted Static Function void KMain(byte*bootInfo)
 {
-    If (bootInfo == null)
+    If (bootInfo== null)
     {
         IO.Panic.Halt();
     }

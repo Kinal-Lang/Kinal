@@ -11,10 +11,17 @@ Class Demo
 
     Public Static Function string Pick(int value)
     {
-        Return Switch(value)
+        Return Switch (value)
         {
-            Case(1) { "ok" }
-            Case(default) { Demo.Fail() }
+            Case(1)
+            {
+                "ok"
+            }
+            Case(
+            default)
+            {
+                Demo.Fail()
+            }
         };
     }
 }

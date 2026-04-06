@@ -6,15 +6,15 @@ Get IO.Time;
 
 Static Function int Main()
 {
-    string path = "out/test/knc_vm_time_file_tmp.txt";
-    string missing = "out/test/knc_vm_time_file_missing.txt";
+    string path= "out/test/knc_vm_time_file_tmp.txt";
+    string missing= "out/test/knc_vm_time_file_missing.txt";
 
     IO.File.DeleteIfExists(path);
     IO.File.DeleteIfExists(missing);
 
-    int tick = IO.Time.GetTick();
+    int tick= IO.Time.GetTick();
     IO.Time.Sleep(0);
-    int nano = IO.Time.GetNanoTick();
+    int nano= IO.Time.GetNanoTick();
 
     Console.PrintLine("ok");
     Console.PrintLine(IO.File.WriteAllText(path, "alpha"));

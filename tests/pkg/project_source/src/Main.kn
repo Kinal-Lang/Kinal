@@ -1,6 +1,6 @@
 Unit Tests.PackageSource;
 Get Console By IO.Console;
-Get IO;
+Get IO.Char;
 Get Greeter By Acme.Greeter;
 
 Static Function int Main()

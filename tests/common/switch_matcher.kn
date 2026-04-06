@@ -2,38 +2,51 @@ Unit Tests.SwitchMatcher;
 
 Get Console By IO.Console;
 
-Static Safe Function int Score(int value) {
-    Switch(value) {
-        Case(1) {
+Static Safe Function int Score(int value)
+{
+    Switch (value)
+    {
+        Case(1)
+        {
             Console.PrintLine("one");
         }
-        Case(2) {
+        Case(2)
+        {
             Console.PrintLine("two");
         }
-        Case(default) {
+        Case(
+        default)
+        {
             Console.PrintLine("other");
         }
     }
 
-    Return Switch(value) {
-        Case(1) {
+    Return Switch (value)
+    {
+        Case(1)
+        {
             10;
         }
-        Case(2) {
+        Case(2)
+        {
             default;
         }
-        Case(default) {
+        Case(
+        default)
+        {
             30;
         }
     };
 }
 
-Static Safe Function int Main(string args[]) {
+Static Safe Function int Main(string args[])
+{
     Console.PrintLine([string](Score(1)));
     Console.PrintLine([string](Score(2)));
     Console.PrintLine([string](Score(9)));
 
-    int zero = default;
+    int zero=
+    default;
     Console.PrintLine([string](zero));
     Return 0;
 }

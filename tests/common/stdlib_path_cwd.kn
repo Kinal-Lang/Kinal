@@ -6,7 +6,7 @@ Get IO.Text;
 
 Static Function int Main()
 {
-    string cwd = IO.Path.Cwd();
+    string cwd= IO.Path.Cwd();
     Console.PrintLine(IO.Text.IsEmpty(cwd));
     Console.PrintLine(IO.Path.IsAbsolute(cwd));
     Return 0;

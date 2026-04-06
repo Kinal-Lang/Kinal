@@ -201,7 +201,7 @@ static const char *path_basename_local(const char *path);
 
 static bool manifest_path_exists(const char *path)
 {
-    return path && path[0] && file_exists(path);
+    return path && path[0] && file_exists(path) && !dir_exists(path);
 }
 
 static bool resolve_manifest_input_path(const char *arg, int want_project, char *out, size_t cap)

@@ -1,9 +1,9 @@
 Unit Tests.StringCompare;
 Get Console By IO.Console;
 
-Static Function int Main() {
-    Console.PrintLine("a" == "a");
-    Console.PrintLine("a" != "b");
+Static Function int Main()
+{
+    Console.PrintLine("a"== "a");
+    Console.PrintLine("a"!= "b");
     Return 0;
 }
-

@@ -1528,9 +1528,10 @@ static void to_zig_target(const char *triple, char *out, size_t cap)
     copy_str(out, cap, triple);
 }
 
-static int compile_intermediate_to_obj(const char *in_path, const char *out_path, const char *target_triple, int lto_mode)
+static int compile_intermediate_to_obj(const char *in_path, const char *out_path, const char *target_triple, int lto_mode, int emit_pic)
 {
     const char *triple = (target_triple && target_triple[0]) ? target_triple : default_target_triple();
+    int want_pic = emit_pic && !target_is_windows(triple);
     KnInputKind kind = classify_input(in_path);
     if (kind == KN_INPUT_OBJ)
     {
@@ -1556,6 +1557,8 @@ static int compile_intermediate_to_obj(const char *in_path, const char *out_path
             append_quoted(cmd, sizeof(cmd), &off, llc);
             kn_append(cmd, sizeof(cmd), &off, " -mtriple=");
             kn_append(cmd, sizeof(cmd), &off, triple);
+            if (want_pic)
+                kn_append(cmd, sizeof(cmd), &off, " --relocation-model=pic");
             kn_append(cmd, sizeof(cmd), &off, " -filetype=obj -o ");
             append_quoted(cmd, sizeof(cmd), &off, out_path);
             kn_append(cmd, sizeof(cmd), &off, " ");
@@ -1598,6 +1601,8 @@ static int compile_intermediate_to_obj(const char *in_path, const char *out_path
         kn_append(cmd, sizeof(cmd), &off, " --target=");
         kn_append(cmd, sizeof(cmd), &off, triple);
         kn_append(cmd, sizeof(cmd), &off, " -Wno-override-module -c -x ir ");
+        if (want_pic)
+            kn_append(cmd, sizeof(cmd), &off, " -fPIC ");
         if (lto_mode == KN_LTO_FULL)
             kn_append(cmd, sizeof(cmd), &off, " -flto ");
         else if (lto_mode == KN_LTO_THIN)
@@ -1628,6 +1633,8 @@ static int compile_intermediate_to_obj(const char *in_path, const char *out_path
         kn_append(cmd, sizeof(cmd), &off, " cc -target ");
         kn_append(cmd, sizeof(cmd), &off, zt);
         kn_append(cmd, sizeof(cmd), &off, " -c ");
+        if (want_pic)
+            kn_append(cmd, sizeof(cmd), &off, " -fPIC ");
         if (lto_mode == KN_LTO_FULL)
             kn_append(cmd, sizeof(cmd), &off, " -flto ");
         else if (lto_mode == KN_LTO_THIN)
@@ -1650,6 +1657,8 @@ static int compile_intermediate_to_obj(const char *in_path, const char *out_path
         kn_append(cmd, sizeof(cmd), &off, " --target=");
         kn_append(cmd, sizeof(cmd), &off, triple);
         kn_append(cmd, sizeof(cmd), &off, " -c ");
+        if (want_pic)
+            kn_append(cmd, sizeof(cmd), &off, " -fPIC ");
         if (lto_mode == KN_LTO_FULL)
             kn_append(cmd, sizeof(cmd), &off, " -flto ");
         else if (lto_mode == KN_LTO_THIN)

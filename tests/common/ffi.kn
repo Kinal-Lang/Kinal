@@ -5,18 +5,20 @@ Get Console By IO.Console;
 Extern Function int __kn_time_tick() By C;
 Extern Function bool __kn_sys_file_exists(string path) By C;
 
-Trusted Function int TickTrusted() {
+Trusted Function int TickTrusted()
+{
     Return __kn_time_tick();
 }
 
-Trusted Function bool ExistsTrusted(string path) {
+Trusted Function bool ExistsTrusted(string path)
+{
     Return __kn_sys_file_exists(path);
 }
 
-Static Function int Main() {
-    int tick = TickTrusted();
-    Console.PrintLine(tick >= 0);
+Static Function int Main()
+{
+    int tick= TickTrusted();
+    Console.PrintLine(tick>= 0);
     Console.PrintLine(ExistsTrusted("tests/common/ffi.kn"));
     Return 0;
 }
-
