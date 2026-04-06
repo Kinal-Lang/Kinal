@@ -212,7 +212,7 @@ def matches_expected_runtime_output(output: str, expected: str) -> bool:
 
 
 def run_driver_integration_tests(compiler: Path, out_dir: Path) -> int:
-    hello_fx = ROOT / "tests" / "hello.kn"
+    hello_fx = ROOT / "tests" / "common" / "hello.kn"
     build_native_ffi_assets(out_dir)
 
     pipe_ll = out_dir / "pipeline_hello.ll"
@@ -317,7 +317,7 @@ def run_driver_integration_tests(compiler: Path, out_dir: Path) -> int:
     print("[OK] knc_vm_exe_alias")
 
     def run_knc_case(label: str, source_name: str, expected: str, expected_exit_code: int = 0) -> int:
-        src = ROOT / "tests" / source_name
+        src = ROOT / "tests" / "common" / source_name
         out = out_dir / f"{Path(source_name).stem}.knc"
         run([str(compiler), "vm", "build", "--no-module-discovery", str(src), "-o", str(out)], cwd=ROOT)
         proc = run([str(vm_exe), str(out)], cwd=ROOT, capture=True)
@@ -329,7 +329,7 @@ def run_driver_integration_tests(compiler: Path, out_dir: Path) -> int:
         print(f"[OK] {label}")
         return 0
 
-    knc_arith_fx = ROOT / "tests" / "knc_arith.kn"
+    knc_arith_fx = ROOT / "tests" / "common" / "knc_arith.kn"
     knc_arith = out_dir / "knc_arith.knc"
     run([str(compiler), "vm", "build", "--no-module-discovery", str(knc_arith_fx), "-o", str(knc_arith)], cwd=ROOT)
     knc_arith_out = run([str(vm_exe), str(knc_arith)], cwd=ROOT, capture=True)
@@ -339,7 +339,7 @@ def run_driver_integration_tests(compiler: Path, out_dir: Path) -> int:
         return 1
     print("[OK] knc_vm_arith")
 
-    knc_std_fx = ROOT / "tests" / "knc_std_semantics.kn"
+    knc_std_fx = ROOT / "tests" / "common" / "knc_std_semantics.kn"
     knc_std = out_dir / "knc_std_semantics.knc"
     run([str(compiler), "vm", "build", "--no-module-discovery", str(knc_std_fx), "-o", str(knc_std)], cwd=ROOT)
     knc_std_out = run([str(vm_exe), str(knc_std)], cwd=ROOT, capture=True)
@@ -350,7 +350,7 @@ def run_driver_integration_tests(compiler: Path, out_dir: Path) -> int:
         return 1
     print("[OK] knc_vm_std_semantics")
 
-    knc_control_fx = ROOT / "tests" / "control.kn"
+    knc_control_fx = ROOT / "tests" / "common" / "control.kn"
     knc_control = out_dir / "control.knc"
     run([str(compiler), "vm", "build", "--no-module-discovery", str(knc_control_fx), "-o", str(knc_control)], cwd=ROOT)
     knc_control_out = run([str(vm_exe), str(knc_control)], cwd=ROOT, capture=True)
@@ -360,7 +360,7 @@ def run_driver_integration_tests(compiler: Path, out_dir: Path) -> int:
         return 1
     print("[OK] knc_vm_control")
 
-    knc_functions_fx = ROOT / "tests" / "functions.kn"
+    knc_functions_fx = ROOT / "tests" / "common" / "functions.kn"
     knc_functions = out_dir / "functions.knc"
     run([str(compiler), "vm", "build", "--no-module-discovery", str(knc_functions_fx), "-o", str(knc_functions)], cwd=ROOT)
     knc_functions_out = run([str(vm_exe), str(knc_functions)], cwd=ROOT, capture=True)
@@ -370,7 +370,7 @@ def run_driver_integration_tests(compiler: Path, out_dir: Path) -> int:
         return 1
     print("[OK] knc_vm_functions")
 
-    knc_expr_fx = ROOT / "tests" / "expr_ops.kn"
+    knc_expr_fx = ROOT / "tests" / "common" / "expr_ops.kn"
     knc_expr = out_dir / "expr_ops.knc"
     run([str(compiler), "vm", "build", "--no-module-discovery", str(knc_expr_fx), "-o", str(knc_expr)], cwd=ROOT)
     knc_expr_out = run([str(vm_exe), str(knc_expr)], cwd=ROOT, capture=True)
@@ -381,7 +381,7 @@ def run_driver_integration_tests(compiler: Path, out_dir: Path) -> int:
         return 1
     print("[OK] knc_vm_expr_ops")
 
-    knc_char_fx = ROOT / "tests" / "char_literals.kn"
+    knc_char_fx = ROOT / "tests" / "common" / "char_literals.kn"
     knc_char = out_dir / "char_literals.knc"
     run([str(compiler), "vm", "build", "--no-module-discovery", str(knc_char_fx), "-o", str(knc_char)], cwd=ROOT)
     knc_char_out = run([str(vm_exe), str(knc_char)], cwd=ROOT, capture=True)
@@ -392,7 +392,7 @@ def run_driver_integration_tests(compiler: Path, out_dir: Path) -> int:
         return 1
     print("[OK] knc_vm_char_literals")
 
-    knc_char_str_fx = ROOT / "tests" / "char_to_string.kn"
+    knc_char_str_fx = ROOT / "tests" / "common" / "char_to_string.kn"
     knc_char_str = out_dir / "char_to_string.knc"
     run([str(compiler), "vm", "build", "--no-module-discovery", str(knc_char_str_fx), "-o", str(knc_char_str)], cwd=ROOT)
     knc_char_str_out = run([str(vm_exe), str(knc_char_str)], cwd=ROOT, capture=True)
@@ -403,7 +403,7 @@ def run_driver_integration_tests(compiler: Path, out_dir: Path) -> int:
         return 1
     print("[OK] knc_vm_char_to_string")
 
-    knc_bitwise_fx = ROOT / "tests" / "bitwise.kn"
+    knc_bitwise_fx = ROOT / "tests" / "common" / "bitwise.kn"
     knc_bitwise = out_dir / "bitwise.knc"
     run([str(compiler), "vm", "build", "--no-module-discovery", str(knc_bitwise_fx), "-o", str(knc_bitwise)], cwd=ROOT)
     knc_bitwise_out = run([str(vm_exe), str(knc_bitwise)], cwd=ROOT, capture=True)
@@ -414,7 +414,7 @@ def run_driver_integration_tests(compiler: Path, out_dir: Path) -> int:
         return 1
     print("[OK] knc_vm_bitwise")
 
-    knc_any_cast_fx = ROOT / "tests" / "any_cast.kn"
+    knc_any_cast_fx = ROOT / "tests" / "common" / "any_cast.kn"
     knc_any_cast = out_dir / "any_cast.knc"
     run([str(compiler), "vm", "build", "--no-module-discovery", str(knc_any_cast_fx), "-o", str(knc_any_cast)], cwd=ROOT)
     knc_any_cast_out = run([str(vm_exe), str(knc_any_cast)], cwd=ROOT, capture=True)
@@ -428,7 +428,7 @@ def run_driver_integration_tests(compiler: Path, out_dir: Path) -> int:
     if run_knc_case("knc_vm_cast_more", "knc_cast_more.kn", "42\n2\n1\n0\nfalse\ntrue\nB\n") != 0:
         return 1
 
-    knc_time_file_fx = ROOT / "tests" / "knc_time_file.kn"
+    knc_time_file_fx = ROOT / "tests" / "common" / "knc_time_file.kn"
     knc_time_file = out_dir / "knc_time_file.knc"
     run([str(compiler), "vm", "build", "--no-module-discovery", str(knc_time_file_fx), "-o", str(knc_time_file)], cwd=ROOT)
     knc_time_file_out = run([str(vm_exe), str(knc_time_file)], cwd=ROOT, capture=True)
@@ -451,7 +451,7 @@ def run_driver_integration_tests(compiler: Path, out_dir: Path) -> int:
         return 1
     if run_knc_case("knc_vm_global_null_sugar", "global_null_sugar.kn", "41\n0\nnull\nblk\nIO.Type.Object.Class\n") != 0:
         return 1
-    if run_knc_case("knc_vm_const_if", "const_if.kn", "win\n") != 0:
+    if run_knc_case("knc_vm_const_if", "../windows/const_if.kn", "win\n") != 0:
         return 1
     if run_knc_case("knc_vm_console_varargs", "console_varargs.kn", "\nA 1 true\nB 2\n") != 0:
         return 1
@@ -459,7 +459,7 @@ def run_driver_integration_tests(compiler: Path, out_dir: Path) -> int:
         return 1
     if run_knc_case("knc_vm_superloop_branches", "knc_superloop_branches.kn", "1\n5\n-1\n0\n") != 0:
         return 1
-    knc_superloop_src = ROOT / "tests" / "knc_superloop.kn"
+    knc_superloop_src = ROOT / "tests" / "common" / "knc_superloop.kn"
     knc_superloop_no_fuse = out_dir / "knc_superloop_nofuse.knc"
     run(
         [str(compiler), "vm", "build", "--no-module-discovery", "--no-superloop", str(knc_superloop_src), "-o", str(knc_superloop_no_fuse)],
@@ -471,7 +471,7 @@ def run_driver_integration_tests(compiler: Path, out_dir: Path) -> int:
         print("[FAIL] knc_vm_superloop_nofuse")
         return 1
     print("[OK] knc_vm_superloop_nofuse")
-    knc_loop_backedge_src = ROOT / "tests" / "knc_loop_backedge.kn"
+    knc_loop_backedge_src = ROOT / "tests" / "common" / "knc_loop_backedge.kn"
     knc_loop_backedge = out_dir / "knc_loop_backedge.knc"
     run(
         [str(compiler), "vm", "build", "--no-module-discovery", "--no-superloop", str(knc_loop_backedge_src), "-o", str(knc_loop_backedge)],
@@ -483,7 +483,7 @@ def run_driver_integration_tests(compiler: Path, out_dir: Path) -> int:
         print("[FAIL] knc_vm_loop_backedge")
         return 1
     print("[OK] knc_vm_loop_backedge")
-    knc_superloop_branches_src = ROOT / "tests" / "knc_superloop_branches.kn"
+    knc_superloop_branches_src = ROOT / "tests" / "common" / "knc_superloop_branches.kn"
     knc_superloop_branches_no_fuse = out_dir / "knc_superloop_branches_nofuse.knc"
     run(
         [str(compiler), "vm", "build", "--no-module-discovery", "--no-superloop", str(knc_superloop_branches_src), "-o", str(knc_superloop_branches_no_fuse)],
@@ -557,7 +557,7 @@ def run_driver_integration_tests(compiler: Path, out_dir: Path) -> int:
                     "zig",
                     "--linker-path",
                     zig,
-                    str(ROOT / "tests" / "stdlib_web_compile.kn"),
+                    str(ROOT / "tests" / "common" / "stdlib_web_compile.kn"),
                     "-o",
                     str(linux_web_exe),
                 ],
@@ -575,7 +575,7 @@ def run_driver_integration_tests(compiler: Path, out_dir: Path) -> int:
         return 1
     print("[OK] locale_export")
 
-    warn_fx = ROOT / "tests" / "warn_entry_unsafe.kn"
+    warn_fx = ROOT / "tests" / "common" / "warn_entry_unsafe.kn"
     warn_exe = exe_path(out_dir / "warn_entry_unsafe")
     warn_proc = run([str(compiler), "build", "--no-module-discovery", str(warn_fx), "-o", str(warn_exe)], cwd=ROOT, capture=True)
     assert isinstance(warn_proc, subprocess.CompletedProcess)
@@ -595,7 +595,7 @@ def run_driver_integration_tests(compiler: Path, out_dir: Path) -> int:
             str(compiler),
             "build",
             "--no-module-discovery",
-            str(ROOT / "tests" / "error_sema_multi.kn"),
+            str(ROOT / "tests" / "common" / "error_sema_multi.kn"),
             "-o",
             str(exe_path(out_dir / "error_sema_multi_dummy")),
         ],
@@ -620,7 +620,7 @@ def run_driver_integration_tests(compiler: Path, out_dir: Path) -> int:
             "--no-module-discovery",
             "--lang",
             "zh",
-            str(ROOT / "tests" / "error_parser.kn"),
+            str(ROOT / "tests" / "common" / "error_parser.kn"),
             "-o",
             str(exe_path(out_dir / "zh_error_dummy")),
         ],
@@ -719,7 +719,7 @@ def run_driver_integration_tests(compiler: Path, out_dir: Path) -> int:
             [
                 str(compiler),
                 "build",
-                "same_unit_autolink_main.kn",
+                "common/same_unit_autolink_main.kn",
                 "-o",
                 str(same_unit_rel_exe),
             ],
@@ -751,7 +751,7 @@ def run_driver_integration_tests(compiler: Path, out_dir: Path) -> int:
                 str(out_dir),
                 "-l",
                 "native_ffi",
-                str(ROOT / "tests" / "ffi_lib.kn"),
+                str(ROOT / "tests" / "windows" / "ffi_lib.kn"),
                 "-o",
                 str(ffi_lib_exe),
             ],
@@ -784,7 +784,7 @@ def run_driver_integration_tests(compiler: Path, out_dir: Path) -> int:
                 "native_ffi",
                 "--link-arg",
                 "/debug",
-                str(ROOT / "tests" / "ffi_lib.kn"),
+                str(ROOT / "tests" / "windows" / "ffi_lib.kn"),
                 "-o",
                 str(ffi_root_exe),
             ],
@@ -811,7 +811,7 @@ def run_driver_integration_tests(compiler: Path, out_dir: Path) -> int:
                 "--no-module-discovery",
                 "-L",
                 str(out_dir),
-                str(ROOT / "tests" / "ffi_attr_lib.kn"),
+                str(ROOT / "tests" / "windows" / "ffi_attr_lib.kn"),
                 "-o",
                 str(ffi_attr_lib_exe),
             ],
@@ -835,7 +835,7 @@ def run_driver_integration_tests(compiler: Path, out_dir: Path) -> int:
                 str(compiler),
                 "build",
                 "--no-module-discovery",
-                str(ROOT / "tests" / "ffi_attr_file.kn"),
+                str(ROOT / "tests" / "windows" / "ffi_attr_file.kn"),
                 "-o",
                 str(ffi_attr_file_exe),
             ],
@@ -861,7 +861,7 @@ def run_driver_integration_tests(compiler: Path, out_dir: Path) -> int:
                 str(compiler),
                 "build",
                 "--no-module-discovery",
-                str(ROOT / "tests" / "ffi_hosted_auto.kn"),
+                str(ROOT / "tests" / "windows" / "ffi_hosted_auto.kn"),
                 "--link-file",
                 str(out_dir / "native_hosted_probe_md.obj"),
                 "-o",
@@ -889,7 +889,7 @@ def run_driver_integration_tests(compiler: Path, out_dir: Path) -> int:
                 "--no-module-discovery",
                 "--crt",
                 "static",
-                str(ROOT / "tests" / "ffi_hosted_auto.kn"),
+                str(ROOT / "tests" / "windows" / "ffi_hosted_auto.kn"),
                 "--link-file",
                 str(out_dir / "native_hosted_probe_mt.obj"),
                 "-o",
@@ -917,7 +917,7 @@ def run_driver_integration_tests(compiler: Path, out_dir: Path) -> int:
             "--no-module-discovery",
             "--kind",
             "shared",
-            str(ROOT / "tests" / "dynlib_shared.kn"),
+            str(ROOT / "tests" / "common" / "dynlib_shared.kn"),
             "-o",
             str(shared_artifact),
         ],
@@ -938,7 +938,7 @@ def run_driver_integration_tests(compiler: Path, out_dir: Path) -> int:
             str(compiler),
             "build",
             "--no-module-discovery",
-            str(ROOT / "tests" / "dynlib_loader.kn"),
+            str(ROOT / "tests" / "common" / "dynlib_loader.kn"),
             "-o",
             str(loader_exe),
         ],
@@ -962,7 +962,7 @@ def run_driver_integration_tests(compiler: Path, out_dir: Path) -> int:
             str(compiler),
             "build",
             "--no-module-discovery",
-            str(ROOT / "tests" / "meta_dynlib_loader.kn"),
+            str(ROOT / "tests" / "common" / "meta_dynlib_loader.kn"),
             "-o",
             str(meta_loader_exe),
         ],

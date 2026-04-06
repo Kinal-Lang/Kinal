@@ -16,7 +16,7 @@ Trusted Function bool ExistsTrusted(string path) {
 Static Function int Main() {
     int tick = TickTrusted();
     Console.PrintLine(tick >= 0);
-    Console.PrintLine(ExistsTrusted("tests/ffi.kn"));
+    Console.PrintLine(ExistsTrusted("tests/common/ffi.kn"));
     Return 0;
 }
 

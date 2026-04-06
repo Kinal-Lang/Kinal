@@ -2,11 +2,11 @@ Unit Tests.FfiAttrFile;
 
 Get Console By IO.Console;
 
-[LinkFile("../out/test/native_ffi.obj")]
+[LinkFile("../../out/test/native_ffi.obj")]
 [LinkName("kn_native_add")]
 Extern Function int NativeAdd(int a, int b) By C;
 
-[LinkFile("../out/test/native_ffi.obj")]
+[LinkFile("../../out/test/native_ffi.obj")]
 [LinkName("kn_native_hello")]
 Extern Function string NativeHello() By C;
 

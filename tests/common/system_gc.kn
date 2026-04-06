@@ -10,7 +10,7 @@ Static Function int Main() {
     IO.GC.Collect();
     IO.Console.PrintLine(b);
 
-    If (IO.System.FileExists("tests/hello.kn")) {
+    If (IO.System.FileExists("tests/common/hello.kn")) {
         IO.Console.PrintLine("file");
     } Else {
         IO.Console.PrintLine("nofile");
