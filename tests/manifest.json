@@ -367,6 +367,70 @@
     ]
   },
   {
+    "name": "macos_const_if",
+    "file": "tests/macos/const_if.kn",
+    "expected": "macos\n",
+    "platforms": [
+      "macos"
+    ]
+  },
+  {
+    "name": "macos_system_exec",
+    "file": "tests/macos/system_exec.kn",
+    "expected": "7\n",
+    "platforms": [
+      "macos"
+    ]
+  },
+  {
+    "name": "macos_target_platform",
+    "file": "tests/macos/target_platform.kn",
+    "expected": "true\n/\ntrue\ntrue\n.dylib\n.a\n.o\n",
+    "platforms": [
+      "macos"
+    ]
+  },
+  {
+    "name": "macos_path_posix",
+    "file": "tests/macos/path_posix.kn",
+    "expected": "usr/local\nusr/local/bin\ntrue\nfalse\nusr/local/bin\nfile.txt\n/home/user\n",
+    "platforms": [
+      "macos"
+    ]
+  },
+  {
+    "name": "linux_const_if",
+    "file": "tests/linux/const_if.kn",
+    "expected": "linux\n",
+    "platforms": [
+      "linux"
+    ]
+  },
+  {
+    "name": "linux_system_exec",
+    "file": "tests/linux/system_exec.kn",
+    "expected": "7\n",
+    "platforms": [
+      "linux"
+    ]
+  },
+  {
+    "name": "linux_target_platform",
+    "file": "tests/linux/target_platform.kn",
+    "expected": "true\n/\ntrue\ntrue\n.so\n.a\n.o\n",
+    "platforms": [
+      "linux"
+    ]
+  },
+  {
+    "name": "linux_path_posix",
+    "file": "tests/linux/path_posix.kn",
+    "expected": "usr/local\nusr/local/bin\ntrue\nfalse\nusr/local/bin\nfile.txt\n/home/user\n",
+    "platforms": [
+      "linux"
+    ]
+  },
+  {
     "name": "ffi_obj",
     "file": "tests/windows/ffi_obj.kn",
     "expected": "5\n20\nffi-native\n",

@@ -1,0 +1,11 @@
+Unit Tests.ConstIf;
+Get Console By IO.Console;
+
+Static Function int Main() {
+    If (IO.Target.OS == IO.Target.OS.MacOS) {
+        Console.PrintLine("macos");
+    } Else {
+        UnknownCall();
+    }
+    Return 0;
+}

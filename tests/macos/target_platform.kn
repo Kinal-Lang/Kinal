@@ -1,0 +1,15 @@
+Unit Tests.TargetPlatform;
+
+Get Console By IO.Console;
+Get IO.Target;
+
+Static Function int Main() {
+    Console.PrintLine(IO.Target.OS == IO.Target.OS.MacOS);
+    Console.PrintLine(IO.Target.PathSeparator);
+    Console.PrintLine(IO.Target.NewLine == "\n");
+    Console.PrintLine(IO.Target.ExeSuffix == "");
+    Console.PrintLine(IO.Target.DynamicLibrarySuffix);
+    Console.PrintLine(IO.Target.StaticLibrarySuffix);
+    Console.PrintLine(IO.Target.ObjectSuffix);
+    Return 0;
+}
