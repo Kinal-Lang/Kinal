@@ -258,8 +258,8 @@ static int kn_link_windows_lld(const KnLinkOptions *opts)
         kn_memset(&dirs, 0, sizeof(dirs));
     kn_dump_windows_toolchain_search_dirs(opts, &dirs);
 
-    const char *triple = opts->target_triple ? opts->target_triple : "";
-    const char *machine = kn_triple_is_x86(triple) ? "/machine:x86" : "/machine:x64";
+    const char *triple = kn_effective_target_triple(opts->target_triple);
+    const char *machine = kn_windows_machine_flag(triple);
 
     char cmd[16384];
     size_t off = 0;
@@ -365,8 +365,8 @@ static int kn_link_windows_msvc(const KnLinkOptions *opts)
         kn_memset(&dirs, 0, sizeof(dirs));
     kn_dump_windows_toolchain_search_dirs(opts, &dirs);
 
-    const char *triple = opts->target_triple ? opts->target_triple : "";
-    const char *machine = kn_triple_is_x86(triple) ? "/machine:x86" : "/machine:x64";
+    const char *triple = kn_effective_target_triple(opts->target_triple);
+    const char *machine = kn_windows_machine_flag(triple);
 
     char cmd[16384];
     size_t off = 0;
@@ -888,7 +888,7 @@ int kn_link(const KnLinkOptions *opts)
     if (!opts || !opts->obj_path || !opts->out_path)
         return -1;
 
-    const char *triple = (opts->target_triple && opts->target_triple[0]) ? opts->target_triple : "x86_64-pc-windows-msvc";
+    const char *triple = kn_effective_target_triple(opts->target_triple);
     int is_windows = kn_triple_is_windows(triple);
     int is_linux = kn_triple_is_linux(triple);
     int is_macos = kn_triple_is_macos(triple);

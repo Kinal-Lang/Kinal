@@ -245,11 +245,54 @@ static int kn_triple_is_arm64(const char *triple)
     return kn_str_contains_ci(triple, "aarch64") || kn_str_contains_ci(triple, "arm64");
 }
 
+static const char *kn_host_default_target_triple(void)
+{
+#if defined(_WIN32) || defined(_WIN64)
+#if defined(__aarch64__) || defined(__arm64__) || defined(_M_ARM64)
+    return "aarch64-pc-windows-msvc";
+#elif defined(__i386__) || defined(_M_IX86)
+    return "i386-pc-windows-msvc";
+#else
+    return "x86_64-pc-windows-msvc";
+#endif
+#elif defined(__APPLE__)
+#if defined(__aarch64__) || defined(__arm64__)
+    return "aarch64-apple-darwin";
+#else
+    return "x86_64-apple-darwin";
+#endif
+#else
+#if defined(__aarch64__) || defined(__arm64__)
+    return "aarch64-linux-gnu";
+#elif defined(__i386__) || defined(_M_IX86)
+    return "i386-linux-gnu";
+#else
+    return "x86_64-linux-gnu";
+#endif
+#endif
+}
+
+static const char *kn_effective_target_triple(const char *triple)
+{
+    return (triple && triple[0]) ? triple : kn_host_default_target_triple();
+}
+
+static const char *kn_windows_machine_flag(const char *triple)
+{
+    const char *effective = kn_effective_target_triple(triple);
+    if (kn_triple_is_x86(effective))
+        return "/machine:x86";
+    if (kn_triple_is_arm64(effective))
+        return "/machine:arm64";
+    return "/machine:x64";
+}
+
 static const char *kn_windows_runtime_dir_rel(const char *triple)
 {
-    if (kn_triple_is_x86(triple ? triple : ""))
+    const char *effective = kn_effective_target_triple(triple);
+    if (kn_triple_is_x86(effective))
         return "runtime\\win-x86";
-    if (kn_triple_is_arm64(triple ? triple : ""))
+    if (kn_triple_is_arm64(effective))
         return "runtime\\win-arm64";
     return "runtime\\win-x64";
 }
@@ -1297,9 +1340,10 @@ static int kn_windows_crt_mode(const KnLinkOptions *opts);
 
 static const char *kn_windows_arch_dir(const char *triple)
 {
-    if (kn_triple_is_x86(triple ? triple : ""))
+    const char *effective = kn_effective_target_triple(triple);
+    if (kn_triple_is_x86(effective))
         return "x86";
-    if (kn_triple_is_arm64(triple ? triple : ""))
+    if (kn_triple_is_arm64(effective))
         return "arm64";
     return "x64";
 }
@@ -1485,7 +1529,7 @@ static int kn_detect_msvc_lib_dir_from_linker(const char *linker_path, const cha
 
 static int kn_detect_msvc_lib_dir(const KnLinkOptions *opts, char *out, size_t cap)
 {
-    const char *triple = opts && opts->target_triple ? opts->target_triple : "";
+    const char *triple = kn_effective_target_triple(opts ? opts->target_triple : 0);
     if (kn_try_env_dir(out, cap, "KINAL_MSVC_LIB"))
         return 1;
 
@@ -1532,7 +1576,7 @@ static int kn_detect_msvc_lib_dir(const KnLinkOptions *opts, char *out, size_t c
 
 static int kn_detect_msvc_link_exe(const KnLinkOptions *opts, char *out, size_t cap)
 {
-    const char *triple = opts && opts->target_triple ? opts->target_triple : "";
+    const char *triple = kn_effective_target_triple(opts ? opts->target_triple : 0);
     const char *arch = kn_windows_arch_dir(triple);
     if (kn_get_env(out, cap, "KINAL_LINKER_MSVC") && kn_file_exists(out))
         return 1;
@@ -1577,7 +1621,7 @@ static int kn_detect_windows_sdk_subdir(char *out, size_t cap, const char *versi
 
 static int kn_detect_windows_um_lib_dir(const KnLinkOptions *opts, char *out, size_t cap)
 {
-    const char *triple = opts && opts->target_triple ? opts->target_triple : "";
+    const char *triple = kn_effective_target_triple(opts ? opts->target_triple : 0);
     if (kn_try_env_dir(out, cap, "KINAL_WINDOWS_SDK_UM_LIB"))
         return 1;
 
@@ -1620,7 +1664,7 @@ static int kn_detect_windows_um_lib_dir(const KnLinkOptions *opts, char *out, si
 
 static int kn_detect_windows_ucrt_lib_dir(const KnLinkOptions *opts, char *out, size_t cap)
 {
-    const char *triple = opts && opts->target_triple ? opts->target_triple : "";
+    const char *triple = kn_effective_target_triple(opts ? opts->target_triple : 0);
     if (kn_try_env_dir(out, cap, "KINAL_WINDOWS_SDK_UCRT_LIB"))
         return 1;
 
@@ -1686,7 +1730,7 @@ static void kn_detect_windows_toolchain_dirs(const KnLinkOptions *opts, KnWindow
     if (!dirs) return;
     kn_memset(dirs, 0, sizeof(*dirs));
     dirs->has_bundle_lib_dir = kn_detect_windows_bundle_lib_dir(
-        opts && opts->target_triple ? opts->target_triple : "",
+        kn_effective_target_triple(opts ? opts->target_triple : 0),
         dirs->bundle_lib_dir,
         sizeof(dirs->bundle_lib_dir));
     if (dirs->has_bundle_lib_dir)

@@ -45,21 +45,35 @@ def write_bundle_readme(dest: Path) -> None:
         [
             f"Kinal {version} ({host_tag()})",
             "",
-            "Contents:",
-            f"  - {exe_name('kinal')}",
-            f"  - {exe_name('kinalvm')}",
-            f"  - {exe_name('kinal-lsp-server')}",
-            "  - kinal-host.lib on Windows",
-            "  - LLVM runtime DLLs on Windows",
-            "  - llvm/lib/LLVM-C.lib on Windows",
-            "  - infra/assets/locales/",
-            "  - libs/std/",
-            "  - libs/runtime/src",
-            "  - libs/runtime/include",
-            "  - libs/runtime/<host>",
-            "  - host linker tools (LLD/LLVM) when available; Zig is discovered locally or bootstrapped on demand",
+            "Kinal is a systems programming language with its own compiler and virtual machine.",
             "",
-            "This bundle targets the current host platform only.",
+            "Quick Start:",
+            f"  {exe_name('kinal')} hello.kn",
+            "",
+            "Tools:",
+            f"  - {exe_name('kinal')}             : compiler",
+            f"  - {exe_name('kinalvm')}           : bytecode virtual machine",
+            f"  - {exe_name('kinal-lsp-server')}  : language server (LSP)",
+            "",
+            "Contents:",
+            "  - compiler and tools",
+            "  - standard library (libs/std/)",
+            "  - runtime (libs/runtime/)",
+            "  - localization assets (infra/assets/locales/)",
+            "  - platform-specific runtime libraries",
+            "",
+            "Notes:",
+            "  - This bundle targets the current host platform only.",
+            "  - LLVM tools/runtime are included when required.",
+            "  - Zig is discovered locally or bootstrapped on demand.",
+            "",
+            "Documentation:",
+            "  Local: docs/",
+            "  Online: https://kinal.org/docs",
+            "",
+            "Resources:",
+            "  Website: https://kinal.org",
+            "  GitHub:  https://github.com/Kinal-Lang/Kinal",
         ]
     )
     write_text(dest / "README.txt", text)
@@ -168,6 +182,7 @@ def stage_bundle(build_type: str, dest: Path) -> Path:
     copy_llvm_runtime_files(dest, llvm_bin, llvm_dir)
     copy_llvm_dev_files(dest, llvm_dir)
     copy_tree(LOCALES_DIR, dest / "locales")
+    copy_tree(ROOT / "docs", dest / "docs")
     build_runtime_for_host(dest / "runtime", llvm_bin)
     build_official_stdpkg_klibs(compiler, llvm_bin)
     copy_tree(STDPKG_DIR, dest / "stdpkg")
