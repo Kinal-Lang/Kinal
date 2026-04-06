@@ -1,13 +1,87 @@
 [
-  { "name": "hello", "file": "tests/hello.kn", "expected": "hello\n" },
-  { "name": "control", "file": "tests/control.kn", "expected": "ok\n" },
-  { "name": "class_null_compare", "file": "tests/class_null_compare.kn", "expected": "256\n", "auto_link": true },
-  { "name": "stdlib_math", "file": "tests/stdlib_math.kn", "expected": "7\n3\n9\n10\n-1\n", "auto_link": true },
-  { "name": "stdlib_char", "file": "tests/stdlib_char.kn", "expected": "true\ntrue\nq\nR\ntrue\n", "auto_link": true },
-  { "name": "stdlib_ui", "file": "tests/stdlib_ui.kn", "compile_only": true, "auto_link": true },
-  { "name": "stdlib_window", "file": "tests/stdlib_window.kn", "compile_only": true, "auto_link": true },
-  { "name": "stdlib_ui_alias_nested_new", "file": "tests/stdlib_ui_alias_nested_new.kn", "compile_only": true, "auto_link": true },
-  { "name": "anon_event", "file": "tests/anon_event.kn", "compile_only": true, "auto_link": true },
-  { "name": "stdlib_ui_components", "file": "tests/stdlib_ui_components.kn", "compile_only": true, "auto_link": true },
-  { "name": "no_unit_local_class", "file": "tests/no_unit_local_class.kn", "compile_only": true, "auto_link": true }
+  {
+    "name": "hello",
+    "file": "tests/common/hello.kn",
+    "expected": "hello\n"
+  },
+  {
+    "name": "control",
+    "file": "tests/common/control.kn",
+    "expected": "ok\n"
+  },
+  {
+    "name": "class_null_compare",
+    "file": "tests/windows/class_null_compare.kn",
+    "expected": "256\n",
+    "auto_link": true,
+    "platforms": [
+      "windows"
+    ]
+  },
+  {
+    "name": "stdlib_math",
+    "file": "tests/common/stdlib_math.kn",
+    "expected": "7\n3\n9\n10\n-1\n",
+    "auto_link": true
+  },
+  {
+    "name": "stdlib_char",
+    "file": "tests/common/stdlib_char.kn",
+    "expected": "true\ntrue\nq\nR\ntrue\n",
+    "auto_link": true
+  },
+  {
+    "name": "stdlib_ui",
+    "file": "tests/windows/stdlib_ui.kn",
+    "compile_only": true,
+    "auto_link": true,
+    "platforms": [
+      "windows"
+    ]
+  },
+  {
+    "name": "stdlib_window",
+    "file": "tests/windows/stdlib_window.kn",
+    "compile_only": true,
+    "auto_link": true,
+    "platforms": [
+      "windows"
+    ]
+  },
+  {
+    "name": "stdlib_ui_alias_nested_new",
+    "file": "tests/windows/stdlib_ui_alias_nested_new.kn",
+    "compile_only": true,
+    "auto_link": true,
+    "platforms": [
+      "windows"
+    ]
+  },
+  {
+    "name": "anon_event",
+    "file": "tests/windows/anon_event.kn",
+    "compile_only": true,
+    "auto_link": true,
+    "platforms": [
+      "windows"
+    ]
+  },
+  {
+    "name": "stdlib_ui_components",
+    "file": "tests/windows/stdlib_ui_components.kn",
+    "compile_only": true,
+    "auto_link": true,
+    "platforms": [
+      "windows"
+    ]
+  },
+  {
+    "name": "no_unit_local_class",
+    "file": "tests/windows/no_unit_local_class.kn",
+    "compile_only": true,
+    "auto_link": true,
+    "platforms": [
+      "windows"
+    ]
+  }
 ]

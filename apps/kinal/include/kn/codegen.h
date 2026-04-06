@@ -15,6 +15,7 @@ typedef struct
     const char *target_triple;
     int emit_kind;      // KnCodegenEmit
     int emit_entry;     // 1: emit executable entry wrapper, 0: library/object mode
+    int emit_pic;       // 1: emit position-independent code for shared libraries
     int env_kind;       // KnEnvKind
     int runtime_mode;   // KnRuntimeMode
     int panic_mode;     // KnPanicMode

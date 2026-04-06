@@ -1,0 +1,41 @@
+Unit Tests.ExceptionChain;
+
+Get Console By IO.Console;
+Get IO.Error;
+Get IO.Text;
+
+Function void C()
+{
+    Throw New IO.Error("T", "M");
+}
+
+Function void B()
+{
+    C();
+}
+
+Function void A()
+{
+    B();
+}
+
+Static Function int Main()
+{
+    Try
+    {
+        A();
+    }
+    Catch (IO.Error e)
+    {
+        Console.PrintLine(e.Title);
+        Console.PrintLine(e.Message);
+        Console.PrintLine(IO.Error.HasException());
+        string trace= IO.Error.LastTrace();
+        Console.PrintLine(IO.Text.Contains(trace, "Tests.ExceptionChain.C"));
+        Console.PrintLine(IO.Text.Contains(trace, "Tests.ExceptionChain.B"));
+        Console.PrintLine(IO.Text.Contains(trace, "Tests.ExceptionChain.A"));
+        IO.Error cur= IO.Error.Current();
+        Console.PrintLine(cur.Title);
+    }
+    Return 0;
+}

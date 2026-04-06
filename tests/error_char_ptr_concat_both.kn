@@ -1,9 +1,0 @@
-Unit Tests.ErrorCharPtrConcatBoth;
-
-Static Function int Main()
-{
-    char* a = "hello";
-    char* b = "world";
-    string bad = a + b;
-    Return 0;
-}

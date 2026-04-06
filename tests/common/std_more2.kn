@@ -1,0 +1,15 @@
+Unit Tests.StdMore2;
+
+Get Console By IO.Console;
+Get IO.Path;
+Get IO.Text;
+Get IO.File;
+
+Static Function int Main()
+{
+    Console.PrintLine(IO.Path.HasExtension("a.txt"));
+    Console.PrintLine(IO.Path.HasExtension("folder/a"));
+    Console.PrintLine(IO.Text.LastIndexOf("ababa", "ba"));
+    Console.PrintLine(IO.File.ReadOr("tests/no_such_file.kn", "fallback"));
+    Return 0;
+}

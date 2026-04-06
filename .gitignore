@@ -38,6 +38,7 @@ tmp_*/
 *.tmp
 *.temp
 *.bak
+*.klib
 
 # -----------------------------------------
 # Compiled / binary / object files

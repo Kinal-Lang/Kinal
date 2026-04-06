@@ -1,8 +1,0 @@
-Unit Tests.ErrorDictKeysArgs;
-
-
-Static Function int Main() {
-    dict d = dict.Create();
-    d.Keys(1);
-    Return 0;
-}

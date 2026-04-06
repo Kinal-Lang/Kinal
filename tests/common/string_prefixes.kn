@@ -1,0 +1,31 @@
+Unit Tests.StringPrefixes;
+
+Get Console By IO.Console;
+
+Static Function int Main()
+{
+    string raw_text=[r]"\n \\ / abc";
+    Console.PrintLine(raw_text);
+    Console.PrintLine(raw_text.Length());
+
+    int value= 7;
+    Console.PrintLine([f]"v={value}");
+    Console.PrintLine([format]"sum={value + 5}");
+    Console.PrintLine([f]"{{{value}}}");
+
+    Var chars1=[c]"abc";
+    Console.PrintLine(chars1.Length());
+    Console.PrintLine(chars1[0]);
+    Console.PrintLine(chars1[2]);
+
+    Var chars2=[f][c]"z={value}";
+    Console.PrintLine(chars2.Length());
+    Console.PrintLine(chars2[0]);
+    Console.PrintLine(chars2[2]);
+
+    Var chars3=[chars][raw]"\n";
+    Console.PrintLine(chars3.Length());
+    Console.PrintLine(chars3[0]);
+    Console.PrintLine(chars3[1]);
+    Return 0;
+}

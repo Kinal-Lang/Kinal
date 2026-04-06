@@ -1,0 +1,48 @@
+Unit Tests.ArrayContextual;
+
+Get Console By IO.Console;
+
+Class Box
+{
+    Public int Value;
+
+    Public Function Box(int value)
+    {
+        This.Value= value;
+    }
+}
+
+Class Probe
+{
+    Private int[] Nums;
+    Private Box[] Boxes;
+
+    Public Function Probe()
+    {
+        This.Nums= {
+        };
+        This.Nums= This.Nums.Add(1);
+        This.Nums= This.Nums.Add(2);
+
+        This.Boxes= {
+        };
+        This.Boxes= {
+            null
+        };
+        This.Boxes= This.Boxes.Add(New Box(7));
+    }
+
+    Public Function void Print()
+    {
+        Console.PrintLine(This.Nums.Length());
+        Console.PrintLine(This.Boxes.Length());
+        Console.PrintLine(This.Boxes[1].Value);
+    }
+}
+
+Static Function int Main()
+{
+    Probe p= New Probe();
+    p.Print();
+    Return 0;
+}

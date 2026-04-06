@@ -280,6 +280,7 @@ const char *__kn_sys_last_error(void)
 
 uint64_t __kn_time_tick(void);
 void __kn_time_sleep(int32_t ms);
+const char *__kn_path_normalize(const char *p);
 
 #if defined(_WIN32) || defined(_WIN64)
 static KN_HANDLE g_heap = 0;
@@ -398,6 +399,36 @@ void __kn_sys_exit(int code)
 const char *__kn_sys_command_line(void)
 {
     return GetCommandLineA();
+}
+
+const char *__kn_sys_executable_path(void)
+{
+    KN_DWORD cap = KN_MAX_PATH;
+    for (;;)
+    {
+        char *buf = (char *)rt_alloc((size_t)cap);
+        KN_DWORD written = 0;
+        if (!buf) return "";
+        written = GetModuleFileNameA(0, buf, cap);
+        if (written == 0)
+        {
+            rt_free(buf);
+            return "";
+        }
+        if (written < cap)
+        {
+            buf[written] = 0;
+            {
+                const char *out = __kn_path_normalize(buf);
+                rt_free(buf);
+                return out;
+            }
+        }
+        rt_free(buf);
+        if (cap >= 65535u)
+            return "";
+        cap *= 2u;
+    }
 }
 
 static void rt_store_string_array(KnStringArray value, const char ***out_data, uint64_t *out_len)
@@ -653,6 +684,9 @@ int __kn_sys_close_library(void *handle)
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#if defined(__APPLE__)
+#include <mach-o/dyld.h>
+#endif
 #define KN_PATH_SEP '/'
 
 KN_HANDLE KN_STDCALL GetStdHandle(KN_DWORD nStdHandle)
@@ -744,6 +778,65 @@ void __kn_sys_exit(int code)
 const char *__kn_sys_command_line(void)
 {
     return "";
+}
+
+const char *__kn_sys_executable_path(void)
+{
+#if defined(__APPLE__)
+    uint32_t cap = 0;
+    char *buf = 0;
+    char *resolved = 0;
+    if (_NSGetExecutablePath(0, &cap) != -1 || cap == 0)
+        return "";
+    buf = (char *)rt_alloc((size_t)cap + 1u);
+    if (!buf)
+        return "";
+    if (_NSGetExecutablePath(buf, &cap) != 0)
+    {
+        rt_free(buf);
+        return "";
+    }
+    resolved = realpath(buf, 0);
+    if (resolved)
+    {
+        const char *out = __kn_path_normalize(resolved);
+        free(resolved);
+        rt_free(buf);
+        return out;
+    }
+    {
+        const char *out = __kn_path_normalize(buf);
+        rt_free(buf);
+        return out;
+    }
+#else
+    size_t cap = 256;
+    for (;;)
+    {
+        char *buf = (char *)rt_alloc(cap);
+        ssize_t written = 0;
+        if (!buf) return "";
+        written = readlink("/proc/self/exe", buf, cap - 1u);
+        if (written < 0)
+        {
+            rt_free(buf);
+            return "";
+        }
+        if ((size_t)written < cap - 1u)
+        {
+            buf[written] = 0;
+            {
+                const char *out = __kn_path_normalize(buf);
+                rt_free(buf);
+                return out;
+            }
+        }
+        rt_free(buf);
+        if (cap >= 65536u)
+            return "";
+        cap *= 2u;
+    }
+#endif
 }
 
 int __kn_sys_file_exists(const char *path)
@@ -3276,6 +3369,7 @@ void *__kn_gc_alloc(uint64_t size)
         rt_spin_unlock(&g_gc_lock);
         return 0;
     }
+    rt_memset(mem, 0, (size_t)size);
     KnGcBlock *b = (KnGcBlock *)rt_alloc(sizeof(KnGcBlock));
     if (!b)
     {

@@ -1,0 +1,89 @@
+Unit Tests.StdlibUIComponents;
+
+Get IO.UI;
+
+Static Function int Main()
+{
+    IO.UI.Window window= New IO.UI.Window("UI Components Test", 640, 480);
+
+    IO.UI.Label label= New IO.UI.Label("Name:", 20, 20, 60, 24);
+    window.Add(label);
+
+    IO.UI.Input nameInput= New IO.UI.Input("", 90, 20, 200, 24);
+    window.Add(nameInput);
+
+    IO.UI.Input multiInput= New IO.UI.Input("", 90, 60, 200, 80);
+    multiInput.SetMultiline(true);
+    window.Add(multiInput);
+
+    IO.UI.Input passInput= New IO.UI.Input("", 90, 150, 200, 24);
+    passInput.SetPassword(true);
+    window.Add(passInput);
+
+    IO.UI.Input readOnlyInput= New IO.UI.Input("Read only text", 90, 180, 200, 24);
+    readOnlyInput.SetReadOnly(true);
+    window.Add(readOnlyInput);
+
+    IO.UI.CheckBox checkBox= New IO.UI.CheckBox("Enable feature", 20, 220, 160, 24);
+    window.Add(checkBox);
+
+    IO.UI.RadioButton radio1= New IO.UI.RadioButton("Option A", 20, 250, 120, 24);
+    IO.UI.RadioButton radio2= New IO.UI.RadioButton("Option B", 20, 280, 120, 24);
+    window.Add(radio1);
+    window.Add(radio2);
+
+    IO.UI.ComboBox combo= New IO.UI.ComboBox(20, 310, 180, 200);
+    combo.AddItem("Item 1");
+    combo.AddItem("Item 2");
+    combo.AddItem("Item 3");
+    combo.SelectedIndex= 0;
+    window.Add(combo);
+
+    IO.UI.ProgressBar progress= New IO.UI.ProgressBar(20, 350, 200, 24);
+    progress.Value= 50;
+    window.Add(progress);
+
+    IO.UI.GroupBox group= New IO.UI.GroupBox("Settings", 320, 20, 280, 180);
+    IO.UI.CheckBox innerCheck= New IO.UI.CheckBox("Dark mode", 20, 30, 140, 24);
+    IO.UI.RadioButton innerRadio1= New IO.UI.RadioButton("Small", 20, 60, 100, 24);
+    IO.UI.RadioButton innerRadio2= New IO.UI.RadioButton("Large", 20, 90, 100, 24);
+    IO.UI.Label innerLabel= New IO.UI.Label("Volume:", 20, 120, 60, 24);
+    IO.UI.ProgressBar innerProgress= New IO.UI.ProgressBar(90, 120, 160, 20);
+    innerProgress.Value= 75;
+    group.Add(innerCheck);
+    group.Add(innerRadio1);
+    group.Add(innerRadio2);
+    group.Add(innerLabel);
+    group.Add(innerProgress);
+    window.Add(group);
+
+    IO.UI.Button button= New IO.UI.Button("Submit", 20, 390, 120, 28);
+    button.AddEvent(New IO.UI.Event(IO.UI.EventKind.OnClick, Function void()
+    {
+        button.Text= "Submitted!";
+    }
+    ));
+    window.Add(button);
+
+    nameInput.AddEvent(New IO.UI.Event(IO.UI.EventKind.OnTextChanged, Function void()
+    {
+    }
+    ));
+
+    checkBox.AddEvent(New IO.UI.Event(IO.UI.EventKind.OnCheckedChanged, Function void()
+    {
+    }
+    ));
+
+    combo.AddEvent(New IO.UI.Event(IO.UI.EventKind.OnSelectedChanged, Function void()
+    {
+    }
+    ));
+
+    window.AddEvent(New IO.UI.Event(IO.UI.EventKind.OnResize, Function void()
+    {
+    }
+    ));
+
+    Return window.Run();
+}

@@ -1,0 +1,7 @@
+Unit App.Test;
+Get Console By IO.Console;
+
+Function void Test()
+{
+    Console.PrintLine("hello");
+}

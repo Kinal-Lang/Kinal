@@ -1,0 +1,40 @@
+Unit Tests.KncLoopBackedge;
+
+Get Console By IO.Console;
+
+Static Function int Main()
+{
+    int sum= 0;
+    For (int i= 0; i< 10; i++)
+    {
+        If (i== 5)
+        {
+            Continue;
+        }
+        sum= sum+ i;
+    }
+    Console.PrintLine(sum);
+
+    int down= 0;
+    For (int j= 5; j> 0; j--)
+    {
+        down= down+ j;
+    }
+    Console.PrintLine(down);
+
+    int hits= 0;
+    For (int k= 0; k!= 4; k++)
+    {
+        hits= hits+ 1;
+    }
+    Console.PrintLine(hits);
+
+    int eqHits= 0;
+    For (int m= 0; m== 0; m++)
+    {
+        eqHits= eqHits+ 1;
+    }
+    Console.PrintLine(eqHits);
+
+    Return 0;
+}

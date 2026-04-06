@@ -1,0 +1,9 @@
+Unit Tests.ErrorStdUnknownSymbol;
+
+Get IO.Path;
+
+Static Function int Main()
+{
+    IO.Path.NotExist("a.txt");
+    Return 0;
+}

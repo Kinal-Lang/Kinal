@@ -1,0 +1,24 @@
+Unit Tests.ErrorIsPatternScope;
+
+Class Animal
+{
+}
+
+Class Dog By Animal
+{
+    Public Function string Name()
+    {
+        Return "dog";
+    }
+}
+
+Safe Static Function int Main(string[] args)
+{
+    Animal a= New Dog();
+    If (a Is Dog d)
+    {
+        Return 0;
+    }
+    d.Name();
+    Return 0;
+}

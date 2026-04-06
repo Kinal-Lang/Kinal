@@ -1,0 +1,8 @@
+Unit Tests.ErrorAnyIsIntArgs;
+
+Static Function int Main()
+{
+    any a= 1;
+    a.IsInt(1);
+    Return 0;
+}

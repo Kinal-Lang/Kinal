@@ -1,8 +1,0 @@
-Unit Tests.ErrorTextJoinType;
-
-Get IO.Text;
-
-Static Function int Main() {
-    IO.Text.Join("x", ",");
-    Return 0;
-}

@@ -1,8 +1,0 @@
-Unit Tests.ErrorAttrLinkLibDelegate;
-
-[LinkLib("native_ffi")]
-Delegate Function int dyn_add(int a, int b) By C;
-
-Static Function int Main() {
-    Return 0;
-}

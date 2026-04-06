@@ -1,0 +1,14 @@
+Unit Tests.StdlibChar;
+
+Get IO.Console;
+Get IO.Char;
+
+Safe Static Function int Main()
+{
+    IO.Console.PrintLine(IO.Char.IsDigit('7'));
+    IO.Console.PrintLine(IO.Char.IsLetter('A'));
+    IO.Console.PrintLine(IO.Char.ToLower('Q'));
+    IO.Console.PrintLine(IO.Char.ToUpper('r'));
+    IO.Console.PrintLine(IO.Char.IsWhitespace('\n'));
+    Return 0;
+}

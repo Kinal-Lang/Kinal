@@ -1,30 +1,46 @@
 [
   {
     "name": "freestanding_core_min",
-    "file": "tests/freestanding_core_min.kn",
+    "file": "tests/common/freestanding_core_min.kn",
     "compile_only": true,
     "output_ext": ".obj",
-    "compiler_args": ["--freestanding", "--emit", "obj"]
+    "compiler_args": [
+      "--freestanding",
+      "--emit",
+      "obj"
+    ]
   },
   {
     "name": "freestanding_core_memory",
-    "file": "tests/freestanding_core_memory.kn",
+    "file": "tests/common/freestanding_core_memory.kn",
     "compile_only": true,
     "output_ext": ".obj",
-    "compiler_args": ["--freestanding", "--emit", "obj"]
+    "compiler_args": [
+      "--freestanding",
+      "--emit",
+      "obj"
+    ]
   },
   {
     "name": "freestanding_core_volatile",
-    "file": "tests/freestanding_core_volatile.kn",
+    "file": "tests/common/freestanding_core_volatile.kn",
     "compile_only": true,
     "output_ext": ".obj",
-    "compiler_args": ["--freestanding", "--emit", "obj"]
+    "compiler_args": [
+      "--freestanding",
+      "--emit",
+      "obj"
+    ]
   },
   {
     "name": "freestanding_core_string_helpers",
-    "file": "tests/freestanding_core_string_helpers.kn",
+    "file": "tests/common/freestanding_core_string_helpers.kn",
     "compile_only": true,
     "output_ext": ".obj",
-    "compiler_args": ["--freestanding", "--emit", "obj"]
+    "compiler_args": [
+      "--freestanding",
+      "--emit",
+      "obj"
+    ]
   }
 ]

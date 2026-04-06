@@ -49,6 +49,8 @@ static bool link_target_spec_matches(const char *spec, const char *triple)
         return target_is_windows(triple);
     if (str_eq_ci(spec, "linux"))
         return target_is_linux(triple);
+    if (str_eq_ci(spec, "macos") || str_eq_ci(spec, "darwin"))
+        return target_is_macos(triple);
     if (str_eq_ci(spec, "freestanding") || str_eq_ci(spec, "bare"))
         return target_is_freestanding(triple);
 
@@ -63,6 +65,10 @@ static bool link_target_spec_matches(const char *spec, const char *triple)
         return target_is_linux(triple) && !target_is_arm64(triple);
     if (str_eq_ci(spec, "linux-arm64"))
         return target_is_linux(triple) && target_is_arm64(triple);
+    if (str_eq_ci(spec, "mac64") || str_eq_ci(spec, "macos-x64") || str_eq_ci(spec, "darwin-x64"))
+        return target_is_macos(triple) && !target_is_arm64(triple);
+    if (str_eq_ci(spec, "macos-arm64") || str_eq_ci(spec, "darwin-arm64"))
+        return target_is_macos(triple) && target_is_arm64(triple);
 
     if (str_eq_ci(spec, "bare64"))
         return target_is_freestanding(triple) && !target_is_arm64(triple) && !target_is_x86(triple);
@@ -182,7 +188,7 @@ static int sema_info_os_from_triple(const char *triple)
         return KN_INFO_OS_WINDOWS;
     if (target_is_linux(triple))
         return KN_INFO_OS_LINUX;
-    if (triple && (str_contains_ci(triple, "darwin") || str_contains_ci(triple, "apple")))
+    if (target_is_macos(triple))
         return KN_INFO_OS_MACOS;
     return KN_INFO_OS_UNKNOWN;
 }
@@ -244,7 +250,9 @@ static const char *sema_info_object_suffix_from_triple(const char *triple)
 
 static const char *sema_info_dynamic_library_suffix_from_triple(const char *triple)
 {
-    return target_is_windows(triple) ? ".dll" : ".so";
+    if (target_is_windows(triple)) return ".dll";
+    if (target_is_macos(triple)) return ".dylib";
+    return ".so";
 }
 
 static const char *sema_info_static_library_suffix_from_triple(const char *triple)
@@ -457,7 +465,8 @@ static int kn_compile(int in_count, const char **in_paths, const KnCompileConfig
                 kn_write_str("object emit from non-.fx inputs requires exactly one input\n");
                 return -1;
             }
-            if (compile_intermediate_to_obj(all_inputs.items[0], out_path, cfg->target_triple, cfg->lto_mode) != 0)
+            if (compile_intermediate_to_obj(all_inputs.items[0], out_path, cfg->target_triple, cfg->lto_mode,
+                                            cfg->artifact_kind == KN_ARTIFACT_SHARED_LIB) != 0)
             {
                 kn_write_str("failed to compile intermediate input to object\n");
                 return -1;
@@ -530,7 +539,8 @@ static int kn_compile(int in_count, const char **in_paths, const KnCompileConfig
                 {
                     if (!derive_temp_obj_path(out_path, cfg->target_triple, temp_count + 1, temp_objs[temp_count], sizeof(temp_objs[temp_count])))
                         return -1;
-                    if (compile_intermediate_to_obj(p, temp_objs[temp_count], cfg->target_triple, cfg->lto_mode) != 0)
+                    if (compile_intermediate_to_obj(p, temp_objs[temp_count], cfg->target_triple, cfg->lto_mode,
+                                                    cfg->artifact_kind == KN_ARTIFACT_SHARED_LIB) != 0)
                     {
                         kn_write_str("failed to compile intermediate input to object\n");
                         return -1;
@@ -837,6 +847,7 @@ static int kn_compile(int in_count, const char **in_paths, const KnCompileConfig
     // Emit entry wrapper for executable artifacts so .ll/.s/.obj intermediates
     // can be resumed and linked later without re-running frontend.
     cg_opts.emit_entry = need_entry;
+    cg_opts.emit_pic = (cfg->artifact_kind == KN_ARTIFACT_SHARED_LIB);
     cg_opts.env_kind = cfg->env_kind;
     cg_opts.runtime_mode = cfg->runtime_mode;
     cg_opts.panic_mode = cfg->panic_mode;
@@ -853,7 +864,8 @@ static int kn_compile(int in_count, const char **in_paths, const KnCompileConfig
         {
             if (!derive_obj_path(out_path, cfg->target_triple, cg_obj, sizeof(cg_obj)))
                 return -1;
-            if (compile_intermediate_to_obj(cg_out, cg_obj, cfg->target_triple, cfg->lto_mode) != 0)
+            if (compile_intermediate_to_obj(cg_out, cg_obj, cfg->target_triple, cfg->lto_mode,
+                                            cfg->artifact_kind == KN_ARTIFACT_SHARED_LIB) != 0)
             {
                 kn_write_str("failed to compile generated llvm ir to object for lto\n");
                 return -1;
@@ -898,7 +910,8 @@ static int kn_compile(int in_count, const char **in_paths, const KnCompileConfig
                 {
                     if (!derive_temp_obj_path(out_path, cfg->target_triple, temp_count + 20, temp_objs[temp_count], sizeof(temp_objs[temp_count])))
                         return -1;
-                    if (compile_intermediate_to_obj(p, temp_objs[temp_count], cfg->target_triple, cfg->lto_mode) != 0)
+                    if (compile_intermediate_to_obj(p, temp_objs[temp_count], cfg->target_triple, cfg->lto_mode,
+                                                    cfg->artifact_kind == KN_ARTIFACT_SHARED_LIB) != 0)
                     {
                         kn_write_str("failed to compile intermediate input to object\n");
                         return -1;
@@ -1129,7 +1142,7 @@ int __kn_host_compile_ex(const char *input_paths, const char *output_path, int a
     cfg.link_items = links;
     cfg.link_item_count = link_count;
     cfg.target_triple = default_target_triple();
-    cfg.linker_kind = KN_LINKER_LLD;
+    cfg.linker_kind = default_hosted_linker_kind(cfg.target_triple);
     cfg.linker_path = 0;
     cfg.artifact_kind = KN_ARTIFACT_EXE;
     cfg.emit_mode = KN_EMIT_LINK;

@@ -8,21 +8,23 @@ from pathlib import Path
 from .context import ROOT, host_tag, is_windows
 from .util import run
 
-ZIG_VERSION = "0.14.1"
+ZIG_VERSION = "0.15.2"
 
 
 def host_default_zig_url() -> str:
     host = host_tag()
     if host == "win-x64":
-        return f"https://ziglang.org/download/{ZIG_VERSION}/zig-windows-x86_64-{ZIG_VERSION}.zip"
+        return f"https://ziglang.org/download/{ZIG_VERSION}/zig-x86_64-windows-{ZIG_VERSION}.zip"
+    if host == "win-arm64":
+        return f"https://ziglang.org/download/{ZIG_VERSION}/zig-aarch64-windows-{ZIG_VERSION}.zip"
     if host == "linux-x64":
-        return f"https://ziglang.org/download/{ZIG_VERSION}/zig-linux-x86_64-{ZIG_VERSION}.tar.xz"
+        return f"https://ziglang.org/download/{ZIG_VERSION}/zig-x86_64-linux-{ZIG_VERSION}.tar.xz"
     if host == "linux-arm64":
-        return f"https://ziglang.org/download/{ZIG_VERSION}/zig-linux-aarch64-{ZIG_VERSION}.tar.xz"
+        return f"https://ziglang.org/download/{ZIG_VERSION}/zig-aarch64-linux-{ZIG_VERSION}.tar.xz"
     if host == "macos-arm64":
-        return f"https://ziglang.org/download/{ZIG_VERSION}/zig-macos-aarch64-{ZIG_VERSION}.tar.xz"
+        return f"https://ziglang.org/download/{ZIG_VERSION}/zig-aarch64-macos-{ZIG_VERSION}.tar.xz"
     if host == "macos-x64":
-        return f"https://ziglang.org/download/{ZIG_VERSION}/zig-macos-x86_64-{ZIG_VERSION}.tar.xz"
+        return f"https://ziglang.org/download/{ZIG_VERSION}/zig-x86_64-macos-{ZIG_VERSION}.tar.xz"
     raise SystemExit(f"unsupported host platform for Zig bootstrap: {host}")
 
 

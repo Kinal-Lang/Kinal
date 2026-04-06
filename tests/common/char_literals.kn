@@ -1,0 +1,15 @@
+Unit Tests.CharLiterals;
+
+Get Console By IO.Console;
+
+Static Function int Main()
+{
+    char a= 'A';
+    char q= '\'';
+
+    Console.PrintLine(a);
+    Console.PrintLine([int](a));
+    Console.PrintLine([int]('\n'));
+    Console.PrintLine([int](q));
+    Return 0;
+}

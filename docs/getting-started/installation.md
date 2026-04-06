@@ -84,11 +84,11 @@ To build Kinal from source:
 - Python 3 (for `infra/` build scripts)
 
 ```bash
-# Configure
-cmake --preset host-debug
+# Using command-line build
+python x.py [dev|dist]
 
-# Build
-cmake --build --preset build-host-debug
+# Or use the build GUI for a more guided setup and build process
+python x.py gui
 ```
 
 See `CMakePresets.json` for available preset names.

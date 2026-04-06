@@ -1,0 +1,33 @@
+Unit Tests.MetaRuntimeMethodOwnerPtr;
+
+Get Console By IO.Console;
+Get IO.Meta;
+
+Meta Route(string path)
+{
+    On@method;
+    Keep@runtime;
+}
+
+Public Class Controller
+{
+    [Route("/hello")] Public Static Function string Hello()
+    {
+        Return "hello";
+    }
+}
+
+Unsafe Static Function int Main()
+{
+    dict route= IO.Meta.Find("Tests.MetaRuntimeMethodOwnerPtr.Controller.Hello", "Route");
+    byte*owner=[byte*](route.Fetch("owner_ptr"));
+    int paramCount=[int](route.Fetch("owner_param_count"));
+    IO.Type.Object.Function fn=[Object.Function](owner);
+
+    Console.PrintLine(owner!= null);
+    Console.PrintLine([string](route.Fetch("owner")));
+    Console.PrintLine(paramCount);
+    Console.PrintLine([string](route.Fetch("arg.path")));
+    Console.PrintLine(fn());
+    Return 0;
+}

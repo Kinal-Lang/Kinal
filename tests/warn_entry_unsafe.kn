@@ -1,7 +1,0 @@
-Unit Tests.WarnEntryUnsafe;
-Get Console By IO.Console;
-
-Static Unsafe Function int Main() {
-    Console.PrintLine("ok");
-    Return 0;
-}

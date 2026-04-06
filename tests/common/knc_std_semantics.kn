@@ -1,0 +1,20 @@
+Unit Tests.KncStdSemantics;
+
+Get Console By IO.Console;
+
+Static Function int Main()
+{
+    string joined= "abc";
+    any boxed= joined;
+    int number= 42;
+    bool ready= false;
+
+    Console.PrintLine(joined.Length());
+    Console.PrintLine(joined.Equals("abc"));
+    Console.PrintLine(boxed.ToString());
+    Console.PrintLine(boxed.IsNull());
+    Console.PrintLine(boxed.IsString());
+    Console.PrintLine(number.ToString());
+    Console.PrintLine(ready.ToString());
+    Return 0;
+}

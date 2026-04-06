@@ -1,0 +1,28 @@
+Unit Tests.AnyCollections;
+
+Get Console By IO.Console;
+
+Static Function int Main()
+{
+    any a= 10;
+    any b= 10;
+    Console.PrintLine(a.Equals(b));
+
+    list l= list.Create();
+    Console.PrintLine(l.IsEmpty());
+    l.Add(1);
+    l.Add(2);
+    Console.PrintLine(l.IsEmpty());
+    Console.PrintLine([int](l.Pop()));
+
+    dict d= dict.Create();
+    Console.PrintLine(d.IsEmpty());
+    d.Set("k", 1);
+    Console.PrintLine(d.IsEmpty());
+
+    set s= set.Create();
+    Console.PrintLine(s.IsEmpty());
+    s.Add("x");
+    Console.PrintLine(s.IsEmpty());
+    Return 0;
+}

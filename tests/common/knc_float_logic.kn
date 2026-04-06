@@ -1,0 +1,24 @@
+Unit Tests.KncFloatLogic;
+
+Get Console By IO.Console;
+
+Static Function int Main()
+{
+    float f= 1.5;
+    float g= f+ 2.5;
+
+    Console.PrintLine(g== 4.0);
+    Console.PrintLine(g);
+    Console.PrintLine((42== 42)&&(g== 4.0));
+
+    If (g== 4.0)
+    {
+        Console.PrintLine("float-ok");
+    }
+    Else
+    {
+        Console.PrintLine("float-bad");
+    }
+
+    Return 0;
+}

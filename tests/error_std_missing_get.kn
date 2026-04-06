@@ -1,8 +1,0 @@
-Unit Tests.ErrorStdMissingGet;
-
-Get Console By IO.Console;
-
-Static Function int Main() {
-    Console.PrintLine(IO.Path.HasExtension("a.txt"));
-    Return 0;
-}

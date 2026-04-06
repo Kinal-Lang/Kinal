@@ -7,3 +7,7 @@ Class Lexer {
         Return New MiniLang.Token.Token("bad");
     }
 }
+
+Safe Static Function int Main() {
+    Return 0;
+}

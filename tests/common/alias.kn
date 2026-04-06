@@ -1,0 +1,9 @@
+Unit Tests.Alias;
+
+Get Con By IO.Console;
+
+Static Function int Main()
+{
+    Con.PrintLine("ok");
+    Return 0;
+}

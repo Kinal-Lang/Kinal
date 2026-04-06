@@ -5,8 +5,10 @@ import argparse
 import json
 import os
 import platform
+import re
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -16,6 +18,42 @@ DEFAULT_MANIFEST = ROOT / "tests" / "manifest.json"
 
 def is_windows() -> bool:
     return platform.system().lower() == "windows"
+
+
+def host_platform() -> str:
+    system = platform.system().lower()
+    if system == "darwin":
+        return "macos"
+    return system
+
+
+def normalize_platform_name(name: object) -> str:
+    value = str(name).strip().lower()
+    if value in {"win", "windows", "win32"}:
+        return "windows"
+    if value in {"mac", "macos", "osx", "darwin"}:
+        return "macos"
+    if value in {"linux", "gnu/linux"}:
+        return "linux"
+    return value
+
+
+def case_runs_on_host(case: dict[str, object]) -> bool:
+    current = host_platform()
+
+    platforms = case.get("platforms")
+    if platforms is not None:
+        allowed = {normalize_platform_name(name) for name in platforms}
+        if current not in allowed:
+            return False
+
+    skip_platforms = case.get("skip_platforms")
+    if skip_platforms is not None:
+        blocked = {normalize_platform_name(name) for name in skip_platforms}
+        if current in blocked:
+            return False
+
+    return True
 
 
 def find_zig() -> str | None:
@@ -43,7 +81,17 @@ def find_wsl_ubuntu() -> str | None:
         if not name:
             continue
         if name.lower() == "ubuntu":
-            return name
+            smoke = subprocess.run(
+                [wsl, "-d", name, "bash", "-lc", "true"],
+                cwd=str(ROOT),
+                text=True,
+                capture_output=True,
+                encoding="utf-8",
+                errors="replace",
+            )
+            if smoke.returncode == 0:
+                return name
+            return None
     return None
 
 
@@ -71,6 +119,14 @@ def artifact_path(base: Path, output_ext: str = "") -> Path:
         suffix = output_ext if output_ext.startswith(".") else f".{output_ext}"
         return base.with_suffix(suffix)
     return exe_path(base)
+
+
+def dylib_suffix() -> str:
+    if is_windows():
+        return ".dll"
+    if platform.system().lower() == "darwin":
+        return ".dylib"
+    return ".so"
 
 
 def case_file_paths(case: dict[str, object]) -> list[Path]:
@@ -112,8 +168,52 @@ def matches_expected_error(output: str, expected: str) -> bool:
     return False
 
 
+ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def strip_ansi(text: str) -> str:
+    return ANSI_ESCAPE_RE.sub("", text)
+
+
+def normalize_unhandled_runtime_output(output: str) -> str:
+    text = strip_ansi(output).replace("\r\n", "\n")
+    if "Unhandled Error:" not in text or "Stack Trace" not in text:
+        return text
+
+    lines = [line.rstrip() for line in text.split("\n")]
+    message = ""
+    frames: list[str] = []
+
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("Unhandled Error:"):
+            message = stripped[len("Unhandled Error:") :].strip()
+            continue
+        if not stripped.startswith("at "):
+            continue
+        frame = stripped[3:]
+        if "  " in frame:
+            frame = frame.split("  ", 1)[0].rstrip()
+        if frame.endswith("()"):
+            frame = frame[:-2]
+        if frame:
+            frames.append(frame)
+
+    if not message or not frames:
+        return text
+    return f"{message}\n{' -> '.join(frames)}\n"
+
+
+def matches_expected_runtime_output(output: str, expected: str) -> bool:
+    normalized_output = output.replace("\r\n", "\n")
+    normalized_expected = expected.replace("\r\n", "\n")
+    if normalized_output == normalized_expected:
+        return True
+    return normalize_unhandled_runtime_output(normalized_output) == normalized_expected
+
+
 def run_driver_integration_tests(compiler: Path, out_dir: Path) -> int:
-    hello_fx = ROOT / "tests" / "hello.kn"
+    hello_fx = ROOT / "tests" / "common" / "hello.kn"
     build_native_ffi_assets(out_dir)
 
     pipe_ll = out_dir / "pipeline_hello.ll"
@@ -131,23 +231,44 @@ def run_driver_integration_tests(compiler: Path, out_dir: Path) -> int:
         return 1
     print("[OK] pipeline_resume")
 
-    lto_exe = exe_path(out_dir / "lto_hello")
-    run([str(compiler), "build", "--no-module-discovery", "--lto=thin", str(hello_fx), "-o", str(lto_exe)], cwd=ROOT)
-    lto_out = run([str(lto_exe)], cwd=ROOT, capture=True)
-    assert isinstance(lto_out, subprocess.CompletedProcess)
-    if (lto_out.stdout or "").replace("\r\n", "\n") != "hello\n":
-        print("[FAIL] lto_thin")
-        return 1
-    print("[OK] lto_thin")
+    # LTO tests — zig linker on macOS/Linux does not support LTO (requires LLD).
+    if sys.platform == "win32":
+        lto_exe = exe_path(out_dir / "lto_hello")
+        try:
+            run([str(compiler), "build", "--no-module-discovery", "--lto=thin", str(hello_fx), "-o", str(lto_exe)], cwd=ROOT)
+        except subprocess.CalledProcessError:
+            lto_diag = subprocess.run(
+                [str(compiler), "build", "--no-module-discovery", "--lto=thin", str(hello_fx), "-o", str(lto_exe)],
+                cwd=str(ROOT), text=True, capture_output=True, encoding="utf-8", errors="replace",
+            )
+            print(f"[FAIL] lto_thin (build failed, rc={lto_diag.returncode}, stderr={lto_diag.stderr!r})")
+            return 1
+        lto_out = run([str(lto_exe)], cwd=ROOT, capture=True)
+        assert isinstance(lto_out, subprocess.CompletedProcess)
+        if (lto_out.stdout or "").replace("\r\n", "\n") != "hello\n":
+            print("[FAIL] lto_thin")
+            return 1
+        print("[OK] lto_thin")
 
-    lto_full_exe = exe_path(out_dir / "lto_hello_full")
-    run([str(compiler), "build", "--no-module-discovery", "--lto=full", str(hello_fx), "-o", str(lto_full_exe)], cwd=ROOT)
-    lto_full_out = run([str(lto_full_exe)], cwd=ROOT, capture=True)
-    assert isinstance(lto_full_out, subprocess.CompletedProcess)
-    if (lto_full_out.stdout or "").replace("\r\n", "\n") != "hello\n":
-        print("[FAIL] lto_full")
-        return 1
-    print("[OK] lto_full")
+        lto_full_exe = exe_path(out_dir / "lto_hello_full")
+        try:
+            run([str(compiler), "build", "--no-module-discovery", "--lto=full", str(hello_fx), "-o", str(lto_full_exe)], cwd=ROOT)
+        except subprocess.CalledProcessError:
+            lto_full_diag = subprocess.run(
+                [str(compiler), "build", "--no-module-discovery", "--lto=full", str(hello_fx), "-o", str(lto_full_exe)],
+                cwd=str(ROOT), text=True, capture_output=True, encoding="utf-8", errors="replace",
+            )
+            print(f"[FAIL] lto_full (build failed, rc={lto_full_diag.returncode}, stderr={lto_full_diag.stderr!r})")
+            return 1
+        lto_full_out = run([str(lto_full_exe)], cwd=ROOT, capture=True)
+        assert isinstance(lto_full_out, subprocess.CompletedProcess)
+        if (lto_full_out.stdout or "").replace("\r\n", "\n") != "hello\n":
+            print("[FAIL] lto_full")
+            return 1
+        print("[OK] lto_full")
+    else:
+        print("[SKIP] lto_thin (zig linker does not support LTO on this platform)")
+        print("[SKIP] lto_full (zig linker does not support LTO on this platform)")
 
     bundled_vm = compiler.parent / exe_path(Path("kinalvm"))
     if not bundled_vm.exists():
@@ -179,7 +300,7 @@ def run_driver_integration_tests(compiler: Path, out_dir: Path) -> int:
     native_source_out = run([str(compiler), "run", "--no-module-discovery", str(hello_fx)], cwd=ROOT, capture=True)
     assert isinstance(native_source_out, subprocess.CompletedProcess)
     if native_source_out.returncode != 0 or (native_source_out.stdout or "").replace("\r\n", "\n") != "hello\n":
-        print("[FAIL] native_source_run")
+        print(f"[FAIL] native_source_run (rc={native_source_out.returncode}, stdout={native_source_out.stdout!r}, stderr={native_source_out.stderr!r})")
         return 1
     print("[OK] native_source_run")
 
@@ -218,7 +339,7 @@ def run_driver_integration_tests(compiler: Path, out_dir: Path) -> int:
     print("[OK] knc_vm_exe_alias")
 
     def run_knc_case(label: str, source_name: str, expected: str, expected_exit_code: int = 0) -> int:
-        src = ROOT / "tests" / source_name
+        src = ROOT / "tests" / "common" / source_name
         out = out_dir / f"{Path(source_name).stem}.knc"
         run([str(compiler), "vm", "build", "--no-module-discovery", str(src), "-o", str(out)], cwd=ROOT)
         proc = run([str(vm_exe), str(out)], cwd=ROOT, capture=True)
@@ -230,7 +351,7 @@ def run_driver_integration_tests(compiler: Path, out_dir: Path) -> int:
         print(f"[OK] {label}")
         return 0
 
-    knc_arith_fx = ROOT / "tests" / "knc_arith.kn"
+    knc_arith_fx = ROOT / "tests" / "common" / "knc_arith.kn"
     knc_arith = out_dir / "knc_arith.knc"
     run([str(compiler), "vm", "build", "--no-module-discovery", str(knc_arith_fx), "-o", str(knc_arith)], cwd=ROOT)
     knc_arith_out = run([str(vm_exe), str(knc_arith)], cwd=ROOT, capture=True)
@@ -240,7 +361,7 @@ def run_driver_integration_tests(compiler: Path, out_dir: Path) -> int:
         return 1
     print("[OK] knc_vm_arith")
 
-    knc_std_fx = ROOT / "tests" / "knc_std_semantics.kn"
+    knc_std_fx = ROOT / "tests" / "common" / "knc_std_semantics.kn"
     knc_std = out_dir / "knc_std_semantics.knc"
     run([str(compiler), "vm", "build", "--no-module-discovery", str(knc_std_fx), "-o", str(knc_std)], cwd=ROOT)
     knc_std_out = run([str(vm_exe), str(knc_std)], cwd=ROOT, capture=True)
@@ -251,7 +372,7 @@ def run_driver_integration_tests(compiler: Path, out_dir: Path) -> int:
         return 1
     print("[OK] knc_vm_std_semantics")
 
-    knc_control_fx = ROOT / "tests" / "control.kn"
+    knc_control_fx = ROOT / "tests" / "common" / "control.kn"
     knc_control = out_dir / "control.knc"
     run([str(compiler), "vm", "build", "--no-module-discovery", str(knc_control_fx), "-o", str(knc_control)], cwd=ROOT)
     knc_control_out = run([str(vm_exe), str(knc_control)], cwd=ROOT, capture=True)
@@ -261,7 +382,7 @@ def run_driver_integration_tests(compiler: Path, out_dir: Path) -> int:
         return 1
     print("[OK] knc_vm_control")
 
-    knc_functions_fx = ROOT / "tests" / "functions.kn"
+    knc_functions_fx = ROOT / "tests" / "common" / "functions.kn"
     knc_functions = out_dir / "functions.knc"
     run([str(compiler), "vm", "build", "--no-module-discovery", str(knc_functions_fx), "-o", str(knc_functions)], cwd=ROOT)
     knc_functions_out = run([str(vm_exe), str(knc_functions)], cwd=ROOT, capture=True)
@@ -271,7 +392,7 @@ def run_driver_integration_tests(compiler: Path, out_dir: Path) -> int:
         return 1
     print("[OK] knc_vm_functions")
 
-    knc_expr_fx = ROOT / "tests" / "expr_ops.kn"
+    knc_expr_fx = ROOT / "tests" / "common" / "expr_ops.kn"
     knc_expr = out_dir / "expr_ops.knc"
     run([str(compiler), "vm", "build", "--no-module-discovery", str(knc_expr_fx), "-o", str(knc_expr)], cwd=ROOT)
     knc_expr_out = run([str(vm_exe), str(knc_expr)], cwd=ROOT, capture=True)
@@ -282,7 +403,7 @@ def run_driver_integration_tests(compiler: Path, out_dir: Path) -> int:
         return 1
     print("[OK] knc_vm_expr_ops")
 
-    knc_char_fx = ROOT / "tests" / "char_literals.kn"
+    knc_char_fx = ROOT / "tests" / "common" / "char_literals.kn"
     knc_char = out_dir / "char_literals.knc"
     run([str(compiler), "vm", "build", "--no-module-discovery", str(knc_char_fx), "-o", str(knc_char)], cwd=ROOT)
     knc_char_out = run([str(vm_exe), str(knc_char)], cwd=ROOT, capture=True)
@@ -293,7 +414,7 @@ def run_driver_integration_tests(compiler: Path, out_dir: Path) -> int:
         return 1
     print("[OK] knc_vm_char_literals")
 
-    knc_char_str_fx = ROOT / "tests" / "char_to_string.kn"
+    knc_char_str_fx = ROOT / "tests" / "common" / "char_to_string.kn"
     knc_char_str = out_dir / "char_to_string.knc"
     run([str(compiler), "vm", "build", "--no-module-discovery", str(knc_char_str_fx), "-o", str(knc_char_str)], cwd=ROOT)
     knc_char_str_out = run([str(vm_exe), str(knc_char_str)], cwd=ROOT, capture=True)
@@ -304,7 +425,7 @@ def run_driver_integration_tests(compiler: Path, out_dir: Path) -> int:
         return 1
     print("[OK] knc_vm_char_to_string")
 
-    knc_bitwise_fx = ROOT / "tests" / "bitwise.kn"
+    knc_bitwise_fx = ROOT / "tests" / "common" / "bitwise.kn"
     knc_bitwise = out_dir / "bitwise.knc"
     run([str(compiler), "vm", "build", "--no-module-discovery", str(knc_bitwise_fx), "-o", str(knc_bitwise)], cwd=ROOT)
     knc_bitwise_out = run([str(vm_exe), str(knc_bitwise)], cwd=ROOT, capture=True)
@@ -315,7 +436,7 @@ def run_driver_integration_tests(compiler: Path, out_dir: Path) -> int:
         return 1
     print("[OK] knc_vm_bitwise")
 
-    knc_any_cast_fx = ROOT / "tests" / "any_cast.kn"
+    knc_any_cast_fx = ROOT / "tests" / "common" / "any_cast.kn"
     knc_any_cast = out_dir / "any_cast.knc"
     run([str(compiler), "vm", "build", "--no-module-discovery", str(knc_any_cast_fx), "-o", str(knc_any_cast)], cwd=ROOT)
     knc_any_cast_out = run([str(vm_exe), str(knc_any_cast)], cwd=ROOT, capture=True)
@@ -329,7 +450,7 @@ def run_driver_integration_tests(compiler: Path, out_dir: Path) -> int:
     if run_knc_case("knc_vm_cast_more", "knc_cast_more.kn", "42\n2\n1\n0\nfalse\ntrue\nB\n") != 0:
         return 1
 
-    knc_time_file_fx = ROOT / "tests" / "knc_time_file.kn"
+    knc_time_file_fx = ROOT / "tests" / "common" / "knc_time_file.kn"
     knc_time_file = out_dir / "knc_time_file.knc"
     run([str(compiler), "vm", "build", "--no-module-discovery", str(knc_time_file_fx), "-o", str(knc_time_file)], cwd=ROOT)
     knc_time_file_out = run([str(vm_exe), str(knc_time_file)], cwd=ROOT, capture=True)
@@ -352,7 +473,13 @@ def run_driver_integration_tests(compiler: Path, out_dir: Path) -> int:
         return 1
     if run_knc_case("knc_vm_global_null_sugar", "global_null_sugar.kn", "41\n0\nnull\nblk\nIO.Type.Object.Class\n") != 0:
         return 1
-    if run_knc_case("knc_vm_const_if", "const_if.kn", "win\n") != 0:
+    knc_const_if_source = f"../{host_platform()}/const_if.kn"
+    knc_const_if_expected = {
+        "windows": "win\n",
+        "linux": "linux\n",
+        "macos": "macos\n",
+    }[host_platform()]
+    if run_knc_case("knc_vm_const_if", knc_const_if_source, knc_const_if_expected) != 0:
         return 1
     if run_knc_case("knc_vm_console_varargs", "console_varargs.kn", "\nA 1 true\nB 2\n") != 0:
         return 1
@@ -360,7 +487,7 @@ def run_driver_integration_tests(compiler: Path, out_dir: Path) -> int:
         return 1
     if run_knc_case("knc_vm_superloop_branches", "knc_superloop_branches.kn", "1\n5\n-1\n0\n") != 0:
         return 1
-    knc_superloop_src = ROOT / "tests" / "knc_superloop.kn"
+    knc_superloop_src = ROOT / "tests" / "common" / "knc_superloop.kn"
     knc_superloop_no_fuse = out_dir / "knc_superloop_nofuse.knc"
     run(
         [str(compiler), "vm", "build", "--no-module-discovery", "--no-superloop", str(knc_superloop_src), "-o", str(knc_superloop_no_fuse)],
@@ -372,7 +499,7 @@ def run_driver_integration_tests(compiler: Path, out_dir: Path) -> int:
         print("[FAIL] knc_vm_superloop_nofuse")
         return 1
     print("[OK] knc_vm_superloop_nofuse")
-    knc_loop_backedge_src = ROOT / "tests" / "knc_loop_backedge.kn"
+    knc_loop_backedge_src = ROOT / "tests" / "common" / "knc_loop_backedge.kn"
     knc_loop_backedge = out_dir / "knc_loop_backedge.knc"
     run(
         [str(compiler), "vm", "build", "--no-module-discovery", "--no-superloop", str(knc_loop_backedge_src), "-o", str(knc_loop_backedge)],
@@ -384,7 +511,7 @@ def run_driver_integration_tests(compiler: Path, out_dir: Path) -> int:
         print("[FAIL] knc_vm_loop_backedge")
         return 1
     print("[OK] knc_vm_loop_backedge")
-    knc_superloop_branches_src = ROOT / "tests" / "knc_superloop_branches.kn"
+    knc_superloop_branches_src = ROOT / "tests" / "common" / "knc_superloop_branches.kn"
     knc_superloop_branches_no_fuse = out_dir / "knc_superloop_branches_nofuse.knc"
     run(
         [str(compiler), "vm", "build", "--no-module-discovery", "--no-superloop", str(knc_superloop_branches_src), "-o", str(knc_superloop_branches_no_fuse)],
@@ -458,7 +585,7 @@ def run_driver_integration_tests(compiler: Path, out_dir: Path) -> int:
                     "zig",
                     "--linker-path",
                     zig,
-                    str(ROOT / "tests" / "stdlib_web_compile.kn"),
+                    str(ROOT / "tests" / "common" / "stdlib_web_compile.kn"),
                     "-o",
                     str(linux_web_exe),
                 ],
@@ -476,7 +603,7 @@ def run_driver_integration_tests(compiler: Path, out_dir: Path) -> int:
         return 1
     print("[OK] locale_export")
 
-    warn_fx = ROOT / "tests" / "warn_entry_unsafe.kn"
+    warn_fx = ROOT / "tests" / "common" / "warn_entry_unsafe.kn"
     warn_exe = exe_path(out_dir / "warn_entry_unsafe")
     warn_proc = run([str(compiler), "build", "--no-module-discovery", str(warn_fx), "-o", str(warn_exe)], cwd=ROOT, capture=True)
     assert isinstance(warn_proc, subprocess.CompletedProcess)
@@ -496,7 +623,7 @@ def run_driver_integration_tests(compiler: Path, out_dir: Path) -> int:
             str(compiler),
             "build",
             "--no-module-discovery",
-            str(ROOT / "tests" / "error_sema_multi.kn"),
+            str(ROOT / "tests" / "common" / "error_sema_multi.kn"),
             "-o",
             str(exe_path(out_dir / "error_sema_multi_dummy")),
         ],
@@ -521,7 +648,7 @@ def run_driver_integration_tests(compiler: Path, out_dir: Path) -> int:
             "--no-module-discovery",
             "--lang",
             "zh",
-            str(ROOT / "tests" / "error_parser.kn"),
+            str(ROOT / "tests" / "common" / "error_parser.kn"),
             "-o",
             str(exe_path(out_dir / "zh_error_dummy")),
         ],
@@ -578,6 +705,25 @@ def run_driver_integration_tests(compiler: Path, out_dir: Path) -> int:
         return 1
     print("[OK] fmt_file")
 
+    fmt_async_src = out_dir / "fmt_async.kn"
+    fmt_async_src.write_text(
+        "Unit App;Get IO.Async;Static Async Function int Step(int value){Return value + 1;}Static Async Function int Main(){int result = Await Step(41);Return result;}",
+        encoding="utf-8",
+    )
+    run([str(compiler), "fmt", str(fmt_async_src)], cwd=ROOT)
+    fmt_async_text = fmt_async_src.read_text(encoding="utf-8").replace("\r\n", "\n")
+    if (
+        "Static Async Function int Step(int value)" not in fmt_async_text
+        or "Static Async Function int Main()" not in fmt_async_text
+        or "Await Step(41)" not in fmt_async_text
+        or "StaticAsyncFunction" in fmt_async_text
+        or "AwaitStep(" in fmt_async_text
+        or "AwaitIO.Async" in fmt_async_text
+    ):
+        print("[FAIL] fmt_async_keywords")
+        return 1
+    print("[OK] fmt_async_keywords")
+
     fmt_check_ok = run([str(compiler), "fmt", "--check", str(fmt_src)], cwd=ROOT, capture=True)
     assert isinstance(fmt_check_ok, subprocess.CompletedProcess)
     if fmt_check_ok.returncode != 0:
@@ -620,7 +766,7 @@ def run_driver_integration_tests(compiler: Path, out_dir: Path) -> int:
             [
                 str(compiler),
                 "build",
-                "same_unit_autolink_main.kn",
+                "common/same_unit_autolink_main.kn",
                 "-o",
                 str(same_unit_rel_exe),
             ],
@@ -652,7 +798,7 @@ def run_driver_integration_tests(compiler: Path, out_dir: Path) -> int:
                 str(out_dir),
                 "-l",
                 "native_ffi",
-                str(ROOT / "tests" / "ffi_lib.kn"),
+                str(ROOT / "tests" / "windows" / "ffi_lib.kn"),
                 "-o",
                 str(ffi_lib_exe),
             ],
@@ -685,7 +831,7 @@ def run_driver_integration_tests(compiler: Path, out_dir: Path) -> int:
                 "native_ffi",
                 "--link-arg",
                 "/debug",
-                str(ROOT / "tests" / "ffi_lib.kn"),
+                str(ROOT / "tests" / "windows" / "ffi_lib.kn"),
                 "-o",
                 str(ffi_root_exe),
             ],
@@ -712,7 +858,7 @@ def run_driver_integration_tests(compiler: Path, out_dir: Path) -> int:
                 "--no-module-discovery",
                 "-L",
                 str(out_dir),
-                str(ROOT / "tests" / "ffi_attr_lib.kn"),
+                str(ROOT / "tests" / "windows" / "ffi_attr_lib.kn"),
                 "-o",
                 str(ffi_attr_lib_exe),
             ],
@@ -736,7 +882,7 @@ def run_driver_integration_tests(compiler: Path, out_dir: Path) -> int:
                 str(compiler),
                 "build",
                 "--no-module-discovery",
-                str(ROOT / "tests" / "ffi_attr_file.kn"),
+                str(ROOT / "tests" / "windows" / "ffi_attr_file.kn"),
                 "-o",
                 str(ffi_attr_file_exe),
             ],
@@ -762,7 +908,7 @@ def run_driver_integration_tests(compiler: Path, out_dir: Path) -> int:
                 str(compiler),
                 "build",
                 "--no-module-discovery",
-                str(ROOT / "tests" / "ffi_hosted_auto.kn"),
+                str(ROOT / "tests" / "windows" / "ffi_hosted_auto.kn"),
                 "--link-file",
                 str(out_dir / "native_hosted_probe_md.obj"),
                 "-o",
@@ -790,7 +936,7 @@ def run_driver_integration_tests(compiler: Path, out_dir: Path) -> int:
                 "--no-module-discovery",
                 "--crt",
                 "static",
-                str(ROOT / "tests" / "ffi_hosted_auto.kn"),
+                str(ROOT / "tests" / "windows" / "ffi_hosted_auto.kn"),
                 "--link-file",
                 str(out_dir / "native_hosted_probe_mt.obj"),
                 "-o",
@@ -810,7 +956,7 @@ def run_driver_integration_tests(compiler: Path, out_dir: Path) -> int:
             return 1
         print("[OK] hosted_probe_static")
 
-    shared_artifact = out_dir / ("driver_dynlib.dll" if is_windows() else "libdriver_dynlib.so")
+    shared_artifact = out_dir / (("driver_dynlib" if is_windows() else "libdriver_dynlib") + dylib_suffix())
     shared_proc = run(
         [
             str(compiler),
@@ -818,7 +964,7 @@ def run_driver_integration_tests(compiler: Path, out_dir: Path) -> int:
             "--no-module-discovery",
             "--kind",
             "shared",
-            str(ROOT / "tests" / "dynlib_shared.kn"),
+            str(ROOT / "tests" / "common" / "dynlib_shared.kn"),
             "-o",
             str(shared_artifact),
         ],
@@ -839,7 +985,7 @@ def run_driver_integration_tests(compiler: Path, out_dir: Path) -> int:
             str(compiler),
             "build",
             "--no-module-discovery",
-            str(ROOT / "tests" / "dynlib_loader.kn"),
+            str(ROOT / "tests" / "common" / "dynlib_loader.kn"),
             "-o",
             str(loader_exe),
         ],
@@ -863,7 +1009,7 @@ def run_driver_integration_tests(compiler: Path, out_dir: Path) -> int:
             str(compiler),
             "build",
             "--no-module-discovery",
-            str(ROOT / "tests" / "meta_dynlib_loader.kn"),
+            str(ROOT / "tests" / "common" / "meta_dynlib_loader.kn"),
             "-o",
             str(meta_loader_exe),
         ],
@@ -1151,9 +1297,66 @@ def run_package_integration_tests(compiler: Path, out_dir: Path) -> int:
 
 def llvm_bin_dir() -> Path:
     env = os.environ.get("KN_LLVM_BIN")
+    candidates: list[Path] = []
+    seen: set[str] = set()
+
+    def add(path: Path) -> None:
+        key = str(path)
+        if key not in seen:
+            seen.add(key)
+            candidates.append(path)
+
     if env:
-        return Path(env).resolve()
+        add(Path(env).expanduser())
+
+    for root in (
+        ROOT.parent / "Kinal-ThirdParty" / ".cache" / "llvm" / "prebuilt",
+        ROOT.parent / "Kinal-ThirdParty" / "llvm" / "prebuilt",
+        ROOT / "third_party" / "llvm" / "prebuilt",
+    ):
+        if not root.exists():
+            continue
+        for child in sorted(root.iterdir(), key=lambda p: p.name.lower(), reverse=True):
+            add(child / "bin")
+
+    clang_on_path = shutil.which("clang.exe") or shutil.which("clang")
+    if clang_on_path:
+        add(Path(clang_on_path).resolve().parent)
+
+    for candidate in candidates:
+        clang = candidate / "clang.exe"
+        llvm_lib = candidate / "llvm-lib.exe"
+        lld_link = candidate / "lld-link.exe"
+        if clang.exists() and llvm_lib.exists() and lld_link.exists():
+            return candidate.resolve()
+
     return (ROOT / "third_party" / "llvm" / "prebuilt" / "clang+llvm-21.1.8-x86_64-pc-windows-msvc" / "bin").resolve()
+
+
+def windows_machine_flag(clang: Path) -> str:
+    triple = ""
+    try:
+        proc = subprocess.run(
+            [str(clang), "-print-target-triple"],
+            cwd=str(ROOT),
+            text=True,
+            capture_output=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+        if proc.returncode == 0:
+            triple = (proc.stdout or "").strip().lower()
+    except Exception:
+        triple = ""
+
+    if not triple:
+        triple = str(clang).lower()
+
+    if "aarch64" in triple or "arm64" in triple:
+        return "/machine:arm64"
+    if any(token in triple for token in ("i386", "i486", "i586", "i686", "win32")) and "x86_64" not in triple and "amd64" not in triple:
+        return "/machine:x86"
+    return "/machine:x64"
 
 
 def build_native_ffi_assets(out_dir: Path) -> None:
@@ -1170,6 +1373,8 @@ def build_native_ffi_assets(out_dir: Path) -> None:
     lld_link = llvm_bin / "lld-link.exe"
     if not clang.exists() or not llvm_lib.exists() or not lld_link.exists():
         raise SystemExit("LLVM toolchain for FFI tests not found; check KN_LLVM_BIN or third_party/llvm/prebuilt")
+
+    machine = windows_machine_flag(clang)
 
     obj = out_dir / "native_ffi.obj"
     lib = out_dir / "native_ffi.lib"
@@ -1194,14 +1399,14 @@ def build_native_ffi_assets(out_dir: Path) -> None:
         ],
         cwd=ROOT,
     )
-    run([str(llvm_lib), f"/out:{lib}", str(obj)], cwd=ROOT)
+    run([str(llvm_lib), machine, f"/out:{lib}", str(obj)], cwd=ROOT)
     run(
         [
             str(lld_link),
             "/nologo",
             "/dll",
             "/noentry",
-            "/machine:x64",
+            machine,
             f"/out:{dll}",
             f"/implib:{imp}",
             str(obj),
@@ -1301,6 +1506,9 @@ def main() -> int:
         build_native_ffi_assets(out_dir)
     for case in manifest:
         name = case["name"]
+        if not case_runs_on_host(case):
+            print(f"[SKIP] {name} (not enabled for {host_platform()})")
+            continue
         if not is_windows() and case_needs_native_ffi(case):
             print(f"[SKIP] {name} (native ffi assets are only wired for Windows in this harness)")
             continue
@@ -1376,7 +1584,7 @@ def main() -> int:
             print(repr(output.returncode))
             return 1
 
-        if out_text != expected:
+        if not matches_expected_runtime_output(out_text, expected):
             print(f"[FAIL] {name}")
             print("Expected:")
             print(repr(expected))

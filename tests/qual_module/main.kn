@@ -1,7 +1,0 @@
-Unit App.Main;
-Get App.Test;
-
-Static Function int Main() {
-    App.Test.Test();
-    Return 0;
-}

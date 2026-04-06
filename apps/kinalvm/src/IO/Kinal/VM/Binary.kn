@@ -10,7 +10,7 @@ Unsafe Extern Function int ftell(byte* file) By C;
 Unsafe Extern Function usize fread(byte* buffer, usize size, usize count, byte* file) By C;
 Unsafe Extern Function byte* malloc(usize size) By C;
 Unsafe Extern Function void free(byte* buffer) By C;
-Unsafe Extern Function int GetModuleFileNameA(byte* module, byte* buf, int size) By C;
+Unsafe Extern Function string __kn_sys_executable_path() By C;
 
 Public Class BinaryFile
 {
@@ -126,24 +126,12 @@ Public Class BinaryFile
 
     Public Unsafe Static Function string GetExePath()
     {
-        byte* buf = malloc(1024);
-        If (buf == null)
+        string path = __kn_sys_executable_path();
+        If (path == "")
         {
-            Throw "Out of memory";
-        }
-        int len = GetModuleFileNameA(null, buf, 1024);
-        If (len <= 0)
-        {
-            free(buf);
             Throw "Cannot get exe path";
         }
-        string result = "";
-        For (int i = 0; i < len; i = i + 1)
-        {
-            result = result + [string]([char]([int](Volatile.Read8([u8*](buf + i)))));
-        }
-        free(buf);
-        Return result;
+        Return path;
     }
 }
 

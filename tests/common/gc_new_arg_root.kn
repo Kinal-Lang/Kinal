@@ -1,0 +1,38 @@
+Unit Tests.GcNewArgRoot;
+
+Get Console By IO.Console;
+Get IO.GC;
+
+Class Box
+{
+    Public string Value;
+
+    Public Safe Constructor(string value)
+    {
+        This.Value= value;
+    }
+}
+
+Class Wrap
+{
+    Public Box Item;
+
+    Public Safe Constructor(Box item)
+    {
+        This.Item= item;
+    }
+}
+
+Safe Static Function Box MakeBox()
+{
+    IO.GC.Collect();
+    Return New Box("ok");
+}
+
+Static Safe Function int Main(string args[])
+{
+    Wrap w= New Wrap(MakeBox());
+    IO.GC.Collect();
+    Console.PrintLine(w.Item.Value);
+    Return 0;
+}

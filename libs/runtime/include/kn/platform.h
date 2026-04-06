@@ -167,6 +167,7 @@ KN_DLLIMPORT KN_BOOL KN_STDCALL RemoveDirectoryA(const char *lpPathName);
 KN_DLLIMPORT KN_BOOL KN_STDCALL DeleteFileA(const char *lpFileName);
 KN_DLLIMPORT KN_DWORD KN_STDCALL GetEnvironmentVariableA(const char *lpName, char *lpBuffer, KN_DWORD nSize);
 KN_DLLIMPORT KN_DWORD KN_STDCALL GetCurrentDirectoryA(KN_DWORD nBufferLength, char *lpBuffer);
+KN_DLLIMPORT KN_DWORD KN_STDCALL GetModuleFileNameA(KN_HANDLE hModule, char *lpFilename, KN_DWORD nSize);
 KN_DLLIMPORT KN_DWORD KN_STDCALL GetFullPathNameA(const char *lpFileName, KN_DWORD nBufferLength, char *lpBuffer, char **lpFilePart);
 KN_DLLIMPORT int KN_STDCALL MultiByteToWideChar(KN_DWORD CodePage, KN_DWORD dwFlags, const char *lpMultiByteStr, int cbMultiByte, uint16_t *lpWideCharStr, int cchWideChar);
 KN_DLLIMPORT int KN_STDCALL WideCharToMultiByte(KN_DWORD CodePage, KN_DWORD dwFlags, const uint16_t *lpWideCharStr, int cchWideChar, char *lpMultiByteStr, int cbMultiByte, const char *lpDefaultChar, KN_BOOL *lpUsedDefaultChar);

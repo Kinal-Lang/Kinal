@@ -1,0 +1,17 @@
+Unit Tests.ToChars;
+
+Get Console By IO.Console;
+Get IO.Type.string;
+
+Static Function int Main()
+{
+    char cs[]= "123".ToChars();
+    Console.PrintLine(cs.Length());
+    Console.PrintLine(cs[0]);
+    Console.PrintLine(cs[2]);
+
+    char ds[]= IO.Type.string.ToChars("ab");
+    Console.PrintLine(ds.Length());
+    Console.PrintLine(ds.Index(1));
+    Return 0;
+}

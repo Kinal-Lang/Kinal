@@ -1,0 +1,11 @@
+Unit Tests.SystemExec;
+
+Get IO.Console;
+Get IO.System;
+
+Static Function int Main()
+{
+    int exitCode= IO.System.Exec("sh -c 'exit 7'");
+    IO.Console.PrintLine(exitCode);
+    Return 0;
+}

@@ -1,8 +1,0 @@
-Unit Tests.ErrorListPeekArgs;
-
-
-Static Function int Main() {
-    list l = list.Create();
-    l.Peek(1);
-    Return 0;
-}

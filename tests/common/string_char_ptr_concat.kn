@@ -1,0 +1,14 @@
+Unit Tests.StringCharPtrConcat;
+Get Console By IO.Console;
+
+Static Function int Main()
+{
+    char*raw= "world";
+    string a= "hello "+ raw;
+    string b= raw+ "!";
+    char*alias= "kinal";
+    Console.PrintLine(a);
+    Console.PrintLine(b);
+    Console.PrintLine("alias="+ alias);
+    Return 0;
+}

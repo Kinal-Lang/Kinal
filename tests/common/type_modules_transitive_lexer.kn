@@ -1,0 +1,11 @@
+Unit MiniLang.Lexer;
+
+Get T By MiniLang.Token;
+
+Class Lexer
+{
+    Public Function T.Token NextAlias()
+    {
+        Return New T.Token(T.TokenType.Literal, "alias");
+    }
+}

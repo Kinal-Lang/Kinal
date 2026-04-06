@@ -1,7 +1,0 @@
-Unit Tests.ErrorMetaUnknown;
-
-[Demo("x")]
-Static Function int Main()
-{
-    Return 0;
-}

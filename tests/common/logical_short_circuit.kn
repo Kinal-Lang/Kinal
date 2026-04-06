@@ -1,0 +1,26 @@
+Unit Tests.LogicalShortCircuit;
+
+Get IO.Console;
+
+int hits= 0;
+
+Function bool Touch(bool value)
+{
+    hits= hits+ 1;
+    Return value;
+}
+
+Safe Static Function int Main()
+{
+    bool a= false&& Touch(true);
+    bool b= true|| Touch(false);
+    bool c= true&& Touch(false);
+    bool d= false|| Touch(true);
+
+    IO.Console.PrintLine(a);
+    IO.Console.PrintLine(b);
+    IO.Console.PrintLine(c);
+    IO.Console.PrintLine(d);
+    IO.Console.PrintLine(hits);
+    Return 0;
+}

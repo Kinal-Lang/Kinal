@@ -1,0 +1,30 @@
+﻿Unit App.StdlibMore;
+Get Console By IO.Console;
+Get IO.Type.string;
+Get IO.Math;
+
+Static Function int Main()
+{
+    string a= "hi";
+    string b= "kinal";
+    Var c= IO.Type.string.Concat(a, b);
+    Var len= IO.Type.string.Length(c);
+    Console.PrintLine(c);
+    Console.PrintLine(len);
+
+    Var eq= IO.Type.string.Equals("a", "a");
+    If (eq)
+    {
+        Console.PrintLine("eq");
+    }
+
+    Var abs= IO.Math.Abs(-5);
+    Var mn= IO.Math.Min(3, 7);
+    Var mx= IO.Math.Max(3, 7);
+    Var cl= IO.Math.Clamp(-3, 0, 10);
+    Console.PrintLine(abs);
+    Console.PrintLine(mn);
+    Console.PrintLine(mx);
+    Console.PrintLine(cl);
+    Return 0;
+}

@@ -1,0 +1,9 @@
+Unit Tests.ErrorPtrCast;
+
+Static Function int Main()
+{
+    int x= 1;
+    int*p= &x;
+    int y=[int](p);
+    Return y;
+}

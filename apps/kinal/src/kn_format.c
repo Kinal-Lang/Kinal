@@ -121,6 +121,8 @@ static int fmt_token_is_word(TokenType t)
     case TOK_BY:
     case TOK_PROPERTY:
     case TOK_FUNCTION:
+    case TOK_ASYNC:
+    case TOK_AWAIT:
     case TOK_RETURN:
     case TOK_IF:
     case TOK_ELSE:

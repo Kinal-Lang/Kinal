@@ -1,0 +1,26 @@
+Unit Tests.PointerDepth;
+
+Get Console By IO.Console;
+
+Trusted Function int Value(int**pp)
+{
+    int*p= *pp;
+    Return*p;
+}
+
+Static Function int Main()
+{
+    int x= 7;
+    int*p= &x;
+    int**pp= &p;
+    int v= Value(pp);
+    If (v== 7)
+    {
+        Console.PrintLine("ok");
+    }
+    Else
+    {
+        Console.PrintLine("bad");
+    }
+    Return 0;
+}

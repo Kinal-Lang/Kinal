@@ -1,0 +1,28 @@
+Get UI By IO.UI;
+Get IO.Console;
+
+Function void OnClick(Object.Class sender, UI.EventArgs args)
+{
+    IO.Console.PrintLine("Button clicked!");
+}
+
+Static Function int Main()
+{
+    UI.Window window= New UI.Window("Kinal Window", 480, 320);
+    window.SetBackColor(New UI.Color(32, 32, 40));
+    window.SetForeColor(UI.Color.White());
+    window.SetFont(New UI.Font("Segoe UI", 18, UI.FontWeight.Normal));
+
+    UI.Label label= New UI.Label("Hello from Kinal UI", 20, 20, 220, 24);
+    label.SetForeColor(UI.Color.White());
+    label.SetFont(New UI.Font("Segoe UI", 20, UI.FontWeight.Bold));
+    window.Add(label);
+
+    UI.Button button= New UI.Button("Click", 20, 60, 120, 28);
+    button.SetBackColor(UI.Color.Blue());
+    button.SetForeColor(UI.Color.White());
+    button.AddEvent(New UI.Event(UI.EventKind.OnClick, OnClick));
+    window.Add(button);
+
+    Return 0;
+}

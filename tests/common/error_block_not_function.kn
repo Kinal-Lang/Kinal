@@ -1,0 +1,7 @@
+Unit Tests.BlockNotFunction;
+
+Static Function int Main()
+{
+    IO.Type.Object.Function f= Block< / / >;
+    Return 0;
+}

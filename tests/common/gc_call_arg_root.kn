@@ -1,0 +1,36 @@
+Unit Tests.GcCallArgRoot;
+
+Get Console By IO.Console;
+Get IO.GC;
+
+Class Box
+{
+    Public string Value;
+
+    Public Safe Constructor(string value)
+    {
+        This.Value= value;
+    }
+}
+
+Safe Static Function Box MakeA()
+{
+    Return New Box("A");
+}
+
+Safe Static Function Box MakeB()
+{
+    IO.GC.Collect();
+    Return New Box("B");
+}
+
+Safe Static Function string Join(Box a, Box b)
+{
+    Return a.Value+ b.Value;
+}
+
+Static Safe Function int Main(string args[])
+{
+    Console.PrintLine(Join(MakeA(), MakeB()));
+    Return 0;
+}

@@ -46,7 +46,7 @@ CIVETWEB_LEGACY_PREBUILT_ROOT = CIVETWEB_DIR / "prebuilt"
 CIVETWEB_VERSION_FILE = CIVETWEB_DIR / "VERSION.txt"
 CIVETWEB_SRC_ARCHIVE_URL = "https://github.com/civetweb/civetweb/archive/{commit}.zip"
 WEB_BRIDGE_SRC = RUNTIME_DIR / "src" / "kn_web_civet.c"
-IO_WEB_NATIVE_TARGETS = ("win-x64", "linux-x64", "linux-arm64")
+IO_WEB_NATIVE_TARGETS = ("win-x64", "win-arm64", "linux-x64", "linux-arm64")
 
 
 def host_tag() -> str:
@@ -55,6 +55,8 @@ def host_tag() -> str:
     if system == "windows":
         if machine in ("amd64", "x86_64"):
             return "win-x64"
+        if machine in ("arm64", "aarch64"):
+            return "win-arm64"
         if machine in ("x86", "i386", "i686"):
             return "win-x86"
     if system == "linux":
@@ -106,13 +108,19 @@ def release_fallback_zip() -> Path:
 
 def release_bundle_ready() -> bool:
     bundle = release_dir()
+    llvm_runtime = bundle / "llvm" / "lib"
+    if is_windows():
+        llvm_ready = (llvm_runtime / "LLVM-C.lib").exists()
+    elif host_tag().startswith("macos-"):
+        llvm_ready = any(llvm_runtime.glob("libLLVM*.dylib"))
+    else:
+        llvm_ready = (llvm_runtime / "libLLVM-C.so").exists() or any(llvm_runtime.glob("libLLVM.so*"))
     required = [
         bundle / exe_name("kinal"),
         bundle / exe_name("kinalvm"),
         bundle / "kinal-host.lib",
-        bundle / "llvm" / "lib" / ("LLVM-C.lib" if is_windows() else "libLLVM-C.so"),
     ]
-    return all(path.exists() for path in required)
+    return all(path.exists() for path in required) and llvm_ready
 
 
 def read_version(key: str = "kinal") -> str:

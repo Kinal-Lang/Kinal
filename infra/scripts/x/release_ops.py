@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import shutil
 import stat
+import tarfile
 import zipfile
 from pathlib import Path
 
@@ -45,21 +46,35 @@ def write_bundle_readme(dest: Path) -> None:
         [
             f"Kinal {version} ({host_tag()})",
             "",
-            "Contents:",
-            f"  - {exe_name('kinal')}",
-            f"  - {exe_name('kinalvm')}",
-            f"  - {exe_name('kinal-lsp-server')}",
-            "  - kinal-host.lib on Windows",
-            "  - LLVM runtime DLLs on Windows",
-            "  - llvm/lib/LLVM-C.lib on Windows",
-            "  - infra/assets/locales/",
-            "  - libs/std/",
-            "  - libs/runtime/src",
-            "  - libs/runtime/include",
-            "  - libs/runtime/<host>",
-            "  - host linker tools (LLD/LLVM) when available; Zig is discovered locally or bootstrapped on demand",
+            "Kinal is a systems programming language with its own compiler and virtual machine.",
             "",
-            "This bundle targets the current host platform only.",
+            "Quick Start:",
+            f"  {exe_name('kinal')} hello.kn",
+            "",
+            "Tools:",
+            f"  - {exe_name('kinal')}             : compiler",
+            f"  - {exe_name('kinalvm')}           : bytecode virtual machine",
+            f"  - {exe_name('kinal-lsp-server')}  : language server (LSP)",
+            "",
+            "Contents:",
+            "  - compiler and tools",
+            "  - standard library (libs/std/)",
+            "  - runtime (libs/runtime/)",
+            "  - localization assets (infra/assets/locales/)",
+            "  - platform-specific runtime libraries",
+            "", 
+            "Notes:",
+            "  - This bundle targets the current host platform only.",
+            "  - LLVM tools/runtime are included when required.",
+            "  - Zig is discovered locally or bootstrapped on demand.",
+            "",
+            "Documentation:",
+            "  Local: docs/",
+            "  Online: https://kinal.org/docs",
+            "",
+            "Resources:",
+            "  Website: https://kinal.org",
+            "  GitHub:  https://github.com/Kinal-Lang/Kinal",
         ]
     )
     write_text(dest / "README.txt", text)
@@ -168,6 +183,7 @@ def stage_bundle(build_type: str, dest: Path) -> Path:
     copy_llvm_runtime_files(dest, llvm_bin, llvm_dir)
     copy_llvm_dev_files(dest, llvm_dir)
     copy_tree(LOCALES_DIR, dest / "locales")
+    copy_tree(ROOT / "docs", dest / "docs")
     build_runtime_for_host(dest / "runtime", llvm_bin)
     build_official_stdpkg_klibs(compiler, llvm_bin)
     copy_tree(STDPKG_DIR, dest / "stdpkg")
@@ -190,12 +206,41 @@ def stage_bundle(build_type: str, dest: Path) -> Path:
     return dest
 
 
-def zip_directory(src_dir: Path, zip_path: Path) -> Path:
+def zip_directory(src_dir: Path, zip_path: Path, root_name: str | None = None) -> Path:
     if zip_path.exists():
         zip_path.unlink()
+    archive_root = root_name or src_dir.name
     with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
         for path in sorted(src_dir.rglob("*")):
             if path.is_file():
-                arcname = str(Path(src_dir.name) / path.relative_to(src_dir)).replace("\\", "/")
+                arcname = str(Path(archive_root) / path.relative_to(src_dir)).replace("\\", "/")
                 zf.write(path, arcname=arcname)
     return zip_path
+
+
+def tar_directory(src_dir: Path, tar_path: Path, *, compression: str = "gz", root_name: str | None = None) -> Path:
+    if tar_path.exists():
+        tar_path.unlink()
+    archive_root = root_name or src_dir.name
+    if compression == "gz":
+        mode = "w:gz"
+    elif compression == "xz":
+        mode = "w:xz"
+    elif compression in ("", "none"):
+        mode = "w"
+    else:
+        raise ValueError(f"unsupported tar compression: {compression}")
+    with tarfile.open(tar_path, mode) as tf:
+        tf.add(src_dir, arcname=archive_root)
+    return tar_path
+
+
+def sha256_file(path: Path) -> str:
+    import hashlib
+
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+

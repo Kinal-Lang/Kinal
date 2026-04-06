@@ -1,0 +1,7 @@
+Unit App.BadCharLiteral;
+
+Static Function int Main()
+{
+    char c= 'AB';
+    Return 0;
+}

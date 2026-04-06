@@ -1,5 +1,0 @@
-Unit App.Util;
-
-Safe Function int Add(int a, int b) {
-    Return a + b;
-}

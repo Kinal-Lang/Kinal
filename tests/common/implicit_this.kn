@@ -1,0 +1,38 @@
+Unit Tests.ImplicitThis;
+
+Get Console By IO.Console;
+
+Class Counter
+{
+    Public int Value;
+
+    Public Constructor(int value)
+    {
+        Value= value;
+    }
+
+    Public Function int Add(int amount)
+    {
+        Value= Value+ amount;
+        Return Value;
+    }
+
+    Public Function int Shadow(int Value)
+    {
+        Return This.Value+ Value;
+    }
+
+    Public Function int CallAdd(int amount)
+    {
+        Return Add(amount);
+    }
+}
+
+Static Function int Main()
+{
+    Counter c= New Counter(2);
+    Console.PrintLine(c.Add(3));
+    Console.PrintLine(c.Shadow(10));
+    Console.PrintLine(c.CallAdd(1));
+    Return 0;
+}

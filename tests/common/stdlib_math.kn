@@ -1,0 +1,14 @@
+Unit Tests.StdlibMath;
+
+Get IO.Console;
+Get IO.Math;
+
+Safe Static Function int Main()
+{
+    IO.Console.PrintLine(IO.Math.Abs(-7));
+    IO.Console.PrintLine(IO.Math.Min(3, 5));
+    IO.Console.PrintLine(IO.Math.Max(2, 9));
+    IO.Console.PrintLine(IO.Math.Clamp(15, 0, 10));
+    IO.Console.PrintLine(IO.Math.Sign(-9));
+    Return 0;
+}

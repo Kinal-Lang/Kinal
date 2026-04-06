@@ -18,6 +18,10 @@ endforeach()
 
 project(kinal VERSION ${KN_VERSION_STRING} LANGUAGES C CXX)
 
+if (WIN32)
+    enable_language(RC)
+endif()
+
 message(STATUS "Kinal version: ${KN_VERSION_STRING}")
 message(STATUS "KinalVM version: ${KN_VM_VERSION_STRING}")
 

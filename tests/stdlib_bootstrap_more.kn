@@ -4,6 +4,16 @@ Get Console By IO.Console;
 Get IO.Text;
 Get IO.Path;
 Get IO.File;
+Get IO.Target;
+
+Static Function string AbsTestPath()
+{
+    If (IO.Target == IO.Target.Windows)
+    {
+        Return "C:/a/b";
+    }
+    Return "/usr/bin";
+}
 
 Static Function int Main() {
     list source = list.Create();
@@ -23,7 +33,7 @@ Static Function int Main() {
     Console.PrintLine(IO.Text.Length("abc"));
     Console.PrintLine(IO.Text.IsEmpty(""));
 
-    Console.PrintLine(IO.Path.IsAbsolute("C:/a/b"));
+    Console.PrintLine(IO.Path.IsAbsolute(AbsTestPath()));
     Console.PrintLine(IO.Path.BaseName("folder/test.txt"));
 
     dict d = dict.Create();

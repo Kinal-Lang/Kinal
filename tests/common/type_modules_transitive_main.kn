@@ -1,0 +1,12 @@
+Unit MiniLang.Main;
+
+Get IO.Console;
+Get MiniLang.Lexer;
+
+Safe Static Function int Main()
+{
+    MiniLang.Lexer.Lexer lx= New MiniLang.Lexer.Lexer();
+    Var tok= lx.NextAlias();
+    IO.Console.PrintLine(tok.Value);
+    Return 0;
+}

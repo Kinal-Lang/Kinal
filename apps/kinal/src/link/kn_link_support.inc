@@ -4,6 +4,12 @@ static int kn_run_process(const char *exe, const char *cmdline)
     KN_PROCESS_INFORMATION pi;
     kn_memset(&si, 0, sizeof(si));
     si.cb = sizeof(si);
+    /* Redirect tool stdout to stderr so external tool output (e.g. zig
+       printing its version) does not pollute program stdout. */
+    si.dwFlags = KN_STARTF_USESTDHANDLES;
+    si.hStdInput  = GetStdHandle(KN_STDIN_HANDLE);
+    si.hStdOutput = GetStdHandle(KN_STDERR_HANDLE);
+    si.hStdError  = GetStdHandle(KN_STDERR_HANDLE);
     kn_memset(&pi, 0, sizeof(pi));
 
     size_t len = kn_strlen(cmdline);
@@ -12,7 +18,7 @@ static int kn_run_process(const char *exe, const char *cmdline)
     kn_memcpy(mutable_cmd, cmdline, len);
     mutable_cmd[len] = 0;
 
-    if (!CreateProcessA(exe, mutable_cmd, 0, 0, 0, 0, 0, 0, &si, &pi))
+    if (!CreateProcessA(exe, mutable_cmd, 0, 0, 1 /*bInheritHandles*/, 0, 0, 0, &si, &pi))
     {
         kn_free(mutable_cmd);
         return -1;
@@ -216,6 +222,11 @@ static int kn_triple_is_linux(const char *triple)
     return kn_str_contains_ci(triple, "linux");
 }
 
+static int kn_triple_is_macos(const char *triple)
+{
+    return kn_str_contains_ci(triple, "darwin") || kn_str_contains_ci(triple, "apple") || kn_str_contains_ci(triple, "macos");
+}
+
 static int kn_triple_is_x64(const char *triple)
 {
     return kn_str_contains_ci(triple, "x86_64") || kn_str_contains_ci(triple, "amd64");
@@ -232,6 +243,58 @@ static int kn_triple_is_x86(const char *triple)
 static int kn_triple_is_arm64(const char *triple)
 {
     return kn_str_contains_ci(triple, "aarch64") || kn_str_contains_ci(triple, "arm64");
+}
+
+static const char *kn_host_default_target_triple(void)
+{
+#if defined(_WIN32) || defined(_WIN64)
+#if defined(__aarch64__) || defined(__arm64__) || defined(_M_ARM64)
+    return "aarch64-pc-windows-msvc";
+#elif defined(__i386__) || defined(_M_IX86)
+    return "i386-pc-windows-msvc";
+#else
+    return "x86_64-pc-windows-msvc";
+#endif
+#elif defined(__APPLE__)
+#if defined(__aarch64__) || defined(__arm64__)
+    return "aarch64-apple-darwin";
+#else
+    return "x86_64-apple-darwin";
+#endif
+#else
+#if defined(__aarch64__) || defined(__arm64__)
+    return "aarch64-linux-gnu";
+#elif defined(__i386__) || defined(_M_IX86)
+    return "i386-linux-gnu";
+#else
+    return "x86_64-linux-gnu";
+#endif
+#endif
+}
+
+static const char *kn_effective_target_triple(const char *triple)
+{
+    return (triple && triple[0]) ? triple : kn_host_default_target_triple();
+}
+
+static const char *kn_windows_machine_flag(const char *triple)
+{
+    const char *effective = kn_effective_target_triple(triple);
+    if (kn_triple_is_x86(effective))
+        return "/machine:x86";
+    if (kn_triple_is_arm64(effective))
+        return "/machine:arm64";
+    return "/machine:x64";
+}
+
+static const char *kn_windows_runtime_dir_rel(const char *triple)
+{
+    const char *effective = kn_effective_target_triple(triple);
+    if (kn_triple_is_x86(effective))
+        return "runtime\\win-x86";
+    if (kn_triple_is_arm64(effective))
+        return "runtime\\win-arm64";
+    return "runtime\\win-x64";
 }
 
 static int kn_path_has_ext(const char *path)
@@ -367,6 +430,44 @@ static int kn_tool_name_has_path(const char *name)
     return 0;
 }
 
+static int kn_tool_name_without_exe_suffix(char *out, size_t cap, const char *name)
+{
+    if (!out || cap == 0 || !name || !name[0]) return 0;
+    out[0] = 0;
+#if defined(_WIN32) || defined(_WIN64)
+    (void)name;
+    return 0;
+#else
+    size_t n = kn_strlen(name);
+    if (n <= 4 || n - 4 >= cap) return 0;
+    if (kn_to_lower(name[n - 4]) != '.' || kn_to_lower(name[n - 3]) != 'e' ||
+        kn_to_lower(name[n - 2]) != 'x' || kn_to_lower(name[n - 1]) != 'e')
+        return 0;
+    kn_memcpy(out, name, n - 4);
+    out[n - 4] = 0;
+    return 1;
+#endif
+}
+
+static int kn_resolve_tool_in_dir(char *out, size_t cap, const char *dir, const char *name)
+{
+    char candidate[1024];
+    char alt_name[1024];
+    if (!out || cap == 0 || !dir || !dir[0] || !name || !name[0]) return 0;
+    if (kn_path_join(candidate, sizeof(candidate), dir, name) && kn_file_exists(candidate))
+    {
+        kn_copy_str(out, cap, candidate);
+        return 1;
+    }
+    if (kn_tool_name_without_exe_suffix(alt_name, sizeof(alt_name), name) &&
+        kn_path_join(candidate, sizeof(candidate), dir, alt_name) && kn_file_exists(candidate))
+    {
+        kn_copy_str(out, cap, candidate);
+        return 1;
+    }
+    return 0;
+}
+
 static char kn_path_env_sep(void)
 {
 #if defined(_WIN32) || defined(_WIN64)
@@ -451,12 +552,8 @@ static int kn_try_env_tool(char *out, size_t cap, const char *name, const char *
     }
     if (kn_get_env(p, sizeof(p), "KINAL_LINKER_DIR"))
     {
-        char q[1024];
-        if (kn_path_join(q, sizeof(q), p, name) && kn_file_exists(q))
-        {
-            kn_copy_str(out, cap, q);
+        if (kn_resolve_tool_in_dir(out, cap, p, name))
             return 1;
-        }
     }
     return 0;
 }
@@ -474,24 +571,20 @@ static void kn_resolve_tool(char *out, size_t cap, const char *name)
     if (kn_get_exe_dir(exe_dir, sizeof(exe_dir)))
     {
         if (kn_path_join(p, sizeof(p), exe_dir, "linker") &&
-            kn_path_join(p, sizeof(p), p, name) &&
-            kn_file_exists(p))
+            kn_resolve_tool_in_dir(out, cap, p, name))
         {
-            kn_copy_str(out, cap, p);
             return;
         }
         if (env_exe && kn_try_env_tool(out, cap, name, env_exe))
             return;
-        if (kn_path_join(p, sizeof(p), exe_dir, "llvm\\bin") &&
-            kn_path_join(p, sizeof(p), p, name) &&
-            kn_file_exists(p))
+        if (kn_path_join(p, sizeof(p), exe_dir, "llvm") &&
+            kn_path_join(p, sizeof(p), p, "bin") &&
+            kn_resolve_tool_in_dir(out, cap, p, name))
         {
-            kn_copy_str(out, cap, p);
             return;
         }
-        if (kn_path_join(p, sizeof(p), exe_dir, name) && kn_file_exists(p))
+        if (kn_resolve_tool_in_dir(out, cap, exe_dir, name))
         {
-            kn_copy_str(out, cap, p);
             return;
         }
     }
@@ -499,14 +592,38 @@ static void kn_resolve_tool(char *out, size_t cap, const char *name)
     if (env_exe && kn_try_env_tool(out, cap, name, env_exe))
         return;
 
-    if (KN_LLVM_BIN[0] && kn_path_join(p, sizeof(p), KN_LLVM_BIN, name) && kn_file_exists(p))
+    if (KN_LLVM_BIN[0] && kn_resolve_tool_in_dir(out, cap, KN_LLVM_BIN, name))
     {
-        kn_copy_str(out, cap, p);
         return;
+    }
+
+    // Runtime KN_LLVM_BIN environment variable.
+    {
+        char envp[1024];
+        KN_DWORD n = GetEnvironmentVariableA("KN_LLVM_BIN", envp, (KN_DWORD)sizeof(envp));
+        if (n > 0 && n < (KN_DWORD)sizeof(envp) && envp[0])
+        {
+            if (kn_resolve_tool_in_dir(out, cap, envp, name))
+            {
+                return;
+            }
+        }
     }
 
     if (kn_try_resolve_tool_on_path(out, cap, name))
         return;
+
+    {
+        char alt_name[1024];
+        if (kn_tool_name_without_exe_suffix(alt_name, sizeof(alt_name), name) &&
+            kn_try_resolve_tool_on_path(out, cap, alt_name))
+            return;
+        if (alt_name[0])
+        {
+            kn_copy_str(out, cap, alt_name);
+            return;
+        }
+    }
 
     kn_copy_str(out, cap, name);
 }
@@ -547,6 +664,11 @@ static int kn_resolve_runtime_src(char *out, size_t cap)
     if (kn_file_exists("runtime/src/kn_runtime.c"))
     {
         kn_copy_str(out, cap, "runtime/src/kn_runtime.c");
+        return 1;
+    }
+    if (kn_file_exists("libs/runtime/src/kn_runtime.c"))
+    {
+        kn_copy_str(out, cap, "libs/runtime/src/kn_runtime.c");
         return 1;
     }
     if (kn_file_exists("kinal-compiler/src/kn_runtime.c"))
@@ -599,6 +721,11 @@ static int kn_resolve_runtime_include(char *out, size_t cap)
         kn_copy_str(out, cap, "runtime/include");
         return 1;
     }
+    if (kn_file_exists("libs/runtime/include/kn/platform.h"))
+    {
+        kn_copy_str(out, cap, "libs/runtime/include");
+        return 1;
+    }
     if (kn_file_exists("kinal-compiler/include/kn/platform.h"))
     {
         kn_copy_str(out, cap, "kinal-compiler/include");
@@ -611,6 +738,7 @@ static int kn_resolve_runtime_obj(const char *triple, char *out, size_t cap)
 {
     char p[1024];
     const int is_linux = kn_triple_is_linux(triple ? triple : "");
+    const int is_macos = kn_triple_is_macos(triple ? triple : "");
     const int is_windows = kn_triple_is_windows(triple ? triple : "");
 
     char exe_dir[1024];
@@ -628,11 +756,23 @@ static int kn_resolve_runtime_obj(const char *triple, char *out, size_t cap)
             return 0;
         }
 
+        if (is_macos)
+        {
+            const int is_arm64 = kn_triple_is_arm64(triple ? triple : "");
+            const char *rt_rel = is_arm64 ? "runtime\\macos-arm64\\kn_runtime.o" : "runtime\\macos-x64\\kn_runtime.o";
+            if (kn_path_join(p, sizeof(p), exe_dir, rt_rel) && kn_file_exists(p))
+            {
+                kn_copy_str(out, cap, p);
+                return 1;
+            }
+            return 0;
+        }
+
         if (is_windows)
         {
-            const int is_x86 = kn_triple_is_x86(triple ? triple : "");
-            const char *rt_rel = is_x86 ? "runtime\\win-x86\\kn_runtime.obj" : "runtime\\win-x64\\kn_runtime.obj";
-            if (kn_path_join(p, sizeof(p), exe_dir, rt_rel) && kn_file_exists(p))
+            const char *rt_rel = kn_windows_runtime_dir_rel(triple ? triple : "");
+            if (kn_path_join(p, sizeof(p), exe_dir, rt_rel) &&
+                kn_path_join(p, sizeof(p), p, "kn_runtime.obj") && kn_file_exists(p))
             {
                 kn_copy_str(out, cap, p);
                 return 1;
@@ -666,8 +806,8 @@ static int kn_resolve_math_obj(const char *triple, char *out, size_t cap)
     if (!kn_get_exe_dir(exe_dir, sizeof(exe_dir)))
         return 0;
     const int is_linux = kn_triple_is_linux(triple ? triple : "");
+    const int is_macos = kn_triple_is_macos(triple ? triple : "");
     const int is_windows = kn_triple_is_windows(triple ? triple : "");
-    const int is_x86 = kn_triple_is_x86(triple ? triple : "");
     if (is_linux)
     {
         const int is_arm64 = kn_triple_is_arm64(triple ? triple : "");
@@ -676,10 +816,19 @@ static int kn_resolve_math_obj(const char *triple, char *out, size_t cap)
         { kn_copy_str(out, cap, p); return 1; }
         return 0;
     }
+    else if (is_macos)
+    {
+        const int is_arm64 = kn_triple_is_arm64(triple ? triple : "");
+        const char *rel = is_arm64 ? "runtime\\macos-arm64\\kn_math.o" : "runtime\\macos-x64\\kn_math.o";
+        if (kn_path_join(p, sizeof(p), exe_dir, rel) && kn_file_exists(p))
+        { kn_copy_str(out, cap, p); return 1; }
+        return 0;
+    }
     else if (is_windows)
     {
-        const char *rel = is_x86 ? "runtime\\win-x86\\kn_math.obj" : "runtime\\win-x64\\kn_math.obj";
-        if (kn_path_join(p, sizeof(p), exe_dir, rel) && kn_file_exists(p))
+        const char *rel = kn_windows_runtime_dir_rel(triple ? triple : "");
+        if (kn_path_join(p, sizeof(p), exe_dir, rel) &&
+            kn_path_join(p, sizeof(p), p, "kn_math.obj") && kn_file_exists(p))
         { kn_copy_str(out, cap, p); return 1; }
     }
     return 0;
@@ -691,9 +840,9 @@ static int kn_resolve_ucrtbase_lib(const char *triple, char *out, size_t cap)
     char exe_dir[1024];
     if (!kn_get_exe_dir(exe_dir, sizeof(exe_dir)))
         return 0;
-    const int is_x86 = kn_triple_is_x86(triple ? triple : "");
-    const char *rel = is_x86 ? "runtime\\win-x86\\ucrtbase.lib" : "runtime\\win-x64\\ucrtbase.lib";
-    if (kn_path_join(p, sizeof(p), exe_dir, rel) && kn_file_exists(p))
+    const char *rel = kn_windows_runtime_dir_rel(triple ? triple : "");
+    if (kn_path_join(p, sizeof(p), exe_dir, rel) &&
+        kn_path_join(p, sizeof(p), p, "ucrtbase.lib") && kn_file_exists(p))
     { kn_copy_str(out, cap, p); return 1; }
     return 0;
 }
@@ -705,9 +854,9 @@ static int kn_resolve_kernel32_lib(const char *triple, char *out, size_t cap)
     char exe_dir[1024];
     if (kn_get_exe_dir(exe_dir, sizeof(exe_dir)))
     {
-        const int is_x86 = kn_triple_is_x86(triple ? triple : "");
-        const char *k32_rel = is_x86 ? "runtime\\win-x86\\kernel32.lib" : "runtime\\win-x64\\kernel32.lib";
-        if (kn_path_join(p, sizeof(p), exe_dir, k32_rel) && kn_file_exists(p))
+        const char *k32_rel = kn_windows_runtime_dir_rel(triple ? triple : "");
+        if (kn_path_join(p, sizeof(p), exe_dir, k32_rel) &&
+            kn_path_join(p, sizeof(p), p, "kernel32.lib") && kn_file_exists(p))
         {
             kn_copy_str(out, cap, p);
             return 1;
@@ -740,9 +889,9 @@ static int kn_resolve_user32_lib(const char *triple, char *out, size_t cap)
     char exe_dir[1024];
     if (kn_get_exe_dir(exe_dir, sizeof(exe_dir)))
     {
-        const int is_x86 = kn_triple_is_x86(triple ? triple : "");
-        const char *u32_rel = is_x86 ? "runtime\\win-x86\\user32.lib" : "runtime\\win-x64\\user32.lib";
-        if (kn_path_join(p, sizeof(p), exe_dir, u32_rel) && kn_file_exists(p))
+        const char *u32_rel = kn_windows_runtime_dir_rel(triple ? triple : "");
+        if (kn_path_join(p, sizeof(p), exe_dir, u32_rel) &&
+            kn_path_join(p, sizeof(p), p, "user32.lib") && kn_file_exists(p))
         {
             kn_copy_str(out, cap, p);
             return 1;
@@ -775,9 +924,9 @@ static int kn_resolve_gdi32_lib(const char *triple, char *out, size_t cap)
     char exe_dir[1024];
     if (kn_get_exe_dir(exe_dir, sizeof(exe_dir)))
     {
-        const int is_x86 = kn_triple_is_x86(triple ? triple : "");
-        const char *g32_rel = is_x86 ? "runtime\\win-x86\\gdi32.lib" : "runtime\\win-x64\\gdi32.lib";
-        if (kn_path_join(p, sizeof(p), exe_dir, g32_rel) && kn_file_exists(p))
+        const char *g32_rel = kn_windows_runtime_dir_rel(triple ? triple : "");
+        if (kn_path_join(p, sizeof(p), exe_dir, g32_rel) &&
+            kn_path_join(p, sizeof(p), p, "gdi32.lib") && kn_file_exists(p))
         {
             kn_copy_str(out, cap, p);
             return 1;
@@ -1191,7 +1340,12 @@ static int kn_windows_crt_mode(const KnLinkOptions *opts);
 
 static const char *kn_windows_arch_dir(const char *triple)
 {
-    return kn_triple_is_x86(triple ? triple : "") ? "x86" : "x64";
+    const char *effective = kn_effective_target_triple(triple);
+    if (kn_triple_is_x86(effective))
+        return "x86";
+    if (kn_triple_is_arm64(effective))
+        return "arm64";
+    return "x64";
 }
 
 static int kn_dir_has_named_lib(const char *dir, const char *name)
@@ -1212,7 +1366,7 @@ static int kn_detect_windows_bundle_lib_dir(const char *triple, char *out, size_
     out[0] = 0;
     if (!kn_get_exe_dir(exe_dir, sizeof(exe_dir)))
         return 0;
-    if (!kn_path_join(out, cap, exe_dir, kn_triple_is_x86(triple ? triple : "") ? "runtime\\win-x86" : "runtime\\win-x64"))
+    if (!kn_path_join(out, cap, exe_dir, kn_windows_runtime_dir_rel(triple ? triple : "")))
         return 0;
     return kn_dir_exists(out);
 }
@@ -1375,7 +1529,7 @@ static int kn_detect_msvc_lib_dir_from_linker(const char *linker_path, const cha
 
 static int kn_detect_msvc_lib_dir(const KnLinkOptions *opts, char *out, size_t cap)
 {
-    const char *triple = opts && opts->target_triple ? opts->target_triple : "";
+    const char *triple = kn_effective_target_triple(opts ? opts->target_triple : 0);
     if (kn_try_env_dir(out, cap, "KINAL_MSVC_LIB"))
         return 1;
 
@@ -1422,7 +1576,7 @@ static int kn_detect_msvc_lib_dir(const KnLinkOptions *opts, char *out, size_t c
 
 static int kn_detect_msvc_link_exe(const KnLinkOptions *opts, char *out, size_t cap)
 {
-    const char *triple = opts && opts->target_triple ? opts->target_triple : "";
+    const char *triple = kn_effective_target_triple(opts ? opts->target_triple : 0);
     const char *arch = kn_windows_arch_dir(triple);
     if (kn_get_env(out, cap, "KINAL_LINKER_MSVC") && kn_file_exists(out))
         return 1;
@@ -1467,7 +1621,7 @@ static int kn_detect_windows_sdk_subdir(char *out, size_t cap, const char *versi
 
 static int kn_detect_windows_um_lib_dir(const KnLinkOptions *opts, char *out, size_t cap)
 {
-    const char *triple = opts && opts->target_triple ? opts->target_triple : "";
+    const char *triple = kn_effective_target_triple(opts ? opts->target_triple : 0);
     if (kn_try_env_dir(out, cap, "KINAL_WINDOWS_SDK_UM_LIB"))
         return 1;
 
@@ -1510,7 +1664,7 @@ static int kn_detect_windows_um_lib_dir(const KnLinkOptions *opts, char *out, si
 
 static int kn_detect_windows_ucrt_lib_dir(const KnLinkOptions *opts, char *out, size_t cap)
 {
-    const char *triple = opts && opts->target_triple ? opts->target_triple : "";
+    const char *triple = kn_effective_target_triple(opts ? opts->target_triple : 0);
     if (kn_try_env_dir(out, cap, "KINAL_WINDOWS_SDK_UCRT_LIB"))
         return 1;
 
@@ -1576,7 +1730,7 @@ static void kn_detect_windows_toolchain_dirs(const KnLinkOptions *opts, KnWindow
     if (!dirs) return;
     kn_memset(dirs, 0, sizeof(*dirs));
     dirs->has_bundle_lib_dir = kn_detect_windows_bundle_lib_dir(
-        opts && opts->target_triple ? opts->target_triple : "",
+        kn_effective_target_triple(opts ? opts->target_triple : 0),
         dirs->bundle_lib_dir,
         sizeof(dirs->bundle_lib_dir));
     if (dirs->has_bundle_lib_dir)

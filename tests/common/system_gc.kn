@@ -1,0 +1,23 @@
+Unit Tests.SystemGc;
+
+Get IO.Console;
+Get IO.System;
+Get IO.GC;
+
+Static Function int Main()
+{
+    string a= "hi";
+    string b= a+ "!";
+    IO.GC.Collect();
+    IO.Console.PrintLine(b);
+
+    If (IO.System.FileExists("tests/common/hello.kn"))
+    {
+        IO.Console.PrintLine("file");
+    }
+    Else
+    {
+        IO.Console.PrintLine("nofile");
+    }
+    Return 0;
+}

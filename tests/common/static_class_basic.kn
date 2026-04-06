@@ -1,0 +1,26 @@
+Unit Tests.StaticClassBasic;
+
+Get IO.Console;
+
+Static Class Counter
+{
+    Private int Value;
+
+    Public Function void Add(int delta)
+    {
+        Value= Value+ delta;
+    }
+
+    Public Function int Read()
+    {
+        Return Value;
+    }
+}
+
+Safe Static Function int Main()
+{
+    Counter.Add(5);
+    Counter.Add(7);
+    IO.Console.PrintLine(Counter.Read());
+    Return 0;
+}

@@ -160,7 +160,11 @@ static bool path_join(char *out, size_t cap, const char *a, const char *b)
     kn_memcpy(out, a, la);
     off = la;
     if (off > 0 && !is_path_sep(out[off - 1]))
+#if defined(_WIN32) || defined(_WIN64)
         out[off++] = '\\';
+#else
+        out[off++] = '/';
+#endif
     kn_memcpy(out + off, b, lb);
     off += lb;
     out[off] = 0;
@@ -353,6 +357,7 @@ static bool path_has_ext(const char *path)
 
 static bool target_is_windows(const char *triple);
 static bool target_is_linux(const char *triple);
+static bool target_is_macos(const char *triple);
 static bool target_is_freestanding(const char *triple);
 static bool target_is_x86(const char *triple);
 static bool target_is_arm64(const char *triple);
@@ -369,6 +374,11 @@ static const char *target_platform_dir_alias(const char *triple)
     {
         if (target_is_arm64(triple)) return "linux-arm64";
         return "linux-x64";
+    }
+    if (target_is_macos(triple))
+    {
+        if (target_is_arm64(triple)) return "macos-arm64";
+        return "macos-x64";
     }
     if (target_is_freestanding(triple))
     {
@@ -449,10 +459,16 @@ static void dump_link_search_dirs(const KnLinkItem *items, int count)
 
 static const char *default_target_triple(void)
 {
-#if defined(_WIN64)
+#if defined(_WIN64) && (defined(__aarch64__) || defined(__arm64__) || defined(_M_ARM64))
+    return "aarch64-pc-windows-msvc";
+#elif defined(_WIN64)
     return "x86_64-pc-windows-msvc";
 #elif defined(_WIN32)
     return "i686-pc-windows-msvc";
+#elif defined(__APPLE__) && (defined(__aarch64__) || defined(__arm64__))
+    return "aarch64-apple-darwin";
+#elif defined(__APPLE__)
+    return "x86_64-apple-darwin";
 #elif defined(__linux__) && defined(__aarch64__)
     return "aarch64-unknown-linux-gnu";
 #elif defined(__linux__)
@@ -470,10 +486,19 @@ static const char *normalize_target_triple(const char *raw)
         return "i686-pc-windows-msvc";
     if (str_eq_ci(raw, "win64") || str_eq_ci(raw, "x64") || str_eq_ci(raw, "windows"))
         return "x86_64-pc-windows-msvc";
+    if (str_eq_ci(raw, "win-arm64") || str_eq_ci(raw, "windows-arm64") ||
+        str_eq_ci(raw, "arm64") || str_eq_ci(raw, "aarch64-windows"))
+        return "aarch64-pc-windows-msvc";
     if (str_eq_ci(raw, "linux64") || str_eq_ci(raw, "linux-x64"))
         return "x86_64-pc-linux-gnu";
     if (str_eq_ci(raw, "linux-arm64") || str_eq_ci(raw, "linuxarm64") || str_eq_ci(raw, "aarch64-linux"))
         return "aarch64-unknown-linux-gnu";
+    if (str_eq_ci(raw, "macos") || str_eq_ci(raw, "macos-x64") || str_eq_ci(raw, "mac64") ||
+        str_eq_ci(raw, "darwin") || str_eq_ci(raw, "darwin-x64"))
+        return "x86_64-apple-darwin";
+    if (str_eq_ci(raw, "macos-arm64") || str_eq_ci(raw, "macarm64") ||
+        str_eq_ci(raw, "darwin-arm64") || str_eq_ci(raw, "aarch64-darwin"))
+        return "aarch64-apple-darwin";
     if (str_eq_ci(raw, "bare64") || str_eq_ci(raw, "freestanding64") || str_eq_ci(raw, "kernel64"))
         return "x86_64-unknown-none-elf";
     if (str_eq_ci(raw, "bare-arm64") || str_eq_ci(raw, "freestanding-arm64") || str_eq_ci(raw, "kernel-arm64"))
@@ -491,10 +516,20 @@ static bool target_is_linux(const char *triple)
     return str_contains_ci(triple, "linux");
 }
 
+static bool target_is_macos(const char *triple)
+{
+    return str_contains_ci(triple, "darwin") || str_contains_ci(triple, "apple") || str_contains_ci(triple, "macos");
+}
+
 static bool target_is_freestanding(const char *triple)
 {
     if (!triple || !triple[0]) return false;
     return str_contains_ci(triple, "unknown-none") || str_contains_ci(triple, "none-elf");
+}
+
+static int default_hosted_linker_kind(const char *triple)
+{
+    return (target_is_linux(triple) || target_is_macos(triple)) ? KN_LINKER_ZIG : KN_LINKER_LLD;
 }
 
 static bool target_is_x86(const char *triple)
@@ -681,6 +716,20 @@ static bool get_exe_path(char *out, size_t cap)
     {
         long n = readlink("/proc/self/exe", out, cap - 1);
         if (n > 0) { out[n] = 0; return true; }
+    }
+#endif
+#if defined(__APPLE__)
+    {
+        uint32_t bufsize = (uint32_t)cap;
+        if (_NSGetExecutablePath(out, &bufsize) == 0)
+        {
+            char resolved[KN_MAX_PATH];
+            if (realpath(out, resolved))
+            {
+                copy_str(out, cap, resolved);
+            }
+            return true;
+        }
     }
 #endif
     const char *cmd = GetCommandLineA();
@@ -968,6 +1017,12 @@ static int run_process(const char *exe, const char *cmdline)
     kn_memset(&si, 0, sizeof(si));
     kn_memset(&pi, 0, sizeof(pi));
     si.cb = sizeof(si);
+    /* Redirect tool stdout to stderr so external tool output (e.g. zig
+       printing its version) does not pollute program stdout. */
+    si.dwFlags = KN_STARTF_USESTDHANDLES;
+    si.hStdInput  = GetStdHandle(KN_STDIN_HANDLE);
+    si.hStdOutput = GetStdHandle(KN_STDERR_HANDLE);
+    si.hStdError  = GetStdHandle(KN_STDERR_HANDLE);
 
     size_t len = kn_strlen(cmdline ? cmdline : "");
     char *mutable_cmd = (char *)kn_malloc(len + 1);
@@ -976,7 +1031,7 @@ static int run_process(const char *exe, const char *cmdline)
         kn_memcpy(mutable_cmd, cmdline, len);
     mutable_cmd[len] = 0;
 
-    if (!CreateProcessA(exe, mutable_cmd, 0, 0, 0, 0, 0, 0, &si, &pi))
+    if (!CreateProcessA(exe, mutable_cmd, 0, 0, 1 /*bInheritHandles*/, 0, 0, 0, &si, &pi))
     {
         kn_free(mutable_cmd);
         return -1;
@@ -998,6 +1053,44 @@ static int tool_name_has_path(const char *name)
     {
         if (name[i] == '\\' || name[i] == '/' || name[i] == ':')
             return 1;
+    }
+    return 0;
+}
+
+static int tool_name_without_exe_suffix(char *out, size_t cap, const char *name)
+{
+    if (!out || cap == 0 || !name || !name[0]) return 0;
+    out[0] = 0;
+#if defined(_WIN32) || defined(_WIN64)
+    (void)name;
+    return 0;
+#else
+    size_t n = kn_strlen(name);
+    if (n <= 4 || n - 4 >= cap) return 0;
+    if (lower_char(name[n - 4]) != '.' || lower_char(name[n - 3]) != 'e' ||
+        lower_char(name[n - 2]) != 'x' || lower_char(name[n - 1]) != 'e')
+        return 0;
+    kn_memcpy(out, name, n - 4);
+    out[n - 4] = 0;
+    return 1;
+#endif
+}
+
+static int resolve_tool_in_dir(char *out, size_t cap, const char *dir, const char *name)
+{
+    char candidate[KN_MAX_PATH];
+    char alt_name[KN_MAX_PATH];
+    if (!out || cap == 0 || !dir || !dir[0] || !name || !name[0]) return 0;
+    if (path_join(candidate, sizeof(candidate), dir, name) && file_exists(candidate))
+    {
+        copy_str(out, cap, candidate);
+        return 1;
+    }
+    if (tool_name_without_exe_suffix(alt_name, sizeof(alt_name), name) &&
+        path_join(candidate, sizeof(candidate), dir, alt_name) && file_exists(candidate))
+    {
+        copy_str(out, cap, candidate);
+        return 1;
     }
     return 0;
 }
@@ -1086,14 +1179,12 @@ static void resolve_tool(char *out, size_t cap, const char *name)
     if (get_exe_dir(exe_dir, sizeof(exe_dir)))
     {
         char p[KN_MAX_PATH];
-        if (path_join(p, sizeof(p), exe_dir, "linker") && path_join(p, sizeof(p), p, name) && file_exists(p))
+        if (path_join(p, sizeof(p), exe_dir, "linker") && resolve_tool_in_dir(out, cap, p, name))
         {
-            copy_str(out, cap, p);
             return;
         }
-        if (path_join(p, sizeof(p), exe_dir, "llvm\\bin") && path_join(p, sizeof(p), p, name) && file_exists(p))
+        if (path_join(p, sizeof(p), exe_dir, "llvm") && path_join(p, sizeof(p), p, "bin") && resolve_tool_in_dir(out, cap, p, name))
         {
-            copy_str(out, cap, p);
             return;
         }
     }
@@ -1102,17 +1193,47 @@ static void resolve_tool(char *out, size_t cap, const char *name)
     {
         char p[KN_MAX_PATH];
         copy_str(p, sizeof(p), KN_LLVM_BIN);
+#if defined(_WIN32) || defined(_WIN64)
         for (size_t i = 0; p[i]; i++)
             if (p[i] == '/') p[i] = '\\';
-        if (path_join(p, sizeof(p), p, name) && file_exists(p))
+#endif
+        if (resolve_tool_in_dir(out, cap, p, name))
         {
-            copy_str(out, cap, p);
             return;
+        }
+    }
+
+    // Runtime KN_LLVM_BIN environment variable (e.g. set by x.py test).
+    {
+        char envp[KN_MAX_PATH];
+        KN_DWORD n = GetEnvironmentVariableA("KN_LLVM_BIN", envp, (KN_DWORD)sizeof(envp));
+        if (n > 0 && n < (KN_DWORD)sizeof(envp) && envp[0])
+        {
+#if defined(_WIN32) || defined(_WIN64)
+            for (size_t i = 0; envp[i]; i++)
+                if (envp[i] == '/') envp[i] = '\\';
+#endif
+            if (resolve_tool_in_dir(out, cap, envp, name))
+            {
+                return;
+            }
         }
     }
 
     if (try_resolve_tool_on_path(out, cap, name))
         return;
+
+    {
+        char alt_name[KN_MAX_PATH];
+        if (tool_name_without_exe_suffix(alt_name, sizeof(alt_name), name) &&
+            try_resolve_tool_on_path(out, cap, alt_name))
+            return;
+        if (alt_name[0])
+        {
+            copy_str(out, cap, alt_name);
+            return;
+        }
+    }
 
     copy_str(out, cap, name);
 }
@@ -1126,20 +1247,12 @@ static int resolve_zig_tool(char *out, size_t cap)
     char exe_dir[KN_MAX_PATH];
     if (get_exe_dir(exe_dir, sizeof(exe_dir)))
     {
-        if (path_join(p, sizeof(p), exe_dir, "linker\\zig\\zig.exe") && file_exists(p))
+        if (path_join(p, sizeof(p), exe_dir, "linker") && path_join(p, sizeof(p), p, "zig"))
         {
-            copy_str(out, cap, p);
-            return 1;
-        }
-        if (path_join(p, sizeof(p), exe_dir, "linker\\zig\\zig") && file_exists(p))
-        {
-            copy_str(out, cap, p);
-            return 1;
-        }
-        if (path_join(p, sizeof(p), exe_dir, "linker\\zig\\bin\\zig") && file_exists(p))
-        {
-            copy_str(out, cap, p);
-            return 1;
+            if (resolve_tool_in_dir(out, cap, p, "zig.exe"))
+                return 1;
+            if (path_join(p, sizeof(p), p, "bin") && resolve_tool_in_dir(out, cap, p, "zig.exe"))
+                return 1;
         }
     }
 
@@ -1369,6 +1482,10 @@ static int embed_knc_into_exe(const char *exe_path, const char *knc_path, const 
         return 1;
     }
 
+#if !defined(_WIN32) && !defined(_WIN64)
+    chmod(out_path, 0755);
+#endif
+
     return 0;
 }
 
@@ -1397,6 +1514,14 @@ static void to_zig_target(const char *triple, char *out, size_t cap)
             copy_str(out, cap, "x86_64-linux-gnu");
         return;
     }
+    if (target_is_macos(triple))
+    {
+        if (target_is_arm64(triple))
+            copy_str(out, cap, "aarch64-macos");
+        else
+            copy_str(out, cap, "x86_64-macos");
+        return;
+    }
     if (target_is_freestanding(triple))
     {
         if (target_is_arm64(triple))
@@ -1408,9 +1533,10 @@ static void to_zig_target(const char *triple, char *out, size_t cap)
     copy_str(out, cap, triple);
 }
 
-static int compile_intermediate_to_obj(const char *in_path, const char *out_path, const char *target_triple, int lto_mode)
+static int compile_intermediate_to_obj(const char *in_path, const char *out_path, const char *target_triple, int lto_mode, int emit_pic)
 {
     const char *triple = (target_triple && target_triple[0]) ? target_triple : default_target_triple();
+    int want_pic = emit_pic && !target_is_windows(triple);
     KnInputKind kind = classify_input(in_path);
     if (kind == KN_INPUT_OBJ)
     {
@@ -1436,6 +1562,8 @@ static int compile_intermediate_to_obj(const char *in_path, const char *out_path
             append_quoted(cmd, sizeof(cmd), &off, llc);
             kn_append(cmd, sizeof(cmd), &off, " -mtriple=");
             kn_append(cmd, sizeof(cmd), &off, triple);
+            if (want_pic)
+                kn_append(cmd, sizeof(cmd), &off, " --relocation-model=pic");
             kn_append(cmd, sizeof(cmd), &off, " -filetype=obj -o ");
             append_quoted(cmd, sizeof(cmd), &off, out_path);
             kn_append(cmd, sizeof(cmd), &off, " ");
@@ -1478,6 +1606,8 @@ static int compile_intermediate_to_obj(const char *in_path, const char *out_path
         kn_append(cmd, sizeof(cmd), &off, " --target=");
         kn_append(cmd, sizeof(cmd), &off, triple);
         kn_append(cmd, sizeof(cmd), &off, " -Wno-override-module -c -x ir ");
+        if (want_pic)
+            kn_append(cmd, sizeof(cmd), &off, " -fPIC ");
         if (lto_mode == KN_LTO_FULL)
             kn_append(cmd, sizeof(cmd), &off, " -flto ");
         else if (lto_mode == KN_LTO_THIN)
@@ -1508,6 +1638,8 @@ static int compile_intermediate_to_obj(const char *in_path, const char *out_path
         kn_append(cmd, sizeof(cmd), &off, " cc -target ");
         kn_append(cmd, sizeof(cmd), &off, zt);
         kn_append(cmd, sizeof(cmd), &off, " -c ");
+        if (want_pic)
+            kn_append(cmd, sizeof(cmd), &off, " -fPIC ");
         if (lto_mode == KN_LTO_FULL)
             kn_append(cmd, sizeof(cmd), &off, " -flto ");
         else if (lto_mode == KN_LTO_THIN)
@@ -1530,6 +1662,8 @@ static int compile_intermediate_to_obj(const char *in_path, const char *out_path
         kn_append(cmd, sizeof(cmd), &off, " --target=");
         kn_append(cmd, sizeof(cmd), &off, triple);
         kn_append(cmd, sizeof(cmd), &off, " -c ");
+        if (want_pic)
+            kn_append(cmd, sizeof(cmd), &off, " -fPIC ");
         if (lto_mode == KN_LTO_FULL)
             kn_append(cmd, sizeof(cmd), &off, " -flto ");
         else if (lto_mode == KN_LTO_THIN)
@@ -1604,7 +1738,7 @@ static int compile_ll_to_asm(const char *in_path, const char *out_path, const ch
     char clang[KN_MAX_PATH];
     resolve_tool(clang, sizeof(clang), "clang.exe");
 
-    if (clang[0])
+    if (clang[0] && file_exists(clang))
     {
         char cmd[8192];
         size_t off = 0;
@@ -1616,7 +1750,8 @@ static int compile_ll_to_asm(const char *in_path, const char *out_path, const ch
         append_quoted(cmd, sizeof(cmd), &off, in_path);
         kn_append(cmd, sizeof(cmd), &off, " -o ");
         append_quoted(cmd, sizeof(cmd), &off, out_path);
-        return run_process(clang, cmd);
+        if (run_process(clang, cmd) == 0)
+            return 0;
     }
 
     return -1;

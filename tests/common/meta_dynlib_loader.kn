@@ -1,0 +1,32 @@
+Unit Tests.MetaDynLoader;
+Get Console By IO.Console;
+Get IO.Meta;
+Get IO.System;
+
+Unsafe Static Function int Main(string[] args)
+{
+    If (args.Length()== 0)
+    {
+        Console.PrintLine("missing-lib");
+        Return 2;
+    }
+
+    byte*lib= IO.System.LoadLibrary(args[0]);
+    If (lib== null)
+    {
+        Console.PrintLine(IO.System.LastError());
+        Return 3;
+    }
+
+    list own= IO.Meta.Of("Tests.Dynamic.Shared.Hello");
+    dict item= IO.Meta.Find("Tests.Dynamic.Shared.Hello", "Exported");
+
+    Console.PrintLine(IO.Meta.Has("Tests.Dynamic.Shared.Add", "Exported"));
+    Console.PrintLine(own.Count());
+    Console.PrintLine([string](item.Fetch("module")));
+    Console.PrintLine([string](item.Fetch("arg.name")));
+
+    IO.System.CloseLibrary(lib);
+    Console.PrintLine(IO.Meta.Has("Tests.Dynamic.Shared.Hello", "Exported"));
+    Return 0;
+}

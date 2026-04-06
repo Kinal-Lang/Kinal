@@ -1,0 +1,8 @@
+Unit Tests.ErrorAttrSymbolNameKinalDelegate;
+
+[SymbolName("Tests.Dynamic.Shared.Add")] Delegate Function int dyn_add(int a, int b) By Kinal;
+
+Static Function int Main()
+{
+    Return 0;
+}

@@ -334,6 +334,12 @@ def cmd_export_gui_locales(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_gui(_: argparse.Namespace) -> int:
+    from infra.scripts.build_gui import main as build_gui_main
+
+    return build_gui_main()
+
+
 def cmd_fetch(args: argparse.Namespace) -> int:
     target = args.target
     if target in ("third-party", "all"):
@@ -435,7 +441,13 @@ def cmd_test(args: argparse.Namespace) -> int:
         ]
         if driver_checks:
             cmd.append("--driver-checks")
-        run(cmd)
+        env = os.environ.copy()
+        if not env.get("KN_LLVM_BIN"):
+            try:
+                env["KN_LLVM_BIN"] = str(llvm_bin_dir(detect_llvm_dir()))
+            except SystemExit:
+                pass
+        run(cmd, env=env)
 
     if args.full:
         run_manifest(ROOT / "tests" / "manifest.json", TEST_ROOT, driver_checks=True)
@@ -563,9 +575,7 @@ def main() -> int:
     if args.cmd == "export-gui-locales":
         return cmd_export_gui_locales(args)
     if args.cmd == "gui":
-        from infra.scripts.kinal_gui import launch_gui
-        launch_gui()
-        return 0
+        return cmd_gui(args)
     if args.cmd == "open-artifacts":
         return cmd_open_artifacts(args)
     if args.cmd == "selfhost":

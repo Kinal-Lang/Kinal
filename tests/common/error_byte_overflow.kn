@@ -1,0 +1,7 @@
+Unit Tests.ErrorByteOverflow;
+
+Static Function int Main()
+{
+    byte b= 300;
+    Return 0;
+}

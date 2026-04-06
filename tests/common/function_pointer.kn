@@ -1,0 +1,20 @@
+Unit Tests.FunctionPointer;
+Get Console By IO.Console;
+
+Function int Cb()
+{
+    Return 7;
+}
+
+Function bool IsNull(byte*p)
+{
+    Return p== null;
+}
+
+Static Function int Main()
+{
+    byte*p= &Cb;
+    Console.PrintLine(IsNull(p));
+    Console.PrintLine(IsNull(&Cb));
+    Return 0;
+}

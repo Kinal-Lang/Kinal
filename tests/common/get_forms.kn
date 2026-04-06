@@ -1,0 +1,18 @@
+Unit Tests.GetForms;
+
+Get IO.Console
+{
+    PrintLine, Print
+};
+Get Println By IO.Console.PrintLine;
+Get IO.Console.PrintLine;
+
+Static Function int Main()
+{
+    IO.Console.PrintLine("m");
+    IO.Console.Print("n");
+    IO.Console.PrintLine("");
+    IO.Console.PrintLine("o");
+    Println("p");
+    Return 0;
+}
