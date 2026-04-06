@@ -1333,6 +1333,32 @@ def llvm_bin_dir() -> Path:
     return (ROOT / "third_party" / "llvm" / "prebuilt" / "clang+llvm-21.1.8-x86_64-pc-windows-msvc" / "bin").resolve()
 
 
+def windows_machine_flag(clang: Path) -> str:
+    triple = ""
+    try:
+        proc = subprocess.run(
+            [str(clang), "-print-target-triple"],
+            cwd=str(ROOT),
+            text=True,
+            capture_output=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+        if proc.returncode == 0:
+            triple = (proc.stdout or "").strip().lower()
+    except Exception:
+        triple = ""
+
+    if not triple:
+        triple = str(clang).lower()
+
+    if "aarch64" in triple or "arm64" in triple:
+        return "/machine:arm64"
+    if any(token in triple for token in ("i386", "i486", "i586", "i686", "win32")) and "x86_64" not in triple and "amd64" not in triple:
+        return "/machine:x86"
+    return "/machine:x64"
+
+
 def build_native_ffi_assets(out_dir: Path) -> None:
     if not is_windows():
         return
@@ -1347,6 +1373,8 @@ def build_native_ffi_assets(out_dir: Path) -> None:
     lld_link = llvm_bin / "lld-link.exe"
     if not clang.exists() or not llvm_lib.exists() or not lld_link.exists():
         raise SystemExit("LLVM toolchain for FFI tests not found; check KN_LLVM_BIN or third_party/llvm/prebuilt")
+
+    machine = windows_machine_flag(clang)
 
     obj = out_dir / "native_ffi.obj"
     lib = out_dir / "native_ffi.lib"
@@ -1371,14 +1399,14 @@ def build_native_ffi_assets(out_dir: Path) -> None:
         ],
         cwd=ROOT,
     )
-    run([str(llvm_lib), f"/out:{lib}", str(obj)], cwd=ROOT)
+    run([str(llvm_lib), machine, f"/out:{lib}", str(obj)], cwd=ROOT)
     run(
         [
             str(lld_link),
             "/nologo",
             "/dll",
             "/noentry",
-            "/machine:x64",
+            machine,
             f"/out:{dll}",
             f"/implib:{imp}",
             str(obj),
