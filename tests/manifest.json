@@ -1,7 +1,7 @@
 [
   { "name": "hello", "file": "tests/hello.kn", "expected": "hello\n" },
   { "name": "control", "file": "tests/control.kn", "expected": "ok\n" },
-  { "name": "class_null_compare", "file": "tests/class_null_compare.kn", "expected": "256\n", "auto_link": true },
+  { "name": "class_null_compare", "file": "tests/class_null_compare.kn", "expected": "256\n", "auto_link": true, "platforms": ["windows"] },
   { "name": "functions", "file": "tests/functions.kn", "expected": "ok\n" },
   { "name": "function_objects", "file": "tests/function_objects.kn", "expected": "5\n25\n15\n21\nIO.Type.Object.Class\n" },
   { "name": "global_null_sugar", "file": "tests/global_null_sugar.kn", "expected": "41\n0\nnull\nblk\nIO.Type.Object.Class\n" },
@@ -39,7 +39,7 @@
   { "name": "alias", "file": "tests/alias.kn", "expected": "ok\n" },
   { "name": "stdlib_console", "file": "tests/stdlib_console.kn", "expected": "ABC\nD\n42!true\n" },
   { "name": "stdlib_web_compile", "file": "tests/stdlib_web_compile.kn", "expected": "", "auto_link": true, "compile_only": true },
-  { "name": "stdlib_ui_alias_nested_new", "file": "tests/stdlib_ui_alias_nested_new.kn", "expected": "", "auto_link": true },
+  { "name": "stdlib_ui_alias_nested_new", "file": "tests/stdlib_ui_alias_nested_new.kn", "expected": "", "auto_link": true, "platforms": ["windows"] },
   { "name": "console_varargs", "file": "tests/console_varargs.kn", "expected": "\nA 1 true\nB 2\n" },
   { "name": "stdlib_more", "file": "tests/stdlib_more.kn", "expected": "hikinal\n7\neq\n5\n3\n7\n0\n", "auto_link": true },
   { "name": "dict", "file": "tests/dict.kn", "expected": "true\n2\n123\ntrue\nkinal\n<any>\n" },

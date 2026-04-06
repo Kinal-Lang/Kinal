@@ -1,7 +1,7 @@
 Unit Tests.StdlibMath;
 
 Get IO.Console;
-Get IO;
+Get IO.Math;
 
 Safe Static Function int Main()
 {

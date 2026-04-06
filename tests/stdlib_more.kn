@@ -1,7 +1,7 @@
 ﻿Unit App.StdlibMore;
 Get Console By IO.Console;
 Get IO.Type.string;
-Get IO;
+Get IO.Math;
 
 Static Function int Main() {
     string a = "hi";
