@@ -334,6 +334,12 @@ def cmd_export_gui_locales(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_gui(_: argparse.Namespace) -> int:
+    from infra.scripts.build_gui import main as build_gui_main
+
+    return build_gui_main()
+
+
 def cmd_fetch(args: argparse.Namespace) -> int:
     target = args.target
     if target in ("third-party", "all"):
@@ -569,9 +575,7 @@ def main() -> int:
     if args.cmd == "export-gui-locales":
         return cmd_export_gui_locales(args)
     if args.cmd == "gui":
-        from infra.scripts.kinal_gui import launch_gui
-        launch_gui()
-        return 0
+        return cmd_gui(args)
     if args.cmd == "open-artifacts":
         return cmd_open_artifacts(args)
     if args.cmd == "selfhost":
