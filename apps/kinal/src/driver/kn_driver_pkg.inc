@@ -375,6 +375,15 @@ static bool default_klib_cache_root(char *out, size_t cap)
         KN_DWORD n = GetEnvironmentVariableA("TMP", temp, (KN_DWORD)sizeof(temp));
         if (n == 0 || n >= (KN_DWORD)sizeof(temp))
             n = GetEnvironmentVariableA("TEMP", temp, (KN_DWORD)sizeof(temp));
+#if !defined(_WIN32) && !defined(_WIN64)
+        if (n == 0 || n >= (KN_DWORD)sizeof(temp))
+            n = GetEnvironmentVariableA("TMPDIR", temp, (KN_DWORD)sizeof(temp));
+        if (n == 0 || n >= (KN_DWORD)sizeof(temp))
+        {
+            copy_str(temp, sizeof(temp), "/tmp");
+            n = 4;
+        }
+#endif
         if (n > 0 && n < (KN_DWORD)sizeof(temp))
         {
             if (!path_join(out, cap, temp, "kinal-cache"))
@@ -1348,7 +1357,13 @@ static bool register_manifest_into_module_map(const KnPkgManifest *manifest, Mod
             pkg_fail("package source_root does not exist", root);
             return false;
         }
-        scan_dir_modules(root, root, map);
+        {
+            char abs_root[KN_MAX_PATH];
+            const char *scan_root = root;
+            if (path_full(abs_root, sizeof(abs_root), root))
+                scan_root = abs_root;
+            scan_dir_modules(scan_root, scan_root, map);
+        }
         return true;
     }
     return true;

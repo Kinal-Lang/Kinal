@@ -709,6 +709,20 @@ static bool get_exe_path(char *out, size_t cap)
         if (n > 0) { out[n] = 0; return true; }
     }
 #endif
+#if defined(__APPLE__)
+    {
+        uint32_t bufsize = (uint32_t)cap;
+        if (_NSGetExecutablePath(out, &bufsize) == 0)
+        {
+            char resolved[KN_MAX_PATH];
+            if (realpath(out, resolved))
+            {
+                copy_str(out, cap, resolved);
+            }
+            return true;
+        }
+    }
+#endif
     const char *cmd = GetCommandLineA();
     if (!cmd || !cmd[0]) return false;
 
