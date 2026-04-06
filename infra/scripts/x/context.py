@@ -46,7 +46,7 @@ CIVETWEB_LEGACY_PREBUILT_ROOT = CIVETWEB_DIR / "prebuilt"
 CIVETWEB_VERSION_FILE = CIVETWEB_DIR / "VERSION.txt"
 CIVETWEB_SRC_ARCHIVE_URL = "https://github.com/civetweb/civetweb/archive/{commit}.zip"
 WEB_BRIDGE_SRC = RUNTIME_DIR / "src" / "kn_web_civet.c"
-IO_WEB_NATIVE_TARGETS = ("win-x64", "linux-x64", "linux-arm64")
+IO_WEB_NATIVE_TARGETS = ("win-x64", "win-arm64", "linux-x64", "linux-arm64")
 
 
 def host_tag() -> str:
@@ -55,6 +55,8 @@ def host_tag() -> str:
     if system == "windows":
         if machine in ("amd64", "x86_64"):
             return "win-x64"
+        if machine in ("arm64", "aarch64"):
+            return "win-arm64"
         if machine in ("x86", "i386", "i686"):
             return "win-x86"
     if system == "linux":

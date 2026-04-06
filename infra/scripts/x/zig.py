@@ -15,6 +15,8 @@ def host_default_zig_url() -> str:
     host = host_tag()
     if host == "win-x64":
         return f"https://ziglang.org/download/{ZIG_VERSION}/zig-x86_64-windows-{ZIG_VERSION}.zip"
+    if host == "win-arm64":
+        return f"https://ziglang.org/download/{ZIG_VERSION}/zig-aarch64-windows-{ZIG_VERSION}.zip"
     if host == "linux-x64":
         return f"https://ziglang.org/download/{ZIG_VERSION}/zig-x86_64-linux-{ZIG_VERSION}.tar.xz"
     if host == "linux-arm64":

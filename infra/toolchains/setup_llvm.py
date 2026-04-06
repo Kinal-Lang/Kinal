@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import platform
 import shutil
 import subprocess
 import sys
@@ -23,22 +24,32 @@ LLVM_SRC_REPO = "https://github.com/llvm/llvm-project.git"
 
 
 def host_default_prebuilt_url() -> str:
-    if sys.platform == "win32":
-        return (
-            "https://github.com/llvm/llvm-project/releases/download/"
-            f"llvmorg-{LLVM_RELEASE}/clang+llvm-{LLVM_RELEASE}-x86_64-pc-windows-msvc.tar.xz"
-        )
-    if sys.platform == "linux":
-        return (
-            "https://github.com/llvm/llvm-project/releases/download/"
-            f"llvmorg-{LLVM_RELEASE}/LLVM-{LLVM_RELEASE}-Linux-X64.tar.xz"
-        )
-    if sys.platform == "darwin":
-        return (
-            "https://github.com/llvm/llvm-project/releases/download/"
-            f"llvmorg-{LLVM_RELEASE}/LLVM-{LLVM_RELEASE}-macOS-ARM64.tar.xz"
-        )
-    raise SystemExit(f"unsupported host platform: {sys.platform}")
+    system = platform.system().lower()
+    machine = platform.machine().lower()
+    base = "https://github.com/llvm/llvm-project/releases/download/"
+
+    if system == "windows":
+        if machine in ("amd64", "x86_64"):
+            return f"{base}llvmorg-{LLVM_RELEASE}/clang+llvm-{LLVM_RELEASE}-x86_64-pc-windows-msvc.tar.xz"
+        if machine in ("arm64", "aarch64"):
+            return f"{base}llvmorg-{LLVM_RELEASE}/clang+llvm-{LLVM_RELEASE}-aarch64-pc-windows-msvc.tar.xz"
+        raise SystemExit(f"unsupported Windows host architecture for LLVM prebuilt: {platform.machine()}")
+
+    if system == "linux":
+        if machine in ("amd64", "x86_64"):
+            return f"{base}llvmorg-{LLVM_RELEASE}/LLVM-{LLVM_RELEASE}-Linux-X64.tar.xz"
+        if machine in ("arm64", "aarch64"):
+            return f"{base}llvmorg-{LLVM_RELEASE}/LLVM-{LLVM_RELEASE}-Linux-ARM64.tar.xz"
+        raise SystemExit(f"unsupported Linux host architecture for LLVM prebuilt: {platform.machine()}")
+
+    if system == "darwin":
+        if machine in ("amd64", "x86_64"):
+            return f"{base}llvmorg-{LLVM_RELEASE}/LLVM-{LLVM_RELEASE}-macOS-X64.tar.xz"
+        if machine in ("arm64", "aarch64"):
+            return f"{base}llvmorg-{LLVM_RELEASE}/LLVM-{LLVM_RELEASE}-macOS-ARM64.tar.xz"
+        raise SystemExit(f"unsupported macOS host architecture for LLVM prebuilt: {platform.machine()}")
+
+    raise SystemExit(f"unsupported host platform: system={platform.system()} arch={platform.machine()}")
 
 
 def run(cmd: list[str], cwd: Path = ROOT) -> None:

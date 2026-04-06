@@ -705,6 +705,25 @@ def run_driver_integration_tests(compiler: Path, out_dir: Path) -> int:
         return 1
     print("[OK] fmt_file")
 
+    fmt_async_src = out_dir / "fmt_async.kn"
+    fmt_async_src.write_text(
+        "Unit App;Get IO.Async;Static Async Function int Step(int value){Return value + 1;}Static Async Function int Main(){int result = Await Step(41);Return result;}",
+        encoding="utf-8",
+    )
+    run([str(compiler), "fmt", str(fmt_async_src)], cwd=ROOT)
+    fmt_async_text = fmt_async_src.read_text(encoding="utf-8").replace("\r\n", "\n")
+    if (
+        "Static Async Function int Step(int value)" not in fmt_async_text
+        or "Static Async Function int Main()" not in fmt_async_text
+        or "Await Step(41)" not in fmt_async_text
+        or "StaticAsyncFunction" in fmt_async_text
+        or "AwaitStep(" in fmt_async_text
+        or "AwaitIO.Async" in fmt_async_text
+    ):
+        print("[FAIL] fmt_async_keywords")
+        return 1
+    print("[OK] fmt_async_keywords")
+
     fmt_check_ok = run([str(compiler), "fmt", "--check", str(fmt_src)], cwd=ROOT, capture=True)
     assert isinstance(fmt_check_ok, subprocess.CompletedProcess)
     if fmt_check_ok.returncode != 0:

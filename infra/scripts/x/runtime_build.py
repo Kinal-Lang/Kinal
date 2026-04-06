@@ -115,6 +115,16 @@ def build_windows_import_lib(def_text: str, out_lib: Path, machine: str, llvm_bi
         run([llvm_lib, "/nologo", f"/machine:{machine}", f"/def:{def_path}", f"/out:{out_lib}"])
 
 
+def windows_host_arch_names(host: str) -> tuple[str, str]:
+    if host == "win-x64":
+        return "x64", "x64"
+    if host == "win-x86":
+        return "x86", "x86"
+    if host == "win-arm64":
+        return "ARM64", "arm64"
+    raise SystemExit(f"unsupported Windows host architecture: {host}")
+
+
 def build_runtime_for_host(stage_runtime: Path, llvm_bin: Path) -> None:
     stage_runtime.mkdir(parents=True, exist_ok=True)
     copy_tree(RUNTIME_DIR / "src", stage_runtime / "src")
@@ -126,7 +136,7 @@ def build_runtime_for_host(stage_runtime: Path, llvm_bin: Path) -> None:
         if not clang.exists():
             raise SystemExit(f"missing clang.exe in {llvm_bin}")
 
-        machine = "x64" if host == "win-x64" else "x86"
+        machine, lib_arch = windows_host_arch_names(host)
         host_dir = stage_runtime / host
         host_dir.mkdir(parents=True, exist_ok=True)
 
@@ -317,7 +327,7 @@ EXPORTS
         build_windows_import_lib(gdi32_def, host_dir / "gdi32.lib", machine, llvm_bin)
         build_windows_import_lib(comctl32_def, host_dir / "comctl32.lib", machine, llvm_bin)
         build_windows_import_lib(ucrtbase_def, host_dir / "ucrtbase.lib", machine, llvm_bin)
-        copy_windows_hosted_lib_dirs(host_dir, "x86" if host == "win-x86" else "x64")
+        copy_windows_hosted_lib_dirs(host_dir, lib_arch)
         return
 
     if host.startswith("linux-"):
@@ -412,7 +422,7 @@ def build_civetweb_for_target(target: str, llvm_bin: Path) -> bool:
     out_dir = civetweb_prebuilt_root() / target
     out_dir.mkdir(parents=True, exist_ok=True)
     if target.startswith("win-"):
-        if not is_windows():
+        if not is_windows() or host_tag() != target:
             return False
         clang = llvm_bin / "clang.exe"
         llvm_lib = llvm_bin / "llvm-lib.exe"
