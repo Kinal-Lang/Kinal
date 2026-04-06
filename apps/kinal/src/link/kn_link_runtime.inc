@@ -143,6 +143,11 @@ static int kn_resolve_math_src(char *out, size_t cap)
         kn_copy_str(out, cap, "runtime/src/kn_math.c");
         return 1;
     }
+    if (kn_file_exists("libs/runtime/src/kn_math.c"))
+    {
+        kn_copy_str(out, cap, "libs/runtime/src/kn_math.c");
+        return 1;
+    }
     return 0;
 }
 

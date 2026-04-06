@@ -19,6 +19,42 @@ def is_windows() -> bool:
     return platform.system().lower() == "windows"
 
 
+def host_platform() -> str:
+    system = platform.system().lower()
+    if system == "darwin":
+        return "macos"
+    return system
+
+
+def normalize_platform_name(name: object) -> str:
+    value = str(name).strip().lower()
+    if value in {"win", "windows", "win32"}:
+        return "windows"
+    if value in {"mac", "macos", "osx", "darwin"}:
+        return "macos"
+    if value in {"linux", "gnu/linux"}:
+        return "linux"
+    return value
+
+
+def case_runs_on_host(case: dict[str, object]) -> bool:
+    current = host_platform()
+
+    platforms = case.get("platforms")
+    if platforms is not None:
+        allowed = {normalize_platform_name(name) for name in platforms}
+        if current not in allowed:
+            return False
+
+    skip_platforms = case.get("skip_platforms")
+    if skip_platforms is not None:
+        blocked = {normalize_platform_name(name) for name in skip_platforms}
+        if current in blocked:
+            return False
+
+    return True
+
+
 def find_zig() -> str | None:
     return shutil.which("zig.exe") or shutil.which("zig")
 
@@ -1395,6 +1431,9 @@ def main() -> int:
         build_native_ffi_assets(out_dir)
     for case in manifest:
         name = case["name"]
+        if not case_runs_on_host(case):
+            print(f"[SKIP] {name} (not enabled for {host_platform()})")
+            continue
         if not is_windows() and case_needs_native_ffi(case):
             print(f"[SKIP] {name} (native ffi assets are only wired for Windows in this harness)")
             continue

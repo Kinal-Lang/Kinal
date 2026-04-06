@@ -595,6 +595,11 @@ static int kn_resolve_runtime_src(char *out, size_t cap)
         kn_copy_str(out, cap, "runtime/src/kn_runtime.c");
         return 1;
     }
+    if (kn_file_exists("libs/runtime/src/kn_runtime.c"))
+    {
+        kn_copy_str(out, cap, "libs/runtime/src/kn_runtime.c");
+        return 1;
+    }
     if (kn_file_exists("kinal-compiler/src/kn_runtime.c"))
     {
         kn_copy_str(out, cap, "kinal-compiler/src/kn_runtime.c");
@@ -645,6 +650,11 @@ static int kn_resolve_runtime_include(char *out, size_t cap)
         kn_copy_str(out, cap, "runtime/include");
         return 1;
     }
+    if (kn_file_exists("libs/runtime/include/kn/platform.h"))
+    {
+        kn_copy_str(out, cap, "libs/runtime/include");
+        return 1;
+    }
     if (kn_file_exists("kinal-compiler/include/kn/platform.h"))
     {
         kn_copy_str(out, cap, "kinal-compiler/include");
@@ -657,6 +667,7 @@ static int kn_resolve_runtime_obj(const char *triple, char *out, size_t cap)
 {
     char p[1024];
     const int is_linux = kn_triple_is_linux(triple ? triple : "");
+    const int is_macos = kn_triple_is_macos(triple ? triple : "");
     const int is_windows = kn_triple_is_windows(triple ? triple : "");
 
     char exe_dir[1024];
@@ -666,6 +677,18 @@ static int kn_resolve_runtime_obj(const char *triple, char *out, size_t cap)
         {
             const int is_arm64 = kn_triple_is_arm64(triple ? triple : "");
             const char *rt_rel = is_arm64 ? "runtime\\linux-arm64\\kn_runtime.o" : "runtime\\linux-x64\\kn_runtime.o";
+            if (kn_path_join(p, sizeof(p), exe_dir, rt_rel) && kn_file_exists(p))
+            {
+                kn_copy_str(out, cap, p);
+                return 1;
+            }
+            return 0;
+        }
+
+        if (is_macos)
+        {
+            const int is_arm64 = kn_triple_is_arm64(triple ? triple : "");
+            const char *rt_rel = is_arm64 ? "runtime\\macos-arm64\\kn_runtime.o" : "runtime\\macos-x64\\kn_runtime.o";
             if (kn_path_join(p, sizeof(p), exe_dir, rt_rel) && kn_file_exists(p))
             {
                 kn_copy_str(out, cap, p);
@@ -712,12 +735,21 @@ static int kn_resolve_math_obj(const char *triple, char *out, size_t cap)
     if (!kn_get_exe_dir(exe_dir, sizeof(exe_dir)))
         return 0;
     const int is_linux = kn_triple_is_linux(triple ? triple : "");
+    const int is_macos = kn_triple_is_macos(triple ? triple : "");
     const int is_windows = kn_triple_is_windows(triple ? triple : "");
     const int is_x86 = kn_triple_is_x86(triple ? triple : "");
     if (is_linux)
     {
         const int is_arm64 = kn_triple_is_arm64(triple ? triple : "");
         const char *rel = is_arm64 ? "runtime\\linux-arm64\\kn_math.o" : "runtime\\linux-x64\\kn_math.o";
+        if (kn_path_join(p, sizeof(p), exe_dir, rel) && kn_file_exists(p))
+        { kn_copy_str(out, cap, p); return 1; }
+        return 0;
+    }
+    else if (is_macos)
+    {
+        const int is_arm64 = kn_triple_is_arm64(triple ? triple : "");
+        const char *rel = is_arm64 ? "runtime\\macos-arm64\\kn_math.o" : "runtime\\macos-x64\\kn_math.o";
         if (kn_path_join(p, sizeof(p), exe_dir, rel) && kn_file_exists(p))
         { kn_copy_str(out, cap, p); return 1; }
         return 0;
