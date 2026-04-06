@@ -23,7 +23,7 @@
   { "name": "logical_short_circuit", "file": "tests/logical_short_circuit.kn", "expected": "false\ntrue\nfalse\ntrue\n2\n" },
   { "name": "bitwise", "file": "tests/bitwise.kn", "expected": "1\n7\n6\n10\n2\n-6\n" },
   { "name": "any_cast", "file": "tests/any_cast.kn", "expected": "123\n456\ntrue\n42\ntrue\nA\n" },
-  { "name": "const_if", "file": "tests/const_if.kn", "expected": "win\n" },
+  { "name": "const_if", "file": "tests/const_if.kn", "expected": "win\n", "platforms": ["windows"] },
   { "name": "attributes", "file": "tests/attributes.kn", "expected": "ok\n" },
   { "name": "meta_runtime", "file": "tests/meta_runtime.kn", "expected": "3\ntrue\nfalse\nTests.MetaRuntime.Main\nTests.MetaRuntime\nTests.MetaRuntime.Route\nRoute\n/hello\nGET\n2\n" },
   { "name": "meta_runtime_owner_ptr", "file": "tests/meta_runtime_owner_ptr.kn", "expected": "true\n0\n/hello\nhello\n" },
