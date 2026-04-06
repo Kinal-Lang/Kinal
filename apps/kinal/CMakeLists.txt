@@ -79,6 +79,7 @@ target_compile_definitions(kinal PRIVATE
     KN_NO_MEM_OVERRIDE
     KN_NO_FLTUSED
     _CRT_SECURE_NO_WARNINGS
+    KN_LLVM_BIN="${LLVM_TOOLS_BINARY_DIR}"
 )
 target_compile_definitions(kinal-host PRIVATE
     KN_HOSTLIB
