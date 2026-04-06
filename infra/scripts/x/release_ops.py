@@ -61,7 +61,7 @@ def write_bundle_readme(dest: Path) -> None:
             "  - runtime (libs/runtime/)",
             "  - localization assets (infra/assets/locales/)",
             "  - platform-specific runtime libraries",
-            "",
+            "", 
             "Notes:",
             "  - This bundle targets the current host platform only.",
             "  - LLVM tools/runtime are included when required.",

@@ -38,7 +38,7 @@ static void print_help(void)
         "\n"
         "Target:\n"
         "  --target <triple|alias>  Target triple (default: host)\n"
-        "                     aliases: win86, win64, linux64, linux-arm64, bare64, bare-arm64\n"
+        "                     aliases: win86, win64, win-arm64, linux64, linux-arm64, bare64, bare-arm64\n"
         "  --freestanding    Shortcut for freestanding core mode on the host architecture\n"
         "  --env <hosted|freestanding>  Select execution environment\n"
         "  --runtime <none|alloc|gc>  Select freestanding runtime profile\n"

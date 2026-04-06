@@ -459,7 +459,9 @@ static void dump_link_search_dirs(const KnLinkItem *items, int count)
 
 static const char *default_target_triple(void)
 {
-#if defined(_WIN64)
+#if defined(_WIN64) && (defined(__aarch64__) || defined(__arm64__) || defined(_M_ARM64))
+    return "aarch64-pc-windows-msvc";
+#elif defined(_WIN64)
     return "x86_64-pc-windows-msvc";
 #elif defined(_WIN32)
     return "i686-pc-windows-msvc";
@@ -484,6 +486,9 @@ static const char *normalize_target_triple(const char *raw)
         return "i686-pc-windows-msvc";
     if (str_eq_ci(raw, "win64") || str_eq_ci(raw, "x64") || str_eq_ci(raw, "windows"))
         return "x86_64-pc-windows-msvc";
+    if (str_eq_ci(raw, "win-arm64") || str_eq_ci(raw, "windows-arm64") ||
+        str_eq_ci(raw, "arm64") || str_eq_ci(raw, "aarch64-windows"))
+        return "aarch64-pc-windows-msvc";
     if (str_eq_ci(raw, "linux64") || str_eq_ci(raw, "linux-x64"))
         return "x86_64-pc-linux-gnu";
     if (str_eq_ci(raw, "linux-arm64") || str_eq_ci(raw, "linuxarm64") || str_eq_ci(raw, "aarch64-linux"))
