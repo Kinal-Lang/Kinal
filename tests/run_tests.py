@@ -231,7 +231,15 @@ def run_driver_integration_tests(compiler: Path, out_dir: Path) -> int:
     print("[OK] pipeline_resume")
 
     lto_exe = exe_path(out_dir / "lto_hello")
-    run([str(compiler), "build", "--no-module-discovery", "--lto=thin", str(hello_fx), "-o", str(lto_exe)], cwd=ROOT)
+    try:
+        run([str(compiler), "build", "--no-module-discovery", "--lto=thin", str(hello_fx), "-o", str(lto_exe)], cwd=ROOT)
+    except subprocess.CalledProcessError:
+        lto_diag = subprocess.run(
+            [str(compiler), "build", "--no-module-discovery", "--lto=thin", str(hello_fx), "-o", str(lto_exe)],
+            cwd=str(ROOT), text=True, capture_output=True, encoding="utf-8", errors="replace",
+        )
+        print(f"[FAIL] lto_thin (build failed, rc={lto_diag.returncode}, stderr={lto_diag.stderr!r})")
+        return 1
     lto_out = run([str(lto_exe)], cwd=ROOT, capture=True)
     assert isinstance(lto_out, subprocess.CompletedProcess)
     if (lto_out.stdout or "").replace("\r\n", "\n") != "hello\n":
@@ -240,7 +248,15 @@ def run_driver_integration_tests(compiler: Path, out_dir: Path) -> int:
     print("[OK] lto_thin")
 
     lto_full_exe = exe_path(out_dir / "lto_hello_full")
-    run([str(compiler), "build", "--no-module-discovery", "--lto=full", str(hello_fx), "-o", str(lto_full_exe)], cwd=ROOT)
+    try:
+        run([str(compiler), "build", "--no-module-discovery", "--lto=full", str(hello_fx), "-o", str(lto_full_exe)], cwd=ROOT)
+    except subprocess.CalledProcessError:
+        lto_full_diag = subprocess.run(
+            [str(compiler), "build", "--no-module-discovery", "--lto=full", str(hello_fx), "-o", str(lto_full_exe)],
+            cwd=str(ROOT), text=True, capture_output=True, encoding="utf-8", errors="replace",
+        )
+        print(f"[FAIL] lto_full (build failed, rc={lto_full_diag.returncode}, stderr={lto_full_diag.stderr!r})")
+        return 1
     lto_full_out = run([str(lto_full_exe)], cwd=ROOT, capture=True)
     assert isinstance(lto_full_out, subprocess.CompletedProcess)
     if (lto_full_out.stdout or "").replace("\r\n", "\n") != "hello\n":
@@ -278,7 +294,7 @@ def run_driver_integration_tests(compiler: Path, out_dir: Path) -> int:
     native_source_out = run([str(compiler), "run", "--no-module-discovery", str(hello_fx)], cwd=ROOT, capture=True)
     assert isinstance(native_source_out, subprocess.CompletedProcess)
     if native_source_out.returncode != 0 or (native_source_out.stdout or "").replace("\r\n", "\n") != "hello\n":
-        print("[FAIL] native_source_run")
+        print(f"[FAIL] native_source_run (rc={native_source_out.returncode}, stdout={native_source_out.stdout!r}, stderr={native_source_out.stderr!r})")
         return 1
     print("[OK] native_source_run")
 
