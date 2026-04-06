@@ -473,7 +473,13 @@ def run_driver_integration_tests(compiler: Path, out_dir: Path) -> int:
         return 1
     if run_knc_case("knc_vm_global_null_sugar", "global_null_sugar.kn", "41\n0\nnull\nblk\nIO.Type.Object.Class\n") != 0:
         return 1
-    if run_knc_case("knc_vm_const_if", "../windows/const_if.kn", "win\n") != 0:
+    knc_const_if_source = f"../{host_platform()}/const_if.kn"
+    knc_const_if_expected = {
+        "windows": "win\n",
+        "linux": "linux\n",
+        "macos": "macos\n",
+    }[host_platform()]
+    if run_knc_case("knc_vm_const_if", knc_const_if_source, knc_const_if_expected) != 0:
         return 1
     if run_knc_case("knc_vm_console_varargs", "console_varargs.kn", "\nA 1 true\nB 2\n") != 0:
         return 1
