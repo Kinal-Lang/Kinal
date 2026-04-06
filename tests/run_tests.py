@@ -8,6 +8,7 @@ import platform
 import re
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -230,39 +231,44 @@ def run_driver_integration_tests(compiler: Path, out_dir: Path) -> int:
         return 1
     print("[OK] pipeline_resume")
 
-    lto_exe = exe_path(out_dir / "lto_hello")
-    try:
-        run([str(compiler), "build", "--no-module-discovery", "--lto=thin", str(hello_fx), "-o", str(lto_exe)], cwd=ROOT)
-    except subprocess.CalledProcessError:
-        lto_diag = subprocess.run(
-            [str(compiler), "build", "--no-module-discovery", "--lto=thin", str(hello_fx), "-o", str(lto_exe)],
-            cwd=str(ROOT), text=True, capture_output=True, encoding="utf-8", errors="replace",
-        )
-        print(f"[FAIL] lto_thin (build failed, rc={lto_diag.returncode}, stderr={lto_diag.stderr!r})")
-        return 1
-    lto_out = run([str(lto_exe)], cwd=ROOT, capture=True)
-    assert isinstance(lto_out, subprocess.CompletedProcess)
-    if (lto_out.stdout or "").replace("\r\n", "\n") != "hello\n":
-        print("[FAIL] lto_thin")
-        return 1
-    print("[OK] lto_thin")
+    # LTO tests — zig linker on macOS/Linux does not support LTO (requires LLD).
+    if sys.platform == "win32":
+        lto_exe = exe_path(out_dir / "lto_hello")
+        try:
+            run([str(compiler), "build", "--no-module-discovery", "--lto=thin", str(hello_fx), "-o", str(lto_exe)], cwd=ROOT)
+        except subprocess.CalledProcessError:
+            lto_diag = subprocess.run(
+                [str(compiler), "build", "--no-module-discovery", "--lto=thin", str(hello_fx), "-o", str(lto_exe)],
+                cwd=str(ROOT), text=True, capture_output=True, encoding="utf-8", errors="replace",
+            )
+            print(f"[FAIL] lto_thin (build failed, rc={lto_diag.returncode}, stderr={lto_diag.stderr!r})")
+            return 1
+        lto_out = run([str(lto_exe)], cwd=ROOT, capture=True)
+        assert isinstance(lto_out, subprocess.CompletedProcess)
+        if (lto_out.stdout or "").replace("\r\n", "\n") != "hello\n":
+            print("[FAIL] lto_thin")
+            return 1
+        print("[OK] lto_thin")
 
-    lto_full_exe = exe_path(out_dir / "lto_hello_full")
-    try:
-        run([str(compiler), "build", "--no-module-discovery", "--lto=full", str(hello_fx), "-o", str(lto_full_exe)], cwd=ROOT)
-    except subprocess.CalledProcessError:
-        lto_full_diag = subprocess.run(
-            [str(compiler), "build", "--no-module-discovery", "--lto=full", str(hello_fx), "-o", str(lto_full_exe)],
-            cwd=str(ROOT), text=True, capture_output=True, encoding="utf-8", errors="replace",
-        )
-        print(f"[FAIL] lto_full (build failed, rc={lto_full_diag.returncode}, stderr={lto_full_diag.stderr!r})")
-        return 1
-    lto_full_out = run([str(lto_full_exe)], cwd=ROOT, capture=True)
-    assert isinstance(lto_full_out, subprocess.CompletedProcess)
-    if (lto_full_out.stdout or "").replace("\r\n", "\n") != "hello\n":
-        print("[FAIL] lto_full")
-        return 1
-    print("[OK] lto_full")
+        lto_full_exe = exe_path(out_dir / "lto_hello_full")
+        try:
+            run([str(compiler), "build", "--no-module-discovery", "--lto=full", str(hello_fx), "-o", str(lto_full_exe)], cwd=ROOT)
+        except subprocess.CalledProcessError:
+            lto_full_diag = subprocess.run(
+                [str(compiler), "build", "--no-module-discovery", "--lto=full", str(hello_fx), "-o", str(lto_full_exe)],
+                cwd=str(ROOT), text=True, capture_output=True, encoding="utf-8", errors="replace",
+            )
+            print(f"[FAIL] lto_full (build failed, rc={lto_full_diag.returncode}, stderr={lto_full_diag.stderr!r})")
+            return 1
+        lto_full_out = run([str(lto_full_exe)], cwd=ROOT, capture=True)
+        assert isinstance(lto_full_out, subprocess.CompletedProcess)
+        if (lto_full_out.stdout or "").replace("\r\n", "\n") != "hello\n":
+            print("[FAIL] lto_full")
+            return 1
+        print("[OK] lto_full")
+    else:
+        print("[SKIP] lto_thin (zig linker does not support LTO on this platform)")
+        print("[SKIP] lto_full (zig linker does not support LTO on this platform)")
 
     bundled_vm = compiler.parent / exe_path(Path("kinalvm"))
     if not bundled_vm.exists():

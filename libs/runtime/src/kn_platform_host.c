@@ -419,7 +419,6 @@ KN_BOOL KN_STDCALL CreateProcessA(const char *lpApplicationName, char *lpCommand
     (void)bInheritHandles;
     (void)dwCreationFlags;
     (void)lpEnvironment;
-    (void)lpStartupInfo;
     if (!lpProcessInformation)
         return 0;
     pid = fork();
@@ -427,6 +426,16 @@ KN_BOOL KN_STDCALL CreateProcessA(const char *lpApplicationName, char *lpCommand
         return 0;
     if (pid == 0)
     {
+        /* Redirect stdin/stdout/stderr if requested. */
+        if (lpStartupInfo && (lpStartupInfo->dwFlags & KN_STARTF_USESTDHANDLES))
+        {
+            KnHostHandle *h_in  = kn_host_as_handle(lpStartupInfo->hStdInput);
+            KnHostHandle *h_out = kn_host_as_handle(lpStartupInfo->hStdOutput);
+            KnHostHandle *h_err = kn_host_as_handle(lpStartupInfo->hStdError);
+            if (h_in  && h_in->kind  == KN_HOST_HANDLE_FD && h_in->u.fd  != 0) dup2(h_in->u.fd,  0);
+            if (h_out && h_out->kind == KN_HOST_HANDLE_FD && h_out->u.fd != 1) dup2(h_out->u.fd, 1);
+            if (h_err && h_err->kind == KN_HOST_HANDLE_FD && h_err->u.fd != 2) dup2(h_err->u.fd, 2);
+        }
         if (lpCurrentDirectory && lpCurrentDirectory[0])
             chdir(lpCurrentDirectory);
         if (lpApplicationName && lpApplicationName[0] && (!lpCommandLine || !lpCommandLine[0]))

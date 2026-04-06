@@ -4,6 +4,12 @@ static int kn_run_process(const char *exe, const char *cmdline)
     KN_PROCESS_INFORMATION pi;
     kn_memset(&si, 0, sizeof(si));
     si.cb = sizeof(si);
+    /* Redirect tool stdout to stderr so external tool output (e.g. zig
+       printing its version) does not pollute program stdout. */
+    si.dwFlags = KN_STARTF_USESTDHANDLES;
+    si.hStdInput  = GetStdHandle(KN_STDIN_HANDLE);
+    si.hStdOutput = GetStdHandle(KN_STDERR_HANDLE);
+    si.hStdError  = GetStdHandle(KN_STDERR_HANDLE);
     kn_memset(&pi, 0, sizeof(pi));
 
     size_t len = kn_strlen(cmdline);
@@ -12,7 +18,7 @@ static int kn_run_process(const char *exe, const char *cmdline)
     kn_memcpy(mutable_cmd, cmdline, len);
     mutable_cmd[len] = 0;
 
-    if (!CreateProcessA(exe, mutable_cmd, 0, 0, 0, 0, 0, 0, &si, &pi))
+    if (!CreateProcessA(exe, mutable_cmd, 0, 0, 1 /*bInheritHandles*/, 0, 0, 0, &si, &pi))
     {
         kn_free(mutable_cmd);
         return -1;
