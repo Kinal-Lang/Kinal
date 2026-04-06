@@ -1693,7 +1693,45 @@ static int compile_ll_to_asm(const char *in_path, const char *out_path, const ch
     char clang[KN_MAX_PATH];
     resolve_tool(clang, sizeof(clang), "clang.exe");
 
-    if (clang[0])
+    if (clang[0] && file_exists(clang))
+    {
+        char cmd[8192];
+        size_t off = 0;
+        cmd[0] = 0;
+        append_quoted(cmd, sizeof(cmd), &off, clang);
+        kn_append(cmd, sizeof(cmd), &off, " --target=");
+        kn_append(cmd, sizeof(cmd), &off, triple);
+        kn_append(cmd, sizeof(cmd), &off, " -Wno-override-module -S -x ir ");
+        append_quoted(cmd, sizeof(cmd), &off, in_path);
+        kn_append(cmd, sizeof(cmd), &off, " -o ");
+        append_quoted(cmd, sizeof(cmd), &off, out_path);
+        if (run_process(clang, cmd) == 0)
+            return 0;
+    }
+
+    char zig[KN_MAX_PATH];
+    (void)resolve_zig_tool(zig, sizeof(zig));
+    if (zig[0])
+    {
+        char zt[256];
+        to_zig_target(triple, zt, sizeof(zt));
+
+        char cmd[8192];
+        size_t off = 0;
+        cmd[0] = 0;
+        append_quoted(cmd, sizeof(cmd), &off, zig);
+        kn_append(cmd, sizeof(cmd), &off, " cc -target ");
+        kn_append(cmd, sizeof(cmd), &off, zt);
+        kn_append(cmd, sizeof(cmd), &off, " -S ");
+        append_quoted(cmd, sizeof(cmd), &off, in_path);
+        kn_append(cmd, sizeof(cmd), &off, " -o ");
+        append_quoted(cmd, sizeof(cmd), &off, out_path);
+
+        if (run_process(zig, cmd) == 0)
+            return 0;
+    }
+
+    if (clang[0] && !file_exists(clang))
     {
         char cmd[8192];
         size_t off = 0;
