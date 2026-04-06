@@ -539,6 +539,19 @@ static void kn_resolve_tool(char *out, size_t cap, const char *name)
         return;
     }
 
+    // Runtime KN_LLVM_BIN environment variable.
+    {
+        char envp[1024];
+        KN_DWORD n = GetEnvironmentVariableA("KN_LLVM_BIN", envp, (KN_DWORD)sizeof(envp));
+        if (n > 0 && n < (KN_DWORD)sizeof(envp) && envp[0])
+        {
+            if (kn_resolve_tool_in_dir(out, cap, envp, name))
+            {
+                return;
+            }
+        }
+    }
+
     if (kn_try_resolve_tool_on_path(out, cap, name))
         return;
 

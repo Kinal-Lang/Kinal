@@ -1188,6 +1188,23 @@ static void resolve_tool(char *out, size_t cap, const char *name)
         }
     }
 
+    // Runtime KN_LLVM_BIN environment variable (e.g. set by x.py test).
+    {
+        char envp[KN_MAX_PATH];
+        KN_DWORD n = GetEnvironmentVariableA("KN_LLVM_BIN", envp, (KN_DWORD)sizeof(envp));
+        if (n > 0 && n < (KN_DWORD)sizeof(envp) && envp[0])
+        {
+#if defined(_WIN32) || defined(_WIN64)
+            for (size_t i = 0; envp[i]; i++)
+                if (envp[i] == '/') envp[i] = '\\';
+#endif
+            if (resolve_tool_in_dir(out, cap, envp, name))
+            {
+                return;
+            }
+        }
+    }
+
     if (try_resolve_tool_on_path(out, cap, name))
         return;
 
@@ -1497,95 +1514,6 @@ static void to_zig_target(const char *triple, char *out, size_t cap)
     copy_str(out, cap, triple);
 }
 
-// Internal LLVM-based .ll compilation: parse IR with LLVMParseIRInContext and
-// emit to object or assembly via LLVMTargetMachineEmitToFile.  This avoids any
-// dependency on external tools (llc / clang / zig) for the resume-pipeline.
-static int compile_ll_internal(const char *in_path, const char *out_path,
-                               const char *target_triple, LLVMCodeGenFileType file_type)
-{
-    const char *triple = (target_triple && target_triple[0]) ? target_triple : default_target_triple();
-
-    LLVMInitializeAllTargetInfos();
-    LLVMInitializeAllTargets();
-    LLVMInitializeAllTargetMCs();
-    LLVMInitializeAllAsmPrinters();
-
-    LLVMMemoryBufferRef buf = 0;
-    char *err = 0;
-    if (LLVMCreateMemoryBufferWithContentsOfFile(in_path, &buf, &err))
-    {
-        kn_write_str("failed to read ");
-        kn_write_str(in_path);
-        if (err) { kn_write_str(": "); kn_write_str(err); LLVMDisposeMessage(err); }
-        kn_write_str("\n");
-        return -1;
-    }
-
-    LLVMContextRef ctx = LLVMContextCreate();
-    LLVMModuleRef mod = 0;
-    if (LLVMParseIRInContext(ctx, buf, &mod, &err))
-    {
-        kn_write_str("failed to parse IR ");
-        kn_write_str(in_path);
-        if (err) { kn_write_str(": "); kn_write_str(err); LLVMDisposeMessage(err); }
-        kn_write_str("\n");
-        LLVMContextDispose(ctx);
-        return -1;
-    }
-
-    LLVMSetTarget(mod, triple);
-
-    LLVMTargetRef target = 0;
-    err = 0;
-    if (LLVMGetTargetFromTriple(triple, &target, &err))
-    {
-        kn_write_str("LLVMGetTargetFromTriple failed: ");
-        if (err) { kn_write_str(err); LLVMDisposeMessage(err); }
-        kn_write_str("\n");
-        LLVMDisposeModule(mod);
-        LLVMContextDispose(ctx);
-        return -1;
-    }
-
-    const char *cpu = "generic";
-    if (str_contains_ci(triple, "x86_64") || str_contains_ci(triple, "amd64"))
-        cpu = "x86-64";
-    else if (target_is_x86(triple))
-        cpu = "pentium4";
-    else if (str_contains_ci(triple, "aarch64") || str_contains_ci(triple, "arm64"))
-        cpu = "generic";
-
-    LLVMTargetMachineRef tm = LLVMCreateTargetMachine(target, triple, cpu, "",
-        LLVMCodeGenLevelDefault, LLVMRelocDefault, LLVMCodeModelDefault);
-    if (!tm)
-    {
-        kn_write_str("LLVMCreateTargetMachine failed\n");
-        LLVMDisposeModule(mod);
-        LLVMContextDispose(ctx);
-        return -1;
-    }
-
-    LLVMTargetDataRef dl = LLVMCreateTargetDataLayout(tm);
-    LLVMSetModuleDataLayout(mod, dl);
-
-    err = 0;
-    if (LLVMTargetMachineEmitToFile(tm, mod, (char *)out_path, file_type, &err))
-    {
-        kn_write_str(file_type == LLVMAssemblyFile ? "emit assembly failed: " : "emit object failed: ");
-        if (err) { kn_write_str(err); LLVMDisposeMessage(err); }
-        kn_write_str("\n");
-        LLVMDisposeTargetMachine(tm);
-        LLVMDisposeModule(mod);
-        LLVMContextDispose(ctx);
-        return -1;
-    }
-
-    LLVMDisposeTargetMachine(tm);
-    LLVMDisposeModule(mod);
-    LLVMContextDispose(ctx);
-    return 0;
-}
-
 static int compile_intermediate_to_obj(const char *in_path, const char *out_path, const char *target_triple, int lto_mode)
 {
     const char *triple = (target_triple && target_triple[0]) ? target_triple : default_target_triple();
@@ -1718,10 +1646,6 @@ static int compile_intermediate_to_obj(const char *in_path, const char *out_path
         return run_process(clang, cmd);
     }
 
-    // Ultimate fallback: use built-in LLVM API for .ll input.
-    if (kind == KN_INPUT_LL && lto_mode == KN_LTO_OFF)
-        return compile_ll_internal(in_path, out_path, triple, LLVMObjectFile);
-
     return -1;
 }
 
@@ -1802,8 +1726,7 @@ static int compile_ll_to_asm(const char *in_path, const char *out_path, const ch
             return 0;
     }
 
-    // Ultimate fallback: use built-in LLVM API.
-    return compile_ll_internal(in_path, out_path, triple, LLVMAssemblyFile);
+    return -1;
 }
 
 static int resolve_link_input_path(char *out, size_t cap, const char *macro_path,
