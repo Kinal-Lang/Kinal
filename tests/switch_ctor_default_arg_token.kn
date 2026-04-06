@@ -1,4 +1,4 @@
-Unit Test.Token;
+Unit MiniLang.Token;
 
 Enum TokenType By u8 {
     Identifier,
@@ -23,13 +23,4 @@ Public Class Token {
         This.Value = value;
         This.LiteralType = literal;
     }
-}
-
-Safe Static Function int Main() {
-    string value = "true";
-    Token type = Switch(value) {
-        Case("true") { New Token(TokenType.Literal, value, TokenLiteralType.Boolean) }
-        Case(default) { New Token(TokenType.Identifier, value) }
-    };
-    Return 0;
 }

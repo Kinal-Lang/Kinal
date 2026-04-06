@@ -5,6 +5,7 @@ import argparse
 import json
 import os
 import platform
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -43,7 +44,17 @@ def find_wsl_ubuntu() -> str | None:
         if not name:
             continue
         if name.lower() == "ubuntu":
-            return name
+            smoke = subprocess.run(
+                [wsl, "-d", name, "bash", "-lc", "true"],
+                cwd=str(ROOT),
+                text=True,
+                capture_output=True,
+                encoding="utf-8",
+                errors="replace",
+            )
+            if smoke.returncode == 0:
+                return name
+            return None
     return None
 
 
@@ -118,6 +129,50 @@ def matches_expected_error(output: str, expected: str) -> bool:
         suffix = expected[len("[Codegen] ") :]
         return "[Codegen]" in output and suffix in output
     return False
+
+
+ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def strip_ansi(text: str) -> str:
+    return ANSI_ESCAPE_RE.sub("", text)
+
+
+def normalize_unhandled_runtime_output(output: str) -> str:
+    text = strip_ansi(output).replace("\r\n", "\n")
+    if "Unhandled Error:" not in text or "Stack Trace" not in text:
+        return text
+
+    lines = [line.rstrip() for line in text.split("\n")]
+    message = ""
+    frames: list[str] = []
+
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith("Unhandled Error:"):
+            message = stripped[len("Unhandled Error:") :].strip()
+            continue
+        if not stripped.startswith("at "):
+            continue
+        frame = stripped[3:]
+        if "  " in frame:
+            frame = frame.split("  ", 1)[0].rstrip()
+        if frame.endswith("()"):
+            frame = frame[:-2]
+        if frame:
+            frames.append(frame)
+
+    if not message or not frames:
+        return text
+    return f"{message}\n{' -> '.join(frames)}\n"
+
+
+def matches_expected_runtime_output(output: str, expected: str) -> bool:
+    normalized_output = output.replace("\r\n", "\n")
+    normalized_expected = expected.replace("\r\n", "\n")
+    if normalized_output == normalized_expected:
+        return True
+    return normalize_unhandled_runtime_output(normalized_output) == normalized_expected
 
 
 def run_driver_integration_tests(compiler: Path, out_dir: Path) -> int:
@@ -1415,7 +1470,7 @@ def main() -> int:
             print(repr(output.returncode))
             return 1
 
-        if out_text != expected:
+        if not matches_expected_runtime_output(out_text, expected):
             print(f"[FAIL] {name}")
             print("Expected:")
             print(repr(expected))

@@ -3369,6 +3369,7 @@ void *__kn_gc_alloc(uint64_t size)
         rt_spin_unlock(&g_gc_lock);
         return 0;
     }
+    rt_memset(mem, 0, (size_t)size);
     KnGcBlock *b = (KnGcBlock *)rt_alloc(sizeof(KnGcBlock));
     if (!b)
     {

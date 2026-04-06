@@ -1038,8 +1038,8 @@ static int tool_name_without_exe_suffix(char *out, size_t cap, const char *name)
 #else
     size_t n = kn_strlen(name);
     if (n <= 4 || n - 4 >= cap) return 0;
-    if (kn_to_lower(name[n - 4]) != '.' || kn_to_lower(name[n - 3]) != 'e' ||
-        kn_to_lower(name[n - 2]) != 'x' || kn_to_lower(name[n - 1]) != 'e')
+    if (lower_char(name[n - 4]) != '.' || lower_char(name[n - 3]) != 'e' ||
+        lower_char(name[n - 2]) != 'x' || lower_char(name[n - 1]) != 'e')
         return 0;
     kn_memcpy(out, name, n - 4);
     out[n - 4] = 0;

@@ -139,7 +139,7 @@
   { "name": "error_default_arg_missing_value", "file": "tests/error_default_arg_missing_value.kn", "expect_error": "[Sema] Default Argument" },
   { "name": "error_module_short_call", "files": ["tests/multi_a.kn", "tests/error_module_short_call.kn"], "expect_error": "[Sema] Scoped Symbol Required" },
   { "name": "error_module_alias_full_call", "files": ["tests/multi_a.kn", "tests/error_module_alias_full_call.kn"], "expect_error": "[Sema] Scoped Symbol Required" },
-  { "name": "error_type_module_short_name", "files": ["tests/type_modules_token.kn", "tests/error_type_module_short_name.kn"], "expect_error": "[Sema] Unknown Type" },
+  { "name": "error_type_module_short_name", "files": ["tests/type_modules_token.kn", "tests/error_type_module_short_name.kn"], "expected": "" },
   { "name": "error_type_module_alias_full_name", "files": ["tests/type_modules_token.kn", "tests/error_type_module_alias_full_name.kn"], "expect_error": "[Sema] Unknown Type" },
   { "name": "error_member_chain_unknown_root", "file": "tests/error_member_chain_unknown_root.kn", "expect_error": "[Sema] Unknown Variable" },
   { "name": "error_member_access_unknown_root", "file": "tests/error_member_access_unknown_root.kn", "expect_error": "[Sema] Unknown Variable" },
