@@ -75,10 +75,10 @@ jobs:
                   "runs_on": "windows-latest",
                   "timeout": 60,
                   "family": "windows",
+                  "msvc_arch": "amd64",
                   "host_tag": "win-x64",
                   "zig_cache_path": "~/AppData/Local/Kinal/toolchains/zig",
                   "llvm_cache_path": "Kinal-ThirdParty/.cache/llvm/prebuilt",
-                  "upload_name": "test-results-win-x64",
                   "enabled": os.environ["RUN_WINDOWS_X64"] == "true",
               },
               {
@@ -87,10 +87,10 @@ jobs:
                   "runs_on": "windows-11-arm",
                   "timeout": 60,
                   "family": "windows",
+                  "msvc_arch": "amd64_arm64",
                   "host_tag": "win-arm64",
                   "zig_cache_path": "~/AppData/Local/Kinal/toolchains/zig",
                   "llvm_cache_path": "Kinal-ThirdParty/.cache/llvm/prebuilt",
-                  "upload_name": "test-results-win-arm64",
                   "enabled": os.environ["RUN_WINDOWS_ARM64"] == "true",
               },
               {
@@ -99,9 +99,9 @@ jobs:
                   "runs_on": "ubuntu-22.04",
                   "timeout": 45,
                   "family": "linux",
+                  "msvc_arch": "",
                   "host_tag": "linux-x64",
                   "zig_cache_path": "~/.cache/kinal/toolchains/zig",
-                  "upload_name": "test-results-linux-x64",
                   "enabled": os.environ["RUN_LINUX_X64"] == "true",
               },
               {
@@ -110,9 +110,9 @@ jobs:
                   "runs_on": "ubuntu-24.04-arm",
                   "timeout": 45,
                   "family": "linux",
+                  "msvc_arch": "",
                   "host_tag": "linux-arm64",
                   "zig_cache_path": "~/.cache/kinal/toolchains/zig",
-                  "upload_name": "test-results-linux-arm64",
                   "enabled": os.environ["RUN_LINUX_ARM64"] == "true",
               },
               {
@@ -121,9 +121,9 @@ jobs:
                   "runs_on": "macos-14",
                   "timeout": 45,
                   "family": "macos",
+                  "msvc_arch": "",
                   "host_tag": "macos-arm64",
                   "zig_cache_path": "~/.cache/kinal/toolchains/zig",
-                  "upload_name": "test-results-macos-arm64",
                   "enabled": os.environ["RUN_MACOS_ARM64"] == "true",
               },
               {
@@ -132,9 +132,9 @@ jobs:
                   "runs_on": "macos-15-intel",
                   "timeout": 45,
                   "family": "macos",
+                  "msvc_arch": "",
                   "host_tag": "macos-x64",
                   "zig_cache_path": "~/.cache/kinal/toolchains/zig",
-                  "upload_name": "test-results-macos-x64",
                   "enabled": os.environ["RUN_MACOS_X64"] == "true",
               },
           ]
@@ -223,6 +223,8 @@ jobs:
       - name: Setup MSVC environment
         if: matrix.family == 'windows'
         uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: ${{ matrix.msvc_arch }}
 
       - name: Build release distribution
         working-directory: Kinal
@@ -236,11 +238,3 @@ jobs:
         working-directory: Kinal
         run: python x.py test --release --full
 
-      - name: Upload test results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.upload_name }}
-          path: Kinal/out/test/
-          if-no-files-found: warn
-          retention-days: 7
