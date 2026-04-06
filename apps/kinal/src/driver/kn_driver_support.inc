@@ -160,7 +160,11 @@ static bool path_join(char *out, size_t cap, const char *a, const char *b)
     kn_memcpy(out, a, la);
     off = la;
     if (off > 0 && !is_path_sep(out[off - 1]))
+#if defined(_WIN32) || defined(_WIN64)
         out[off++] = '\\';
+#else
+        out[off++] = '/';
+#endif
     kn_memcpy(out + off, b, lb);
     off += lb;
     out[off] = 0;
