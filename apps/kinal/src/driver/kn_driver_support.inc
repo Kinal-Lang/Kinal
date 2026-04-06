@@ -353,6 +353,7 @@ static bool path_has_ext(const char *path)
 
 static bool target_is_windows(const char *triple);
 static bool target_is_linux(const char *triple);
+static bool target_is_macos(const char *triple);
 static bool target_is_freestanding(const char *triple);
 static bool target_is_x86(const char *triple);
 static bool target_is_arm64(const char *triple);
@@ -369,6 +370,11 @@ static const char *target_platform_dir_alias(const char *triple)
     {
         if (target_is_arm64(triple)) return "linux-arm64";
         return "linux-x64";
+    }
+    if (target_is_macos(triple))
+    {
+        if (target_is_arm64(triple)) return "macos-arm64";
+        return "macos-x64";
     }
     if (target_is_freestanding(triple))
     {
@@ -453,6 +459,10 @@ static const char *default_target_triple(void)
     return "x86_64-pc-windows-msvc";
 #elif defined(_WIN32)
     return "i686-pc-windows-msvc";
+#elif defined(__APPLE__) && (defined(__aarch64__) || defined(__arm64__))
+    return "aarch64-apple-darwin";
+#elif defined(__APPLE__)
+    return "x86_64-apple-darwin";
 #elif defined(__linux__) && defined(__aarch64__)
     return "aarch64-unknown-linux-gnu";
 #elif defined(__linux__)
@@ -474,6 +484,12 @@ static const char *normalize_target_triple(const char *raw)
         return "x86_64-pc-linux-gnu";
     if (str_eq_ci(raw, "linux-arm64") || str_eq_ci(raw, "linuxarm64") || str_eq_ci(raw, "aarch64-linux"))
         return "aarch64-unknown-linux-gnu";
+    if (str_eq_ci(raw, "macos") || str_eq_ci(raw, "macos-x64") || str_eq_ci(raw, "mac64") ||
+        str_eq_ci(raw, "darwin") || str_eq_ci(raw, "darwin-x64"))
+        return "x86_64-apple-darwin";
+    if (str_eq_ci(raw, "macos-arm64") || str_eq_ci(raw, "macarm64") ||
+        str_eq_ci(raw, "darwin-arm64") || str_eq_ci(raw, "aarch64-darwin"))
+        return "aarch64-apple-darwin";
     if (str_eq_ci(raw, "bare64") || str_eq_ci(raw, "freestanding64") || str_eq_ci(raw, "kernel64"))
         return "x86_64-unknown-none-elf";
     if (str_eq_ci(raw, "bare-arm64") || str_eq_ci(raw, "freestanding-arm64") || str_eq_ci(raw, "kernel-arm64"))
@@ -491,10 +507,20 @@ static bool target_is_linux(const char *triple)
     return str_contains_ci(triple, "linux");
 }
 
+static bool target_is_macos(const char *triple)
+{
+    return str_contains_ci(triple, "darwin") || str_contains_ci(triple, "apple") || str_contains_ci(triple, "macos");
+}
+
 static bool target_is_freestanding(const char *triple)
 {
     if (!triple || !triple[0]) return false;
     return str_contains_ci(triple, "unknown-none") || str_contains_ci(triple, "none-elf");
+}
+
+static int default_hosted_linker_kind(const char *triple)
+{
+    return (target_is_linux(triple) || target_is_macos(triple)) ? KN_LINKER_ZIG : KN_LINKER_LLD;
 }
 
 static bool target_is_x86(const char *triple)
@@ -1002,6 +1028,44 @@ static int tool_name_has_path(const char *name)
     return 0;
 }
 
+static int tool_name_without_exe_suffix(char *out, size_t cap, const char *name)
+{
+    if (!out || cap == 0 || !name || !name[0]) return 0;
+    out[0] = 0;
+#if defined(_WIN32) || defined(_WIN64)
+    (void)name;
+    return 0;
+#else
+    size_t n = kn_strlen(name);
+    if (n <= 4 || n - 4 >= cap) return 0;
+    if (kn_to_lower(name[n - 4]) != '.' || kn_to_lower(name[n - 3]) != 'e' ||
+        kn_to_lower(name[n - 2]) != 'x' || kn_to_lower(name[n - 1]) != 'e')
+        return 0;
+    kn_memcpy(out, name, n - 4);
+    out[n - 4] = 0;
+    return 1;
+#endif
+}
+
+static int resolve_tool_in_dir(char *out, size_t cap, const char *dir, const char *name)
+{
+    char candidate[KN_MAX_PATH];
+    char alt_name[KN_MAX_PATH];
+    if (!out || cap == 0 || !dir || !dir[0] || !name || !name[0]) return 0;
+    if (path_join(candidate, sizeof(candidate), dir, name) && file_exists(candidate))
+    {
+        copy_str(out, cap, candidate);
+        return 1;
+    }
+    if (tool_name_without_exe_suffix(alt_name, sizeof(alt_name), name) &&
+        path_join(candidate, sizeof(candidate), dir, alt_name) && file_exists(candidate))
+    {
+        copy_str(out, cap, candidate);
+        return 1;
+    }
+    return 0;
+}
+
 static char path_env_sep(void)
 {
 #if defined(_WIN32) || defined(_WIN64)
@@ -1086,14 +1150,12 @@ static void resolve_tool(char *out, size_t cap, const char *name)
     if (get_exe_dir(exe_dir, sizeof(exe_dir)))
     {
         char p[KN_MAX_PATH];
-        if (path_join(p, sizeof(p), exe_dir, "linker") && path_join(p, sizeof(p), p, name) && file_exists(p))
+        if (path_join(p, sizeof(p), exe_dir, "linker") && resolve_tool_in_dir(out, cap, p, name))
         {
-            copy_str(out, cap, p);
             return;
         }
-        if (path_join(p, sizeof(p), exe_dir, "llvm\\bin") && path_join(p, sizeof(p), p, name) && file_exists(p))
+        if (path_join(p, sizeof(p), exe_dir, "llvm") && path_join(p, sizeof(p), p, "bin") && resolve_tool_in_dir(out, cap, p, name))
         {
-            copy_str(out, cap, p);
             return;
         }
     }
@@ -1102,17 +1164,30 @@ static void resolve_tool(char *out, size_t cap, const char *name)
     {
         char p[KN_MAX_PATH];
         copy_str(p, sizeof(p), KN_LLVM_BIN);
+#if defined(_WIN32) || defined(_WIN64)
         for (size_t i = 0; p[i]; i++)
             if (p[i] == '/') p[i] = '\\';
-        if (path_join(p, sizeof(p), p, name) && file_exists(p))
+#endif
+        if (resolve_tool_in_dir(out, cap, p, name))
         {
-            copy_str(out, cap, p);
             return;
         }
     }
 
     if (try_resolve_tool_on_path(out, cap, name))
         return;
+
+    {
+        char alt_name[KN_MAX_PATH];
+        if (tool_name_without_exe_suffix(alt_name, sizeof(alt_name), name) &&
+            try_resolve_tool_on_path(out, cap, alt_name))
+            return;
+        if (alt_name[0])
+        {
+            copy_str(out, cap, alt_name);
+            return;
+        }
+    }
 
     copy_str(out, cap, name);
 }
@@ -1126,20 +1201,12 @@ static int resolve_zig_tool(char *out, size_t cap)
     char exe_dir[KN_MAX_PATH];
     if (get_exe_dir(exe_dir, sizeof(exe_dir)))
     {
-        if (path_join(p, sizeof(p), exe_dir, "linker\\zig\\zig.exe") && file_exists(p))
+        if (path_join(p, sizeof(p), exe_dir, "linker") && path_join(p, sizeof(p), p, "zig"))
         {
-            copy_str(out, cap, p);
-            return 1;
-        }
-        if (path_join(p, sizeof(p), exe_dir, "linker\\zig\\zig") && file_exists(p))
-        {
-            copy_str(out, cap, p);
-            return 1;
-        }
-        if (path_join(p, sizeof(p), exe_dir, "linker\\zig\\bin\\zig") && file_exists(p))
-        {
-            copy_str(out, cap, p);
-            return 1;
+            if (resolve_tool_in_dir(out, cap, p, "zig.exe"))
+                return 1;
+            if (path_join(p, sizeof(p), p, "bin") && resolve_tool_in_dir(out, cap, p, "zig.exe"))
+                return 1;
         }
     }
 
@@ -1395,6 +1462,14 @@ static void to_zig_target(const char *triple, char *out, size_t cap)
             copy_str(out, cap, "aarch64-linux-gnu");
         else
             copy_str(out, cap, "x86_64-linux-gnu");
+        return;
+    }
+    if (target_is_macos(triple))
+    {
+        if (target_is_arm64(triple))
+            copy_str(out, cap, "aarch64-macos");
+        else
+            copy_str(out, cap, "x86_64-macos");
         return;
     }
     if (target_is_freestanding(triple))

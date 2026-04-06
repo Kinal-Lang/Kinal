@@ -611,6 +611,83 @@ static int kn_link_linux_with_zig(const KnLinkOptions *opts)
     return kn_run_process(zig, cmd);
 }
 
+static int kn_link_macos_with_zig(const KnLinkOptions *opts)
+{
+    kn_dump_link_search_dirs(opts);
+    char zig[1024];
+    if (opts->linker_path && opts->linker_path[0])
+    {
+        kn_copy_str(zig, sizeof(zig), opts->linker_path);
+        if (!kn_file_exists(zig))
+        {
+            kn_write_str("link failed: configured linker not found\n");
+            return -1;
+        }
+    }
+    else
+    {
+        kn_resolve_zig(zig, sizeof(zig), 1);
+    }
+    if (!kn_check_tool_version(zig))
+    {
+        kn_write_str("link failed: zig toolchain is not available\n");
+        return -1;
+    }
+
+    char runtime_obj[1024];
+    int has_runtime = kn_prepare_runtime_obj(opts, runtime_obj, sizeof(runtime_obj));
+    if (opts->include_runtime && !has_runtime)
+    {
+        kn_write_str("link failed: cannot prepare runtime object\n");
+        return -1;
+    }
+    char math_obj[1024];
+    int has_math = kn_prepare_math_obj(opts, math_obj, sizeof(math_obj));
+
+    char zt[256];
+    kn_to_zig_target(opts->target_triple, zt, sizeof(zt));
+
+    char cmd[16384];
+    size_t off = 0;
+    cmd[0] = 0;
+    kn_append_quoted(cmd, sizeof(cmd), &off, zig);
+    kn_append(cmd, sizeof(cmd), &off, " cc -target ");
+    kn_append(cmd, sizeof(cmd), &off, zt);
+    if (opts->lto_mode == KN_LTO_FULL)
+        kn_append(cmd, sizeof(cmd), &off, " -flto ");
+    else if (opts->lto_mode == KN_LTO_THIN)
+        kn_append(cmd, sizeof(cmd), &off, " -flto=thin ");
+    if (opts->artifact_kind == KN_ARTIFACT_SHARED_LIB)
+        kn_append(cmd, sizeof(cmd), &off, " -dynamiclib");
+    kn_append(cmd, sizeof(cmd), &off, " -o ");
+    kn_append_quoted(cmd, sizeof(cmd), &off, opts->out_path);
+    kn_append(cmd, sizeof(cmd), &off, " ");
+    kn_append_quoted(cmd, sizeof(cmd), &off, opts->obj_path);
+
+    if (has_runtime)
+    {
+        kn_append(cmd, sizeof(cmd), &off, " ");
+        kn_append_quoted(cmd, sizeof(cmd), &off, runtime_obj);
+    }
+    if (has_math)
+    {
+        kn_append(cmd, sizeof(cmd), &off, " ");
+        kn_append_quoted(cmd, sizeof(cmd), &off, math_obj);
+    }
+
+    kn_append_link_items_gnu(cmd, sizeof(cmd), &off, opts->items, opts->item_count);
+
+    if (has_math && !opts->no_default_libs)
+        kn_append(cmd, sizeof(cmd), &off, " -lm");
+    if (opts->trace || opts->show_link)
+    {
+        kn_write_str("[Trace] link cmd: ");
+        kn_write_str(cmd);
+        kn_write_str("\n");
+    }
+    return kn_run_process(zig, cmd);
+}
+
 static int kn_link_static_windows(const KnLinkOptions *opts)
 {
     kn_dump_link_search_dirs(opts);
@@ -814,6 +891,7 @@ int kn_link(const KnLinkOptions *opts)
     const char *triple = (opts->target_triple && opts->target_triple[0]) ? opts->target_triple : "x86_64-pc-windows-msvc";
     int is_windows = kn_triple_is_windows(triple);
     int is_linux = kn_triple_is_linux(triple);
+    int is_macos = kn_triple_is_macos(triple);
     int is_freestanding = (opts->env_kind == KN_ENV_FREESTANDING) || kn_str_contains_ci(triple, "none-elf");
 
     if (opts->artifact_kind == KN_ARTIFACT_STATIC_LIB)
@@ -855,6 +933,21 @@ int kn_link(const KnLinkOptions *opts)
             return -1;
         }
         return kn_link_linux_with_zig(opts);
+    }
+
+    if (is_macos)
+    {
+        if (opts->linker_kind == KN_LINKER_MSVC)
+        {
+            kn_write_str("link failed: msvc linker is only available for Windows targets\n");
+            return -1;
+        }
+        if (opts->linker_kind == KN_LINKER_LLD)
+        {
+            kn_write_str("link failed: lld backend for macOS target is not available in this build\n");
+            return -1;
+        }
+        return kn_link_macos_with_zig(opts);
     }
 
     kn_write_str("link failed: unsupported target triple\n");

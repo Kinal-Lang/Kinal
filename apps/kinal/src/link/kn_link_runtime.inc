@@ -21,6 +21,14 @@ static void kn_to_zig_target(const char *triple, char *out, size_t cap)
             kn_copy_str(out, cap, "x86_64-linux-gnu");
         return;
     }
+    if (kn_triple_is_macos(triple))
+    {
+        if (kn_triple_is_arm64(triple))
+            kn_copy_str(out, cap, "aarch64-macos");
+        else
+            kn_copy_str(out, cap, "x86_64-macos");
+        return;
+    }
     kn_copy_str(out, cap, triple);
 }
 
@@ -182,7 +190,8 @@ static int kn_prepare_runtime_obj(const KnLinkOptions *opts, char *out, size_t c
 
     const char *triple = opts->target_triple && opts->target_triple[0] ? opts->target_triple : "x86_64-pc-windows-msvc";
 
-    const int need_pic = (opts->artifact_kind == KN_ARTIFACT_SHARED_LIB && kn_triple_is_linux(triple)) ? 1 : 0;
+    const int need_pic = (opts->artifact_kind == KN_ARTIFACT_SHARED_LIB &&
+                          (kn_triple_is_linux(triple) || kn_triple_is_macos(triple))) ? 1 : 0;
 
     if (!need_pic && (kn_triple_is_windows(triple) || kn_triple_is_linux(triple)))
     {
@@ -214,7 +223,8 @@ static int kn_prepare_math_obj(const KnLinkOptions *opts, char *out, size_t cap)
     out[0] = 0;
 
     const char *triple = opts->target_triple && opts->target_triple[0] ? opts->target_triple : "x86_64-pc-windows-msvc";
-    const int need_pic = (opts->artifact_kind == KN_ARTIFACT_SHARED_LIB && kn_triple_is_linux(triple)) ? 1 : 0;
+    const int need_pic = (opts->artifact_kind == KN_ARTIFACT_SHARED_LIB &&
+                          (kn_triple_is_linux(triple) || kn_triple_is_macos(triple))) ? 1 : 0;
 
     if (!need_pic && kn_resolve_math_obj(triple, out, cap))
         return 1;

@@ -6,7 +6,7 @@
 #include <unistd.h>
 #endif
 
-#define KN_ZIG_VERSION "0.14.1"
+#define KN_ZIG_VERSION "0.15.2"
 
 static const char *KN_KERNEL32_DEF =
     "LIBRARY KERNEL32.dll\n"
@@ -42,6 +42,7 @@ static const char *KN_KERNEL32_DEF =
     "  FindClose\n"
     "  DeleteFileA\n"
     "  GetEnvironmentVariableA\n"
+    "  GetModuleFileNameA\n"
     "  GetModuleHandleA\n"
     "  GetLastError\n"
     "  SetConsoleOutputCP\n"

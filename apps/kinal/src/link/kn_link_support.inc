@@ -216,6 +216,11 @@ static int kn_triple_is_linux(const char *triple)
     return kn_str_contains_ci(triple, "linux");
 }
 
+static int kn_triple_is_macos(const char *triple)
+{
+    return kn_str_contains_ci(triple, "darwin") || kn_str_contains_ci(triple, "apple") || kn_str_contains_ci(triple, "macos");
+}
+
 static int kn_triple_is_x64(const char *triple)
 {
     return kn_str_contains_ci(triple, "x86_64") || kn_str_contains_ci(triple, "amd64");
@@ -367,6 +372,44 @@ static int kn_tool_name_has_path(const char *name)
     return 0;
 }
 
+static int kn_tool_name_without_exe_suffix(char *out, size_t cap, const char *name)
+{
+    if (!out || cap == 0 || !name || !name[0]) return 0;
+    out[0] = 0;
+#if defined(_WIN32) || defined(_WIN64)
+    (void)name;
+    return 0;
+#else
+    size_t n = kn_strlen(name);
+    if (n <= 4 || n - 4 >= cap) return 0;
+    if (kn_to_lower(name[n - 4]) != '.' || kn_to_lower(name[n - 3]) != 'e' ||
+        kn_to_lower(name[n - 2]) != 'x' || kn_to_lower(name[n - 1]) != 'e')
+        return 0;
+    kn_memcpy(out, name, n - 4);
+    out[n - 4] = 0;
+    return 1;
+#endif
+}
+
+static int kn_resolve_tool_in_dir(char *out, size_t cap, const char *dir, const char *name)
+{
+    char candidate[1024];
+    char alt_name[1024];
+    if (!out || cap == 0 || !dir || !dir[0] || !name || !name[0]) return 0;
+    if (kn_path_join(candidate, sizeof(candidate), dir, name) && kn_file_exists(candidate))
+    {
+        kn_copy_str(out, cap, candidate);
+        return 1;
+    }
+    if (kn_tool_name_without_exe_suffix(alt_name, sizeof(alt_name), name) &&
+        kn_path_join(candidate, sizeof(candidate), dir, alt_name) && kn_file_exists(candidate))
+    {
+        kn_copy_str(out, cap, candidate);
+        return 1;
+    }
+    return 0;
+}
+
 static char kn_path_env_sep(void)
 {
 #if defined(_WIN32) || defined(_WIN64)
@@ -451,12 +494,8 @@ static int kn_try_env_tool(char *out, size_t cap, const char *name, const char *
     }
     if (kn_get_env(p, sizeof(p), "KINAL_LINKER_DIR"))
     {
-        char q[1024];
-        if (kn_path_join(q, sizeof(q), p, name) && kn_file_exists(q))
-        {
-            kn_copy_str(out, cap, q);
+        if (kn_resolve_tool_in_dir(out, cap, p, name))
             return 1;
-        }
     }
     return 0;
 }
@@ -474,24 +513,20 @@ static void kn_resolve_tool(char *out, size_t cap, const char *name)
     if (kn_get_exe_dir(exe_dir, sizeof(exe_dir)))
     {
         if (kn_path_join(p, sizeof(p), exe_dir, "linker") &&
-            kn_path_join(p, sizeof(p), p, name) &&
-            kn_file_exists(p))
+            kn_resolve_tool_in_dir(out, cap, p, name))
         {
-            kn_copy_str(out, cap, p);
             return;
         }
         if (env_exe && kn_try_env_tool(out, cap, name, env_exe))
             return;
-        if (kn_path_join(p, sizeof(p), exe_dir, "llvm\\bin") &&
-            kn_path_join(p, sizeof(p), p, name) &&
-            kn_file_exists(p))
+        if (kn_path_join(p, sizeof(p), exe_dir, "llvm") &&
+            kn_path_join(p, sizeof(p), p, "bin") &&
+            kn_resolve_tool_in_dir(out, cap, p, name))
         {
-            kn_copy_str(out, cap, p);
             return;
         }
-        if (kn_path_join(p, sizeof(p), exe_dir, name) && kn_file_exists(p))
+        if (kn_resolve_tool_in_dir(out, cap, exe_dir, name))
         {
-            kn_copy_str(out, cap, p);
             return;
         }
     }
@@ -499,14 +534,25 @@ static void kn_resolve_tool(char *out, size_t cap, const char *name)
     if (env_exe && kn_try_env_tool(out, cap, name, env_exe))
         return;
 
-    if (KN_LLVM_BIN[0] && kn_path_join(p, sizeof(p), KN_LLVM_BIN, name) && kn_file_exists(p))
+    if (KN_LLVM_BIN[0] && kn_resolve_tool_in_dir(out, cap, KN_LLVM_BIN, name))
     {
-        kn_copy_str(out, cap, p);
         return;
     }
 
     if (kn_try_resolve_tool_on_path(out, cap, name))
         return;
+
+    {
+        char alt_name[1024];
+        if (kn_tool_name_without_exe_suffix(alt_name, sizeof(alt_name), name) &&
+            kn_try_resolve_tool_on_path(out, cap, alt_name))
+            return;
+        if (alt_name[0])
+        {
+            kn_copy_str(out, cap, alt_name);
+            return;
+        }
+    }
 
     kn_copy_str(out, cap, name);
 }

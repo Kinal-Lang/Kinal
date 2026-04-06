@@ -49,6 +49,8 @@ static bool link_target_spec_matches(const char *spec, const char *triple)
         return target_is_windows(triple);
     if (str_eq_ci(spec, "linux"))
         return target_is_linux(triple);
+    if (str_eq_ci(spec, "macos") || str_eq_ci(spec, "darwin"))
+        return target_is_macos(triple);
     if (str_eq_ci(spec, "freestanding") || str_eq_ci(spec, "bare"))
         return target_is_freestanding(triple);
 
@@ -63,6 +65,10 @@ static bool link_target_spec_matches(const char *spec, const char *triple)
         return target_is_linux(triple) && !target_is_arm64(triple);
     if (str_eq_ci(spec, "linux-arm64"))
         return target_is_linux(triple) && target_is_arm64(triple);
+    if (str_eq_ci(spec, "mac64") || str_eq_ci(spec, "macos-x64") || str_eq_ci(spec, "darwin-x64"))
+        return target_is_macos(triple) && !target_is_arm64(triple);
+    if (str_eq_ci(spec, "macos-arm64") || str_eq_ci(spec, "darwin-arm64"))
+        return target_is_macos(triple) && target_is_arm64(triple);
 
     if (str_eq_ci(spec, "bare64"))
         return target_is_freestanding(triple) && !target_is_arm64(triple) && !target_is_x86(triple);
@@ -182,7 +188,7 @@ static int sema_info_os_from_triple(const char *triple)
         return KN_INFO_OS_WINDOWS;
     if (target_is_linux(triple))
         return KN_INFO_OS_LINUX;
-    if (triple && (str_contains_ci(triple, "darwin") || str_contains_ci(triple, "apple")))
+    if (target_is_macos(triple))
         return KN_INFO_OS_MACOS;
     return KN_INFO_OS_UNKNOWN;
 }
@@ -244,7 +250,9 @@ static const char *sema_info_object_suffix_from_triple(const char *triple)
 
 static const char *sema_info_dynamic_library_suffix_from_triple(const char *triple)
 {
-    return target_is_windows(triple) ? ".dll" : ".so";
+    if (target_is_windows(triple)) return ".dll";
+    if (target_is_macos(triple)) return ".dylib";
+    return ".so";
 }
 
 static const char *sema_info_static_library_suffix_from_triple(const char *triple)
@@ -1129,7 +1137,7 @@ int __kn_host_compile_ex(const char *input_paths, const char *output_path, int a
     cfg.link_items = links;
     cfg.link_item_count = link_count;
     cfg.target_triple = default_target_triple();
-    cfg.linker_kind = KN_LINKER_LLD;
+    cfg.linker_kind = default_hosted_linker_kind(cfg.target_triple);
     cfg.linker_path = 0;
     cfg.artifact_kind = KN_ARTIFACT_EXE;
     cfg.emit_mode = KN_EMIT_LINK;

@@ -782,7 +782,7 @@ static int kn_build_main(int argc, char **argv)
         if (!entry_symbol || !entry_symbol[0]) entry_symbol = "KMain";
         if (!linker_explicit) linker_kind = KN_LINKER_LLD;
     }
-    if (env_kind == KN_ENV_HOSTED && !linker_explicit && target_is_linux(target_triple)) linker_kind = KN_LINKER_ZIG;
+    if (env_kind == KN_ENV_HOSTED && !linker_explicit) linker_kind = default_hosted_linker_kind(target_triple);
     if (env_kind == KN_ENV_HOSTED && (!entry_symbol || !entry_symbol[0])) entry_symbol = "Main";
     if (env_kind == KN_ENV_FREESTANDING && artifact_kind == KN_ARTIFACT_SHARED_LIB) { kn_write_str("freestanding does not support shared libraries\n"); return 1; }
 
@@ -946,7 +946,7 @@ static int kn_run_main(int argc, char **argv)
     cfg.emit_mode = KN_EMIT_LINK;
     cfg.artifact_kind = KN_ARTIFACT_EXE;
     cfg.target_triple = default_target_triple();
-    cfg.linker_kind = KN_LINKER_LLD;
+    cfg.linker_kind = default_hosted_linker_kind(cfg.target_triple);
     cfg.env_kind = KN_ENV_HOSTED;
     cfg.runtime_mode = KN_RUNTIME_GC;
     cfg.panic_mode = KN_PANIC_TRAP;
@@ -1045,7 +1045,7 @@ static int kn_vm_build_main(int argc, char **argv)
     cfg.emit_mode = KN_EMIT_KNC;
     cfg.artifact_kind = KN_ARTIFACT_EXE;
     cfg.target_triple = default_target_triple();
-    cfg.linker_kind = KN_LINKER_LLD;
+    cfg.linker_kind = default_hosted_linker_kind(cfg.target_triple);
     cfg.env_kind = KN_ENV_HOSTED;
     cfg.runtime_mode = KN_RUNTIME_GC;
     cfg.entry_symbol = "Main";
@@ -1142,7 +1142,7 @@ static int kn_vm_run_main(int argc, char **argv)
         cfg.emit_mode = KN_EMIT_KNC;
         cfg.artifact_kind = KN_ARTIFACT_EXE;
         cfg.target_triple = default_target_triple();
-        cfg.linker_kind = KN_LINKER_LLD;
+        cfg.linker_kind = default_hosted_linker_kind(cfg.target_triple);
         cfg.env_kind = KN_ENV_HOSTED;
         cfg.runtime_mode = KN_RUNTIME_GC;
         cfg.panic_mode = KN_PANIC_TRAP;
@@ -1259,7 +1259,7 @@ static int kn_vm_pack_main(int argc, char **argv)
         knc_cfg.emit_mode = KN_EMIT_KNC;
         knc_cfg.artifact_kind = KN_ARTIFACT_EXE;
         knc_cfg.target_triple = target_triple;
-        knc_cfg.linker_kind = KN_LINKER_LLD;
+        knc_cfg.linker_kind = default_hosted_linker_kind(knc_cfg.target_triple);
         knc_cfg.env_kind = KN_ENV_HOSTED;
         knc_cfg.runtime_mode = KN_RUNTIME_GC;
         knc_cfg.entry_symbol = "Main";
@@ -1308,7 +1308,7 @@ static int kn_vm_pack_main(int argc, char **argv)
     exe_cfg.emit_mode = KN_EMIT_LINK;
     exe_cfg.artifact_kind = KN_ARTIFACT_EXE;
     exe_cfg.target_triple = target_triple;
-    exe_cfg.linker_kind = KN_LINKER_LLD;
+    exe_cfg.linker_kind = default_hosted_linker_kind(exe_cfg.target_triple);
     exe_cfg.env_kind = KN_ENV_HOSTED;
     exe_cfg.runtime_mode = KN_RUNTIME_GC;
     exe_cfg.entry_symbol = "Main";
