@@ -221,6 +221,7 @@ EXPORTS
   DeleteFileA
   GetEnvironmentVariableA
   GetCurrentDirectoryA
+    GetModuleFileNameA
   GetModuleHandleA
   GetLastError
   GetConsoleMode
@@ -330,6 +331,19 @@ EXPORTS
         host_dir.mkdir(parents=True, exist_ok=True)
         run([cc, "-c", str(RUNTIME_SRC), "-o", str(host_dir / "kn_runtime.o"), "-std=c11", "-O2", "-D_POSIX_C_SOURCE=200809L", "-I", str(RUNTIME_INCLUDE)])
         run([cc, "-c", str(MATH_SRC), "-o", str(host_dir / "kn_math.o"), "-std=c11", "-O2", "-lm"])
+        return
+
+    if host.startswith("macos-"):
+        cc = llvm_bin / "clang"
+        if not cc.exists():
+            cc_path = shutil.which("clang") or shutil.which("cc")
+            if not cc_path:
+                raise SystemExit("clang/cc not found for macOS runtime build")
+            cc = Path(cc_path)
+        host_dir = stage_runtime / host
+        host_dir.mkdir(parents=True, exist_ok=True)
+        run([cc, "-c", str(RUNTIME_SRC), "-o", str(host_dir / "kn_runtime.o"), "-std=c11", "-O2", "-I", str(RUNTIME_INCLUDE)])
+        run([cc, "-c", str(MATH_SRC), "-o", str(host_dir / "kn_math.o"), "-std=c11", "-O2"])
         return
 
     raise SystemExit(f"host runtime packaging is not implemented for {host}")
@@ -509,6 +523,13 @@ def copy_host_linker_tools(stage_linker: Path, llvm_bin: Path) -> None:
             src = llvm_bin / name
             if src.exists():
                 shutil.copy2(src, stage_linker / name)
+        return
+
+    if host.startswith("macos-"):
+        for name in ("ld.lld", "lld"):
+            src = llvm_bin / name
+            if src.exists():
+                shutil.copy2(src, stage_linker / name)
 
 
 def copy_llvm_runtime_files(dest: Path, llvm_bin: Path, llvm_dir: Path) -> None:
@@ -523,12 +544,18 @@ def copy_llvm_runtime_files(dest: Path, llvm_bin: Path, llvm_dir: Path) -> None:
     runtime_dest = dest / "llvm" / "lib"
     runtime_dest.mkdir(parents=True, exist_ok=True)
     copied = False
-    for src in sorted(lib_dir.glob("libLLVM.so*")):
-        if src.is_file():
-            shutil.copy2(src, runtime_dest / src.name)
-            copied = True
+    host = host_tag()
+    patterns = ["libLLVM.so*"]
+    if host.startswith("macos-"):
+        patterns = ["libLLVM*.dylib", "libLTO*.dylib", "libRemarks*.dylib"]
+    for pattern in patterns:
+        for src in sorted(lib_dir.glob(pattern)):
+            if src.is_file():
+                shutil.copy2(src, runtime_dest / src.name)
+                copied = True
     if not copied:
-        raise SystemExit(f"failed to locate libLLVM.so* in {lib_dir}")
+        expected = "libLLVM*.dylib" if host.startswith("macos-") else "libLLVM.so*"
+        raise SystemExit(f"failed to locate {expected} in {lib_dir}")
 
 
 def copy_llvm_dev_files(dest: Path, llvm_dir: Path) -> None:

@@ -435,7 +435,13 @@ def cmd_test(args: argparse.Namespace) -> int:
         ]
         if driver_checks:
             cmd.append("--driver-checks")
-        run(cmd)
+        env = os.environ.copy()
+        if not env.get("KN_LLVM_BIN"):
+            try:
+                env["KN_LLVM_BIN"] = str(llvm_bin_dir(detect_llvm_dir()))
+            except SystemExit:
+                pass
+        run(cmd, env=env)
 
     if args.full:
         run_manifest(ROOT / "tests" / "manifest.json", TEST_ROOT, driver_checks=True)

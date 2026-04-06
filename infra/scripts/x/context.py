@@ -106,13 +106,19 @@ def release_fallback_zip() -> Path:
 
 def release_bundle_ready() -> bool:
     bundle = release_dir()
+    llvm_runtime = bundle / "llvm" / "lib"
+    if is_windows():
+        llvm_ready = (llvm_runtime / "LLVM-C.lib").exists()
+    elif host_tag().startswith("macos-"):
+        llvm_ready = any(llvm_runtime.glob("libLLVM*.dylib"))
+    else:
+        llvm_ready = (llvm_runtime / "libLLVM-C.so").exists() or any(llvm_runtime.glob("libLLVM.so*"))
     required = [
         bundle / exe_name("kinal"),
         bundle / exe_name("kinalvm"),
         bundle / "kinal-host.lib",
-        bundle / "llvm" / "lib" / ("LLVM-C.lib" if is_windows() else "libLLVM-C.so"),
     ]
-    return all(path.exists() for path in required)
+    return all(path.exists() for path in required) and llvm_ready
 
 
 def read_version(key: str = "kinal") -> str:

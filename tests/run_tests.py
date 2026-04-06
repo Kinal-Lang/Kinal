@@ -73,6 +73,14 @@ def artifact_path(base: Path, output_ext: str = "") -> Path:
     return exe_path(base)
 
 
+def dylib_suffix() -> str:
+    if is_windows():
+        return ".dll"
+    if platform.system().lower() == "darwin":
+        return ".dylib"
+    return ".so"
+
+
 def case_file_paths(case: dict[str, object]) -> list[Path]:
     files = case.get("files")
     if files:
@@ -810,7 +818,7 @@ def run_driver_integration_tests(compiler: Path, out_dir: Path) -> int:
             return 1
         print("[OK] hosted_probe_static")
 
-    shared_artifact = out_dir / ("driver_dynlib.dll" if is_windows() else "libdriver_dynlib.so")
+    shared_artifact = out_dir / (("driver_dynlib" if is_windows() else "libdriver_dynlib") + dylib_suffix())
     shared_proc = run(
         [
             str(compiler),
@@ -1151,8 +1159,39 @@ def run_package_integration_tests(compiler: Path, out_dir: Path) -> int:
 
 def llvm_bin_dir() -> Path:
     env = os.environ.get("KN_LLVM_BIN")
+    candidates: list[Path] = []
+    seen: set[str] = set()
+
+    def add(path: Path) -> None:
+        key = str(path)
+        if key not in seen:
+            seen.add(key)
+            candidates.append(path)
+
     if env:
-        return Path(env).resolve()
+        add(Path(env).expanduser())
+
+    for root in (
+        ROOT.parent / "Kinal-ThirdParty" / ".cache" / "llvm" / "prebuilt",
+        ROOT.parent / "Kinal-ThirdParty" / "llvm" / "prebuilt",
+        ROOT / "third_party" / "llvm" / "prebuilt",
+    ):
+        if not root.exists():
+            continue
+        for child in sorted(root.iterdir(), key=lambda p: p.name.lower(), reverse=True):
+            add(child / "bin")
+
+    clang_on_path = shutil.which("clang.exe") or shutil.which("clang")
+    if clang_on_path:
+        add(Path(clang_on_path).resolve().parent)
+
+    for candidate in candidates:
+        clang = candidate / "clang.exe"
+        llvm_lib = candidate / "llvm-lib.exe"
+        lld_link = candidate / "lld-link.exe"
+        if clang.exists() and llvm_lib.exists() and lld_link.exists():
+            return candidate.resolve()
+
     return (ROOT / "third_party" / "llvm" / "prebuilt" / "clang+llvm-21.1.8-x86_64-pc-windows-msvc" / "bin").resolve()
 
 

@@ -89,15 +89,6 @@ jobs:
         working-directory: Kinal
         run: python x.py test --release --full
 
-      - name: Upload release bundle
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: Kinal-win-x64
-          path: Kinal/artifacts/release/Kinal-win-x64.zip
-          if-no-files-found: warn
-          retention-days: 7
-
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v4
@@ -167,15 +158,6 @@ jobs:
         working-directory: Kinal
         run: python x.py test --release --full
 
-      - name: Upload release bundle
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: Kinal-linux-x64
-          path: Kinal/artifacts/release/Kinal-linux-x64.zip
-          if-no-files-found: warn
-          retention-days: 7
-
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v4
@@ -243,15 +225,6 @@ jobs:
       - name: Run full regression tests
         working-directory: Kinal
         run: python x.py test --release --full
-
-      - name: Upload release bundle
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: Kinal-macos-arm64
-          path: Kinal/artifacts/release/Kinal-macos-arm64.zip
-          if-no-files-found: warn
-          retention-days: 7
 
       - name: Upload test results
         if: always()
