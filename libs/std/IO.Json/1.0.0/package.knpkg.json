@@ -1,0 +1,12 @@
+{
+  "kind": "package",
+  "name": "IO.Json",
+  "version": "1.0.0",
+  "summary": "Official JSON package backed by cJSON.",
+  "source_root": "src",
+  "klib": "lib/IO.Json.klib",
+  "entry": "src/IO/Json.kn",
+  "dependencies": [
+    "IO.Core"
+  ]
+}

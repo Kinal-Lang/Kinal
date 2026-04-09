@@ -347,6 +347,7 @@ typedef struct
     LLVMContextRef ctx;
     LLVMModuleRef mod;
     LLVMBuilderRef builder;
+    LLVMTargetDataRef target_data;
     LLVMTypeRef i1;
     LLVMTypeRef i8;
     LLVMTypeRef i16;

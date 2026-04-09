@@ -94,7 +94,7 @@ git push origin v0.6.0
 Before tagging and releasing, confirm each of the following in order:
 
 - [ ] All tests pass: `python x.py test`
-- [ ] `VERSION` and `apps/kinalvm/VERSION` have been updated
+- [ ] `VERSION` has been updated with the correct `kinal` / `kinalvm` entries
 - [ ] Rebuild succeeds: `python x.py dev`
 - [ ] `kinal --version --verbose` outputs the correct version numbers
 - [ ] Commit the version change and push

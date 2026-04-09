@@ -19,6 +19,13 @@
 #if defined(_WIN32)
 #include <fcntl.h>
 #include <io.h>
+extern "C" __declspec(dllimport) unsigned long __stdcall GetModuleFileNameW(void *hModule, wchar_t *lpFilename, unsigned long nSize);
+#elif defined(__linux__)
+#include <unistd.h>
+#include <climits>
+#elif defined(__APPLE__)
+#include <mach-o/dyld.h>
+#include <climits>
 #endif
 
 extern "C" {
@@ -547,6 +554,14 @@ struct Analysis {
     std::vector<std::string> import_open_modules;
     std::vector<uint32_t> sem_data;
     std::vector<Completion> completions; // precomputed global-ish list, completion requests still filter by context
+};
+
+struct SemTokSpan {
+    int line = 0;
+    int col = 0;
+    int len = 1;
+    int type = 0;
+    int mods = 0;
 };
 
 struct DeclInfo {
@@ -1397,6 +1412,110 @@ std::string sanitize_cache_segment(std::string s) {
     return s;
 }
 
+// ---- klib virtual URI support ----
+// Cache root for klib extraction (system cache directory).
+std::filesystem::path g_klib_cache_base;
+// Set of normalized klib cache source root paths (used to identify klib files).
+std::unordered_set<std::string> g_klib_cache_source_roots;
+
+std::filesystem::path lsp_system_cache_dir() {
+#if defined(_WIN32)
+    const char *local = std::getenv("LOCALAPPDATA");
+    if (local && local[0]) return std::filesystem::path(local) / "kinal" / "lsp-klib";
+    const char *appdata = std::getenv("APPDATA");
+    if (appdata && appdata[0]) return std::filesystem::path(appdata) / "kinal" / "lsp-klib";
+#elif defined(__APPLE__)
+    const char *home = std::getenv("HOME");
+    if (home && home[0]) return std::filesystem::path(home) / "Library" / "Caches" / "kinal" / "lsp-klib";
+#else
+    const char *xdg = std::getenv("XDG_CACHE_HOME");
+    if (xdg && xdg[0]) return std::filesystem::path(xdg) / "kinal" / "lsp-klib";
+    const char *home = std::getenv("HOME");
+    if (home && home[0]) return std::filesystem::path(home) / ".cache" / "kinal" / "lsp-klib";
+#endif
+    return {};
+}
+
+// Convert a file:// URI under the klib cache to a virtual kinal-stdlib:/klib/... URI.
+// Returns empty string if the URI is not under the klib cache.
+std::string file_uri_to_klib_virtual_uri(const std::string &file_uri) {
+    if (file_uri.rfind("file://", 0) != 0) return {};
+    if (g_klib_cache_base.empty()) return {};
+
+    std::string fpath = uri_to_path(file_uri);
+    if (fpath.empty()) return {};
+
+    // Normalize both paths for comparison (case-insensitive on Windows).
+    std::filesystem::path fp = std::filesystem::path(fpath).lexically_normal();
+    std::filesystem::path bp = g_klib_cache_base.lexically_normal();
+
+    // Check if fpath is under g_klib_cache_base.
+    auto fp_it = fp.begin();
+    auto bp_it = bp.begin();
+    for (; bp_it != bp.end() && fp_it != fp.end(); ++bp_it, ++fp_it) {
+#if defined(_WIN32)
+        std::string a = bp_it->string(), b = fp_it->string();
+        std::transform(a.begin(), a.end(), a.begin(), [](unsigned char c) { return (char)std::tolower(c); });
+        std::transform(b.begin(), b.end(), b.begin(), [](unsigned char c) { return (char)std::tolower(c); });
+        if (a != b) return {};
+#else
+        if (*bp_it != *fp_it) return {};
+#endif
+    }
+    if (bp_it != bp.end()) return {};
+
+    // Remaining segments: <category>/<pkg>/<ver>/<source_root>/<relative...>
+    // e.g.: stdpkg / IO.Web / 1.0.0 / src / IO / Web / Server.kn
+    std::vector<std::string> segs;
+    for (; fp_it != fp.end(); ++fp_it) segs.push_back(fp_it->string());
+    // Need at least: category, pkg, ver, source_root, and one relative segment.
+    if (segs.size() < 5) return {};
+
+    const std::string &cat = segs[0];       // stdpkg
+    const std::string &pkg = segs[1];       // IO.Web
+    const std::string &ver = segs[2];       // 1.0.0
+    // segs[3] is source_root (e.g., "src") — skip it.
+    // segs[4..] is the relative path.
+    std::string rel;
+    for (size_t i = 4; i < segs.size(); ++i) {
+        if (!rel.empty()) rel.push_back('/');
+        rel += segs[i];
+    }
+    if (rel.empty()) return {};
+
+    return std::string("kinal-stdlib:/klib/") + cat + "/" + pkg + "/" + ver + "/" + rel;
+}
+
+// Convert a kinal-stdlib:/klib/... URI back to a cache file path.
+std::string klib_virtual_uri_to_file_path(const std::string &virt_uri) {
+    constexpr std::string_view klib_prefix = "kinal-stdlib:/klib/";
+    if (virt_uri.rfind(klib_prefix, 0) != 0) return {};
+    if (g_klib_cache_base.empty()) return {};
+    std::string_view rest = std::string_view(virt_uri).substr(klib_prefix.size());
+    // rest = <category>/<pkg>/<ver>/<relative>
+    // Split: category
+    auto slash1 = rest.find('/');
+    if (slash1 == std::string_view::npos) return {};
+    std::string cat(rest.substr(0, slash1));
+    rest.remove_prefix(slash1 + 1);
+    // pkg
+    auto slash2 = rest.find('/');
+    if (slash2 == std::string_view::npos) return {};
+    std::string pkg(rest.substr(0, slash2));
+    rest.remove_prefix(slash2 + 1);
+    // ver
+    auto slash3 = rest.find('/');
+    if (slash3 == std::string_view::npos) return {};
+    std::string ver(rest.substr(0, slash3));
+    rest.remove_prefix(slash3 + 1);
+    // relative
+    std::string rel(rest);
+
+    // Reconstruct: <cache_base>/<category>/<pkg>/<ver>/src/<rel>
+    std::filesystem::path result = g_klib_cache_base / cat / pkg / ver / "src" / rel;
+    return result.string();
+}
+
 static size_t utf8_seq_len(unsigned char c) {
     if ((c & 0x80u) == 0u) return 1;
     if ((c & 0xE0u) == 0xC0u) return 2;
@@ -1576,7 +1695,7 @@ void collect_package_source_roots(const std::filesystem::path &package_root,
     if (!std::filesystem::exists(package_root, ec) || ec) return;
     if (!std::filesystem::is_directory(package_root, ec) || ec) return;
 
-    auto add = [&](std::filesystem::path p) {
+    auto add = [&](std::filesystem::path p, bool is_klib_cache = false) {
         if (p.empty()) return;
         p = p.lexically_normal();
         std::error_code add_ec;
@@ -1586,6 +1705,7 @@ void collect_package_source_roots(const std::filesystem::path &package_root,
         if (key.empty()) return;
         if (!seen.insert(key).second) return;
         out.push_back(std::move(p));
+        if (is_klib_cache) g_klib_cache_source_roots.insert(key);
     };
 
     for (std::filesystem::recursive_directory_iterator it(package_root, ec), end; !ec && it != end; it.increment(ec)) {
@@ -1623,11 +1743,11 @@ void collect_package_source_roots(const std::filesystem::path &package_root,
                     std::filesystem::remove_all(cache_dir, ec);
                     ec.clear();
                     if (klib_extract_to_dir_lsp(klib_path, cache_dir)) {
-                        add(cache_dir / source_root);
+                        add(cache_dir / source_root, true);
                         continue;
                     }
                 } else {
-                    add(cache_dir / source_root);
+                    add(cache_dir / source_root, true);
                     continue;
                 }
             }
@@ -1635,6 +1755,36 @@ void collect_package_source_roots(const std::filesystem::path &package_root,
 
         add(package_dir / source_root);
     }
+}
+
+std::optional<std::string> resolve_package_entry_uri_from_source_root(std::string_view unit,
+                                                                      const std::filesystem::path &root) {
+    if (unit.empty() || root.empty()) return std::nullopt;
+
+    const std::filesystem::path package_dir = root.parent_path();
+    static constexpr const char *kManifestNames[] = {"package.knpkg.json", "package.knpkg"};
+
+    for (const char *manifest_name : kManifestNames) {
+        std::filesystem::path manifest_path = package_dir / manifest_name;
+        auto manifest = read_json_file(manifest_path);
+        if (!manifest || manifest->kind != Json::Kind::Object) continue;
+
+        std::string package_name = manifest->find("name") ? manifest->find("name")->str() : "";
+        if (package_name != unit) continue;
+
+        const Json *entry = manifest->find("entry");
+        if (!entry || entry->kind != Json::Kind::String || entry->s.empty()) continue;
+
+        std::filesystem::path entry_path = (package_dir / entry->s).lexically_normal();
+        if (!path_is_within(package_dir, entry_path)) continue;
+
+        std::error_code ec;
+        if (!std::filesystem::exists(entry_path, ec) || ec) continue;
+        if (!std::filesystem::is_regular_file(entry_path, ec) || ec) continue;
+        return path_to_uri(entry_path.string());
+    }
+
+    return std::nullopt;
 }
 
 std::vector<std::filesystem::path> stdlib_source_roots() {
@@ -1655,10 +1805,17 @@ std::vector<std::filesystem::path> stdlib_source_roots() {
 
     std::error_code ec;
     std::filesystem::path cwd = std::filesystem::current_path(ec);
-    std::filesystem::path cache_root;
+    std::filesystem::path cache_root = lsp_system_cache_dir();
     bool have_cwd = !ec;
+
+    if (cache_root.empty()) {
+        // Fallback to project-local cache if system cache is unavailable.
+        if (have_cwd) cache_root = cwd / ".kinal-cache" / "lsp-klib";
+        else if (!g_exe_dir.empty()) cache_root = std::filesystem::path(g_exe_dir) / ".kinal-cache" / "lsp-klib";
+    }
+    g_klib_cache_base = cache_root;
+
     if (have_cwd) {
-        cache_root = cwd / ".kinal-cache" / "lsp-klib";
         collect_package_source_roots(cwd / "stdpkg", cache_root / "stdpkg", out, seen);
         collect_package_source_roots(cwd / "kpkg", cache_root / "kpkg", out, seen);
         add(cwd / "stdlib" / "src");
@@ -1666,13 +1823,12 @@ std::vector<std::filesystem::path> stdlib_source_roots() {
 
     if (!g_exe_dir.empty()) {
         std::filesystem::path exe_dir(g_exe_dir);
-        std::filesystem::path base_cache = have_cwd ? cache_root : (exe_dir / ".kinal-cache" / "lsp-klib");
-        collect_package_source_roots(exe_dir / "stdpkg", base_cache / "stdpkg", out, seen);
-        collect_package_source_roots(exe_dir / "kpkg", base_cache / "kpkg", out, seen);
+        collect_package_source_roots(exe_dir / "stdpkg", cache_root / "stdpkg", out, seen);
+        collect_package_source_roots(exe_dir / "kpkg", cache_root / "kpkg", out, seen);
         add(exe_dir / "stdlib" / "src");
         if (exe_dir.has_parent_path()) {
-            collect_package_source_roots(exe_dir.parent_path() / "stdpkg", base_cache / "stdpkg-parent", out, seen);
-            collect_package_source_roots(exe_dir.parent_path() / "kpkg", base_cache / "kpkg-parent", out, seen);
+            collect_package_source_roots(exe_dir.parent_path() / "stdpkg", cache_root / "stdpkg-parent", out, seen);
+            collect_package_source_roots(exe_dir.parent_path() / "kpkg", cache_root / "kpkg-parent", out, seen);
             add(exe_dir.parent_path() / "stdlib" / "src");
         }
     }
@@ -1744,6 +1900,10 @@ std::optional<std::string> resolve_unit_uri_from_roots(std::string_view unit, co
                 continue;
             }
             return path_to_uri(candidate.string());
+        }
+
+        if (auto entry_uri = resolve_package_entry_uri_from_source_root(unit, root)) {
+            return entry_uri;
         }
     }
     return std::nullopt;
@@ -2762,6 +2922,12 @@ Analysis build_symbols(const std::string &path, const std::string &uri, const st
 }
 
 static bool string_token_has_format_prefix(const std::vector<Tok> &toks, int string_idx);
+static void emit_format_string_interpolation_tokens(const Analysis &an,
+                                                    std::string_view current_unit,
+                                                    const std::string &text,
+                                                    const std::vector<size_t> &line_starts,
+                                                    const Tok &string_tok,
+                                                    std::vector<SemTokSpan> &out);
 
 void build_semantic_and_completion(Analysis &an, const std::string &text) {
     std::unordered_map<int, std::pair<int, int>> tok_style;
@@ -3022,21 +3188,14 @@ void build_semantic_and_completion(Analysis &an, const std::string &text) {
         }
     }
 
-    struct ST {
-        int line;
-        int col;
-        int len;
-        int type;
-        int mods;
-    };
-    std::vector<ST> st;
+    std::vector<SemTokSpan> st;
     constexpr int SEM_COMMENT = 16; // matches init_json() tokenTypes (comment is appended at the end)
     st.reserve(an.toks.size() + an.comment_ranges.size());
 
     for (const Range &r : an.comment_ranges) {
         if (r.sl != r.el) continue;
         auto span = utf16_span_from_utf8_line_span(text, line_starts, r.sl, r.sc, std::max(1, r.ec - r.sc));
-        st.push_back(ST{r.sl, span.first, span.second, SEM_COMMENT, 0});
+        st.push_back(SemTokSpan{r.sl, span.first, span.second, SEM_COMMENT, 0});
     }
 
     auto in_unnecessary = [&](const Tok &t) -> bool {
@@ -3087,41 +3246,7 @@ void build_semantic_and_completion(Analysis &an, const std::string &text) {
             // Split format strings into sub-tokens so interpolation content is not string-colored.
             if ((t.type == TOK_STRING || t.type == TOK_BAD_STRING) &&
                 t.text.size() >= 2 && string_token_has_format_prefix(an.toks, (int)ti)) {
-                int line0 = std::max(0, t.line - 1);
-                int base_col = std::max(0, t.col - 1);
-                int depth = 0;
-                size_t seg_start = 0;
-                auto emit_sub = [&](size_t from, size_t to, int sem_type) {
-                    if (to <= from) return;
-                    auto sp = utf16_span_from_utf8_line_span(text, line_starts, line0,
-                                                             base_col + (int)from, (int)(to - from));
-                    st.push_back(ST{line0, sp.first, sp.second, sem_type, 0});
-                };
-                for (size_t ci = 1; ci + 1 < t.text.size(); ++ci) {
-                    char cc = t.text[ci];
-                    if (depth == 0) {
-                        if (cc == '\\') { ++ci; continue; }
-                        if (cc == '{' && ci + 1 < t.text.size() && t.text[ci + 1] == '{') { ++ci; continue; }
-                        if (cc == '}' && ci + 1 < t.text.size() && t.text[ci + 1] == '}') { ++ci; continue; }
-                        if (cc == '{') {
-                            emit_sub(seg_start, ci, 13);
-                            emit_sub(ci, ci + 1, 15);
-                            depth = 1;
-                            seg_start = ci + 1;
-                        }
-                    } else {
-                        if (cc == '{') { ++depth; continue; }
-                        if (cc == '}') {
-                            --depth;
-                            if (depth == 0) {
-                                emit_sub(seg_start, ci, 9);
-                                emit_sub(ci, ci + 1, 15);
-                                seg_start = ci + 1;
-                            }
-                        }
-                    }
-                }
-                emit_sub(seg_start, t.text.size(), 13);
+                emit_format_string_interpolation_tokens(an, current_unit, text, line_starts, t, st);
                 continue;
             }
             type = 13;
@@ -3148,10 +3273,10 @@ void build_semantic_and_completion(Analysis &an, const std::string &text) {
         if (in_unnecessary(t)) mods |= 1 << 4; // deprecated
         int line0 = std::max(0, t.line - 1);
         auto span = utf16_span_from_utf8_line_span(text, line_starts, line0, std::max(0, t.col - 1), std::max(1, t.len));
-        st.push_back(ST{line0, span.first, span.second, type, mods});
+        st.push_back(SemTokSpan{line0, span.first, span.second, type, mods});
     }
 
-    std::sort(st.begin(), st.end(), [](const ST &a, const ST &b) {
+    std::sort(st.begin(), st.end(), [](const SemTokSpan &a, const SemTokSpan &b) {
         if (a.line != b.line) return a.line < b.line;
         if (a.col != b.col) return a.col < b.col;
         if (a.len != b.len) return a.len < b.len;
@@ -3163,7 +3288,7 @@ void build_semantic_and_completion(Analysis &an, const std::string &text) {
     int pl = 0;
     int pc = 0;
     bool first = true;
-    for (const ST &x : st) {
+    for (const SemTokSpan &x : st) {
         int dl = first ? x.line : (x.line - pl);
         int dc = (first || dl != 0) ? x.col : (x.col - pc);
         an.sem_data.push_back((uint32_t)std::max(0, dl));
@@ -3434,8 +3559,11 @@ std::optional<std::string> load_doc_text_for_uri(const std::string &uri) {
         dit = g_docs.find(norm);
         if (dit != g_docs.end()) return dit->second.text;
     }
-    if (uri.rfind("file://", 0) != 0) return std::nullopt;
-    return read_file_text(uri_to_path(uri));
+    if (uri.rfind("file://", 0) == 0) return read_file_text(uri_to_path(uri));
+    // Handle kinal-stdlib:/klib/... virtual URIs by resolving to cache file.
+    std::string cache_path = klib_virtual_uri_to_file_path(uri);
+    if (!cache_path.empty()) return read_file_text(std::filesystem::path(cache_path));
+    return std::nullopt;
 }
 
 bool keep_decl_symbol(const Symbol &s) {
@@ -3717,22 +3845,34 @@ std::vector<ProjectSource> collect_project_sources(const std::string &uri, const
         auto uit = unit_to_uris.find(std::string(unit));
         if (uit != unit_to_uris.end()) return uit->second;
 
-        auto fallback = resolve_unit_uri_from_roots(unit, fallback_roots);
-        if (!fallback) return {};
+        std::vector<std::string> out_uris;
 
-        const std::string dep_uri = canonical_file_uri(*fallback);
-        auto dep_text = load_doc_text_for_uri(dep_uri);
-        if (dep_text) {
-            UnitDocIndex idx = index_units_from_tokens(lex_all(*dep_text));
-            g_unit_docs[dep_uri] = idx;
-            g_decl_doc_cache.erase(dep_uri);
-            for (const UnitIndexItem &item : idx.items) {
-                if (!item.decl || item.unit.empty()) continue;
-                add_unit_uri(item.unit, dep_uri);
+        if (auto fallback = resolve_unit_uri_from_roots(unit, fallback_roots)) {
+            const std::string dep_uri = canonical_file_uri(*fallback);
+            auto dep_text = load_doc_text_for_uri(dep_uri);
+            if (dep_text) {
+                UnitDocIndex idx = index_units_from_tokens(lex_all(*dep_text));
+                g_unit_docs[dep_uri] = idx;
+                g_decl_doc_cache.erase(dep_uri);
+                for (const UnitIndexItem &item : idx.items) {
+                    if (!item.decl || item.unit.empty()) continue;
+                    add_unit_uri(item.unit, dep_uri);
+                }
+                added_workspace_units = true;
             }
-            added_workspace_units = true;
+            out_uris.push_back(dep_uri);
         }
-        return {dep_uri};
+
+        if (out_uris.empty()) {
+            for (const std::string &dep_uri : discover_declaring_unit_uris_from_roots(unit, fallback_roots)) {
+                add_unit_uri(unit, dep_uri);
+                if (std::find(out_uris.begin(), out_uris.end(), dep_uri) == out_uris.end())
+                    out_uris.push_back(dep_uri);
+            }
+            if (!out_uris.empty()) added_workspace_units = true;
+        }
+
+        return out_uris;
     };
     auto resolve_same_unit_uris = [&](std::string_view unit) -> std::vector<std::string> {
         std::vector<std::string> out_uris;
@@ -3849,8 +3989,8 @@ Analysis analyze_doc(const std::string &uri, const std::string &path, const std:
     Analysis an = build_symbols(path, uri, text);
     an.comment_ranges = scan_comment_ranges(text);
 
-    // stdlib virtual documents are documentation stubs, not real compilable source.
-    // Avoid running the full parser/sema pipeline on them to prevent noisy diagnostics.
+    // Virtual stdlib/klib documents are read-only library source.
+    // Only provide semantic tokens and completions; skip full sema to avoid noisy diagnostics.
     if (uri.rfind("kinal-stdlib:", 0) == 0) {
         build_semantic_and_completion(an, text);
         return an;
@@ -4680,7 +4820,10 @@ std::string locs_json(const std::vector<Loc> &locs) {
     oss << "[";
     for (size_t i = 0; i < locs.size(); ++i) {
         if (i) oss << ",";
-        oss << "{\"uri\":\"" << esc(locs[i].uri) << "\",\"range\":" << range_json(locs[i].range) << "}";
+        std::string uri = locs[i].uri;
+        std::string virt = file_uri_to_klib_virtual_uri(uri);
+        if (!virt.empty()) uri = virt;
+        oss << "{\"uri\":\"" << esc(uri) << "\",\"range\":" << range_json(locs[i].range) << "}";
     }
     oss << "]";
     return oss.str();
@@ -5224,6 +5367,130 @@ static bool string_token_has_format_prefix(const std::vector<Tok> &toks, int str
         i -= 3;
     }
     return found;
+}
+
+static bool is_semantic_operator_token(TokenType t) {
+    return is_op(t) || t == TOK_DOT || t == TOK_LPAREN || t == TOK_RPAREN ||
+           t == TOK_LBRACKET || t == TOK_RBRACKET || t == TOK_LBRACE ||
+           t == TOK_RBRACE || t == TOK_COMMA || t == TOK_SEMI;
+}
+
+static void emit_format_string_interpolation_tokens(const Analysis &an,
+                                                    std::string_view current_unit,
+                                                    const std::string &text,
+                                                    const std::vector<size_t> &line_starts,
+                                                    const Tok &string_tok,
+                                                    std::vector<SemTokSpan> &out) {
+    const int line0 = std::max(0, string_tok.line - 1);
+    const int base_col = std::max(0, string_tok.col - 1);
+    int depth = 0;
+    size_t seg_start = 0;
+    size_t expr_start = std::string::npos;
+
+    auto emit_span = [&](size_t from, size_t to, int sem_type, int mods = 0) {
+        if (to <= from) return;
+        auto sp = utf16_span_from_utf8_line_span(text, line_starts, line0,
+                                                 base_col + (int)from, (int)(to - from));
+        out.push_back(SemTokSpan{line0, sp.first, sp.second, sem_type, mods});
+    };
+
+    auto emit_expr = [&](size_t from, size_t to) {
+        if (to <= from) return;
+        std::string expr = string_tok.text.substr(from, to - from);
+        std::vector<Tok> expr_toks = lex_all(expr);
+        for (size_t i = 0; i < expr_toks.size(); ++i) {
+            const Tok &tok = expr_toks[i];
+            TokenType prev = (i > 0) ? expr_toks[i - 1].type : TOK_EOF;
+            TokenType next = (i + 1 < expr_toks.size()) ? expr_toks[i + 1].type : TOK_EOF;
+
+            int sem_type = -1;
+            int mods = 0;
+
+            if (tok.type == TOK_ID) {
+                if (prev != TOK_DOT &&
+                    (tok.text == "Meta" || tok.text == "On" || tok.text == "Keep" || tok.text == "Repeatable" ||
+                     is_builtin_meta_attr(tok.text) || is_string_prefix_name(tok.text))) {
+                    sem_type = 12;
+                } else if (prev == TOK_AT) {
+                    sem_type = 12;
+                } else if (prev != TOK_DOT) {
+                    auto alias_it = an.import_alias_to_module.find(tok.text);
+                    if (alias_it != an.import_alias_to_module.end()) {
+                        sem_type = 0;
+                        if (kn_std_module_has(alias_it->second.c_str())) mods |= 1 << 2;
+                    } else if (auto top = project_visible_top_level_decl_in_analysis(an, current_unit, tok.text)) {
+                        sem_type = sem_type_for_kind(top->kind);
+                        if (top->is_static) mods |= 1 << 1;
+                    }
+                }
+
+                if (sem_type < 0) {
+                    if (prev == TOK_DOT && next == TOK_LPAREN) sem_type = 8;
+                    else if (prev == TOK_DOT) sem_type = 11;
+                    else if (next == TOK_LPAREN) sem_type = 7;
+                    else sem_type = 9;
+                }
+            } else if (is_kw(tok.type)) {
+                sem_type = 12;
+            } else if (is_type_kw(tok.type)) {
+                sem_type = 1;
+            } else if (tok.type == TOK_STRING || tok.type == TOK_BAD_STRING || tok.type == TOK_CHAR_LIT || tok.type == TOK_BAD_CHAR) {
+                sem_type = 13;
+            } else if (tok.type == TOK_NUMBER) {
+                sem_type = 14;
+            } else if (is_semantic_operator_token(tok.type)) {
+                sem_type = 15;
+            }
+
+            if (sem_type < 0) continue;
+            auto sp = utf16_span_from_utf8_line_span(text, line_starts, line0,
+                                                     base_col + (int)from + std::max(0, tok.col - 1),
+                                                     std::max(1, tok.len));
+            out.push_back(SemTokSpan{line0, sp.first, sp.second, sem_type, mods});
+        }
+    };
+
+    for (size_t ci = 1; ci + 1 < string_tok.text.size(); ++ci) {
+        char cc = string_tok.text[ci];
+        if (depth == 0) {
+            if (cc == '\\') {
+                ++ci;
+                continue;
+            }
+            if (cc == '{' && ci + 1 < string_tok.text.size() && string_tok.text[ci + 1] == '{') {
+                ++ci;
+                continue;
+            }
+            if (cc == '}' && ci + 1 < string_tok.text.size() && string_tok.text[ci + 1] == '}') {
+                ++ci;
+                continue;
+            }
+            if (cc == '{') {
+                emit_span(seg_start, ci, 13);
+                emit_span(ci, ci + 1, 15);
+                depth = 1;
+                expr_start = ci + 1;
+                seg_start = ci + 1;
+            }
+            continue;
+        }
+
+        if (cc == '{') {
+            ++depth;
+            continue;
+        }
+        if (cc == '}') {
+            --depth;
+            if (depth == 0) {
+                emit_expr(expr_start, ci);
+                emit_span(ci, ci + 1, 15);
+                seg_start = ci + 1;
+                expr_start = std::string::npos;
+            }
+        }
+    }
+
+    emit_span(seg_start, string_tok.text.size(), 13);
 }
 
 static std::optional<std::pair<std::string, std::string>> interpolation_prefix_at(const Doc &d, int line, int ch) {
@@ -6209,6 +6476,32 @@ int main() {
             for (int i = 0; i < args.argc; ++i) kn_free(args.argv[i]);
             kn_free(args.argv);
         }
+        // Fallback: use platform API to resolve the real executable path when argv[0] has no directory.
+        if (g_exe_dir.empty()) {
+#if defined(_WIN32)
+            wchar_t buf[1024] = {};
+            unsigned long len = GetModuleFileNameW(nullptr, buf, 1023);
+            if (len > 0 && len < 1023) {
+                std::filesystem::path ep(buf);
+                if (ep.has_parent_path()) g_exe_dir = ep.parent_path().string();
+            }
+#elif defined(__linux__)
+            char buf[PATH_MAX + 1] = {};
+            ssize_t len = readlink("/proc/self/exe", buf, PATH_MAX);
+            if (len > 0) {
+                buf[len] = '\0';
+                std::filesystem::path ep(buf);
+                if (ep.has_parent_path()) g_exe_dir = ep.parent_path().string();
+            }
+#elif defined(__APPLE__)
+            char buf[PATH_MAX + 1] = {};
+            uint32_t sz = sizeof(buf);
+            if (_NSGetExecutablePath(buf, &sz) == 0) {
+                std::filesystem::path ep = std::filesystem::path(buf).lexically_normal();
+                if (ep.has_parent_path()) g_exe_dir = ep.parent_path().string();
+            }
+#endif
+        }
     }
     while (true) {
         std::string raw;
@@ -6243,8 +6536,19 @@ int main() {
                 const Json *mv = params->find("module");
                 if (mv && mv->kind == Json::Kind::String) {
                     std::string text;
-                    if (auto pkg = packaged_unit_text(mv->s)) text = *pkg;
-                    else text = stdlib_stub_text(mv->s);
+                    std::string mod = mv->s;
+                    // Handle klib/... paths from virtual document URIs.
+                    constexpr std::string_view klib_pfx = "klib/";
+                    if (text_starts_with(mod, klib_pfx)) {
+                        std::string virt_uri = std::string("kinal-stdlib:/") + mod;
+                        std::string cache_path = klib_virtual_uri_to_file_path(virt_uri);
+                        if (!cache_path.empty()) {
+                            if (auto ft = read_file_text(std::filesystem::path(cache_path))) text = *ft;
+                        }
+                    } else {
+                        if (auto pkg = packaged_unit_text(mod)) text = *pkg;
+                        else text = stdlib_stub_text(mod);
+                    }
                     rs = "\"" + esc(text) + "\"";
                 }
             }

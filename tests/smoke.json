@@ -31,6 +31,12 @@
     "auto_link": true
   },
   {
+    "name": "stdlib_json",
+    "file": "tests/common/stdlib_json.kn",
+    "expected": "kinal\n1\ntrue\n2\nvm\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\n3\n1\ntrue\ntrue\ntrue\n",
+    "auto_link": true
+  },
+  {
     "name": "stdlib_ui",
     "file": "tests/windows/stdlib_ui.kn",
     "compile_only": true,

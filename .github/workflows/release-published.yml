@@ -1,0 +1,247 @@
+name: Published Release Sync
+
+on:
+  release:
+    types:
+      - published
+  workflow_dispatch:
+
+concurrency:
+  group: release-published-${{ github.event.release.tag_name || github.ref || github.run_id }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  PYTHON_VERSION: "3.12"
+
+jobs:
+  release-feed:
+    name: Generate website release feed
+    runs-on: ubuntu-22.04
+    outputs:
+      release_tag: ${{ steps.release.outputs.release_tag }}
+      asset_name: ${{ steps.asset.outputs.asset_name }}
+      asset_url: ${{ steps.asset.outputs.asset_url }}
+      asset_tag: ${{ steps.asset.outputs.asset_tag }}
+    steps:
+      - name: Checkout Kinal
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Resolve target release tag
+        id: release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_EVENT_TAG: ${{ github.event.release.tag_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python <<'PY'
+          import json
+          import os
+          from urllib import request
+
+          event_name = os.environ["GITHUB_EVENT_NAME"]
+          repo = os.environ["GITHUB_REPOSITORY"]
+          event_tag = os.environ.get("RELEASE_EVENT_TAG", "").strip()
+          token = os.environ.get("GITHUB_TOKEN", "").strip()
+
+          if event_name == "release" and event_tag:
+              tag = event_tag
+          else:
+              headers = {
+                  "Accept": "application/vnd.github+json",
+                  "User-Agent": "kinal-release-sync/1.0",
+              }
+              if token:
+                  headers["Authorization"] = f"Bearer {token}"
+              req = request.Request(f"https://api.github.com/repos/{repo}/releases/latest", headers=headers)
+              with request.urlopen(req) as response:
+                  payload = json.loads(response.read().decode("utf-8"))
+              tag = str(payload.get("tag_name") or "").strip()
+              if not tag:
+                  raise SystemExit("unable to resolve latest published release tag")
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              print(f"release_tag={tag}", file=output)
+          print(f"Resolved release tag: {tag}")
+          PY
+
+      - name: Generate releases.json
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python -m infra.scripts.release_feed generate \
+            --repo "${{ github.repository }}" \
+            --limit 16 \
+            --token-env GITHUB_TOKEN \
+            --output out/release-feed/releases.json
+
+      - name: Resolve Linux x64 compiler asset
+        id: asset
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python -m infra.scripts.release_feed select-asset \
+            --repo "${{ github.repository }}" \
+            --tag "${{ steps.release.outputs.release_tag }}" \
+            --host-tag linux-x64 \
+            --token-env GITHUB_TOKEN \
+            --github-output "$GITHUB_OUTPUT"
+
+      - name: Upload release feed artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: kinal-release-feed
+          path: out/release-feed/releases.json
+          if-no-files-found: error
+          retention-days: 14
+
+  deploy-production:
+    name: Deploy website feed and production compiler
+    needs: release-feed
+    runs-on: ubuntu-22.04
+    env:
+      SSH_HOST: ${{ secrets.KINAL_SITE_SSH_HOST }}
+      SSH_PORT: ${{ secrets.KINAL_SITE_SSH_PORT }}
+      SSH_USER: ${{ secrets.KINAL_SITE_SSH_USER }}
+      SSH_KEY: ${{ secrets.KINAL_SITE_SSH_KEY }}
+      RELEASE_JSON_PATH: ${{ secrets.KINAL_SITE_RELEASE_JSON_PATH }}
+      COMPILER_ROOT: ${{ secrets.KINAL_SITE_COMPILER_ROOT }}
+      BIN_DIR: ${{ secrets.KINAL_SITE_BIN_DIR }}
+      SERVICE_NAME: ${{ secrets.KINAL_SITE_SERVICE_NAME }}
+    steps:
+      - name: Download release feed artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: kinal-release-feed
+          path: release-feed
+
+      - name: Validate deploy configuration
+        id: config
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=0
+          for name in SSH_HOST SSH_USER SSH_KEY RELEASE_JSON_PATH COMPILER_ROOT; do
+            if [ -z "${!name:-}" ]; then
+              echo "::warning::${name} is not configured; production deployment will be skipped."
+              missing=1
+            fi
+          done
+          if [ "$missing" -eq 0 ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Prepare SSH client
+        if: steps.config.outputs.ready == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.ssh"
+          key_path="$HOME/.ssh/kinal_site"
+          printf '%s\n' "$SSH_KEY" > "$key_path"
+          chmod 600 "$key_path"
+          port="${SSH_PORT:-22}"
+          ssh-keyscan -p "$port" "$SSH_HOST" >> "$HOME/.ssh/known_hosts"
+          {
+            echo "KINAL_SSH_KEY=$key_path"
+            echo "KINAL_SSH_PORT=$port"
+          } >> "$GITHUB_ENV"
+
+      - name: Download Linux x64 compiler archive
+        if: steps.config.outputs.ready == 'true'
+        shell: bash
+        env:
+          ASSET_URL: ${{ needs.release-feed.outputs.asset_url }}
+          ASSET_NAME: ${{ needs.release-feed.outputs.asset_name }}
+        run: |
+          set -euo pipefail
+          mkdir -p deploy
+          curl -L --fail --retry 3 --retry-delay 2 "$ASSET_URL" -o "deploy/$ASSET_NAME"
+
+      - name: Upload website feed and compiler archive
+        if: steps.config.outputs.ready == 'true'
+        shell: bash
+        env:
+          ASSET_NAME: ${{ needs.release-feed.outputs.asset_name }}
+          TAG_NAME: ${{ needs.release-feed.outputs.asset_tag }}
+        run: |
+          set -euo pipefail
+          release_tmp="/tmp/kinal-release-feed-${GITHUB_RUN_ID}.json"
+          archive_tmp="/tmp/${ASSET_NAME}-${GITHUB_RUN_ID}"
+          scp -P "$KINAL_SSH_PORT" -i "$KINAL_SSH_KEY" "release-feed/releases.json" "$SSH_USER@$SSH_HOST:$release_tmp"
+          scp -P "$KINAL_SSH_PORT" -i "$KINAL_SSH_KEY" "deploy/$ASSET_NAME" "$SSH_USER@$SSH_HOST:$archive_tmp"
+          {
+            echo "KINAL_REMOTE_RELEASE_TMP=$release_tmp"
+            echo "KINAL_REMOTE_ARCHIVE_TMP=$archive_tmp"
+            echo "KINAL_RELEASE_TAG=$TAG_NAME"
+          } >> "$GITHUB_ENV"
+
+      - name: Install production compiler and refresh service
+        if: steps.config.outputs.ready == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          bin_dir="${BIN_DIR:-/usr/local/bin}"
+          ssh -p "$KINAL_SSH_PORT" -i "$KINAL_SSH_KEY" "$SSH_USER@$SSH_HOST" \
+            "RELEASE_JSON_PATH='$RELEASE_JSON_PATH' COMPILER_ROOT='$COMPILER_ROOT' BIN_DIR='$bin_dir' SERVICE_NAME='${SERVICE_NAME:-}' KINAL_RELEASE_TAG='$KINAL_RELEASE_TAG' KINAL_REMOTE_RELEASE_TMP='$KINAL_REMOTE_RELEASE_TMP' KINAL_REMOTE_ARCHIVE_TMP='$KINAL_REMOTE_ARCHIVE_TMP' bash -s" <<'EOF'
+          set -euo pipefail
+
+          extract_root=$(mktemp -d)
+          cleanup() {
+            rm -rf "$extract_root"
+            rm -f "$KINAL_REMOTE_RELEASE_TMP" "$KINAL_REMOTE_ARCHIVE_TMP"
+          }
+          trap cleanup EXIT
+
+          mkdir -p "$(dirname "$RELEASE_JSON_PATH")" "$COMPILER_ROOT/versions" "$BIN_DIR"
+          install -m 0644 "$KINAL_REMOTE_RELEASE_TMP" "$RELEASE_JSON_PATH"
+
+          tar -xf "$KINAL_REMOTE_ARCHIVE_TMP" -C "$extract_root"
+          bundle_dir=$(find "$extract_root" -mindepth 1 -maxdepth 1 -type d | head -n 1)
+          if [ -z "$bundle_dir" ]; then
+            echo "failed to locate extracted release bundle" >&2
+            exit 1
+          fi
+
+          version_dir="$COMPILER_ROOT/versions/$KINAL_RELEASE_TAG"
+          rm -rf "$version_dir"
+          mkdir -p "$version_dir"
+          cp -a "$bundle_dir"/. "$version_dir"/
+
+          if [ -f "$version_dir/kinal" ]; then
+            chmod +x "$version_dir/kinal"
+          fi
+          if [ -f "$version_dir/kinalvm" ]; then
+            chmod +x "$version_dir/kinalvm"
+          fi
+
+          ln -sfn "$version_dir" "$COMPILER_ROOT/current"
+
+          if [ -x "$version_dir/kinal" ]; then
+            ln -sfn "$version_dir/kinal" "$BIN_DIR/kinal"
+          fi
+          if [ -x "$version_dir/kinalvm" ]; then
+            ln -sfn "$version_dir/kinalvm" "$BIN_DIR/kinalvm"
+          fi
+
+          if [ -n "$SERVICE_NAME" ]; then
+            systemctl restart "$SERVICE_NAME"
+          fi
+
+          echo "release feed installed at: $RELEASE_JSON_PATH"
+          echo "compiler version installed at: $version_dir"
+          EOF
+
+      - name: Deployment skipped
+        if: steps.config.outputs.ready != 'true'
+        run: echo "Production deployment skipped because required secrets are not configured."

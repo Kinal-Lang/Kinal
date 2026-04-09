@@ -133,7 +133,26 @@ typedef enum
     KNC_OP_LOOP_BACK_INT_EQ_INC = 107,
     KNC_OP_LOOP_BACK_INT_NE_INC = 108,
     KNC_OP_LOOP_BACK_INT_EQ_DEC = 109,
-    KNC_OP_LOOP_BACK_INT_NE_DEC = 110
+    KNC_OP_LOOP_BACK_INT_NE_DEC = 110,
+    KNC_OP_LOOP_ARRAY_FILL_INT_LT_INC = 111,
+    KNC_OP_LOOP_ARRAY_FILL_INT_LE_INC = 112,
+    KNC_OP_LOOP_ARRAY_SUM_INT_LT_INC = 113,
+    KNC_OP_LOOP_ARRAY_SUM_INT_LE_INC = 114,
+    KNC_OP_LOOP_SUM_INT_LT_INC = 115,
+    KNC_OP_LOOP_SUM_INT_LE_INC = 116,
+    KNC_OP_ADD_INT_IMM = 117,
+    KNC_OP_SUB_INT_IMM = 118,
+    KNC_OP_MUL_INT_IMM = 119,
+    KNC_OP_DIV_INT_IMM = 120,
+    KNC_OP_LT_INT_IMM = 121,
+    KNC_OP_LE_INT_IMM = 122,
+    KNC_OP_GT_INT_IMM = 123,
+    KNC_OP_GE_INT_IMM = 124,
+    KNC_OP_BITAND_INT_IMM = 125,
+    KNC_OP_BITOR_INT_IMM = 126,
+    KNC_OP_BITXOR_INT_IMM = 127,
+    KNC_OP_SHL_INT_IMM = 128,
+    KNC_OP_SHR_INT_IMM = 129
 } KncOpCode;
 
 typedef enum
@@ -567,6 +586,8 @@ static void int_array_ensure(int **items, int *cap, int needed)
     }
 }
 
+static int program_add_int(KncProgram *program, int value);
+
 static int type_is_integerish(Type t)
 {
     switch (t.kind)
@@ -600,6 +621,23 @@ static int type_is_floatish(Type t)
     case TY_F32:
     case TY_F64:
     case TY_F128:
+        return 1;
+    default:
+        return 0;
+    }
+}
+
+static int expr_int_immediate_index(KncFuncState *st, Expr *e, int *index)
+{
+    if (!e || !index)
+        return 0;
+    switch (e->kind)
+    {
+    case EXPR_INT:
+        *index = program_add_int(st->program, (int)e->v.int_val);
+        return 1;
+    case EXPR_CHAR:
+        *index = program_add_int(st->program, (int)e->v.int_val);
         return 1;
     default:
         return 0;
@@ -1428,6 +1466,20 @@ static void emit_default_value(KncFuncState *st, int reg, Type type)
         emit_u16(st->code, program_add_string(st->program, ""));
         return;
     }
+    if (type.kind == TY_ARRAY)
+    {
+        Type elem_type = type_make(type.elem);
+        int len_reg = alloc_reg(st);
+        elem_type.name = type.name;
+        emit_u8(st->code, KNC_OP_LOAD_INT);
+        emit_u8(st->code, len_reg);
+        emit_u16(st->code, program_add_int(st->program, type.array_len >= 0 ? (int)type.array_len : 0));
+        emit_u8(st->code, KNC_OP_NEW_ARRAY);
+        emit_u8(st->code, reg);
+        emit_u8(st->code, len_reg);
+        emit_u8(st->code, value_kind_from_type(elem_type));
+        return;
+    }
     if (type.kind == TY_STRUCT)
     {
         int type_index = program_find_type(st->program, type.name);
@@ -1558,44 +1610,172 @@ static int knc_expr_is_superloop_pure(const Expr *e, const char *loop_name)
     }
 }
 
-static int knc_match_empty_superloop_for(KncFuncState *st,
-                                         Stmt *s,
-                                         KncLocal **out_local,
-                                         Expr **out_limit,
-                                         KncOpCode *out_op)
+static int knc_expr_is_int_const(const Expr *e, int64_t value)
 {
-    Expr *post;
-    Expr *cond;
-    Expr *limit_expr = 0;
+    return e && e->kind == EXPR_INT && e->v.int_val == value;
+}
+
+static int knc_select_loop_op(int delta_sign, int cmp_op, int is_backedge, KncOpCode *out_op)
+{
+    if (!out_op)
+        return 0;
+    if (delta_sign > 0)
+    {
+        switch (cmp_op)
+        {
+        case TOK_EQ: *out_op = is_backedge ? KNC_OP_LOOP_BACK_INT_EQ_INC : KNC_OP_LOOP_INT_EQ_INC; break;
+        case TOK_NE: *out_op = is_backedge ? KNC_OP_LOOP_BACK_INT_NE_INC : KNC_OP_LOOP_INT_NE_INC; break;
+        case TOK_LT: *out_op = is_backedge ? KNC_OP_LOOP_BACK_INT_LT_INC : KNC_OP_LOOP_INT_LT_INC; break;
+        case TOK_LE: *out_op = is_backedge ? KNC_OP_LOOP_BACK_INT_LE_INC : KNC_OP_LOOP_INT_LE_INC; break;
+        default:     return 0;
+        }
+    }
+    else if (delta_sign < 0)
+    {
+        switch (cmp_op)
+        {
+        case TOK_EQ: *out_op = is_backedge ? KNC_OP_LOOP_BACK_INT_EQ_DEC : KNC_OP_LOOP_INT_EQ_DEC; break;
+        case TOK_NE: *out_op = is_backedge ? KNC_OP_LOOP_BACK_INT_NE_DEC : KNC_OP_LOOP_INT_NE_DEC; break;
+        case TOK_GT: *out_op = is_backedge ? KNC_OP_LOOP_BACK_INT_GT_DEC : KNC_OP_LOOP_INT_GT_DEC; break;
+        case TOK_GE: *out_op = is_backedge ? KNC_OP_LOOP_BACK_INT_GE_DEC : KNC_OP_LOOP_INT_GE_DEC; break;
+        default:     return 0;
+        }
+    }
+    else
+    {
+        return 0;
+    }
+    return 1;
+}
+
+static int knc_match_loop_update_name_and_value(KncFuncState *st,
+                                                const char *loop_name,
+                                                Expr *value,
+                                                KncLocal **out_local,
+                                                int *out_delta_sign)
+{
     KncLocal *local;
-    const char *loop_name;
-    int cmp_op;
+    Expr *left;
+    Expr *right;
 
-    if (!st || !s || s->kind != ST_FOR || !st->program || !st->program->enable_superloop)
-        return 0;
-    if (!knc_stmt_is_empty_block(s->v.fors.body) || !s->v.fors.cond || !s->v.fors.post)
+    if (!st || !loop_name || !value || value->kind != EXPR_BINARY || !out_local || !out_delta_sign)
         return 0;
 
-    post = s->v.fors.post;
-    cond = s->v.fors.cond;
-    if (post->kind != EXPR_UNARY || !post->v.unary.expr || post->v.unary.expr->kind != EXPR_VAR)
-        return 0;
-    if (post->v.unary.op != TOK_PLUSPLUS && post->v.unary.op != TOK_MINUSMINUS)
-        return 0;
-    if (cond->kind != EXPR_BINARY || !cond->v.binary.left || !cond->v.binary.right)
-        return 0;
-
-    loop_name = post->v.unary.expr->v.var.name;
     local = find_local(st, loop_name);
     if (!local || local->storage != KNC_LOCAL_VALUE || !type_is_integerish(local->type))
         return 0;
 
+    left = value->v.binary.left;
+    right = value->v.binary.right;
+    if (!left || !right)
+        return 0;
+
+    switch (value->v.binary.op)
+    {
+    case TOK_PLUS:
+        if (left->kind == EXPR_VAR && kn_strcmp(left->v.var.name, loop_name) == 0 && knc_expr_is_int_const(right, 1))
+        {
+            *out_local = local;
+            *out_delta_sign = 1;
+            return 1;
+        }
+        if (right->kind == EXPR_VAR && kn_strcmp(right->v.var.name, loop_name) == 0 && knc_expr_is_int_const(left, 1))
+        {
+            *out_local = local;
+            *out_delta_sign = 1;
+            return 1;
+        }
+        return 0;
+    case TOK_MINUS:
+        if (left->kind == EXPR_VAR && kn_strcmp(left->v.var.name, loop_name) == 0 && knc_expr_is_int_const(right, 1))
+        {
+            *out_local = local;
+            *out_delta_sign = -1;
+            return 1;
+        }
+        return 0;
+    default:
+        return 0;
+    }
+}
+
+static int knc_match_loop_update_expr(KncFuncState *st,
+                                      Expr *post,
+                                      KncLocal **out_local,
+                                      int *out_delta_sign)
+{
+    if (!st || !post || !out_local || !out_delta_sign)
+        return 0;
+    if (post->kind == EXPR_UNARY && post->v.unary.expr && post->v.unary.expr->kind == EXPR_VAR)
+    {
+        KncLocal *local;
+        const char *loop_name = post->v.unary.expr->v.var.name;
+        int delta_sign;
+
+        if (post->v.unary.op == TOK_PLUSPLUS)
+            delta_sign = 1;
+        else if (post->v.unary.op == TOK_MINUSMINUS)
+            delta_sign = -1;
+        else
+            return 0;
+
+        local = find_local(st, loop_name);
+        if (!local || local->storage != KNC_LOCAL_VALUE || !type_is_integerish(local->type))
+            return 0;
+
+        *out_local = local;
+        *out_delta_sign = delta_sign;
+        return 1;
+    }
+    if (post->kind == EXPR_ASSIGN && post->v.assign.target && post->v.assign.target->kind == EXPR_VAR)
+        return knc_match_loop_update_name_and_value(st,
+                                                    post->v.assign.target->v.var.name,
+                                                    post->v.assign.value,
+                                                    out_local,
+                                                    out_delta_sign);
+    return 0;
+}
+
+static int knc_match_loop_update_stmt(KncFuncState *st,
+                                      Stmt *post,
+                                      KncLocal **out_local,
+                                      int *out_delta_sign)
+{
+    if (!st || !post || !out_local || !out_delta_sign)
+        return 0;
+    if (post->kind == ST_ASSIGN)
+        return knc_match_loop_update_name_and_value(st,
+                                                    post->v.assign.name,
+                                                    post->v.assign.value,
+                                                    out_local,
+                                                    out_delta_sign);
+    if (post->kind == ST_EXPR)
+        return knc_match_loop_update_expr(st, post->v.expr.expr, out_local, out_delta_sign);
+    return 0;
+}
+
+static int knc_match_loop_cond(KncFuncState *st,
+                               Expr *cond,
+                               KncLocal *local,
+                               int delta_sign,
+                               Expr **out_limit,
+                               KncOpCode *out_op,
+                               int is_backedge)
+{
+    Expr *limit_expr = 0;
+    int cmp_op;
+
+    if (!st || !cond || !local || !out_limit || !out_op)
+        return 0;
+    if (cond->kind != EXPR_BINARY || !cond->v.binary.left || !cond->v.binary.right)
+        return 0;
+
     cmp_op = cond->v.binary.op;
-    if (cond->v.binary.left->kind == EXPR_VAR && kn_strcmp(cond->v.binary.left->v.var.name, loop_name) == 0)
+    if (cond->v.binary.left->kind == EXPR_VAR && kn_strcmp(cond->v.binary.left->v.var.name, local->name) == 0)
     {
         limit_expr = cond->v.binary.right;
     }
-    else if (cond->v.binary.right->kind == EXPR_VAR && kn_strcmp(cond->v.binary.right->v.var.name, loop_name) == 0)
+    else if (cond->v.binary.right->kind == EXPR_VAR && kn_strcmp(cond->v.binary.right->v.var.name, local->name) == 0)
     {
         limit_expr = cond->v.binary.left;
         cmp_op = knc_reverse_cmp_op(cmp_op);
@@ -1605,34 +1785,451 @@ static int knc_match_empty_superloop_for(KncFuncState *st,
         return 0;
     }
 
-    if (!knc_expr_is_superloop_pure(limit_expr, loop_name))
+    if (!knc_expr_is_superloop_pure(limit_expr, local->name))
+        return 0;
+    if (!knc_select_loop_op(delta_sign, cmp_op, is_backedge, out_op))
         return 0;
 
-    if (post->v.unary.op == TOK_PLUSPLUS)
+    *out_limit = limit_expr;
+    return 1;
+}
+
+static int knc_local_is_raw_int_array(KncLocal *local)
+{
+    Type elem_type;
+
+    if (!local || local->storage != KNC_LOCAL_VALUE || local->type.kind != TY_ARRAY)
+        return 0;
+
+    elem_type = type_make(local->type.elem);
+    elem_type.name = local->type.name;
+    return value_kind_from_type(elem_type) == KNC_VALUE_INT;
+}
+
+static int knc_extract_var_assignment(Stmt *stmt, const char **out_name, Expr **out_value)
+{
+    if (!stmt || !out_name || !out_value)
+        return 0;
+    if (stmt->kind == ST_ASSIGN)
     {
-        switch (cmp_op)
-        {
-        case TOK_EQ: *out_op = KNC_OP_LOOP_INT_EQ_INC; break;
-        case TOK_NE: *out_op = KNC_OP_LOOP_INT_NE_INC; break;
-        case TOK_LT: *out_op = KNC_OP_LOOP_INT_LT_INC; break;
-        case TOK_LE: *out_op = KNC_OP_LOOP_INT_LE_INC; break;
-        default:     return 0;
-        }
+        *out_name = stmt->v.assign.name;
+        *out_value = stmt->v.assign.value;
+        return *out_name && *out_value;
+    }
+    if (stmt->kind == ST_EXPR && stmt->v.expr.expr && stmt->v.expr.expr->kind == EXPR_ASSIGN &&
+        stmt->v.expr.expr->v.assign.target && stmt->v.expr.expr->v.assign.target->kind == EXPR_VAR &&
+        stmt->v.expr.expr->v.assign.value)
+    {
+        *out_name = stmt->v.expr.expr->v.assign.target->v.var.name;
+        *out_value = stmt->v.expr.expr->v.assign.value;
+        return *out_name && *out_value;
+    }
+    return 0;
+}
+
+static int knc_match_raw_int_array_index_expr(KncFuncState *st,
+                                              Expr *expr,
+                                              KncLocal *counter_local,
+                                              KncLocal **out_array)
+{
+    KncLocal *array_local;
+
+    if (!st || !expr || !counter_local || !out_array)
+        return 0;
+    if (expr->kind != EXPR_INDEX || !expr->v.index.recv || !expr->v.index.index)
+        return 0;
+    if (expr->v.index.recv->kind != EXPR_VAR || expr->v.index.index->kind != EXPR_VAR)
+        return 0;
+    if (kn_strcmp(expr->v.index.index->v.var.name, counter_local->name) != 0)
+        return 0;
+
+    array_local = find_local(st, expr->v.index.recv->v.var.name);
+    if (!knc_local_is_raw_int_array(array_local))
+        return 0;
+
+    *out_array = array_local;
+    return 1;
+}
+
+static int knc_match_array_fill_stmt(KncFuncState *st,
+                                     Stmt *stmt,
+                                     KncLocal *counter_local,
+                                     KncLocal **out_array)
+{
+    Expr *expr;
+
+    if (!st || !stmt || !counter_local || !out_array)
+        return 0;
+    if (stmt->kind != ST_EXPR || !stmt->v.expr.expr)
+        return 0;
+
+    expr = stmt->v.expr.expr;
+    if (expr->kind != EXPR_ASSIGN || !expr->v.assign.target || !expr->v.assign.value)
+        return 0;
+    if (!knc_match_raw_int_array_index_expr(st, expr->v.assign.target, counter_local, out_array))
+        return 0;
+    if (expr->v.assign.value->kind != EXPR_VAR ||
+        kn_strcmp(expr->v.assign.value->v.var.name, counter_local->name) != 0)
+        return 0;
+
+    return 1;
+}
+
+static int knc_match_array_sum_stmt(KncFuncState *st,
+                                    Stmt *stmt,
+                                    KncLocal *counter_local,
+                                    KncLocal **out_sum,
+                                    KncLocal **out_array)
+{
+    const char *sum_name;
+    Expr *value;
+    Expr *index_expr;
+    KncLocal *sum_local;
+
+    if (!st || !stmt || !counter_local || !out_sum || !out_array)
+        return 0;
+    if (!knc_extract_var_assignment(stmt, &sum_name, &value))
+        return 0;
+
+    sum_local = find_local(st, sum_name);
+    if (!sum_local || sum_local == counter_local || sum_local->storage != KNC_LOCAL_VALUE || !type_is_integerish(sum_local->type))
+        return 0;
+    if (!value || value->kind != EXPR_BINARY || value->v.binary.op != TOK_PLUS ||
+        !value->v.binary.left || !value->v.binary.right)
+        return 0;
+
+    if (value->v.binary.left->kind == EXPR_VAR && kn_strcmp(value->v.binary.left->v.var.name, sum_name) == 0)
+    {
+        index_expr = value->v.binary.right;
+    }
+    else if (value->v.binary.right->kind == EXPR_VAR && kn_strcmp(value->v.binary.right->v.var.name, sum_name) == 0)
+    {
+        index_expr = value->v.binary.left;
     }
     else
     {
-        switch (cmp_op)
-        {
-        case TOK_EQ: *out_op = KNC_OP_LOOP_INT_EQ_DEC; break;
-        case TOK_NE: *out_op = KNC_OP_LOOP_INT_NE_DEC; break;
-        case TOK_GT: *out_op = KNC_OP_LOOP_INT_GT_DEC; break;
-        case TOK_GE: *out_op = KNC_OP_LOOP_INT_GE_DEC; break;
-        default:     return 0;
-        }
+        return 0;
     }
 
-    *out_local = local;
+    if (!knc_match_raw_int_array_index_expr(st, index_expr, counter_local, out_array))
+        return 0;
+
+    *out_sum = sum_local;
+    return 1;
+}
+
+static int knc_match_sum_stmt(KncFuncState *st,
+                              Stmt *stmt,
+                              KncLocal *counter_local,
+                              KncLocal **out_sum)
+{
+    const char *sum_name;
+    Expr *value;
+    Expr *term_expr;
+    KncLocal *sum_local;
+
+    if (!st || !stmt || !counter_local || !out_sum)
+        return 0;
+    if (!knc_extract_var_assignment(stmt, &sum_name, &value))
+        return 0;
+
+    sum_local = find_local(st, sum_name);
+    if (!sum_local || sum_local == counter_local || sum_local->storage != KNC_LOCAL_VALUE || !type_is_integerish(sum_local->type))
+        return 0;
+    if (!value || value->kind != EXPR_BINARY || value->v.binary.op != TOK_PLUS ||
+        !value->v.binary.left || !value->v.binary.right)
+        return 0;
+
+    if (value->v.binary.left->kind == EXPR_VAR && kn_strcmp(value->v.binary.left->v.var.name, sum_name) == 0)
+    {
+        term_expr = value->v.binary.right;
+    }
+    else if (value->v.binary.right->kind == EXPR_VAR && kn_strcmp(value->v.binary.right->v.var.name, sum_name) == 0)
+    {
+        term_expr = value->v.binary.left;
+    }
+    else
+    {
+        return 0;
+    }
+
+    if (term_expr->kind != EXPR_VAR || kn_strcmp(term_expr->v.var.name, counter_local->name) != 0)
+        return 0;
+
+    *out_sum = sum_local;
+    return 1;
+}
+
+static int knc_match_superloop_inc_cond(KncFuncState *st,
+                                        Expr *cond,
+                                        KncLocal *counter_local,
+                                        Expr **out_limit,
+                                        int *out_inclusive)
+{
+    Expr *limit_expr = 0;
+    int cmp_op;
+
+    if (!st || !cond || !counter_local || !out_limit || !out_inclusive)
+        return 0;
+    if (cond->kind != EXPR_BINARY || !cond->v.binary.left || !cond->v.binary.right)
+        return 0;
+
+    cmp_op = cond->v.binary.op;
+    if (cond->v.binary.left->kind == EXPR_VAR && kn_strcmp(cond->v.binary.left->v.var.name, counter_local->name) == 0)
+    {
+        limit_expr = cond->v.binary.right;
+    }
+    else if (cond->v.binary.right->kind == EXPR_VAR && kn_strcmp(cond->v.binary.right->v.var.name, counter_local->name) == 0)
+    {
+        limit_expr = cond->v.binary.left;
+        cmp_op = knc_reverse_cmp_op(cmp_op);
+    }
+    else
+    {
+        return 0;
+    }
+
+    if (!knc_expr_is_superloop_pure(limit_expr, counter_local->name))
+        return 0;
+    if (cmp_op == TOK_LT)
+        *out_inclusive = 0;
+    else if (cmp_op == TOK_LE)
+        *out_inclusive = 1;
+    else
+        return 0;
+
     *out_limit = limit_expr;
+    return 1;
+}
+
+static int knc_match_array_fill_superloop_while(KncFuncState *st,
+                                                Stmt *s,
+                                                KncLocal **out_array,
+                                                KncLocal **out_counter,
+                                                Expr **out_limit,
+                                                KncOpCode *out_op)
+{
+    Stmt *body;
+    KncLocal *counter_local;
+    KncLocal *array_local;
+    int delta_sign;
+    int inclusive;
+
+    if (!st || !s || s->kind != ST_WHILE || !st->program || !st->program->enable_superloop ||
+        !s->v.whiles.cond || !s->v.whiles.body)
+        return 0;
+
+    body = s->v.whiles.body;
+    if (body->kind != ST_BLOCK || body->v.block.stmts.count != 2)
+        return 0;
+    if (!knc_match_loop_update_stmt(st, body->v.block.stmts.items[1], &counter_local, &delta_sign) || delta_sign != 1)
+        return 0;
+    if (!knc_match_array_fill_stmt(st, body->v.block.stmts.items[0], counter_local, &array_local))
+        return 0;
+    if (!knc_match_superloop_inc_cond(st, s->v.whiles.cond, counter_local, out_limit, &inclusive))
+        return 0;
+
+    *out_array = array_local;
+    *out_counter = counter_local;
+    *out_op = inclusive ? KNC_OP_LOOP_ARRAY_FILL_INT_LE_INC : KNC_OP_LOOP_ARRAY_FILL_INT_LT_INC;
+    return 1;
+}
+
+static int knc_match_array_sum_superloop_while(KncFuncState *st,
+                                               Stmt *s,
+                                               KncLocal **out_sum,
+                                               KncLocal **out_array,
+                                               KncLocal **out_counter,
+                                               Expr **out_limit,
+                                               KncOpCode *out_op)
+{
+    Stmt *body;
+    KncLocal *counter_local;
+    KncLocal *sum_local;
+    KncLocal *array_local;
+    int delta_sign;
+    int inclusive;
+
+    if (!st || !s || s->kind != ST_WHILE || !st->program || !st->program->enable_superloop ||
+        !s->v.whiles.cond || !s->v.whiles.body)
+        return 0;
+
+    body = s->v.whiles.body;
+    if (body->kind != ST_BLOCK || body->v.block.stmts.count != 2)
+        return 0;
+    if (!knc_match_loop_update_stmt(st, body->v.block.stmts.items[1], &counter_local, &delta_sign) || delta_sign != 1)
+        return 0;
+    if (!knc_match_array_sum_stmt(st, body->v.block.stmts.items[0], counter_local, &sum_local, &array_local))
+        return 0;
+    if (!knc_match_superloop_inc_cond(st, s->v.whiles.cond, counter_local, out_limit, &inclusive))
+        return 0;
+
+    *out_sum = sum_local;
+    *out_array = array_local;
+    *out_counter = counter_local;
+    *out_op = inclusive ? KNC_OP_LOOP_ARRAY_SUM_INT_LE_INC : KNC_OP_LOOP_ARRAY_SUM_INT_LT_INC;
+    return 1;
+}
+
+static int knc_match_array_fill_superloop_for(KncFuncState *st,
+                                              Stmt *s,
+                                              KncLocal **out_array,
+                                              KncLocal **out_counter,
+                                              Expr **out_limit,
+                                              KncOpCode *out_op)
+{
+    Stmt *body;
+    KncLocal *counter_local;
+    KncLocal *array_local;
+    int delta_sign;
+    int inclusive;
+
+    if (!st || !s || s->kind != ST_FOR || !st->program || !st->program->enable_superloop ||
+        !s->v.fors.cond || !s->v.fors.post || !s->v.fors.body)
+        return 0;
+
+    body = s->v.fors.body;
+    if (body->kind != ST_BLOCK || body->v.block.stmts.count != 1)
+        return 0;
+    if (!knc_match_loop_update_expr(st, s->v.fors.post, &counter_local, &delta_sign) || delta_sign != 1)
+        return 0;
+    if (!knc_match_array_fill_stmt(st, body->v.block.stmts.items[0], counter_local, &array_local))
+        return 0;
+    if (!knc_match_superloop_inc_cond(st, s->v.fors.cond, counter_local, out_limit, &inclusive))
+        return 0;
+
+    *out_array = array_local;
+    *out_counter = counter_local;
+    *out_op = inclusive ? KNC_OP_LOOP_ARRAY_FILL_INT_LE_INC : KNC_OP_LOOP_ARRAY_FILL_INT_LT_INC;
+    return 1;
+}
+
+static int knc_match_array_sum_superloop_for(KncFuncState *st,
+                                             Stmt *s,
+                                             KncLocal **out_sum,
+                                             KncLocal **out_array,
+                                             KncLocal **out_counter,
+                                             Expr **out_limit,
+                                             KncOpCode *out_op)
+{
+    Stmt *body;
+    KncLocal *counter_local;
+    KncLocal *sum_local;
+    KncLocal *array_local;
+    int delta_sign;
+    int inclusive;
+
+    if (!st || !s || s->kind != ST_FOR || !st->program || !st->program->enable_superloop ||
+        !s->v.fors.cond || !s->v.fors.post || !s->v.fors.body)
+        return 0;
+
+    body = s->v.fors.body;
+    if (body->kind != ST_BLOCK || body->v.block.stmts.count != 1)
+        return 0;
+    if (!knc_match_loop_update_expr(st, s->v.fors.post, &counter_local, &delta_sign) || delta_sign != 1)
+        return 0;
+    if (!knc_match_array_sum_stmt(st, body->v.block.stmts.items[0], counter_local, &sum_local, &array_local))
+        return 0;
+    if (!knc_match_superloop_inc_cond(st, s->v.fors.cond, counter_local, out_limit, &inclusive))
+        return 0;
+
+    *out_sum = sum_local;
+    *out_array = array_local;
+    *out_counter = counter_local;
+    *out_op = inclusive ? KNC_OP_LOOP_ARRAY_SUM_INT_LE_INC : KNC_OP_LOOP_ARRAY_SUM_INT_LT_INC;
+    return 1;
+}
+
+static int knc_match_sum_superloop_while(KncFuncState *st,
+                                         Stmt *s,
+                                         KncLocal **out_sum,
+                                         KncLocal **out_counter,
+                                         Expr **out_limit,
+                                         KncOpCode *out_op)
+{
+    Stmt *body;
+    KncLocal *counter_local;
+    KncLocal *sum_local;
+    int delta_sign;
+    int inclusive;
+
+    if (!st || !s || s->kind != ST_WHILE || !st->program || !st->program->enable_superloop ||
+        !s->v.whiles.cond || !s->v.whiles.body)
+        return 0;
+
+    body = s->v.whiles.body;
+    if (body->kind != ST_BLOCK || body->v.block.stmts.count != 2)
+        return 0;
+    if (!knc_match_loop_update_stmt(st, body->v.block.stmts.items[1], &counter_local, &delta_sign) || delta_sign != 1)
+        return 0;
+    if (!knc_match_sum_stmt(st, body->v.block.stmts.items[0], counter_local, &sum_local))
+        return 0;
+    if (!knc_match_superloop_inc_cond(st, s->v.whiles.cond, counter_local, out_limit, &inclusive))
+        return 0;
+
+    *out_sum = sum_local;
+    *out_counter = counter_local;
+    *out_op = inclusive ? KNC_OP_LOOP_SUM_INT_LE_INC : KNC_OP_LOOP_SUM_INT_LT_INC;
+    return 1;
+}
+
+static int knc_match_sum_superloop_for(KncFuncState *st,
+                                       Stmt *s,
+                                       KncLocal **out_sum,
+                                       KncLocal **out_counter,
+                                       Expr **out_limit,
+                                       KncOpCode *out_op)
+{
+    Stmt *body;
+    KncLocal *counter_local;
+    KncLocal *sum_local;
+    int delta_sign;
+    int inclusive;
+
+    if (!st || !s || s->kind != ST_FOR || !st->program || !st->program->enable_superloop ||
+        !s->v.fors.cond || !s->v.fors.post || !s->v.fors.body)
+        return 0;
+
+    body = s->v.fors.body;
+    if (body->kind != ST_BLOCK || body->v.block.stmts.count != 1)
+        return 0;
+    if (!knc_match_loop_update_expr(st, s->v.fors.post, &counter_local, &delta_sign) || delta_sign != 1)
+        return 0;
+    if (!knc_match_sum_stmt(st, body->v.block.stmts.items[0], counter_local, &sum_local))
+        return 0;
+    if (!knc_match_superloop_inc_cond(st, s->v.fors.cond, counter_local, out_limit, &inclusive))
+        return 0;
+
+    *out_sum = sum_local;
+    *out_counter = counter_local;
+    *out_op = inclusive ? KNC_OP_LOOP_SUM_INT_LE_INC : KNC_OP_LOOP_SUM_INT_LT_INC;
+    return 1;
+}
+
+static int knc_match_empty_superloop_for(KncFuncState *st,
+                                         Stmt *s,
+                                         KncLocal **out_local,
+                                         Expr **out_limit,
+                                         KncOpCode *out_op)
+{
+    Expr *post;
+    Expr *cond;
+    KncLocal *local;
+    int delta_sign;
+
+    if (!st || !s || s->kind != ST_FOR || !st->program || !st->program->enable_superloop)
+        return 0;
+    if (!knc_stmt_is_empty_block(s->v.fors.body) || !s->v.fors.cond || !s->v.fors.post)
+        return 0;
+
+    post = s->v.fors.post;
+    cond = s->v.fors.cond;
+    if (!knc_match_loop_update_expr(st, post, &local, &delta_sign))
+        return 0;
+    if (!knc_match_loop_cond(st, cond, local, delta_sign, out_limit, out_op, 0))
+        return 0;
+
+    *out_local = local;
     return 1;
 }
 
@@ -1644,71 +2241,48 @@ static int knc_match_fused_backedge_for(KncFuncState *st,
 {
     Expr *post;
     Expr *cond;
-    Expr *limit_expr = 0;
     KncLocal *local;
-    const char *loop_name;
-    int cmp_op;
+    int delta_sign;
 
     if (!st || !s || s->kind != ST_FOR || !s->v.fors.cond || !s->v.fors.post)
         return 0;
 
     post = s->v.fors.post;
     cond = s->v.fors.cond;
-    if (post->kind != EXPR_UNARY || !post->v.unary.expr || post->v.unary.expr->kind != EXPR_VAR)
+    if (!knc_match_loop_update_expr(st, post, &local, &delta_sign))
         return 0;
-    if (post->v.unary.op != TOK_PLUSPLUS && post->v.unary.op != TOK_MINUSMINUS)
+    if (!knc_match_loop_cond(st, cond, local, delta_sign, out_limit, out_op, 1))
         return 0;
-    if (cond->kind != EXPR_BINARY || !cond->v.binary.left || !cond->v.binary.right)
-        return 0;
-
-    loop_name = post->v.unary.expr->v.var.name;
-    local = find_local(st, loop_name);
-    if (!local || local->storage != KNC_LOCAL_VALUE || !type_is_integerish(local->type))
-        return 0;
-
-    cmp_op = cond->v.binary.op;
-    if (cond->v.binary.left->kind == EXPR_VAR && kn_strcmp(cond->v.binary.left->v.var.name, loop_name) == 0)
-    {
-        limit_expr = cond->v.binary.right;
-    }
-    else if (cond->v.binary.right->kind == EXPR_VAR && kn_strcmp(cond->v.binary.right->v.var.name, loop_name) == 0)
-    {
-        limit_expr = cond->v.binary.left;
-        cmp_op = knc_reverse_cmp_op(cmp_op);
-    }
-    else
-    {
-        return 0;
-    }
-
-    if (!knc_expr_is_superloop_pure(limit_expr, loop_name))
-        return 0;
-
-    if (post->v.unary.op == TOK_PLUSPLUS)
-    {
-        switch (cmp_op)
-        {
-        case TOK_EQ: *out_op = KNC_OP_LOOP_BACK_INT_EQ_INC; break;
-        case TOK_NE: *out_op = KNC_OP_LOOP_BACK_INT_NE_INC; break;
-        case TOK_LT: *out_op = KNC_OP_LOOP_BACK_INT_LT_INC; break;
-        case TOK_LE: *out_op = KNC_OP_LOOP_BACK_INT_LE_INC; break;
-        default:     return 0;
-        }
-    }
-    else
-    {
-        switch (cmp_op)
-        {
-        case TOK_EQ: *out_op = KNC_OP_LOOP_BACK_INT_EQ_DEC; break;
-        case TOK_NE: *out_op = KNC_OP_LOOP_BACK_INT_NE_DEC; break;
-        case TOK_GT: *out_op = KNC_OP_LOOP_BACK_INT_GT_DEC; break;
-        case TOK_GE: *out_op = KNC_OP_LOOP_BACK_INT_GE_DEC; break;
-        default:     return 0;
-        }
-    }
 
     *out_local = local;
-    *out_limit = limit_expr;
+    return 1;
+}
+
+static int knc_match_fused_backedge_while(KncFuncState *st,
+                                          Stmt *s,
+                                          KncLocal **out_local,
+                                          Expr **out_limit,
+                                          KncOpCode *out_op)
+{
+    Stmt *body;
+    Stmt *post;
+    KncLocal *local;
+    int delta_sign;
+
+    if (!st || !s || s->kind != ST_WHILE || !s->v.whiles.cond || !s->v.whiles.body)
+        return 0;
+
+    body = s->v.whiles.body;
+    if (body->kind != ST_BLOCK || body->v.block.stmts.count <= 0)
+        return 0;
+
+    post = body->v.block.stmts.items[body->v.block.stmts.count - 1];
+    if (!knc_match_loop_update_stmt(st, post, &local, &delta_sign))
+        return 0;
+    if (!knc_match_loop_cond(st, s->v.whiles.cond, local, delta_sign, out_limit, out_op, 1))
+        return 0;
+
+    *out_local = local;
     return 1;
 }
 
@@ -3200,13 +3774,45 @@ static KncValue compile_expr(KncFuncState *st, Expr *e)
         else
         {
             KncValue lhs = compile_expr(st, e->v.binary.left);
-            KncValue rhs = compile_expr(st, e->v.binary.right);
-            int use_float = type_is_floatish(lhs.type) || type_is_floatish(rhs.type);
+            KncValue rhs;
+            int rhs_int_imm_index = -1;
+            int use_float = type_is_floatish(e->v.binary.left->type) || type_is_floatish(e->v.binary.right->type);
+            int has_rhs_int_imm = !use_float && expr_int_immediate_index(st, e->v.binary.right, &rhs_int_imm_index);
+            int use_rhs_int_imm = 0;
+            TokenType binary_op = (TokenType)e->v.binary.op;
+            switch (binary_op)
+            {
+            case TOK_PLUS:
+                use_rhs_int_imm = has_rhs_int_imm && e->type.kind != TY_PTR && e->type.kind != TY_STRING;
+                break;
+            case TOK_MINUS:
+                use_rhs_int_imm = has_rhs_int_imm && e->type.kind != TY_PTR;
+                break;
+            case TOK_STAR:
+            case TOK_SLASH:
+            case TOK_LT:
+            case TOK_LE:
+            case TOK_GT:
+            case TOK_GE:
+            case TOK_AMP:
+            case TOK_BITOR:
+            case TOK_XOR:
+            case TOK_SHL:
+            case TOK_SHR:
+                use_rhs_int_imm = has_rhs_int_imm;
+                break;
+            default:
+                break;
+            }
+            rhs.reg = -1;
+            rhs.type = e->v.binary.right ? e->v.binary.right->type : type_make(TY_UNKNOWN);
+            if (!use_rhs_int_imm)
+                rhs = compile_expr(st, e->v.binary.right);
             if (kn_diag_error_count() > 0)
                 return out;
             out.reg = alloc_reg(st);
 
-            switch ((TokenType)e->v.binary.op)
+            switch (binary_op)
             {
             case TOK_PLUS:
                 if (e->type.kind == TY_PTR)
@@ -3232,6 +3838,14 @@ static KncValue compile_expr(KncFuncState *st, Expr *e)
                     emit_u8(st->code, 255);
                     return out;
                 }
+                if (use_rhs_int_imm)
+                {
+                    emit_u8(st->code, KNC_OP_ADD_INT_IMM);
+                    emit_u8(st->code, out.reg);
+                    emit_u8(st->code, lhs.reg);
+                    emit_u16(st->code, rhs_int_imm_index);
+                    return out;
+                }
                 emit_u8(st->code, use_float ? KNC_OP_ADD_FLOAT : KNC_OP_ADD_INT);
                 emit_u8(st->code, out.reg);
                 emit_u8(st->code, lhs.reg);
@@ -3250,18 +3864,42 @@ static KncValue compile_expr(KncFuncState *st, Expr *e)
                     emit_u8(st->code, neg_reg);
                     return out;
                 }
+                if (use_rhs_int_imm)
+                {
+                    emit_u8(st->code, KNC_OP_SUB_INT_IMM);
+                    emit_u8(st->code, out.reg);
+                    emit_u8(st->code, lhs.reg);
+                    emit_u16(st->code, rhs_int_imm_index);
+                    return out;
+                }
                 emit_u8(st->code, use_float ? KNC_OP_SUB_FLOAT : KNC_OP_SUB_INT);
                 emit_u8(st->code, out.reg);
                 emit_u8(st->code, lhs.reg);
                 emit_u8(st->code, rhs.reg);
                 return out;
             case TOK_STAR:
+                if (use_rhs_int_imm)
+                {
+                    emit_u8(st->code, KNC_OP_MUL_INT_IMM);
+                    emit_u8(st->code, out.reg);
+                    emit_u8(st->code, lhs.reg);
+                    emit_u16(st->code, rhs_int_imm_index);
+                    return out;
+                }
                 emit_u8(st->code, use_float ? KNC_OP_MUL_FLOAT : KNC_OP_MUL_INT);
                 emit_u8(st->code, out.reg);
                 emit_u8(st->code, lhs.reg);
                 emit_u8(st->code, rhs.reg);
                 return out;
             case TOK_SLASH:
+                if (use_rhs_int_imm)
+                {
+                    emit_u8(st->code, KNC_OP_DIV_INT_IMM);
+                    emit_u8(st->code, out.reg);
+                    emit_u8(st->code, lhs.reg);
+                    emit_u16(st->code, rhs_int_imm_index);
+                    return out;
+                }
                 emit_u8(st->code, use_float ? KNC_OP_DIV_FLOAT : KNC_OP_DIV_INT);
                 emit_u8(st->code, out.reg);
                 emit_u8(st->code, lhs.reg);
@@ -3305,6 +3943,15 @@ static KncValue compile_expr(KncFuncState *st, Expr *e)
                 out.type = type_make(TY_BOOL);
                 return out;
             case TOK_LT:
+                if (use_rhs_int_imm)
+                {
+                    emit_u8(st->code, KNC_OP_LT_INT_IMM);
+                    emit_u8(st->code, out.reg);
+                    emit_u8(st->code, lhs.reg);
+                    emit_u16(st->code, rhs_int_imm_index);
+                    out.type = type_make(TY_BOOL);
+                    return out;
+                }
                 emit_u8(st->code, use_float ? KNC_OP_LT_FLOAT : KNC_OP_LT_INT);
                 emit_u8(st->code, out.reg);
                 emit_u8(st->code, lhs.reg);
@@ -3312,6 +3959,15 @@ static KncValue compile_expr(KncFuncState *st, Expr *e)
                 out.type = type_make(TY_BOOL);
                 return out;
             case TOK_LE:
+                if (use_rhs_int_imm)
+                {
+                    emit_u8(st->code, KNC_OP_LE_INT_IMM);
+                    emit_u8(st->code, out.reg);
+                    emit_u8(st->code, lhs.reg);
+                    emit_u16(st->code, rhs_int_imm_index);
+                    out.type = type_make(TY_BOOL);
+                    return out;
+                }
                 emit_u8(st->code, use_float ? KNC_OP_LE_FLOAT : KNC_OP_LE_INT);
                 emit_u8(st->code, out.reg);
                 emit_u8(st->code, lhs.reg);
@@ -3319,6 +3975,15 @@ static KncValue compile_expr(KncFuncState *st, Expr *e)
                 out.type = type_make(TY_BOOL);
                 return out;
             case TOK_GT:
+                if (use_rhs_int_imm)
+                {
+                    emit_u8(st->code, KNC_OP_GT_INT_IMM);
+                    emit_u8(st->code, out.reg);
+                    emit_u8(st->code, lhs.reg);
+                    emit_u16(st->code, rhs_int_imm_index);
+                    out.type = type_make(TY_BOOL);
+                    return out;
+                }
                 emit_u8(st->code, use_float ? KNC_OP_GT_FLOAT : KNC_OP_GT_INT);
                 emit_u8(st->code, out.reg);
                 emit_u8(st->code, lhs.reg);
@@ -3326,6 +3991,15 @@ static KncValue compile_expr(KncFuncState *st, Expr *e)
                 out.type = type_make(TY_BOOL);
                 return out;
             case TOK_GE:
+                if (use_rhs_int_imm)
+                {
+                    emit_u8(st->code, KNC_OP_GE_INT_IMM);
+                    emit_u8(st->code, out.reg);
+                    emit_u8(st->code, lhs.reg);
+                    emit_u16(st->code, rhs_int_imm_index);
+                    out.type = type_make(TY_BOOL);
+                    return out;
+                }
                 emit_u8(st->code, use_float ? KNC_OP_GE_FLOAT : KNC_OP_GE_INT);
                 emit_u8(st->code, out.reg);
                 emit_u8(st->code, lhs.reg);
@@ -3333,30 +4007,70 @@ static KncValue compile_expr(KncFuncState *st, Expr *e)
                 out.type = type_make(TY_BOOL);
                 return out;
             case TOK_AMP:
+                if (use_rhs_int_imm)
+                {
+                    emit_u8(st->code, KNC_OP_BITAND_INT_IMM);
+                    emit_u8(st->code, out.reg);
+                    emit_u8(st->code, lhs.reg);
+                    emit_u16(st->code, rhs_int_imm_index);
+                    return out;
+                }
                 emit_u8(st->code, KNC_OP_BITAND_INT);
                 emit_u8(st->code, out.reg);
                 emit_u8(st->code, lhs.reg);
                 emit_u8(st->code, rhs.reg);
                 return out;
             case TOK_BITOR:
+                if (use_rhs_int_imm)
+                {
+                    emit_u8(st->code, KNC_OP_BITOR_INT_IMM);
+                    emit_u8(st->code, out.reg);
+                    emit_u8(st->code, lhs.reg);
+                    emit_u16(st->code, rhs_int_imm_index);
+                    return out;
+                }
                 emit_u8(st->code, KNC_OP_BITOR_INT);
                 emit_u8(st->code, out.reg);
                 emit_u8(st->code, lhs.reg);
                 emit_u8(st->code, rhs.reg);
                 return out;
             case TOK_XOR:
+                if (use_rhs_int_imm)
+                {
+                    emit_u8(st->code, KNC_OP_BITXOR_INT_IMM);
+                    emit_u8(st->code, out.reg);
+                    emit_u8(st->code, lhs.reg);
+                    emit_u16(st->code, rhs_int_imm_index);
+                    return out;
+                }
                 emit_u8(st->code, KNC_OP_BITXOR_INT);
                 emit_u8(st->code, out.reg);
                 emit_u8(st->code, lhs.reg);
                 emit_u8(st->code, rhs.reg);
                 return out;
             case TOK_SHL:
+                if (use_rhs_int_imm)
+                {
+                    emit_u8(st->code, KNC_OP_SHL_INT_IMM);
+                    emit_u8(st->code, out.reg);
+                    emit_u8(st->code, lhs.reg);
+                    emit_u16(st->code, rhs_int_imm_index);
+                    return out;
+                }
                 emit_u8(st->code, KNC_OP_SHL_INT);
                 emit_u8(st->code, out.reg);
                 emit_u8(st->code, lhs.reg);
                 emit_u8(st->code, rhs.reg);
                 return out;
             case TOK_SHR:
+                if (use_rhs_int_imm)
+                {
+                    emit_u8(st->code, KNC_OP_SHR_INT_IMM);
+                    emit_u8(st->code, out.reg);
+                    emit_u8(st->code, lhs.reg);
+                    emit_u16(st->code, rhs_int_imm_index);
+                    return out;
+                }
                 emit_u8(st->code, KNC_OP_SHR_INT);
                 emit_u8(st->code, out.reg);
                 emit_u8(st->code, lhs.reg);
@@ -4189,20 +4903,93 @@ static int compile_stmt(KncFuncState *st, Stmt *s)
 
     case ST_WHILE:
     {
+        KncLocal *reduce_sum_local = 0;
+        KncLocal *reduce_counter_local = 0;
+        Expr *reduce_limit = 0;
+        KncOpCode reduce_op = (KncOpCode)0;
+        KncLocal *array_super_local = 0;
+        KncLocal *array_sum_local = 0;
+        KncLocal *counter_super_local = 0;
+        Expr *array_super_limit = 0;
+        KncOpCode array_super_op = (KncOpCode)0;
         int cond_ip = current_ip(st->code);
+        int body_ip;
         int end_patch;
+        KncLocal *fused_local = 0;
+        Expr *fused_limit = 0;
+        KncOpCode fused_op = (KncOpCode)0;
         LoopState loop;
+
+        if (knc_match_sum_superloop_while(st, s, &reduce_sum_local, &reduce_counter_local, &reduce_limit, &reduce_op))
+        {
+            KncValue limit = compile_expr(st, reduce_limit);
+            if (kn_diag_error_count() > 0)
+                return -1;
+            emit_u8(st->code, reduce_op);
+            emit_u8(st->code, reduce_sum_local->reg);
+            emit_u8(st->code, reduce_counter_local->reg);
+            emit_u8(st->code, limit.reg);
+            return 0;
+        }
+        if (knc_match_array_fill_superloop_while(st, s, &array_super_local, &counter_super_local, &array_super_limit, &array_super_op))
+        {
+            KncValue limit = compile_expr(st, array_super_limit);
+            if (kn_diag_error_count() > 0)
+                return -1;
+            emit_u8(st->code, array_super_op);
+            emit_u8(st->code, array_super_local->reg);
+            emit_u8(st->code, counter_super_local->reg);
+            emit_u8(st->code, limit.reg);
+            return 0;
+        }
+        if (knc_match_array_sum_superloop_while(st, s, &array_sum_local, &array_super_local, &counter_super_local, &array_super_limit, &array_super_op))
+        {
+            KncValue limit = compile_expr(st, array_super_limit);
+            if (kn_diag_error_count() > 0)
+                return -1;
+            emit_u8(st->code, array_super_op);
+            emit_u8(st->code, array_sum_local->reg);
+            emit_u8(st->code, array_super_local->reg);
+            emit_u8(st->code, counter_super_local->reg);
+            emit_u8(st->code, limit.reg);
+            return 0;
+        }
+
         kn_memset(&loop, 0, sizeof(loop));
         loop.continue_ip = cond_ip;
         end_patch = emit_condition_false_branch(st, s->v.whiles.cond);
         if (kn_diag_error_count() > 0 || end_patch < 0)
             return -1;
+        body_ip = current_ip(st->code);
+        (void)knc_match_fused_backedge_while(st, s, &fused_local, &fused_limit, &fused_op);
         loopbuf_push(&st->loops, loop);
-        if (compile_stmt(st, s->v.whiles.body) != 0)
+        if (fused_local && fused_limit)
+        {
+            Stmt *body = s->v.whiles.body;
+            for (int i = 0; i + 1 < body->v.block.stmts.count; i++)
+                if (compile_stmt(st, body->v.block.stmts.items[i]) != 0)
+                    return -1;
+        }
+        else if (compile_stmt(st, s->v.whiles.body) != 0)
+        {
             return -1;
+        }
         patch_all(st->code, &current_loop(st)->continue_patches, cond_ip);
-        emit_u8(st->code, KNC_OP_JUMP);
-        emit_u16(st->code, cond_ip);
+        if (fused_local && fused_limit)
+        {
+            KncValue limit = compile_expr(st, fused_limit);
+            if (kn_diag_error_count() > 0)
+                return -1;
+            emit_u8(st->code, fused_op);
+            emit_u8(st->code, fused_local->reg);
+            emit_u8(st->code, limit.reg);
+            emit_u16(st->code, body_ip);
+        }
+        else
+        {
+            emit_u8(st->code, KNC_OP_JUMP);
+            emit_u16(st->code, cond_ip);
+        }
         patch_u16(st->code, end_patch, current_ip(st->code));
         patch_all(st->code, &current_loop(st)->break_patches, current_ip(st->code));
         st->loops.count--;
@@ -4218,6 +5005,15 @@ static int compile_stmt(KncFuncState *st, Stmt *s)
         KncLocal *super_local = 0;
         Expr *super_limit = 0;
         KncOpCode super_op = (KncOpCode)0;
+        KncLocal *reduce_sum_local = 0;
+        KncLocal *reduce_counter_local = 0;
+        Expr *reduce_limit = 0;
+        KncOpCode reduce_op = (KncOpCode)0;
+        KncLocal *array_super_local = 0;
+        KncLocal *array_sum_local = 0;
+        KncLocal *counter_super_local = 0;
+        Expr *array_super_limit = 0;
+        KncOpCode array_super_op = (KncOpCode)0;
         KncLocal *fused_local = 0;
         Expr *fused_limit = 0;
         KncOpCode fused_op = (KncOpCode)0;
@@ -4226,6 +5022,45 @@ static int compile_stmt(KncFuncState *st, Stmt *s)
 
         if (s->v.fors.init && compile_stmt(st, s->v.fors.init) != 0)
             return -1;
+
+        if (knc_match_sum_superloop_for(st, s, &reduce_sum_local, &reduce_counter_local, &reduce_limit, &reduce_op))
+        {
+            KncValue limit = compile_expr(st, reduce_limit);
+            if (kn_diag_error_count() > 0)
+                return -1;
+            emit_u8(st->code, reduce_op);
+            emit_u8(st->code, reduce_sum_local->reg);
+            emit_u8(st->code, reduce_counter_local->reg);
+            emit_u8(st->code, limit.reg);
+            st->locals.count = saved_for_locals;
+            return 0;
+        }
+
+        if (knc_match_array_fill_superloop_for(st, s, &array_super_local, &counter_super_local, &array_super_limit, &array_super_op))
+        {
+            KncValue limit = compile_expr(st, array_super_limit);
+            if (kn_diag_error_count() > 0)
+                return -1;
+            emit_u8(st->code, array_super_op);
+            emit_u8(st->code, array_super_local->reg);
+            emit_u8(st->code, counter_super_local->reg);
+            emit_u8(st->code, limit.reg);
+            st->locals.count = saved_for_locals;
+            return 0;
+        }
+        if (knc_match_array_sum_superloop_for(st, s, &array_sum_local, &array_super_local, &counter_super_local, &array_super_limit, &array_super_op))
+        {
+            KncValue limit = compile_expr(st, array_super_limit);
+            if (kn_diag_error_count() > 0)
+                return -1;
+            emit_u8(st->code, array_super_op);
+            emit_u8(st->code, array_sum_local->reg);
+            emit_u8(st->code, array_super_local->reg);
+            emit_u8(st->code, counter_super_local->reg);
+            emit_u8(st->code, limit.reg);
+            st->locals.count = saved_for_locals;
+            return 0;
+        }
 
         if (knc_match_empty_superloop_for(st, s, &super_local, &super_limit, &super_op))
         {

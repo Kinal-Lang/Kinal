@@ -1,0 +1,40 @@
+Unit Tests.StdJson;
+
+Get Console By IO.Console;
+Get IO.Json;
+Get IO.Text;
+
+Static Function int Main()
+{
+    string source = "{\"name\":\"kinal\",\"version\":1,\"stable\":true,\"tags\":[\"lang\",\"vm\"],\"meta\":{\"score\":7.5,\"missing\":null}}";
+    dict root = IO.Json.Parse(source);
+    list tags = IO.Json.AsList(root.Fetch("tags"));
+    dict meta = IO.Json.AsDict(root.Fetch("meta"));
+    any name_value = root.Fetch("name");
+    any version_value = root.Fetch("version");
+    any stable_value = root.Fetch("stable");
+    any tag_value = tags.Fetch(1);
+    any score_value = meta.Fetch("score");
+    string pretty = IO.Json.Format(root);
+    string minified = IO.Json.Minify(source);
+    list array_root = IO.Json.AsList(IO.Json.ParseValue("[1,true,null]"));
+
+    Console.PrintLine([string](name_value));
+    Console.PrintLine([int](version_value));
+    Console.PrintLine([bool](stable_value));
+    Console.PrintLine(tags.Count());
+    Console.PrintLine([string](tag_value));
+    Console.PrintLine([float](score_value) > 7.0f);
+    Console.PrintLine(meta.Fetch("missing").IsNull());
+    Console.PrintLine(IO.Text.Contains(pretty, "\n"));
+    Console.PrintLine(IO.Text.Contains(pretty, "\"name\""));
+    Console.PrintLine(minified == source);
+    Console.PrintLine(IO.Json.IsList(root.Fetch("tags")));
+    Console.PrintLine(IO.Json.IsDict(root.Fetch("meta")));
+    Console.PrintLine(array_root.Count());
+    Console.PrintLine([int](array_root.Fetch(0)));
+    Console.PrintLine([bool](array_root.Fetch(1)));
+    Console.PrintLine(array_root.Fetch(2).IsNull());
+    Console.PrintLine(IO.Text.Contains(pretty, "7.5"));
+    Return 0;
+}

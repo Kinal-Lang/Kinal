@@ -4,58 +4,61 @@ This document explains how to install the Kinal compiler toolchain on various pl
 
 ## System Requirements
 
-| Platform | Requirements |
-|----------|-------------|
-| Windows | Windows 10/11, x86-64 |
-| Linux | glibc 2.17+, x86-64 or AArch64 |
-| macOS | macOS 11+, x86-64 or Apple Silicon |
+| Platform | Architecture |
+|------|------|
+| Windows 10/11 | x86-64 / ARM64 |
+| Linux (glibc 2.17+) | x86-64 / ARM64 |
+| macOS 11+ | x86-64 / Apple Silicon |
 
-> The Kinal compiler itself has no runtime dependencies; the generated binaries run standalone on the above systems.
+> The Kinal compiler itself does not depend on any runtime; the generated binaries can run independently on the systems listed above.
 
 ## Installing the Compiler
 
-### Install from a Pre-built Package
+### Installing from a Pre-compiled Package
 
-Download the `kinal` executable for your platform from the Releases page and place it in your `PATH`:
+Download the compressed package for your platform from the Release page and extract it:
 
 ```bash
 # Linux / macOS
+tar -xf kinal-*.tar.gz
+cd kinal
 chmod +x kinal
 sudo mv kinal /usr/local/bin/
 
-# Windows: place kinal.exe in any directory on PATH
+# Windows
+# After extracting the zip file, add the entire kinal directory to PATH
 ```
 
-### Verify the Installation
+### Verify Installation
 
 ```bash
 kinal --help
 ```
 
-If the help text appears, the installation was successful.
+If you see the help message, the installation was successful.
 
 ## Installing KinalVM (Optional)
 
-KinalVM is Kinal's bytecode virtual machine, used for running `.knc` files or executing `.kn` source files via `kinal vm run` (which first compiles to a temporary `.knc` and then runs it).
+KinalVM is Kinal’s bytecode virtual machine, used to run `.knc` files, or to compile `.kn` source files into temporary `.knc` files and execute them via `kinal vm run`.
 
-The `kinalvm` executable is typically distributed alongside the compiler. Place it in the same directory or add it to `PATH`:
+The `kinalvm` executable is typically distributed alongside the compiler. Place it in the same directory or add it to your `PATH`:
 
 ```bash
 # Verify
 kinalvm --help
 ```
 
-## Directory Layout (Typical Installation)
+## Directory Structure (Typical Installation)
 
 ```
 kinal/
 ├── kinal          # Main compiler
 ├── kinalvm        # Bytecode virtual machine
-└── locales/       # Diagnostic message locale files
+└── locales/       # Localization files for diagnostic messages
     └── zh-CN.json
 ```
 
-## Diagnostic Language
+## Diagnostic Language Settings
 
 Kinal supports Chinese diagnostic messages:
 
@@ -63,15 +66,15 @@ Kinal supports Chinese diagnostic messages:
 kinal --lang zh hello.kn
 ```
 
-When a `zh-CN.json` locale file is present, `--lang zh` will automatically load it.
+Alternatively, if the `zh-CN.json` file exists, `--lang zh` will automatically load the Chinese locale file.
 
-## Developer Tooling
+## Development Tool Support
 
 ### VS Code
 
-Install the **Kinal Language Server** extension (if available) for syntax highlighting, code completion, and live diagnostics.
+Install the **Kinal Language Server** extension (if available) to enable syntax highlighting, code completion, and real-time diagnostics.
 
-The LSP server is located at `apps/kinal-lsp/` and can be built locally and configured in your editor.
+The LSP server is located in `apps/kinal-lsp/`; build it locally and configure it within your editor.
 
 ## Building from Source
 
@@ -79,19 +82,19 @@ To build Kinal from source:
 
 **Dependencies:**
 - CMake 3.20+
-- LLVM 14+ (`llvm-config` must be on PATH)
-- A C compiler (MSVC / GCC / Clang)
+- LLVM 14+ (requires `llvm-config` in PATH)
+- C compiler (MSVC / GCC / Clang)
 - Python 3 (for `infra/` build scripts)
 
 ```bash
-# Using command-line build
+# Build via command line
 python x.py [dev|dist]
 
-# Or use the build GUI for a more guided setup and build process
+# Or use the build GUI to quickly set up the environment and build
 python x.py gui
 ```
 
-See `CMakePresets.json` for available preset names.
+See `CMakePresets.json` for specific preset names.
 
 ## Next Steps
 

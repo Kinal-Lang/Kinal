@@ -1439,8 +1439,11 @@ static void build_runtime_hosted(Codegen *g)
         LLVMBasicBlockRef case_i64 = LLVMAppendBasicBlockInContext(g->ctx, g->fn_any_to_ptr, "i64");
         LLVMBasicBlockRef def_bb = LLVMAppendBasicBlockInContext(g->ctx, g->fn_any_to_ptr, "def");
 
-        LLVMValueRef sw = LLVMBuildSwitch(g->builder, tag, def_bb, 3);
+        LLVMValueRef sw = LLVMBuildSwitch(g->builder, tag, def_bb, 6);
         LLVMAddCase(sw, LLVMConstInt(t_i64, KN_ANY_TAG_PTR, 0), case_ptr);
+        LLVMAddCase(sw, LLVMConstInt(t_i64, KN_ANY_TAG_DICT, 0), case_ptr);
+        LLVMAddCase(sw, LLVMConstInt(t_i64, KN_ANY_TAG_LIST, 0), case_ptr);
+        LLVMAddCase(sw, LLVMConstInt(t_i64, KN_ANY_TAG_SET, 0), case_ptr);
         LLVMAddCase(sw, LLVMConstInt(t_i64, KN_ANY_TAG_STRING, 0), case_str);
         LLVMAddCase(sw, LLVMConstInt(t_i64, KN_ANY_TAG_I64, 0), case_i64);
 
@@ -1493,13 +1496,16 @@ static void build_runtime_hosted(Codegen *g)
         LLVMBasicBlockRef case_ptr = LLVMAppendBasicBlockInContext(g->ctx, g->fn_any_to_string, "ptr");
         LLVMBasicBlockRef def_bb = LLVMAppendBasicBlockInContext(g->ctx, g->fn_any_to_string, "def");
 
-        LLVMValueRef sw = LLVMBuildSwitch(g->builder, tag, def_bb, 7);
+        LLVMValueRef sw = LLVMBuildSwitch(g->builder, tag, def_bb, 10);
         LLVMAddCase(sw, LLVMConstInt(t_i64, KN_ANY_TAG_STRING, 0), case_str);
         LLVMAddCase(sw, LLVMConstInt(t_i64, KN_ANY_TAG_I64, 0), case_i64);
         LLVMAddCase(sw, LLVMConstInt(t_i64, KN_ANY_TAG_BOOL, 0), case_bool);
         LLVMAddCase(sw, LLVMConstInt(t_i64, KN_ANY_TAG_F64, 0), case_f64);
         LLVMAddCase(sw, LLVMConstInt(t_i64, KN_ANY_TAG_CHAR, 0), case_char);
         LLVMAddCase(sw, LLVMConstInt(t_i64, KN_ANY_TAG_PTR, 0), case_ptr);
+        LLVMAddCase(sw, LLVMConstInt(t_i64, KN_ANY_TAG_DICT, 0), case_ptr);
+        LLVMAddCase(sw, LLVMConstInt(t_i64, KN_ANY_TAG_LIST, 0), case_ptr);
+        LLVMAddCase(sw, LLVMConstInt(t_i64, KN_ANY_TAG_SET, 0), case_ptr);
 
         LLVMPositionBuilderAtEnd(g->builder, case_str);
         {
@@ -2215,13 +2221,16 @@ static void build_freestanding_core_string_helpers(Codegen *g)
         LLVMBasicBlockRef case_ptr = LLVMAppendBasicBlockInContext(g->ctx, g->fn_any_to_string, "ptr");
         LLVMBasicBlockRef def_bb = LLVMAppendBasicBlockInContext(g->ctx, g->fn_any_to_string, "def");
 
-        LLVMValueRef sw = LLVMBuildSwitch(g->builder, tag, def_bb, 7);
+        LLVMValueRef sw = LLVMBuildSwitch(g->builder, tag, def_bb, 10);
         LLVMAddCase(sw, LLVMConstInt(t_i64, KN_ANY_TAG_STRING, 0), case_str);
         LLVMAddCase(sw, LLVMConstInt(t_i64, KN_ANY_TAG_I64, 0), case_i64);
         LLVMAddCase(sw, LLVMConstInt(t_i64, KN_ANY_TAG_BOOL, 0), case_bool);
         LLVMAddCase(sw, LLVMConstInt(t_i64, KN_ANY_TAG_F64, 0), case_f64);
         LLVMAddCase(sw, LLVMConstInt(t_i64, KN_ANY_TAG_CHAR, 0), case_char);
         LLVMAddCase(sw, LLVMConstInt(t_i64, KN_ANY_TAG_PTR, 0), case_ptr);
+        LLVMAddCase(sw, LLVMConstInt(t_i64, KN_ANY_TAG_DICT, 0), case_ptr);
+        LLVMAddCase(sw, LLVMConstInt(t_i64, KN_ANY_TAG_LIST, 0), case_ptr);
+        LLVMAddCase(sw, LLVMConstInt(t_i64, KN_ANY_TAG_SET, 0), case_ptr);
 
         LLVMPositionBuilderAtEnd(g->builder, case_str);
         {
@@ -3158,4 +3167,3 @@ static void codegen_global_init(Codegen *g, StmtList *globals)
     LLVMPositionBuilderAtEnd(g->builder, done_bb);
     LLVMBuildRetVoid(g->builder);
 }
-

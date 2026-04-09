@@ -112,7 +112,26 @@ Enum OpCode By u8
     LoopBackIntEqInc,
     LoopBackIntNeInc,
     LoopBackIntEqDec,
-    LoopBackIntNeDec
+    LoopBackIntNeDec,
+    LoopArrayFillIntLtInc,
+    LoopArrayFillIntLeInc,
+    LoopArraySumIntLtInc,
+    LoopArraySumIntLeInc,
+    LoopSumIntLtInc,
+    LoopSumIntLeInc,
+    AddIntImm,
+    SubIntImm,
+    MulIntImm,
+    DivIntImm,
+    LtIntImm,
+    LeIntImm,
+    GtIntImm,
+    GeIntImm,
+    BitAndIntImm,
+    BitOrIntImm,
+    BitXorIntImm,
+    ShlIntImm,
+    ShrIntImm
 }
 
 Enum ValueKind By u8
@@ -387,6 +406,25 @@ Public Class Program
             Case([int](OpCode.LoopBackIntNeInc)) { Return 5; }
             Case([int](OpCode.LoopBackIntEqDec)) { Return 5; }
             Case([int](OpCode.LoopBackIntNeDec)) { Return 5; }
+            Case([int](OpCode.LoopArrayFillIntLtInc)) { Return 4; }
+            Case([int](OpCode.LoopArrayFillIntLeInc)) { Return 4; }
+            Case([int](OpCode.LoopArraySumIntLtInc)) { Return 5; }
+            Case([int](OpCode.LoopArraySumIntLeInc)) { Return 5; }
+            Case([int](OpCode.LoopSumIntLtInc)) { Return 4; }
+            Case([int](OpCode.LoopSumIntLeInc)) { Return 4; }
+            Case([int](OpCode.AddIntImm)) { Return 5; }
+            Case([int](OpCode.SubIntImm)) { Return 5; }
+            Case([int](OpCode.MulIntImm)) { Return 5; }
+            Case([int](OpCode.DivIntImm)) { Return 5; }
+            Case([int](OpCode.LtIntImm)) { Return 5; }
+            Case([int](OpCode.LeIntImm)) { Return 5; }
+            Case([int](OpCode.GtIntImm)) { Return 5; }
+            Case([int](OpCode.GeIntImm)) { Return 5; }
+            Case([int](OpCode.BitAndIntImm)) { Return 5; }
+            Case([int](OpCode.BitOrIntImm)) { Return 5; }
+            Case([int](OpCode.BitXorIntImm)) { Return 5; }
+            Case([int](OpCode.ShlIntImm)) { Return 5; }
+            Case([int](OpCode.ShrIntImm)) { Return 5; }
             Case(default)                    { Throw "Unknown KNC opcode: " + [string](op); }
         }
 

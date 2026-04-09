@@ -13,7 +13,7 @@
 </p>
 
 <p align="center">
-  <a href="#"><img src="https://img.shields.io/badge/version-0.5.0-blue?style=flat-square"></a>
+  <a href="#"><img src="https://img.shields.io/badge/version-0.6.0-blue?style=flat-square"></a>
   <a href="#"><img src="https://img.shields.io/badge/backend-LLVM%20%2B%20KinalVM-orange?style=flat-square"></a>
   <a href="#"><img src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey?style=flat-square"></a>
   <a href="#"><img src="https://img.shields.io/badge/license-MIT-green?style=flat-square"></a>

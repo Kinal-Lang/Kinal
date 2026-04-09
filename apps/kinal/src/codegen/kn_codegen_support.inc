@@ -494,7 +494,10 @@ enum
     KN_ANY_TAG_BOOL = 3,
     KN_ANY_TAG_CHAR = 4,
     KN_ANY_TAG_STRING = 5,
-    KN_ANY_TAG_PTR  = 6
+    KN_ANY_TAG_PTR  = 6,
+    KN_ANY_TAG_DICT = 7,
+    KN_ANY_TAG_LIST = 8,
+    KN_ANY_TAG_SET  = 9
 };
 
 static LLVMValueRef box_any_value(Codegen *g, CGValue v);
@@ -728,9 +731,19 @@ static LLVMValueRef box_any_value(Codegen *g, CGValue v)
         LLVMValueRef pv = LLVMBuildBitCast(g->builder, v.value, g->i8ptr, "any.ptr.cast");
         LLVMValueRef is_null = LLVMBuildICmp(g->builder, LLVMIntEQ, pv, LLVMConstNull(g->i8ptr), "any.ptr.isnull");
         LLVMValueRef raw_payload = LLVMBuildPtrToInt(g->builder, pv, g->i64, "any.ptr");
+        LLVMValueRef tag_non_null = LLVMConstInt(g->i64, KN_ANY_TAG_PTR, 0);
+        if (v.type.kind == TY_CLASS && v.type.name)
+        {
+            if (kn_strcmp(v.type.name, "IO.Collection.dict") == 0)
+                tag_non_null = LLVMConstInt(g->i64, KN_ANY_TAG_DICT, 0);
+            else if (kn_strcmp(v.type.name, "IO.Collection.list") == 0)
+                tag_non_null = LLVMConstInt(g->i64, KN_ANY_TAG_LIST, 0);
+            else if (kn_strcmp(v.type.name, "IO.Collection.set") == 0)
+                tag_non_null = LLVMConstInt(g->i64, KN_ANY_TAG_SET, 0);
+        }
         tag = LLVMBuildSelect(g->builder, is_null,
                               LLVMConstInt(g->i64, KN_ANY_TAG_NONE, 0),
-                              LLVMConstInt(g->i64, KN_ANY_TAG_PTR, 0),
+                              tag_non_null,
                               "any.ptr.tag");
         payload = LLVMBuildSelect(g->builder, is_null,
                                   LLVMConstInt(g->i64, 0, 0),

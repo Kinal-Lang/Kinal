@@ -94,7 +94,7 @@ git push origin v0.6.0
 在打标签并发布前，按顺序确认以下各项：
 
 - [ ] 所有测试通过：`python x.py test`
-- [ ] `VERSION` 和 `apps/kinalvm/VERSION` 已更新
+- [ ] `VERSION` 中的 `kinal` / `kinalvm` 条目已按需正确更新
 - [ ] 重新构建成功：`python x.py dev`
 - [ ] `kinal --version --verbose` 输出的版本号正确
 - [ ] 提交版本号变更并推送

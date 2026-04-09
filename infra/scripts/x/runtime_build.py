@@ -8,6 +8,12 @@ import zipfile
 from pathlib import Path
 
 from .context import (
+    CJSON_DIR,
+    CJSON_INCLUDE,
+    CJSON_LEGACY_PREBUILT_ROOT,
+    CJSON_PREBUILT_CACHE_ROOT,
+    CJSON_SRC,
+    CJSON_VERSION_FILE,
     CHKSTK_SRC,
     CIVETWEB_DIR,
     CIVETWEB_INCLUDE,
@@ -17,6 +23,8 @@ from .context import (
     CIVETWEB_SRC_ARCHIVE_URL,
     CIVETWEB_VERSION_FILE,
     IO_WEB_NATIVE_TARGETS,
+    IO_JSON_NATIVE_TARGETS,
+    JSON_BRIDGE_SRC,
     MATH_SRC,
     ROOT,
     RUNTIME_DIR,
@@ -417,6 +425,18 @@ def civetweb_prebuilt_root() -> Path:
     return CIVETWEB_PREBUILT_CACHE_ROOT
 
 
+def cjson_prebuilt_root() -> Path:
+    if CJSON_LEGACY_PREBUILT_ROOT.exists():
+        return CJSON_LEGACY_PREBUILT_ROOT
+    return CJSON_PREBUILT_CACHE_ROOT
+
+
+def ensure_cjson_source() -> None:
+    if CJSON_SRC.exists() and (CJSON_INCLUDE / "cJSON.h").exists():
+        return
+    raise SystemExit(f"cJSON source is missing under {CJSON_DIR}; ensure Kinal-ThirdParty provides cjson/include and cjson/src.")
+
+
 def build_civetweb_for_target(target: str, llvm_bin: Path) -> bool:
     ensure_civetweb_source()
     out_dir = civetweb_prebuilt_root() / target
@@ -473,6 +493,87 @@ def build_civetweb_for_available_targets(llvm_bin: Path) -> list[str]:
     return built
 
 
+def build_cjson_for_target(target: str, llvm_bin: Path) -> bool:
+    ensure_cjson_source()
+    out_dir = cjson_prebuilt_root() / target
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    if target.startswith("win-"):
+        if not is_windows():
+            return False
+        clang = llvm_bin / "clang.exe"
+        if not clang.exists():
+            return False
+        if target == "win-x64":
+            triple = "x86_64-pc-windows-msvc"
+        elif target == "win-arm64":
+            triple = "aarch64-pc-windows-msvc"
+        else:
+            return False
+        cjson_obj = out_dir / "cJSON.obj"
+        bridge_obj = out_dir / "kn_json_cjson.obj"
+        run([clang, "--target=" + triple, "-c", str(CJSON_SRC), "-o", str(cjson_obj), "-std=c11", "-O2", "-I", str(CJSON_INCLUDE)])
+        run([clang, "--target=" + triple, "-c", str(JSON_BRIDGE_SRC), "-o", str(bridge_obj), "-std=c11", "-O2", "-I", str(CJSON_INCLUDE)])
+        return True
+
+    if target.startswith("linux-"):
+        zig_target = "x86_64-linux-gnu" if target == "linux-x64" else "aarch64-linux-gnu" if target == "linux-arm64" else ""
+        if not zig_target:
+            return False
+        zig = ensure_zig_available(fetch=True)
+        if zig:
+            cc_cmd: list[str | Path] = [zig, "cc", "-target", zig_target]
+        else:
+            clang = llvm_bin / "clang"
+            if host_tag().startswith("linux-") and host_tag() == target:
+                if not clang.exists():
+                    cc_path = shutil.which("clang") or shutil.which("cc")
+                    if not cc_path:
+                        return False
+                    clang = Path(cc_path)
+                cc_cmd = [clang]
+            else:
+                return False
+        cjson_obj = out_dir / "cJSON.o"
+        bridge_obj = out_dir / "kn_json_cjson.o"
+        run(cc_cmd + ["-c", str(CJSON_SRC), "-o", str(cjson_obj), "-std=c11", "-O2", "-fPIC", "-I", str(CJSON_INCLUDE)])
+        run(cc_cmd + ["-c", str(JSON_BRIDGE_SRC), "-o", str(bridge_obj), "-std=c11", "-O2", "-fPIC", "-I", str(CJSON_INCLUDE)])
+        return True
+
+    if target.startswith("macos-"):
+        zig_target = "x86_64-macos-none" if target == "macos-x64" else "aarch64-macos-none" if target == "macos-arm64" else ""
+        if not zig_target:
+            return False
+        zig = ensure_zig_available(fetch=True)
+        if zig:
+            cc_cmd: list[str | Path] = [zig, "cc", "-target", zig_target]
+        else:
+            if not host_tag().startswith("macos-") or host_tag() != target:
+                return False
+            clang = llvm_bin / "clang"
+            if not clang.exists():
+                cc_path = shutil.which("clang") or shutil.which("cc")
+                if not cc_path:
+                    return False
+                clang = Path(cc_path)
+            cc_cmd = [clang]
+        cjson_obj = out_dir / "cJSON.o"
+        bridge_obj = out_dir / "kn_json_cjson.o"
+        run(cc_cmd + ["-c", str(CJSON_SRC), "-o", str(cjson_obj), "-std=c11", "-O2", "-fPIC", "-I", str(CJSON_INCLUDE)])
+        run(cc_cmd + ["-c", str(JSON_BRIDGE_SRC), "-o", str(bridge_obj), "-std=c11", "-O2", "-fPIC", "-I", str(CJSON_INCLUDE)])
+        return True
+
+    return False
+
+
+def build_cjson_for_available_targets(llvm_bin: Path) -> list[str]:
+    built: list[str] = []
+    for target in IO_JSON_NATIVE_TARGETS:
+        if build_cjson_for_target(target, llvm_bin):
+            built.append(target)
+    return built
+
+
 def copy_civetweb_bundle_files(dest: Path) -> None:
     civet_dst = dest / "third_party" / "civetweb"
     civet_dst.mkdir(parents=True, exist_ok=True)
@@ -488,6 +589,21 @@ def copy_civetweb_bundle_files(dest: Path) -> None:
             copy_tree(prebuilt_src, civet_dst / "prebuilt" / prebuilt_src.name)
 
 
+def copy_cjson_bundle_files(dest: Path) -> None:
+    cjson_dst = dest / "third_party" / "cjson"
+    cjson_dst.mkdir(parents=True, exist_ok=True)
+    for name in ("LICENSE", "VERSION.txt"):
+        src = CJSON_DIR / name
+        if src.exists():
+            shutil.copy2(src, cjson_dst / name)
+    prebuilt_root = cjson_prebuilt_root()
+    if not prebuilt_root.exists():
+        return
+    for prebuilt_src in sorted(prebuilt_root.iterdir()):
+        if prebuilt_src.is_dir():
+            copy_tree(prebuilt_src, cjson_dst / "prebuilt" / prebuilt_src.name)
+
+
 def sync_io_web_native_assets(stdpkg_dir: Path, targets: list[str] | None = None) -> list[str]:
     copied: list[str] = []
     prebuilt_root = civetweb_prebuilt_root()
@@ -501,6 +617,36 @@ def sync_io_web_native_assets(stdpkg_dir: Path, targets: list[str] | None = None
         return copied
 
     version_dirs = sorted((stdpkg_dir / "IO.Web").glob("*/"))
+    for version_dir in version_dirs:
+        if not version_dir.is_dir():
+            continue
+        for target in target_names:
+            prebuilt_src = prebuilt_root / target
+            if not prebuilt_src.exists():
+                continue
+            native_dir = version_dir / "native" / target
+            native_dir.mkdir(parents=True, exist_ok=True)
+            for src in sorted(prebuilt_src.iterdir()):
+                if src.is_file():
+                    shutil.copy2(src, native_dir / src.name)
+            if target not in copied:
+                copied.append(target)
+    return copied
+
+
+def sync_io_json_native_assets(stdpkg_dir: Path, targets: list[str] | None = None) -> list[str]:
+    copied: list[str] = []
+    prebuilt_root = cjson_prebuilt_root()
+    if targets:
+        target_names = list(targets)
+    else:
+        if not prebuilt_root.exists():
+            return copied
+        target_names = [p.name for p in sorted(prebuilt_root.iterdir()) if p.is_dir()]
+    if not target_names:
+        return copied
+
+    version_dirs = sorted((stdpkg_dir / "IO.Json").glob("*/"))
     for version_dir in version_dirs:
         if not version_dir.is_dir():
             continue

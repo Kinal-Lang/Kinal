@@ -19,13 +19,16 @@ from .context import (
 )
 from .llvm import detect_llvm_dir, llvm_bin_dir, resolve_cmake_env
 from .runtime_build import (
+    build_cjson_for_available_targets,
     build_civetweb_for_available_targets,
     build_kinal_vm_binary,
     build_runtime_for_host,
+    copy_cjson_bundle_files,
     copy_civetweb_bundle_files,
     copy_host_linker_tools,
     copy_llvm_dev_files,
     copy_llvm_runtime_files,
+    sync_io_json_native_assets,
     sync_io_web_native_assets,
     write_linux_compiler_launcher,
 )
@@ -91,7 +94,9 @@ def build_official_stdpkg_klibs(compiler: Path, llvm_bin: Path | None = None) ->
         return
     if llvm_bin is not None:
         build_civetweb_for_available_targets(llvm_bin)
+        build_cjson_for_available_targets(llvm_bin)
     sync_io_web_native_assets(STDPKG_DIR)
+    sync_io_json_native_assets(STDPKG_DIR)
     for manifest in manifests:
         data = read_json(manifest)
         name = data.get("name", manifest.parent.parent.name)
@@ -192,6 +197,7 @@ def stage_bundle(build_type: str, dest: Path) -> Path:
             if src_dir.is_dir():
                 _rmtree(src_dir)
     copy_civetweb_bundle_files(dest)
+    copy_cjson_bundle_files(dest)
     copy_host_linker_tools(dest / "linker", llvm_bin)
     write_linux_compiler_launcher(dest)
     build_kinal_vm_binary(dest / compiler.name, dest)
@@ -243,4 +249,3 @@ def sha256_file(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
-

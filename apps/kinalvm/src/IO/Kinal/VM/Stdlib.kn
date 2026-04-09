@@ -274,7 +274,7 @@ Static Function void BuiltinStringEquals(Context.ExecutionContext ctx, int dst, 
 }
 
 [VmBuiltin(22, "IO.Type.string.ToChars")]
-Static Function void BuiltinStringToChars(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+Static Unsafe Function void BuiltinStringToChars(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
 {
     char[] chars = ctx.GetString(a0).ToChars();
     int handle = ctx.NewArray(chars.Length(), [int](Bytecode.ValueKind.Char));

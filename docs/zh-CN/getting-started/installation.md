@@ -4,11 +4,11 @@
 
 ## 系统要求
 
-| 平台 | 要求 |
+| 平台 | 架构 |
 |------|------|
-| Windows | Windows 10/11，x86-64 |
-| Linux | glibc 2.17+，x86-64 或 AArch64 |
-| macOS | macOS 11+，x86-64 或 Apple Silicon |
+| Windows 10/11 | x86-64 / ARM64 |
+| Linux (glibc 2.17+) | x86-64 / ARM64 |
+| macOS 11+ | x86-64 / Apple Silicon |
 
 > Kinal 编译器本身不依赖任何运行时，生成的二进制可在上述系统独立运行。
 
@@ -16,14 +16,17 @@
 
 ### 从预编译包安装
 
-从 Release 页面下载对应平台的 `kinal` 可执行文件，放入 `PATH` 即可：
+从 Release 页面下载对应平台的压缩包并解压：
 
 ```bash
 # Linux / macOS
+tar -xf kinal-*.tar.gz
+cd kinal
 chmod +x kinal
 sudo mv kinal /usr/local/bin/
 
-# Windows：将 kinal.exe 放入任意 PATH 目录
+# Windows
+# 解压 zip 后，将整个 kinal 目录加入 PATH
 ```
 
 ### 验证安装

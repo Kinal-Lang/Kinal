@@ -1,6 +1,8 @@
 Unit IO.Kinal.VM.Context;
 
 Get Bytecode By IO.Kinal.VM.Bytecode;
+Get Binary By IO.Kinal.VM.Binary;
+Get Memory By IO.Memory;
 
 Public Class VMValue
 {
@@ -92,11 +94,25 @@ Public Class VMValue
 Public Class HeapArray
 {
     Public int ElementKind;
+    Public byte* RawBuffer;
+    Public int RawLength;
+    Public int RawCapacity;
+    Public int[] IntItems;
+    Public float[] FloatItems;
+    Public bool[] BoolItems;
+    Public string[] StringItems;
     Public VMValue[] Items;
 
     Public Constructor()
     {
         This.ElementKind = [int](Bytecode.ValueKind.Null);
+        This.RawBuffer = null;
+        This.RawLength = 0;
+        This.RawCapacity = 0;
+        This.IntItems = {};
+        This.FloatItems = {};
+        This.BoolItems = {};
+        This.StringItems = {};
         This.Items = {};
     }
 }
@@ -763,7 +779,7 @@ Public Class ExecutionContext
         Return result;
     }
 
-    Public Function VMValue PointerLoadValue(int handle)
+    Public Unsafe Function VMValue PointerLoadValue(int handle)
     {
         PointerInfo info = This.GetPointerInfo(handle);
         Switch(info.Kind)
@@ -789,7 +805,7 @@ Public Class ExecutionContext
         Return VMValue.NullValue();
     }
 
-    Public Function void PointerStoreValue(int handle, VMValue value)
+    Public Unsafe Function void PointerStoreValue(int handle, VMValue value)
     {
         PointerInfo info = This.GetPointerInfo(handle);
         Switch(info.Kind)
@@ -847,14 +863,120 @@ Public Class ExecutionContext
         };
     }
 
-    Public Function int NewArray(int length, int elementKind)
+    Private Function int ArrayStoredLength(HeapArray arr)
+    {
+        Return Switch(arr.ElementKind)
+        {
+            Case([int](Bytecode.ValueKind.Int))    { arr.RawLength }
+            Case([int](Bytecode.ValueKind.Char))   { arr.RawLength }
+            Case([int](Bytecode.ValueKind.Float))  { arr.FloatItems.Length() }
+            Case([int](Bytecode.ValueKind.Bool))   { arr.BoolItems.Length() }
+            Case([int](Bytecode.ValueKind.String)) { arr.StringItems.Length() }
+            Case(default)                          { arr.Items.Length() }
+        };
+    }
+
+    Private Unsafe Function void EnsureRawIntCapacity(HeapArray arr, int minCapacity)
+    {
+        If (minCapacity <= arr.RawCapacity)
+        {
+            Return;
+        }
+
+        int newCapacity = arr.RawCapacity <= 0 ? 4 : arr.RawCapacity;
+        While (newCapacity < minCapacity)
+        {
+            newCapacity = newCapacity * 2;
+        }
+
+        int byteCount = newCapacity * 8;
+        byte* next = Binary.malloc([usize](byteCount));
+        If (next == null)
+        {
+            Throw "Out of memory while growing primitive VM array";
+        }
+
+        Memory.Zero(next, [usize](byteCount));
+        If (arr.RawBuffer != null)
+        {
+            If (arr.RawLength > 0)
+            {
+                Memory.Copy(next, arr.RawBuffer, [usize](arr.RawLength * 8));
+            }
+            Binary.free(arr.RawBuffer);
+        }
+
+        arr.RawBuffer = next;
+        arr.RawCapacity = newCapacity;
+    }
+
+    Public Unsafe Function int NewArray(int length, int elementKind)
     {
         HeapArray arr = New HeapArray();
         arr.ElementKind = elementKind;
-        For (int i = 0; i < length; i = i + 1)
+
+        Switch(elementKind)
         {
-            arr.Items = arr.Items.Add(This.DefaultValueForKind(elementKind));
+            Case([int](Bytecode.ValueKind.Int))
+            {
+                arr.RawLength = length;
+                arr.RawCapacity = length;
+                If (length > 0)
+                {
+                    int byteCount = length * 8;
+                    arr.RawBuffer = Binary.malloc([usize](byteCount));
+                    If (arr.RawBuffer == null)
+                    {
+                        Throw "Out of memory while creating int VM array";
+                    }
+                    Memory.Zero(arr.RawBuffer, [usize](byteCount));
+                }
+            }
+            Case([int](Bytecode.ValueKind.Char))
+            {
+                arr.RawLength = length;
+                arr.RawCapacity = length;
+                If (length > 0)
+                {
+                    int byteCount = length * 8;
+                    arr.RawBuffer = Binary.malloc([usize](byteCount));
+                    If (arr.RawBuffer == null)
+                    {
+                        Throw "Out of memory while creating char VM array";
+                    }
+                    Memory.Zero(arr.RawBuffer, [usize](byteCount));
+                }
+            }
+            Case([int](Bytecode.ValueKind.Float))
+            {
+                For (int i = 0; i < length; i = i + 1)
+                {
+                    arr.FloatItems = arr.FloatItems.Add(0.0);
+                }
+            }
+            Case([int](Bytecode.ValueKind.Bool))
+            {
+                For (int i = 0; i < length; i = i + 1)
+                {
+                    arr.BoolItems = arr.BoolItems.Add(false);
+                }
+            }
+            Case([int](Bytecode.ValueKind.String))
+            {
+                For (int i = 0; i < length; i = i + 1)
+                {
+                    arr.StringItems = arr.StringItems.Add("");
+                }
+            }
+            Case(default)
+            {
+                For (int i = 0; i < length; i = i + 1)
+                {
+                    arr.Items = arr.Items.Add(This.DefaultValueForKind(elementKind));
+                }
+            }
         }
+
         This.Arrays = This.Arrays.Add(arr);
         Return This.Arrays.Length() - 1;
     }
@@ -901,32 +1023,95 @@ Public Class ExecutionContext
         Return This.Objects.Length() - 1;
     }
 
-    Public Function VMValue ArrayGetValue(int handle, int index)
+    Public Unsafe Function VMValue ArrayGetValue(int handle, int index)
     {
         If (handle < 0 || handle >= This.Arrays.Length())
         {
             Throw "Array handle out of range";
         }
         HeapArray arr = This.Arrays[handle];
-        If (index < 0 || index >= arr.Items.Length())
+        If (index < 0 || index >= This.ArrayStoredLength(arr))
         {
             Throw "Array index out of range";
         }
-        Return arr.Items[index];
+        Return Switch(arr.ElementKind)
+        {
+            Case([int](Bytecode.ValueKind.Int))    { VMValue.FromInt(([int*](arr.RawBuffer))[index]) }
+            Case([int](Bytecode.ValueKind.Char))   { VMValue.FromChar([char](([int*](arr.RawBuffer))[index])) }
+            Case([int](Bytecode.ValueKind.Float))  { VMValue.FromFloat(arr.FloatItems[index]) }
+            Case([int](Bytecode.ValueKind.Bool))   { VMValue.FromBool(arr.BoolItems[index]) }
+            Case([int](Bytecode.ValueKind.String)) { VMValue.FromString(arr.StringItems[index]) }
+            Case(default)                          { arr.Items[index] }
+        };
     }
 
-    Public Function void ArraySetValue(int handle, int index, VMValue value)
+    Public Unsafe Function void ArraySetValue(int handle, int index, VMValue value)
     {
         If (handle < 0 || handle >= This.Arrays.Length())
         {
             Throw "Array handle out of range";
         }
         HeapArray arr = This.Arrays[handle];
-        If (index < 0 || index >= arr.Items.Length())
+        If (index < 0 || index >= This.ArrayStoredLength(arr))
         {
             Throw "Array index out of range";
         }
-        arr.Items[index] = value;
+
+        Switch(arr.ElementKind)
+        {
+            Case([int](Bytecode.ValueKind.Int))    { ([int*](arr.RawBuffer))[index] = value.IntValue; }
+            Case([int](Bytecode.ValueKind.Char))   { ([int*](arr.RawBuffer))[index] = value.IntValue; }
+            Case([int](Bytecode.ValueKind.Float))  { arr.FloatItems[index] = value.FloatValue; }
+            Case([int](Bytecode.ValueKind.Bool))   { arr.BoolItems[index] = value.BoolValue; }
+            Case([int](Bytecode.ValueKind.String)) { arr.StringItems[index] = value.StringValue; }
+            Case(default)                          { arr.Items[index] = value; }
+        }
+    }
+
+    Public Unsafe Function void ArrayLoadIntoFrame(int handle, int index, FunctionFrame frame, int dst)
+    {
+        If (handle < 0 || handle >= This.Arrays.Length())
+        {
+            Throw "Array handle out of range";
+        }
+        HeapArray arr = This.Arrays[handle];
+        If (index < 0 || index >= This.ArrayStoredLength(arr))
+        {
+            Throw "Array index out of range";
+        }
+
+        Switch(arr.ElementKind)
+        {
+            Case([int](Bytecode.ValueKind.Int))    { frame.SetInt(dst, ([int*](arr.RawBuffer))[index]); }
+            Case([int](Bytecode.ValueKind.Char))   { frame.SetChar(dst, [char](([int*](arr.RawBuffer))[index])); }
+            Case([int](Bytecode.ValueKind.Float))  { frame.SetFloat(dst, arr.FloatItems[index]); }
+            Case([int](Bytecode.ValueKind.Bool))   { frame.SetBool(dst, arr.BoolItems[index]); }
+            Case([int](Bytecode.ValueKind.String)) { frame.SetString(dst, arr.StringItems[index]); }
+            Case(default)                          { frame.ImportValue(dst, arr.Items[index]); }
+        }
+    }
+
+    Public Unsafe Function void ArrayStoreFromFrame(int handle, int index, FunctionFrame frame, int src)
+    {
+        If (handle < 0 || handle >= This.Arrays.Length())
+        {
+            Throw "Array handle out of range";
+        }
+        HeapArray arr = This.Arrays[handle];
+        If (index < 0 || index >= This.ArrayStoredLength(arr))
+        {
+            Throw "Array index out of range";
+        }
+
+        Switch(arr.ElementKind)
+        {
+            Case([int](Bytecode.ValueKind.Int))    { ([int*](arr.RawBuffer))[index] = frame.GetInt(src); }
+            Case([int](Bytecode.ValueKind.Char))   { ([int*](arr.RawBuffer))[index] = [int](frame.GetChar(src)); }
+            Case([int](Bytecode.ValueKind.Float))  { arr.FloatItems[index] = frame.GetFloat(src); }
+            Case([int](Bytecode.ValueKind.Bool))   { arr.BoolItems[index] = frame.GetBool(src); }
+            Case([int](Bytecode.ValueKind.String)) { arr.StringItems[index] = frame.GetString(src); }
+            Case(default)                          { arr.Items[index] = frame.ExportValue(src); }
+        }
     }
 
     Public Function int ArrayLengthOf(int handle)
@@ -935,17 +1120,68 @@ Public Class ExecutionContext
         {
             Throw "Array handle out of range";
         }
-        Return This.Arrays[handle].Items.Length();
+        Return This.ArrayStoredLength(This.Arrays[handle]);
     }
 
-    Public Function int ArrayAddValue(int handle, VMValue value)
+    Public Unsafe Function int ArrayAddValue(int handle, VMValue value)
     {
         If (handle < 0 || handle >= This.Arrays.Length())
         {
             Throw "Array handle out of range";
         }
         HeapArray arr = This.Arrays[handle];
-        arr.Items = arr.Items.Add(value);
+
+        Switch(arr.ElementKind)
+        {
+            Case([int](Bytecode.ValueKind.Int))
+            {
+                This.EnsureRawIntCapacity(arr, arr.RawLength + 1);
+                ([int*](arr.RawBuffer))[arr.RawLength] = value.IntValue;
+                arr.RawLength = arr.RawLength + 1;
+            }
+            Case([int](Bytecode.ValueKind.Char))
+            {
+                This.EnsureRawIntCapacity(arr, arr.RawLength + 1);
+                ([int*](arr.RawBuffer))[arr.RawLength] = value.IntValue;
+                arr.RawLength = arr.RawLength + 1;
+            }
+            Case([int](Bytecode.ValueKind.Float))  { arr.FloatItems = arr.FloatItems.Add(value.FloatValue); }
+            Case([int](Bytecode.ValueKind.Bool))   { arr.BoolItems = arr.BoolItems.Add(value.BoolValue); }
+            Case([int](Bytecode.ValueKind.String)) { arr.StringItems = arr.StringItems.Add(value.StringValue); }
+            Case(default)                          { arr.Items = arr.Items.Add(value); }
+        }
+
+        Return handle;
+    }
+
+    Public Unsafe Function int ArrayAddFromFrame(int handle, FunctionFrame frame, int src)
+    {
+        If (handle < 0 || handle >= This.Arrays.Length())
+        {
+            Throw "Array handle out of range";
+        }
+        HeapArray arr = This.Arrays[handle];
+
+        Switch(arr.ElementKind)
+        {
+            Case([int](Bytecode.ValueKind.Int))
+            {
+                This.EnsureRawIntCapacity(arr, arr.RawLength + 1);
+                ([int*](arr.RawBuffer))[arr.RawLength] = frame.GetInt(src);
+                arr.RawLength = arr.RawLength + 1;
+            }
+            Case([int](Bytecode.ValueKind.Char))
+            {
+                This.EnsureRawIntCapacity(arr, arr.RawLength + 1);
+                ([int*](arr.RawBuffer))[arr.RawLength] = [int](frame.GetChar(src));
+                arr.RawLength = arr.RawLength + 1;
+            }
+            Case([int](Bytecode.ValueKind.Float))  { arr.FloatItems = arr.FloatItems.Add(frame.GetFloat(src)); }
+            Case([int](Bytecode.ValueKind.Bool))   { arr.BoolItems = arr.BoolItems.Add(frame.GetBool(src)); }
+            Case([int](Bytecode.ValueKind.String)) { arr.StringItems = arr.StringItems.Add(frame.GetString(src)); }
+            Case(default)                          { arr.Items = arr.Items.Add(frame.ExportValue(src)); }
+        }
+
         Return handle;
     }
 

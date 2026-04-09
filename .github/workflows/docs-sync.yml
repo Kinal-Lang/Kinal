@@ -1,0 +1,179 @@
+name: Docs Sync
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - "docs/**"
+  workflow_dispatch:
+
+concurrency:
+  group: docs-sync-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  SSH_HOST: ${{ secrets.KINAL_SITE_SSH_HOST }}
+  SSH_PORT: ${{ secrets.KINAL_SITE_SSH_PORT }}
+  SSH_USER: ${{ secrets.KINAL_SITE_SSH_USER }}
+  SSH_KEY: ${{ secrets.KINAL_SITE_SSH_KEY }}
+  SERVICE_NAME: ${{ secrets.KINAL_SITE_SERVICE_NAME }}
+  SITE_ROOT_HINT: ${{ secrets.KINAL_SITE_ROOT_HINT }}
+
+jobs:
+  deploy-docs:
+    name: Upload docs to kinal.org
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout Kinal
+        uses: actions/checkout@v4
+
+      - name: Validate deploy configuration
+        id: config
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=0
+          for name in SSH_HOST SSH_USER SSH_KEY; do
+            if [ -z "${!name:-}" ]; then
+              echo "::warning::${name} is not configured; docs deployment will be skipped."
+              missing=1
+            fi
+          done
+          if [ "$missing" -eq 0 ]; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Prepare SSH client
+        if: steps.config.outputs.ready == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.ssh"
+          key_path="$HOME/.ssh/kinal_site"
+          printf '%s\n' "$SSH_KEY" > "$key_path"
+          chmod 600 "$key_path"
+          port="${SSH_PORT:-22}"
+          ssh-keyscan -p "$port" "$SSH_HOST" >> "$HOME/.ssh/known_hosts"
+          {
+            echo "KINAL_SSH_KEY=$key_path"
+            echo "KINAL_SSH_PORT=$port"
+          } >> "$GITHUB_ENV"
+
+      - name: Package docs
+        if: steps.config.outputs.ready == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p deploy
+          tar -czf deploy/kinal-docs.tar.gz docs
+
+      - name: Upload docs archive
+        if: steps.config.outputs.ready == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          docs_tmp="/tmp/kinal-docs-${GITHUB_RUN_ID}.tar.gz"
+          scp -P "$KINAL_SSH_PORT" -i "$KINAL_SSH_KEY" "deploy/kinal-docs.tar.gz" "$SSH_USER@$SSH_HOST:$docs_tmp"
+          echo "KINAL_REMOTE_DOCS_TMP=$docs_tmp" >> "$GITHUB_ENV"
+
+      - name: Install docs on remote kinal.org site
+        if: steps.config.outputs.ready == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh -p "$KINAL_SSH_PORT" -i "$KINAL_SSH_KEY" "$SSH_USER@$SSH_HOST" \
+            "SERVICE_NAME='${SERVICE_NAME:-}' SITE_ROOT_HINT='${SITE_ROOT_HINT:-}' KINAL_REMOTE_DOCS_TMP='$KINAL_REMOTE_DOCS_TMP' bash -s" <<'EOF'
+          set -euo pipefail
+
+          append_target() {
+            local target="$1"
+            [ -n "$target" ] || return 0
+            case " ${doc_targets[*]} " in
+              *" $target "*) ;;
+              *) doc_targets+=("$target") ;;
+            esac
+          }
+
+          append_docs_targets_for_root() {
+            local root="$1"
+            [ -n "$root" ] || return 0
+            [ -d "$root" ] || return 0
+
+            if [ -d "$root/managed/static" ]; then
+              append_target "$root/managed/static/docs"
+            fi
+            if [ -d "$root/src/web/managed/static" ] || [ -f "$root/build.py" ]; then
+              append_target "$root/src/web/managed/static/docs"
+            fi
+            if [ -d "$root/build/managed/static" ]; then
+              append_target "$root/build/managed/static/docs"
+            fi
+          }
+
+          extract_root="$(mktemp -d)"
+          cleanup() {
+            rm -rf "$extract_root"
+            rm -f "$KINAL_REMOTE_DOCS_TMP"
+          }
+          trap cleanup EXIT
+
+          tar -xzf "$KINAL_REMOTE_DOCS_TMP" -C "$extract_root"
+          if [ ! -d "$extract_root/docs" ]; then
+            echo "docs archive did not contain a top-level docs directory" >&2
+            exit 1
+          fi
+
+          doc_targets=()
+
+          append_docs_targets_for_root "${SITE_ROOT_HINT:-}"
+
+          service_workdir=""
+          if [ -n "${SERVICE_NAME:-}" ]; then
+            service_workdir="$(systemctl show -p WorkingDirectory --value "$SERVICE_NAME" 2>/dev/null || true)"
+            append_docs_targets_for_root "$service_workdir"
+            append_docs_targets_for_root "$(dirname "$service_workdir")"
+          fi
+
+          for candidate in \
+            "/srv/kinal.org/current" \
+            "/srv/kinal.org" \
+            "$HOME/kinal.org" \
+            "/root/kinal.org" \
+            "/opt/kinal.org" \
+            "/usr/local/src/kinal.org"; do
+            append_docs_targets_for_root "$candidate"
+          done
+
+          append_target "/var/www/kinal-static/current/static/docs"
+          append_target "/var/www/kinal-static/static/docs"
+
+          if [ "${#doc_targets[@]}" -eq 0 ]; then
+            echo "no remote docs targets were discovered" >&2
+            exit 1
+          fi
+
+          for target in "${doc_targets[@]}"; do
+            mkdir -p "$(dirname "$target")"
+            rm -rf "$target"
+            mkdir -p "$target"
+            cp -a "$extract_root/docs"/. "$target"/
+            echo "docs installed at: $target"
+          done
+
+          if [ -n "${SERVICE_NAME:-}" ]; then
+            systemctl restart "$SERVICE_NAME"
+            echo "restarted service: $SERVICE_NAME"
+          fi
+
+          printf 'resolved docs targets:\n'
+          printf ' - %s\n' "${doc_targets[@]}"
+          EOF
+
+      - name: Deployment skipped
+        if: steps.config.outputs.ready != 'true'
+        run: echo "Docs deployment skipped because required secrets are not configured."

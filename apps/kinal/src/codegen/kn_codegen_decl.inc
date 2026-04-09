@@ -816,6 +816,7 @@ int kn_codegen(const char *out_path, MetaList *metas, FuncList *funcs, ImportLis
         return -1;
     }
     LLVMTargetDataRef dl = LLVMCreateTargetDataLayout(tm);
+    g.target_data = dl;
     LLVMSetModuleDataLayout(g.mod, dl);
     // declare user functions
     for (int i = 0; i < funcs->count; i++)

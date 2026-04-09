@@ -48,6 +48,15 @@ CIVETWEB_SRC_ARCHIVE_URL = "https://github.com/civetweb/civetweb/archive/{commit
 WEB_BRIDGE_SRC = RUNTIME_DIR / "src" / "kn_web_civet.c"
 IO_WEB_NATIVE_TARGETS = ("win-x64", "win-arm64", "linux-x64", "linux-arm64")
 
+CJSON_DIR = THIRD_PARTY_ROOT / "cjson"
+CJSON_INCLUDE = CJSON_DIR / "include"
+CJSON_SRC = CJSON_DIR / "src" / "cJSON.c"
+CJSON_VERSION_FILE = CJSON_DIR / "VERSION.txt"
+CJSON_PREBUILT_CACHE_ROOT = THIRD_PARTY_CACHE_ROOT / "cjson" / "artifacts"
+CJSON_LEGACY_PREBUILT_ROOT = CJSON_DIR / "prebuilt"
+JSON_BRIDGE_SRC = RUNTIME_DIR / "src" / "kn_json_cjson.c"
+IO_JSON_NATIVE_TARGETS = ("win-x64", "win-arm64", "linux-x64", "linux-arm64", "macos-x64", "macos-arm64")
+
 
 def host_tag() -> str:
     system = platform.system().lower()

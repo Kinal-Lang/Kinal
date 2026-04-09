@@ -92,6 +92,8 @@ static const KnStdFunc g_type_funcs[] = {
     { "IO.Type", "usize",  KN_BUILTIN_IO_TYPE_USIZE,  { TY_USIZE, TY_UNKNOWN, 0 }, 1, { { TY_ANY, TY_UNKNOWN, 0 } }, SAFETY_SAFE },
     { "IO.Type", "string", KN_BUILTIN_IO_TYPE_STRING, { TY_STRING, TY_UNKNOWN, 0 }, 1, { { TY_ANY, TY_UNKNOWN, 0 } }, SAFETY_SAFE },
     { "IO.Type", "any",    KN_BUILTIN_IO_TYPE_ANY,    { TY_ANY, TY_UNKNOWN, 0 }, 1, { { TY_ANY, TY_UNKNOWN, 0 } }, SAFETY_SAFE },
+    { "IO.Type", "dict",   KN_BUILTIN_IO_TYPE_DICT,   { TY_CLASS, TY_UNKNOWN, 0, 0, "IO.Collection.dict" }, 1, { { TY_ANY, TY_UNKNOWN, 0 } }, SAFETY_SAFE },
+    { "IO.Type", "list",   KN_BUILTIN_IO_TYPE_LIST,   { TY_CLASS, TY_UNKNOWN, 0, 0, "IO.Collection.list" }, 1, { { TY_ANY, TY_UNKNOWN, 0 } }, SAFETY_SAFE },
 };
 
 static const KnStdFunc g_any_funcs[] = {
@@ -303,6 +305,8 @@ static unsigned builtin_profile_mask(KnBuiltinKind kind)
     case KN_BUILTIN_IO_TYPE_USIZE:
     case KN_BUILTIN_IO_TYPE_STRING:
     case KN_BUILTIN_IO_TYPE_ANY:
+    case KN_BUILTIN_IO_TYPE_DICT:
+    case KN_BUILTIN_IO_TYPE_LIST:
     case KN_BUILTIN_IO_ANY_ISNULL:
     case KN_BUILTIN_IO_ANY_EQUALS:
     case KN_BUILTIN_IO_ANY_TAG:

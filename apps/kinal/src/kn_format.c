@@ -458,17 +458,19 @@ static int fmt_need_space_before(const KnFmtState *st, Token current)
         return 0;
     if (prev == TOK_LPAREN || prev == TOK_LBRACKET || prev == TOK_DOT || prev == TOK_AT)
         return 0;
+    if (st->force_space_before_next)
+        return 1;
     if (curr == TOK_LBRACKET)
-        return 0;
+        return (fmt_token_is_word(prev) && !fmt_token_can_end_expr(prev)) ? 1 : 0;
     if (curr == TOK_LPAREN)
         return fmt_token_is_control_with_paren(prev);
     if (prev == TOK_RBRACKET && (curr == TOK_LPAREN || curr == TOK_STRING || curr == TOK_BAD_STRING || curr == TOK_CHAR_LIT || curr == TOK_BAD_CHAR))
         return 0;
-    if (st->force_space_before_next)
-        return 1;
     if (fmt_token_is_word(prev) && fmt_token_is_word(curr))
         return 1;
     if (fmt_token_is_word(curr) && (prev == TOK_RPAREN || prev == TOK_RBRACKET))
+        return 1;
+    if (fmt_token_can_end_expr(prev) && fmt_token_is_binary_operator(curr, st->has_prev, prev))
         return 1;
     if (curr == TOK_LBRACE)
     {

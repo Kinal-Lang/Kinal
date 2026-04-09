@@ -1,0 +1,380 @@
+Unit IO.Json;
+
+Get IO.Char;
+Get IO.Error;
+Get IO.Math;
+Get Native By IO.__Json;
+
+Trusted Function void __JsonThrow(string message)
+{
+    Throw New IO.Error("IO.Json", message);
+}
+
+Trusted Function string __JsonNativeError(string fallback)
+{
+    string detail = Native.LastError();
+    If (detail == null || detail == "")
+    {
+        Return fallback;
+    }
+    Return detail;
+}
+
+Trusted Function byte* __JsonParseDocument(string text)
+{
+    byte* document = Native.DocumentParse(text);
+    If (document == null)
+    {
+        __JsonThrow(__JsonNativeError("Failed to parse JSON text"));
+    }
+    Return document;
+}
+
+Trusted Function char __JsonHexDigit(int value)
+{
+    If (value < 10)
+    {
+        Return [char]([int]('0') + value);
+    }
+    Return [char]([int]('A') + (value - 10));
+}
+
+Trusted Function string __JsonHex4(int value)
+{
+    string result = "";
+    result += __JsonHexDigit((value >> 12) & 15);
+    result += __JsonHexDigit((value >> 8) & 15);
+    result += __JsonHexDigit((value >> 4) & 15);
+    result += __JsonHexDigit(value & 15);
+    Return result;
+}
+
+Trusted Function string __JsonEscapeString(string text)
+{
+    string value = text;
+    string result = "";
+    If (value == null)
+    {
+        Return "";
+    }
+
+    For (int i = 0; i < value.Length(); i++)
+    {
+        char c = value[i];
+        int code = [int](c);
+
+        If (c == '"')
+        {
+            result += "\\\"";
+            Continue;
+        }
+        If (c == '\\')
+        {
+            result += "\\\\";
+            Continue;
+        }
+        If (code == 8)
+        {
+            result += "\\b";
+            Continue;
+        }
+        If (code == 12)
+        {
+            result += "\\f";
+            Continue;
+        }
+        If (c == '\n')
+        {
+            result += "\\n";
+            Continue;
+        }
+        If (c == '\r')
+        {
+            result += "\\r";
+            Continue;
+        }
+        If (c == '\t')
+        {
+            result += "\\t";
+            Continue;
+        }
+        If (code < 32)
+        {
+            result += "\\u";
+            result += __JsonHex4(code);
+            Continue;
+        }
+        result += c;
+    }
+
+    Return result;
+}
+
+Trusted Function string __JsonQuote(string text)
+{
+    Return "\"" + __JsonEscapeString(text) + "\"";
+}
+
+Trusted Function string __JsonFormatNumber(float value)
+{
+    string text = Native.FormatNumber([f64](value));
+    If (text == null || text == "")
+    {
+        __JsonThrow(__JsonNativeError("Failed to format JSON number"));
+    }
+    Return text;
+}
+
+Trusted Function int __JsonBoolFlag(bool value)
+{
+    If (value)
+    {
+        Return 1;
+    }
+    Return 0;
+}
+
+Trusted Function bool IsDict(any value)
+{
+    Return !value.IsNull() && value.TypeName() == "IO.Collection.dict";
+}
+
+Trusted Function bool IsList(any value)
+{
+    Return !value.IsNull() && value.TypeName() == "IO.Collection.list";
+}
+
+Trusted Function dict AsDict(any value)
+{
+    If (!IsDict(value))
+    {
+        __JsonThrow("JSON value is not an object");
+    }
+    Return IO.Type.dict(value);
+}
+
+Trusted Function list AsList(any value)
+{
+    If (!IsList(value))
+    {
+        __JsonThrow("JSON value is not an array");
+    }
+    Return IO.Type.list(value);
+}
+
+Trusted Function any __JsonBuildValue(byte* document, int node_id)
+{
+    int kind = Native.NodeKind(document, node_id);
+
+    If (kind == 0)
+    {
+        Return null;
+    }
+    If (kind == 1)
+    {
+        Return Native.NodeBool(document, node_id) != 0;
+    }
+    If (kind == 2)
+    {
+        Return Native.NodeInt(document, node_id);
+    }
+    If (kind == 3)
+    {
+        Return [float](Native.NodeFloat(document, node_id));
+    }
+    If (kind == 4)
+    {
+        Return Native.NodeString(document, node_id);
+    }
+    If (kind == 5)
+    {
+        Return __JsonBuildObject(document, node_id);
+    }
+    If (kind == 6)
+    {
+        Return __JsonBuildArray(document, node_id);
+    }
+
+    __JsonThrow("Unsupported JSON node kind: " + kind.ToString());
+    Return null;
+}
+
+Trusted Function dict __JsonBuildObject(byte* document, int node_id)
+{
+    dict result = dict.Create();
+    int count = Native.ObjectCount(document, node_id);
+
+    For (int i = 0; i < count; i++)
+    {
+        string key = Native.ObjectKeyAt(document, node_id, i);
+        int child_id = Native.ObjectValueAt(document, node_id, i);
+        result.Set(key, __JsonBuildValue(document, child_id));
+    }
+
+    Return result;
+}
+
+Trusted Function list __JsonBuildArray(byte* document, int node_id)
+{
+    list result = list.Create();
+    int count = Native.ArrayCount(document, node_id);
+
+    For (int i = 0; i < count; i++)
+    {
+        int child_id = Native.ArrayItemAt(document, node_id, i);
+        result.Add(__JsonBuildValue(document, child_id));
+    }
+
+    Return result;
+}
+
+Trusted Function string __JsonSerializeValue(any value, int depth)
+{
+    string type_name;
+    If (depth > 128)
+    {
+        __JsonThrow("JSON structure is too deeply nested");
+    }
+
+    If (value.IsNull())
+    {
+        Return "null";
+    }
+    If (value.IsString())
+    {
+        Return __JsonQuote([string](value));
+    }
+    If (value.IsChar())
+    {
+        Return __JsonQuote([string](value));
+    }
+    If (value.IsBool())
+    {
+        If ([bool](value))
+        {
+            Return "true";
+        }
+        Return "false";
+    }
+    If (value.IsInt())
+    {
+        Return [int](value).ToString();
+    }
+    If (value.IsFloat())
+    {
+        float number = [float](value);
+        If (IO.Math.IsNaN(number) || IO.Math.IsInf(number))
+        {
+            __JsonThrow("JSON does not support NaN or Infinity");
+        }
+        Return __JsonFormatNumber(number);
+    }
+
+    type_name = value.TypeName();
+    If (type_name == "IO.Collection.dict")
+    {
+        Return __JsonSerializeDict(AsDict(value), depth + 1);
+    }
+    If (type_name == "IO.Collection.list")
+    {
+        Return __JsonSerializeList(AsList(value), depth + 1);
+    }
+
+    __JsonThrow("Unsupported JSON value type: " + type_name);
+    Return "";
+}
+
+Trusted Function string __JsonSerializeList(list value, int depth)
+{
+    string result = "[";
+
+    For (int i = 0; i < value.Count(); i++)
+    {
+        If (i > 0)
+        {
+            result += ",";
+        }
+        result += __JsonSerializeValue(value.Fetch(i), depth);
+    }
+
+    result += "]";
+    Return result;
+}
+
+Trusted Function string __JsonSerializeDict(dict value, int depth)
+{
+    string result = "{";
+    list keys = value.Keys();
+
+    For (int i = 0; i < keys.Count(); i++)
+    {
+        any key_value = keys.Fetch(i);
+        string key;
+
+        If (!key_value.IsString())
+        {
+            __JsonThrow("JSON object keys must be strings");
+        }
+
+        key = [string](key_value);
+        If (i > 0)
+        {
+            result += ",";
+        }
+        result += __JsonQuote(key);
+        result += ":";
+        result += __JsonSerializeValue(value.Fetch(key), depth);
+    }
+
+    result += "}";
+    Return result;
+}
+
+Trusted Function any ParseValue(string text)
+{
+    byte* document = __JsonParseDocument(text);
+    any result = null;
+
+    Try
+    {
+        result = __JsonBuildValue(document, Native.DocumentRoot(document));
+        Native.DocumentFree(document);
+        Return result;
+    }
+    Catch (IO.Error e)
+    {
+        Native.DocumentFree(document);
+        Throw e;
+    }
+}
+
+Trusted Function dict Parse(string text)
+{
+    Return AsDict(ParseValue(text));
+}
+
+Trusted Function string FormatText(string text, bool pretty = true)
+{
+    string formatted = Native.FormatText(text, __JsonBoolFlag(pretty));
+    If (formatted == null)
+    {
+        __JsonThrow(__JsonNativeError("Failed to format JSON text"));
+    }
+    Return formatted;
+}
+
+Trusted Function string Minify(string text)
+{
+    Return FormatText(text, false);
+}
+
+Trusted Function string FormatValue(any value, bool pretty = true)
+{
+    string raw = __JsonSerializeValue(value, 0);
+    Return FormatText(raw, pretty);
+}
+
+Trusted Function string Format(any value, bool pretty = true)
+{
+    Return FormatValue(value, pretty);
+}
