@@ -3986,7 +3986,13 @@ static CGValue gen_builtin_call(Codegen *g, KnBuiltinKind kind, ExprList *args, 
         CGValue a = (recv && args->count == 0) ? gen_expr(g, recv) : gen_expr(g, args->items[0]);
         LLVMValueRef anyv = cast_value(g, a, type_make(TY_ANY));
         LLVMValueRef tag = LLVMBuildExtractValue(g->builder, anyv, 0, "any.tag");
-        out.value = LLVMBuildICmp(g->builder, LLVMIntEQ, tag, LLVMConstInt(g->i64, KN_ANY_TAG_PTR, 0), "any.isobj");
+        LLVMValueRef is_ptr = LLVMBuildICmp(g->builder, LLVMIntEQ, tag, LLVMConstInt(g->i64, KN_ANY_TAG_PTR, 0), "");
+        LLVMValueRef is_dict = LLVMBuildICmp(g->builder, LLVMIntEQ, tag, LLVMConstInt(g->i64, KN_ANY_TAG_DICT, 0), "");
+        LLVMValueRef is_list = LLVMBuildICmp(g->builder, LLVMIntEQ, tag, LLVMConstInt(g->i64, KN_ANY_TAG_LIST, 0), "");
+        LLVMValueRef is_set = LLVMBuildICmp(g->builder, LLVMIntEQ, tag, LLVMConstInt(g->i64, KN_ANY_TAG_SET, 0), "");
+        LLVMValueRef is_object = LLVMBuildOr(g->builder, is_ptr, is_dict, "");
+        is_object = LLVMBuildOr(g->builder, is_object, is_list, "");
+        out.value = LLVMBuildOr(g->builder, is_object, is_set, "any.isobj");
         out.type = type_make(TY_BOOL);
         return out;
     }
