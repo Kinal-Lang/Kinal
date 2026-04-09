@@ -9,10 +9,14 @@ from pathlib import Path
 
 from .context import (
     CJSON_DIR,
+    CJSON_DEFAULT_SOURCE_URL,
+    CJSON_DEFAULT_TAG,
+    CJSON_DEFAULT_VERSION,
     CJSON_INCLUDE,
     CJSON_LEGACY_PREBUILT_ROOT,
     CJSON_PREBUILT_CACHE_ROOT,
     CJSON_SRC,
+    CJSON_SRC_ARCHIVE_URL,
     CJSON_VERSION_FILE,
     CHKSTK_SRC,
     CIVETWEB_DIR,
@@ -431,10 +435,92 @@ def cjson_prebuilt_root() -> Path:
     return CJSON_PREBUILT_CACHE_ROOT
 
 
+def cjson_pinned_release() -> tuple[str, str, str, str]:
+    version = CJSON_DEFAULT_VERSION
+    tag = CJSON_DEFAULT_TAG
+    source = CJSON_DEFAULT_SOURCE_URL
+
+    if CJSON_VERSION_FILE.exists():
+        for raw_line in CJSON_VERSION_FILE.read_text(encoding="utf-8").splitlines():
+            line = raw_line.strip()
+            if ":" not in line:
+                continue
+            key, value = line.split(":", 1)
+            key = key.strip().lower()
+            value = value.strip()
+            if not value:
+                continue
+            if key == "version":
+                version = value
+            elif key == "tag":
+                tag = value
+            elif key == "source":
+                source = value
+
+    if not tag:
+        normalized = version.strip()
+        if not normalized:
+            raise SystemExit(f"failed to resolve pinned cJSON version from {CJSON_VERSION_FILE}")
+        tag = normalized if normalized.startswith("v") else f"v{normalized}"
+
+    source = source.rstrip("/")
+    if source.endswith(".git"):
+        source = source[:-4]
+    archive_url = CJSON_SRC_ARCHIVE_URL.format(source=source, tag=tag)
+    return version, tag, source, archive_url
+
+
 def ensure_cjson_source() -> None:
     if CJSON_SRC.exists() and (CJSON_INCLUDE / "cJSON.h").exists():
         return
-    raise SystemExit(f"cJSON source is missing under {CJSON_DIR}; ensure Kinal-ThirdParty provides cjson/include and cjson/src.")
+
+    version, tag, source, archive_url = cjson_pinned_release()
+
+    with tempfile.TemporaryDirectory(prefix="kinal-cjson-") as temp_dir:
+        temp_root = Path(temp_dir)
+        archive_path = temp_root / f"cjson-{tag}.zip"
+        extract_root = temp_root / "extract"
+        extract_root.mkdir(parents=True, exist_ok=True)
+
+        download_file(archive_url, archive_path)
+        with zipfile.ZipFile(archive_path) as zf:
+            zf.extractall(extract_root)
+
+        extracted_roots = sorted(path for path in extract_root.iterdir() if path.is_dir())
+        if not extracted_roots:
+            raise SystemExit(f"downloaded cJSON archive did not contain a root directory: {archive_url}")
+
+        upstream_root = extracted_roots[0]
+        header_src = upstream_root / "cJSON.h"
+        source_src = upstream_root / "cJSON.c"
+        if not header_src.exists() or not source_src.exists():
+            raise SystemExit(f"downloaded cJSON archive is missing cJSON.h/cJSON.c: {archive_url}")
+
+        CJSON_INCLUDE.mkdir(parents=True, exist_ok=True)
+        (CJSON_DIR / "src").mkdir(parents=True, exist_ok=True)
+        shutil.copy2(header_src, CJSON_INCLUDE / "cJSON.h")
+        shutil.copy2(source_src, CJSON_DIR / "src" / "cJSON.c")
+
+        for candidate in ("LICENSE", "LICENSE.txt", "COPYING"):
+            license_src = upstream_root / candidate
+            if license_src.exists():
+                shutil.copy2(license_src, CJSON_DIR / "LICENSE")
+                break
+
+    if not CJSON_VERSION_FILE.exists():
+        write_text(
+            CJSON_VERSION_FILE,
+            "\n".join(
+                [
+                    f"Version: {version}",
+                    f"Tag: {tag}",
+                    f"Source: {source}",
+                    "",
+                ]
+            ),
+        )
+
+    print(f"[OK] bootstrapped cJSON source into {CJSON_DIR}")
 
 
 def build_civetweb_for_target(target: str, llvm_bin: Path) -> bool:

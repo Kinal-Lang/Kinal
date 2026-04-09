@@ -15,6 +15,7 @@ def sparse_checkout_patterns() -> list[str]:
         ".gitignore",
         "README.md",
         "README.zh-CN.md",
+        "cjson/**",
         "civetweb/**",
         "llvm/README.md",
         "llvm/README.zh-CN.md",
