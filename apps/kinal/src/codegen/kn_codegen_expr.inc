@@ -1298,7 +1298,7 @@ static CGValue gen_expr(Codegen *g, Expr *e)
         if (e->v.call.builtin_id != KN_BUILTIN_NONE)
         {
             KnBuiltinKind bk = (KnBuiltinKind)e->v.call.builtin_id;
-            if (bk >= KN_BUILTIN_IO_TYPE_BOOL && bk <= KN_BUILTIN_IO_TYPE_ANY && e->v.call.args.count == 1)
+            if (bk >= KN_BUILTIN_IO_TYPE_BOOL && bk <= KN_BUILTIN_IO_TYPE_LIST && e->v.call.args.count == 1)
             {
                 Type dst = type_make(TY_UNKNOWN);
                 switch (bk)
@@ -1324,6 +1324,8 @@ static CGValue gen_expr(Codegen *g, Expr *e)
                 case KN_BUILTIN_IO_TYPE_USIZE: dst = type_make(TY_USIZE); break;
                 case KN_BUILTIN_IO_TYPE_STRING: dst = type_make(TY_STRING); break;
                 case KN_BUILTIN_IO_TYPE_ANY: dst = type_make(TY_ANY); break;
+                case KN_BUILTIN_IO_TYPE_DICT: dst = type_class("IO.Collection.dict"); break;
+                case KN_BUILTIN_IO_TYPE_LIST: dst = type_class("IO.Collection.list"); break;
                 default: dst = type_make(TY_UNKNOWN); break;
                 }
                 CGValue srcv = gen_expr(g, e->v.call.args.items[0]);
@@ -1413,7 +1415,7 @@ static CGValue gen_expr(Codegen *g, Expr *e)
         if (e->v.member_call.builtin_id != KN_BUILTIN_NONE)
         {
             KnBuiltinKind bk = (KnBuiltinKind)e->v.member_call.builtin_id;
-            if (bk >= KN_BUILTIN_IO_TYPE_BOOL && bk <= KN_BUILTIN_IO_TYPE_ANY && e->v.member_call.args.count == 1)
+            if (bk >= KN_BUILTIN_IO_TYPE_BOOL && bk <= KN_BUILTIN_IO_TYPE_LIST && e->v.member_call.args.count == 1)
             {
                 Type dst = type_make(TY_UNKNOWN);
                 switch (bk)
@@ -1439,6 +1441,8 @@ static CGValue gen_expr(Codegen *g, Expr *e)
                 case KN_BUILTIN_IO_TYPE_USIZE: dst = type_make(TY_USIZE); break;
                 case KN_BUILTIN_IO_TYPE_STRING: dst = type_make(TY_STRING); break;
                 case KN_BUILTIN_IO_TYPE_ANY: dst = type_make(TY_ANY); break;
+                case KN_BUILTIN_IO_TYPE_DICT: dst = type_class("IO.Collection.dict"); break;
+                case KN_BUILTIN_IO_TYPE_LIST: dst = type_class("IO.Collection.list"); break;
                 default: dst = type_make(TY_UNKNOWN); break;
                 }
                 CGValue srcv = gen_expr(g, e->v.member_call.args.items[0]);
@@ -3059,6 +3063,8 @@ static CGValue gen_builtin_call(Codegen *g, KnBuiltinKind kind, ExprList *args, 
     case KN_BUILTIN_IO_TYPE_USIZE:
     case KN_BUILTIN_IO_TYPE_STRING:
     case KN_BUILTIN_IO_TYPE_ANY:
+    case KN_BUILTIN_IO_TYPE_DICT:
+    case KN_BUILTIN_IO_TYPE_LIST:
     {
         CGValue a = gen_expr(g, args->items[0]);
         Type dst = type_make(TY_UNKNOWN);
@@ -3085,6 +3091,8 @@ static CGValue gen_builtin_call(Codegen *g, KnBuiltinKind kind, ExprList *args, 
         case KN_BUILTIN_IO_TYPE_USIZE: dst = type_make(TY_USIZE); break;
         case KN_BUILTIN_IO_TYPE_STRING: dst = type_make(TY_STRING); break;
         case KN_BUILTIN_IO_TYPE_ANY: dst = type_make(TY_ANY); break;
+        case KN_BUILTIN_IO_TYPE_DICT: dst = type_class("IO.Collection.dict"); break;
+        case KN_BUILTIN_IO_TYPE_LIST: dst = type_class("IO.Collection.list"); break;
         default: dst = type_make(TY_UNKNOWN); break;
         }
         out.value = cast_value(g, a, dst);
@@ -3882,12 +3890,18 @@ static CGValue gen_builtin_call(Codegen *g, KnBuiltinKind kind, ExprList *args, 
         LLVMValueRef is_bool = LLVMBuildICmp(g->builder, LLVMIntEQ, tag, LLVMConstInt(g->i64, KN_ANY_TAG_BOOL, 0), "");
         LLVMValueRef is_char = LLVMBuildICmp(g->builder, LLVMIntEQ, tag, LLVMConstInt(g->i64, KN_ANY_TAG_CHAR, 0), "");
         LLVMValueRef is_str = LLVMBuildICmp(g->builder, LLVMIntEQ, tag, LLVMConstInt(g->i64, KN_ANY_TAG_STRING, 0), "");
+        LLVMValueRef is_dict = LLVMBuildICmp(g->builder, LLVMIntEQ, tag, LLVMConstInt(g->i64, KN_ANY_TAG_DICT, 0), "");
+        LLVMValueRef is_list = LLVMBuildICmp(g->builder, LLVMIntEQ, tag, LLVMConstInt(g->i64, KN_ANY_TAG_LIST, 0), "");
+        LLVMValueRef is_set = LLVMBuildICmp(g->builder, LLVMIntEQ, tag, LLVMConstInt(g->i64, KN_ANY_TAG_SET, 0), "");
         LLVMValueRef t_none = build_string_const(g, "null", 4);
         LLVMValueRef t_i64 = build_string_const(g, "int", 3);
         LLVMValueRef t_f64 = build_string_const(g, "float", 5);
         LLVMValueRef t_bool = build_string_const(g, "bool", 4);
         LLVMValueRef t_char = build_string_const(g, "char", 4);
         LLVMValueRef t_str = build_string_const(g, "string", 6);
+        LLVMValueRef t_dict = build_string_const(g, "IO.Collection.dict", 18);
+        LLVMValueRef t_list = build_string_const(g, "IO.Collection.list", 18);
+        LLVMValueRef t_set = build_string_const(g, "IO.Collection.set", 17);
         LLVMValueRef t_ptr = build_string_const(g, "pointer", 7);
         LLVMValueRef name = LLVMBuildSelect(g->builder, is_none, t_none, t_ptr, "");
         name = LLVMBuildSelect(g->builder, is_i64, t_i64, name, "");
@@ -3895,6 +3909,9 @@ static CGValue gen_builtin_call(Codegen *g, KnBuiltinKind kind, ExprList *args, 
         name = LLVMBuildSelect(g->builder, is_bool, t_bool, name, "");
         name = LLVMBuildSelect(g->builder, is_char, t_char, name, "");
         name = LLVMBuildSelect(g->builder, is_str, t_str, name, "");
+        name = LLVMBuildSelect(g->builder, is_dict, t_dict, name, "");
+        name = LLVMBuildSelect(g->builder, is_list, t_list, name, "");
+        name = LLVMBuildSelect(g->builder, is_set, t_set, name, "");
         out.value = name;
         out.type = type_make(TY_STRING);
         return out;
