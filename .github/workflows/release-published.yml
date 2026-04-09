@@ -111,6 +111,7 @@ jobs:
       SSH_HOST: ${{ secrets.KINAL_SITE_SSH_HOST }}
       SSH_PORT: ${{ secrets.KINAL_SITE_SSH_PORT }}
       SSH_USER: ${{ secrets.KINAL_SITE_SSH_USER }}
+      SSH_PASSWORD: ${{ secrets.KINAL_SITE_SSH_PASSWORD }}
       SSH_KEY: ${{ secrets.KINAL_SITE_SSH_KEY }}
       RELEASE_JSON_PATH: ${{ secrets.KINAL_SITE_RELEASE_JSON_PATH }}
       COMPILER_ROOT: ${{ secrets.KINAL_SITE_COMPILER_ROOT }}
@@ -129,12 +130,16 @@ jobs:
         run: |
           set -euo pipefail
           missing=0
-          for name in SSH_HOST SSH_USER SSH_KEY RELEASE_JSON_PATH COMPILER_ROOT; do
+          for name in SSH_HOST SSH_USER RELEASE_JSON_PATH COMPILER_ROOT; do
             if [ -z "${!name:-}" ]; then
               echo "::warning::${name} is not configured; production deployment will be skipped."
               missing=1
             fi
           done
+          if [ -z "${SSH_KEY:-}" ] && [ -z "${SSH_PASSWORD:-}" ]; then
+            echo "::warning::Either SSH_KEY or SSH_PASSWORD must be configured; production deployment will be skipped."
+            missing=1
+          fi
           if [ "$missing" -eq 0 ]; then
             echo "ready=true" >> "$GITHUB_OUTPUT"
           else
@@ -147,15 +152,25 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$HOME/.ssh"
-          key_path="$HOME/.ssh/kinal_site"
-          printf '%s\n' "$SSH_KEY" > "$key_path"
-          chmod 600 "$key_path"
           port="${SSH_PORT:-22}"
           ssh-keyscan -p "$port" "$SSH_HOST" >> "$HOME/.ssh/known_hosts"
+          if [ -n "${SSH_KEY:-}" ]; then
+            key_path="$HOME/.ssh/kinal_site"
+            printf '%s\n' "$SSH_KEY" > "$key_path"
+            chmod 600 "$key_path"
+            echo "KINAL_SSH_KEY=$key_path" >> "$GITHUB_ENV"
+          fi
           {
-            echo "KINAL_SSH_KEY=$key_path"
             echo "KINAL_SSH_PORT=$port"
           } >> "$GITHUB_ENV"
+
+      - name: Install sshpass for password auth
+        if: steps.config.outputs.ready == 'true' && env.SSH_KEY == '' && env.SSH_PASSWORD != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y sshpass
 
       - name: Download Linux x64 compiler archive
         if: steps.config.outputs.ready == 'true'
@@ -178,8 +193,28 @@ jobs:
           set -euo pipefail
           release_tmp="/tmp/kinal-release-feed-${GITHUB_RUN_ID}.json"
           archive_tmp="/tmp/${ASSET_NAME}-${GITHUB_RUN_ID}"
-          scp -P "$KINAL_SSH_PORT" -i "$KINAL_SSH_KEY" "release-feed/releases.json" "$SSH_USER@$SSH_HOST:$release_tmp"
-          scp -P "$KINAL_SSH_PORT" -i "$KINAL_SSH_KEY" "deploy/$ASSET_NAME" "$SSH_USER@$SSH_HOST:$archive_tmp"
+          if [ -n "${SSH_KEY:-}" ]; then
+            scp -P "$KINAL_SSH_PORT" -i "$KINAL_SSH_KEY" "release-feed/releases.json" "$SSH_USER@$SSH_HOST:$release_tmp"
+            scp -P "$KINAL_SSH_PORT" -i "$KINAL_SSH_KEY" "deploy/$ASSET_NAME" "$SSH_USER@$SSH_HOST:$archive_tmp"
+          else
+            export SSHPASS="$SSH_PASSWORD"
+            sshpass -e scp \
+              -o StrictHostKeyChecking=yes \
+              -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
+              -o PreferredAuthentications=password \
+              -o PubkeyAuthentication=no \
+              -P "$KINAL_SSH_PORT" \
+              "release-feed/releases.json" \
+              "$SSH_USER@$SSH_HOST:$release_tmp"
+            sshpass -e scp \
+              -o StrictHostKeyChecking=yes \
+              -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
+              -o PreferredAuthentications=password \
+              -o PubkeyAuthentication=no \
+              -P "$KINAL_SSH_PORT" \
+              "deploy/$ASSET_NAME" \
+              "$SSH_USER@$SSH_HOST:$archive_tmp"
+          fi
           {
             echo "KINAL_REMOTE_RELEASE_TMP=$release_tmp"
             echo "KINAL_REMOTE_ARCHIVE_TMP=$archive_tmp"
@@ -192,7 +227,26 @@ jobs:
         run: |
           set -euo pipefail
           bin_dir="${BIN_DIR:-/usr/local/bin}"
-          ssh -p "$KINAL_SSH_PORT" -i "$KINAL_SSH_KEY" "$SSH_USER@$SSH_HOST" \
+          remote_cmd=(
+            ssh
+            -p "$KINAL_SSH_PORT"
+            -o StrictHostKeyChecking=yes
+            -o UserKnownHostsFile="$HOME/.ssh/known_hosts"
+          )
+          if [ -n "${SSH_KEY:-}" ]; then
+            remote_cmd+=(-i "$KINAL_SSH_KEY")
+          else
+            export SSHPASS="$SSH_PASSWORD"
+            remote_cmd=(
+              sshpass -e ssh
+              -p "$KINAL_SSH_PORT"
+              -o StrictHostKeyChecking=yes
+              -o UserKnownHostsFile="$HOME/.ssh/known_hosts"
+              -o PreferredAuthentications=password
+              -o PubkeyAuthentication=no
+            )
+          fi
+          "${remote_cmd[@]}" "$SSH_USER@$SSH_HOST" \
             "RELEASE_JSON_PATH='$RELEASE_JSON_PATH' COMPILER_ROOT='$COMPILER_ROOT' BIN_DIR='$bin_dir' SERVICE_NAME='${SERVICE_NAME:-}' KINAL_RELEASE_TAG='$KINAL_RELEASE_TAG' KINAL_REMOTE_RELEASE_TMP='$KINAL_REMOTE_RELEASE_TMP' KINAL_REMOTE_ARCHIVE_TMP='$KINAL_REMOTE_ARCHIVE_TMP' bash -s" <<'EOF'
           set -euo pipefail
 
