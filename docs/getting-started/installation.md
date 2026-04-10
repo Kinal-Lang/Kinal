@@ -37,6 +37,41 @@ If `~/.local/bin` is not already on your `PATH`, add it:
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
+The installer now prints step-by-step status messages and download progress while fetching release assets.
+
+### Using a Proxy
+
+The installer supports standard proxy environment variables such as `HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY`, and `NO_PROXY`.
+
+If only the GitHub download step needs a proxy, pass it directly to the installer:
+
+```bash
+curl -fsSL https://kinal.org/install.sh | bash -s -- --proxy http://127.0.0.1:7890
+```
+
+If fetching the installer script itself also requires a proxy, apply the environment variable to both commands:
+
+```bash
+HTTPS_PROXY=http://127.0.0.1:7890 \
+curl -fsSL https://kinal.org/install.sh | \
+bash -s -- --proxy http://127.0.0.1:7890
+```
+
+### Uninstalling
+
+To remove the installed toolchain and the launcher scripts created by the installer:
+
+```bash
+curl -fsSL https://kinal.org/install.sh | bash -s -- --uninstall
+```
+
+If you installed to a custom location, pass the same directories again:
+
+```bash
+curl -fsSL https://kinal.org/install.sh | \
+bash -s -- --uninstall --root-dir ~/.local/share/kinal --install-dir ~/.local/bin
+```
+
 ### Installing from a Pre-compiled Package
 
 If you prefer a manual install, download the compressed package for your platform from the Release page and extract it:

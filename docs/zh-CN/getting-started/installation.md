@@ -36,6 +36,41 @@ curl -fsSL https://kinal.org/install.sh | bash -s -- --version v0.6.0
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
+安装器现在会在下载和安装过程中输出步骤提示与下载进度，等待时不会再像之前那样看起来“没反应”。
+
+### 使用代理
+
+安装脚本支持标准代理环境变量，比如 `HTTPS_PROXY`、`HTTP_PROXY`、`ALL_PROXY` 和 `NO_PROXY`。
+
+如果只是 GitHub 下载步骤需要代理，可以直接传给安装器：
+
+```bash
+curl -fsSL https://kinal.org/install.sh | bash -s -- --proxy http://127.0.0.1:7890
+```
+
+如果连拉取安装脚本本身也需要代理，那外层 `curl` 也要一起带上代理环境变量：
+
+```bash
+HTTPS_PROXY=http://127.0.0.1:7890 \
+curl -fsSL https://kinal.org/install.sh | \
+bash -s -- --proxy http://127.0.0.1:7890
+```
+
+### 卸载
+
+如果你想移除安装器创建的工具链目录和启动脚本，可以直接执行：
+
+```bash
+curl -fsSL https://kinal.org/install.sh | bash -s -- --uninstall
+```
+
+如果你当时用了自定义安装目录，也记得把同样的目录参数再传一次：
+
+```bash
+curl -fsSL https://kinal.org/install.sh | \
+bash -s -- --uninstall --root-dir ~/.local/share/kinal --install-dir ~/.local/bin
+```
+
 ### 从预编译包安装
 
 如果你更想手动安装，也可以从 Release 页面下载对应平台的压缩包并解压：

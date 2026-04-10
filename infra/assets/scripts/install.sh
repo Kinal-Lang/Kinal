@@ -10,6 +10,8 @@ VERSION="latest"
 BIN_DIR="${HOME}/.local/bin"
 ROOT_DIR="${HOME}/.local/share/kinal"
 VERIFY_CHECKSUMS=1
+UNINSTALL=0
+PROXY_URL="${KINAL_PROXY:-}"
 
 usage() {
   cat <<'EOF'
@@ -23,17 +25,21 @@ Options:
                         Defaults to the latest published release.
   --install-dir <dir>   Directory for the launcher scripts. Defaults to ~/.local/bin
   --root-dir <dir>      Directory for the installed toolchain. Defaults to ~/.local/share/kinal
+  --proxy <url>         Use a proxy for GitHub downloads. Standard proxy env vars also work.
+  --uninstall           Remove the installed toolchain under --root-dir and its launcher scripts.
   --no-verify           Skip SHA256 verification.
   -h, --help            Show this help message.
 
 Examples:
   curl -fsSL https://kinal.org/install.sh | bash
   curl -fsSL https://kinal.org/install.sh | bash -s -- --version v0.6.0
+  curl -fsSL https://kinal.org/install.sh | bash -s -- --proxy http://127.0.0.1:7890
+  curl -fsSL https://kinal.org/install.sh | bash -s -- --uninstall
 EOF
 }
 
 note() {
-  printf '[INFO] %s\n' "$*"
+  printf '[INFO] %s\n' "$*" >&2
 }
 
 warn() {
@@ -47,6 +53,10 @@ fail() {
 
 has_cmd() {
   command -v "$1" >/dev/null 2>&1
+}
+
+can_show_progress() {
+  [ -t 2 ]
 }
 
 expand_path() {
@@ -63,17 +73,31 @@ expand_path() {
   esac
 }
 
+apply_proxy_settings() {
+  if [ -n "${PROXY_URL:-}" ]; then
+    export HTTP_PROXY="$PROXY_URL"
+    export HTTPS_PROXY="$PROXY_URL"
+    export ALL_PROXY="${ALL_PROXY:-$PROXY_URL}"
+    export http_proxy="$PROXY_URL"
+    export https_proxy="$PROXY_URL"
+    export all_proxy="${all_proxy:-$PROXY_URL}"
+    note "using proxy configuration for network downloads"
+  elif [ -n "${HTTPS_PROXY:-}${https_proxy:-}${HTTP_PROXY:-}${http_proxy:-}${ALL_PROXY:-}${all_proxy:-}" ]; then
+    note "using proxy settings from environment"
+  fi
+}
+
 download_text() {
   local url="$1"
   if has_cmd curl; then
     if [ -n "${GITHUB_TOKEN:-}" ]; then
-      curl -fsSL \
+      curl -fsSL --retry 3 --connect-timeout 15 \
         -H "Accept: application/vnd.github+json" \
         -H "Authorization: Bearer ${GITHUB_TOKEN}" \
         -H "User-Agent: ${USER_AGENT}" \
         "$url"
     else
-      curl -fsSL \
+      curl -fsSL --retry 3 --connect-timeout 15 \
         -H "Accept: application/vnd.github+json" \
         -H "User-Agent: ${USER_AGENT}" \
         "$url"
@@ -84,12 +108,16 @@ download_text() {
   if has_cmd wget; then
     if [ -n "${GITHUB_TOKEN:-}" ]; then
       wget -qO- \
+        --tries=3 \
+        --timeout=15 \
         --header="Accept: application/vnd.github+json" \
         --header="Authorization: Bearer ${GITHUB_TOKEN}" \
         --header="User-Agent: ${USER_AGENT}" \
         "$url"
     else
       wget -qO- \
+        --tries=3 \
+        --timeout=15 \
         --header="Accept: application/vnd.github+json" \
         --header="User-Agent: ${USER_AGENT}" \
         "$url"
@@ -104,31 +132,43 @@ download_file() {
   local url="$1"
   local dest="$2"
   if has_cmd curl; then
-    if [ -n "${GITHUB_TOKEN:-}" ]; then
-      curl -fsSL \
-        -H "Authorization: Bearer ${GITHUB_TOKEN}" \
-        -H "User-Agent: ${USER_AGENT}" \
-        "$url" \
-        -o "$dest"
+    local curl_args=(
+      -fL
+      --retry 3
+      --connect-timeout 15
+      -H "User-Agent: ${USER_AGENT}"
+    )
+    if can_show_progress; then
+      curl_args+=(--progress-bar)
     else
-      curl -fsSL \
-        -H "User-Agent: ${USER_AGENT}" \
-        "$url" \
-        -o "$dest"
+      curl_args+=(-sS)
+    fi
+    if [ -n "${GITHUB_TOKEN:-}" ]; then
+      curl_args+=(-H "Authorization: Bearer ${GITHUB_TOKEN}")
+      curl "${curl_args[@]}" "$url" -o "$dest"
+    else
+      curl "${curl_args[@]}" "$url" -o "$dest"
     fi
     return 0
   fi
 
   if has_cmd wget; then
-    if [ -n "${GITHUB_TOKEN:-}" ]; then
-      wget -qO "$dest" \
-        --header="Authorization: Bearer ${GITHUB_TOKEN}" \
-        --header="User-Agent: ${USER_AGENT}" \
-        "$url"
+    local wget_args=(
+      -O "$dest"
+      --tries=3
+      --timeout=15
+      --header="User-Agent: ${USER_AGENT}"
+    )
+    if can_show_progress; then
+      wget_args+=(--progress=bar:force:noscroll --show-progress)
     else
-      wget -qO "$dest" \
-        --header="User-Agent: ${USER_AGENT}" \
-        "$url"
+      wget_args+=(-q)
+    fi
+    if [ -n "${GITHUB_TOKEN:-}" ]; then
+      wget_args+=(--header="Authorization: Bearer ${GITHUB_TOKEN}")
+      wget "${wget_args[@]}" "$url"
+    else
+      wget "${wget_args[@]}" "$url"
     fi
     return 0
   fi
@@ -182,6 +222,7 @@ resolve_latest_tag() {
   local payload
   local tag
 
+  note "resolving the latest Kinal release tag"
   payload="$(download_text "${GITHUB_API_ROOT}/repos/${REPO}/releases/latest")"
   tag="$(printf '%s' "$payload" | tr -d '\r\n' | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
   [ -n "$tag" ] || fail "failed to resolve the latest release tag"
@@ -228,6 +269,70 @@ EOF
   chmod 0755 "$target"
 }
 
+wrapper_matches_target() {
+  local wrapper_path="$1"
+  local expected_binary="$2"
+  [ -f "$wrapper_path" ] || return 1
+  case "$(cat "$wrapper_path" 2>/dev/null || true)" in
+    *"exec \"$expected_binary\" \"\$@\""*)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+assert_safe_root_dir() {
+  local candidate="$1"
+  case "$candidate" in
+    ""|"/"|"/root"|"/home"|"/usr"|"/usr/local"|"/opt"|"/var"|"/tmp"|"$HOME"|"$HOME/.local"|"$HOME/.local/bin")
+      fail "refusing to remove an unsafe root directory: $candidate"
+      ;;
+  esac
+}
+
+uninstall_installation() {
+  local removed_any=0
+  local current_kinal="${ROOT_DIR}/current/kinal"
+  local current_kinalvm="${ROOT_DIR}/current/kinalvm"
+
+  note "uninstalling Kinal from ${ROOT_DIR}"
+
+  if [ -e "${BIN_DIR}/kinal" ] || [ -L "${BIN_DIR}/kinal" ]; then
+    if wrapper_matches_target "${BIN_DIR}/kinal" "$current_kinal"; then
+      rm -f "${BIN_DIR}/kinal"
+      removed_any=1
+      note "removed launcher: ${BIN_DIR}/kinal"
+    else
+      warn "skipping ${BIN_DIR}/kinal because it was not created by this installer"
+    fi
+  fi
+
+  if [ -e "${BIN_DIR}/kinalvm" ] || [ -L "${BIN_DIR}/kinalvm" ]; then
+    if wrapper_matches_target "${BIN_DIR}/kinalvm" "$current_kinalvm"; then
+      rm -f "${BIN_DIR}/kinalvm"
+      removed_any=1
+      note "removed launcher: ${BIN_DIR}/kinalvm"
+    else
+      warn "skipping ${BIN_DIR}/kinalvm because it was not created by this installer"
+    fi
+  fi
+
+  if [ -d "$ROOT_DIR" ] || [ -L "$ROOT_DIR" ]; then
+    assert_safe_root_dir "$ROOT_DIR"
+    rm -rf "$ROOT_DIR"
+    removed_any=1
+    note "removed toolchain root: ${ROOT_DIR}"
+  fi
+
+  if [ "$removed_any" -eq 0 ]; then
+    note "nothing to uninstall"
+  else
+    note "uninstall completed"
+  fi
+}
+
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --version)
@@ -245,6 +350,15 @@ while [ "$#" -gt 0 ]; do
       ROOT_DIR="$2"
       shift 2
       ;;
+    --proxy)
+      [ "$#" -ge 2 ] || fail "--proxy requires a value"
+      PROXY_URL="$2"
+      shift 2
+      ;;
+    --uninstall)
+      UNINSTALL=1
+      shift
+      ;;
     --no-verify)
       VERIFY_CHECKSUMS=0
       shift
@@ -259,15 +373,26 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
-require_tools
-
 BIN_DIR="$(expand_path "$BIN_DIR")"
 ROOT_DIR="$(expand_path "$ROOT_DIR")"
+apply_proxy_settings
+
+if [ "$UNINSTALL" -eq 1 ]; then
+  uninstall_installation
+  exit 0
+fi
+
+require_tools
+
+note "starting Kinal installer"
 HOST_TAG="$(detect_host_tag)"
 TAG="$(normalize_tag "$VERSION")"
 VERSION_NUMBER="${TAG#v}"
 RELEASE_BASE="${GITHUB_RELEASE_ROOT}/download/${TAG}"
 ARCHIVE_PREFIX="Kinal-${VERSION_NUMBER}-${HOST_TAG}"
+
+note "target release: ${TAG}"
+note "detected host platform: ${HOST_TAG}"
 
 TMP_DIR="$(mktemp -d)"
 cleanup() {
@@ -281,6 +406,7 @@ for ext in tar.xz tar.gz; do
   candidate_name="${ARCHIVE_PREFIX}.${ext}"
   candidate_path="${TMP_DIR}/${candidate_name}"
   candidate_url="${RELEASE_BASE}/${candidate_name}"
+  note "downloading ${candidate_name}"
   if download_file "$candidate_url" "$candidate_path"; then
     ARCHIVE_NAME="$candidate_name"
     ARCHIVE_PATH="$candidate_path"
@@ -294,6 +420,7 @@ if [ "$VERIFY_CHECKSUMS" -eq 1 ]; then
   checksum_file=""
   for checksum_name in "SHA256SUMS-${HOST_TAG}.txt" "SHA256SUMS.txt"; do
     candidate_checksum="${TMP_DIR}/${checksum_name}"
+    note "downloading ${checksum_name}"
     if download_file "${RELEASE_BASE}/${checksum_name}" "$candidate_checksum"; then
       checksum_file="$candidate_checksum"
       break
@@ -318,6 +445,7 @@ fi
 
 EXTRACT_DIR="${TMP_DIR}/extract"
 mkdir -p "$EXTRACT_DIR"
+note "extracting ${ARCHIVE_NAME}"
 tar -xf "$ARCHIVE_PATH" -C "$EXTRACT_DIR"
 
 entry_count="$(find "$EXTRACT_DIR" -mindepth 1 -maxdepth 1 | wc -l | tr -d ' ')"
@@ -331,6 +459,7 @@ fi
 
 INSTALL_DIR="${ROOT_DIR}/versions/${TAG}"
 mkdir -p "${ROOT_DIR}/versions" "$BIN_DIR"
+note "installing into ${INSTALL_DIR}"
 rm -rf "$INSTALL_DIR"
 mkdir -p "$INSTALL_DIR"
 cp -a "$BUNDLE_DIR"/. "$INSTALL_DIR"/
