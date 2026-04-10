@@ -110,12 +110,12 @@ download_text() {
         -H "Accept: application/vnd.github+json" \
         -H "Authorization: Bearer ${GITHUB_TOKEN}" \
         -H "User-Agent: ${USER_AGENT}" \
-        "$url"
+        "$url" || return 1
     else
       curl -fsSL --retry 3 --connect-timeout 15 \
         -H "Accept: application/vnd.github+json" \
         -H "User-Agent: ${USER_AGENT}" \
-        "$url"
+        "$url" || return 1
     fi
     return 0
   fi
@@ -128,14 +128,14 @@ download_text() {
         --header="Accept: application/vnd.github+json" \
         --header="Authorization: Bearer ${GITHUB_TOKEN}" \
         --header="User-Agent: ${USER_AGENT}" \
-        "$url"
+        "$url" || return 1
     else
       wget -qO- \
         --tries=3 \
         --timeout=15 \
         --header="Accept: application/vnd.github+json" \
         --header="User-Agent: ${USER_AGENT}" \
-        "$url"
+        "$url" || return 1
     fi
     return 0
   fi
@@ -154,15 +154,21 @@ download_file() {
       -H "User-Agent: ${USER_AGENT}"
     )
     if can_show_progress; then
-      curl_args+=(--progress-bar)
+      :
     else
       curl_args+=(-sS)
     fi
     if [ -n "${GITHUB_TOKEN:-}" ]; then
       curl_args+=(-H "Authorization: Bearer ${GITHUB_TOKEN}")
-      curl "${curl_args[@]}" "$url" -o "$dest"
+      curl "${curl_args[@]}" "$url" -o "$dest" || {
+        rm -f "$dest"
+        return 1
+      }
     else
-      curl "${curl_args[@]}" "$url" -o "$dest"
+      curl "${curl_args[@]}" "$url" -o "$dest" || {
+        rm -f "$dest"
+        return 1
+      }
     fi
     return 0
   fi
@@ -175,15 +181,21 @@ download_file() {
       --header="User-Agent: ${USER_AGENT}"
     )
     if can_show_progress; then
-      wget_args+=(--progress=bar:force:noscroll --show-progress)
+      wget_args+=(--show-progress)
     else
       wget_args+=(-q)
     fi
     if [ -n "${GITHUB_TOKEN:-}" ]; then
       wget_args+=(--header="Authorization: Bearer ${GITHUB_TOKEN}")
-      wget "${wget_args[@]}" "$url"
+      wget "${wget_args[@]}" "$url" || {
+        rm -f "$dest"
+        return 1
+      }
     else
-      wget "${wget_args[@]}" "$url"
+      wget "${wget_args[@]}" "$url" || {
+        rm -f "$dest"
+        return 1
+      }
     fi
     return 0
   fi
