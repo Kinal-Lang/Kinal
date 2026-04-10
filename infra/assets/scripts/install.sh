@@ -59,6 +59,21 @@ can_show_progress() {
   [ -t 2 ]
 }
 
+detect_shell_rc() {
+  local shell_name="${SHELL##*/}"
+  case "$shell_name" in
+    zsh)
+      printf '%s\n' "${HOME}/.zshrc"
+      ;;
+    bash)
+      printf '%s\n' "${HOME}/.bashrc"
+      ;;
+    *)
+      printf '%s\n' "${HOME}/.profile"
+      ;;
+  esac
+}
+
 expand_path() {
   case "$1" in
     "~")
@@ -296,6 +311,7 @@ uninstall_installation() {
   local removed_any=0
   local current_kinal="${ROOT_DIR}/current/kinal"
   local current_kinalvm="${ROOT_DIR}/current/kinalvm"
+  local shell_rc
 
   note "uninstalling Kinal from ${ROOT_DIR}"
 
@@ -330,6 +346,11 @@ uninstall_installation() {
     note "nothing to uninstall"
   else
     note "uninstall completed"
+    shell_rc="$(detect_shell_rc)"
+    printf '\n' >&2
+    printf 'If your current shell still resolves "kinal", refresh it and try again:\n' >&2
+    printf '  hash -r\n' >&2
+    printf '  source "%s"\n' "$shell_rc" >&2
   fi
 }
 
@@ -487,11 +508,21 @@ fi
 
 case ":${PATH}:" in
   *":${BIN_DIR}:"*)
+    shell_rc="$(detect_shell_rc)"
     note "PATH already contains ${BIN_DIR}"
+    printf '\n' >&2
+    printf 'If "kinal" is still unavailable in this shell, refresh it and try again:\n' >&2
+    printf '  hash -r\n' >&2
+    printf '  source "%s"\n' "$shell_rc" >&2
     ;;
   *)
+    shell_rc="$(detect_shell_rc)"
     printf '\n'
     printf 'Add this directory to your PATH:\n'
     printf '  export PATH="%s:$PATH"\n' "$BIN_DIR"
+    printf '\n'
+    printf 'To make it persistent for future shells, add it to your shell config and reload it:\n'
+    printf '  echo '\''export PATH="%s:$PATH"'\'' >> "%s"\n' "$BIN_DIR" "$shell_rc"
+    printf '  source "%s"\n' "$shell_rc"
     ;;
 esac

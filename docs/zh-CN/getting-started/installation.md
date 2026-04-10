@@ -36,8 +36,6 @@ curl -fsSL https://kinal.org/install.sh | bash -s -- --version v0.6.0
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
-安装器现在会在下载和安装过程中输出步骤提示与下载进度，等待时不会再像之前那样看起来“没反应”。
-
 ### 使用代理
 
 安装脚本支持标准代理环境变量，比如 `HTTPS_PROXY`、`HTTP_PROXY`、`ALL_PROXY` 和 `NO_PROXY`。

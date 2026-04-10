@@ -37,8 +37,6 @@ If `~/.local/bin` is not already on your `PATH`, add it:
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
-The installer now prints step-by-step status messages and download progress while fetching release assets.
-
 ### Using a Proxy
 
 The installer supports standard proxy environment variables such as `HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY`, and `NO_PROXY`.
