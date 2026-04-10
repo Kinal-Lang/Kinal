@@ -1,6 +1,30 @@
 cmake_minimum_required(VERSION 3.20)
 project(kinal_compiler LANGUAGES C CXX)
 
+if (NOT DEFINED KINAL_GENERATED_INCLUDE_DIR)
+    file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/../../VERSION" _version_lines)
+    foreach(_line IN LISTS _version_lines)
+        if(_line MATCHES "^kinal=([0-9]+)\\.([0-9]+)\\.([0-9]+)$")
+            set(KN_VERSION_MAJOR   ${CMAKE_MATCH_1})
+            set(KN_VERSION_MINOR   ${CMAKE_MATCH_2})
+            set(KN_VERSION_PATCH   ${CMAKE_MATCH_3})
+            set(KN_VERSION_STRING  "${CMAKE_MATCH_1}.${CMAKE_MATCH_2}.${CMAKE_MATCH_3}")
+        elseif(_line MATCHES "^kinalvm=([0-9]+)\\.([0-9]+)\\.([0-9]+)$")
+            set(KN_VM_VERSION_MAJOR  ${CMAKE_MATCH_1})
+            set(KN_VM_VERSION_MINOR  ${CMAKE_MATCH_2})
+            set(KN_VM_VERSION_PATCH  ${CMAKE_MATCH_3})
+            set(KN_VM_VERSION_STRING "${CMAKE_MATCH_1}.${CMAKE_MATCH_2}.${CMAKE_MATCH_3}")
+        endif()
+    endforeach()
+    set(KINAL_GENERATED_INCLUDE_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
+    file(MAKE_DIRECTORY "${KINAL_GENERATED_INCLUDE_DIR}/kn")
+    configure_file(
+        "${CMAKE_CURRENT_SOURCE_DIR}/include/kn/version.h.in"
+        "${KINAL_GENERATED_INCLUDE_DIR}/kn/version.h"
+        @ONLY
+    )
+endif()
+
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 
@@ -61,6 +85,7 @@ if (WIN32)
     )
 endif()
 target_include_directories(kinal PRIVATE
+    "${KINAL_GENERATED_INCLUDE_DIR}"
     "${CMAKE_CURRENT_SOURCE_DIR}/include"
     "${CMAKE_CURRENT_SOURCE_DIR}/../../libs/runtime/include"
     ${LLVM_INCLUDE_DIRS}
@@ -68,6 +93,7 @@ target_include_directories(kinal PRIVATE
 
 add_library(kinal-host STATIC ${KINAL_COMPILER_SOURCES})
 target_include_directories(kinal-host PRIVATE
+    "${KINAL_GENERATED_INCLUDE_DIR}"
     "${CMAKE_CURRENT_SOURCE_DIR}/include"
     "${CMAKE_CURRENT_SOURCE_DIR}/../../libs/runtime/include"
     ${LLVM_INCLUDE_DIRS}

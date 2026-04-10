@@ -25,10 +25,14 @@ endif()
 message(STATUS "Kinal version: ${KN_VERSION_STRING}")
 message(STATUS "KinalVM version: ${KN_VM_VERSION_STRING}")
 
-# Generate version header
+set(KINAL_GENERATED_INCLUDE_DIR "${CMAKE_BINARY_DIR}/generated")
+file(MAKE_DIRECTORY "${KINAL_GENERATED_INCLUDE_DIR}/kn")
+
+# Generate the version header into the build tree so VERSION stays the
+# single source of truth and source files do not become dirty after configure.
 configure_file(
     "${CMAKE_SOURCE_DIR}/apps/kinal/include/kn/version.h.in"
-    "${CMAKE_SOURCE_DIR}/apps/kinal/include/kn/version.h"
+    "${KINAL_GENERATED_INCLUDE_DIR}/kn/version.h"
     @ONLY
 )
 
@@ -38,4 +42,3 @@ configure_file(
 
 add_subdirectory(apps/kinal)
 add_subdirectory(apps/kinal-lsp/server)
-
