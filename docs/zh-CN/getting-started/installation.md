@@ -14,9 +14,31 @@
 
 ## 安装编译器
 
+### 使用官方安装脚本
+
+对于 macOS 和 Linux，推荐直接使用官方安装脚本：
+
+```bash
+curl -fsSL https://kinal.org/install.sh | bash
+```
+
+安装指定版本：
+
+```bash
+curl -fsSL https://kinal.org/install.sh | bash -s -- --version v0.6.0
+```
+
+脚本默认会把工具链安装到 `~/.local/share/kinal`，并把启动脚本写到 `~/.local/bin`。
+
+如果 `~/.local/bin` 还不在 `PATH` 里，可以手动加入：
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+```
+
 ### 从预编译包安装
 
-从 Release 页面下载对应平台的压缩包并解压：
+如果你更想手动安装，也可以从 Release 页面下载对应平台的压缩包并解压：
 
 ```bash
 # Linux / macOS

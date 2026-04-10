@@ -58,7 +58,21 @@ Kinal's goal is simple --
 
 ### Installation
 
+Option 1: use the install script (recommended, it handles the toolchain layout and PATH setup for you)
+
+```bash
+curl -sSL https://kinal.org/install.sh | bash
+```
+
+Option 2: install manually
+
 Download the pre-built package for your platform from [Releases](https://github.com/user/kinal/releases) and place kinal (and optionally kinalvm) on your PATH.
+
+Then verify the installation:
+
+```bash
+kinal --version
+```
 
 ### Your First Program
 

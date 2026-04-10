@@ -75,7 +75,19 @@ kinal vm run hello.kn           # 通过 KinalVM 字节码运行
 
 ### 安装
 
+
+选项1：使用安装脚本（推荐，自动处理依赖和环境变量）
+
+```bash
+curl -sSL https://kinal.org/install.sh | bash
+```
+
+选项2：手动安装
+
 从 [Releases](https://github.com/user/kinal/releases) 下载对应平台的预编译包，将 `kinal`（和可选的 `kinalvm`）放入 `PATH`。
+
+
+最后验证安装：
 
 ```bash
 kinal --version   # 验证安装

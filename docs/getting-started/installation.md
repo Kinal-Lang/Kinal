@@ -14,9 +14,31 @@ This document explains how to install the Kinal compiler toolchain on various pl
 
 ## Installing the Compiler
 
+### Install with the Official Script
+
+For macOS and Linux, the recommended way is the official install script:
+
+```bash
+curl -fsSL https://kinal.org/install.sh | bash
+```
+
+Install a specific version:
+
+```bash
+curl -fsSL https://kinal.org/install.sh | bash -s -- --version v0.6.0
+```
+
+By default, the script installs the toolchain under `~/.local/share/kinal` and writes launcher scripts to `~/.local/bin`.
+
+If `~/.local/bin` is not already on your `PATH`, add it:
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+```
+
 ### Installing from a Pre-compiled Package
 
-Download the compressed package for your platform from the Release page and extract it:
+If you prefer a manual install, download the compressed package for your platform from the Release page and extract it:
 
 ```bash
 # Linux / macOS
