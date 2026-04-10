@@ -16,13 +16,13 @@
 
 ### 使用官方安装脚本
 
-对于 macOS 和 Linux，推荐直接使用官方安装脚本：
+对于 macOS 和 Linux，推荐直接使用官方安装脚本。下面这条命令会安装最新发布版本：
 
 ```bash
 curl -fsSL https://kinal.org/install.sh | bash
 ```
 
-安装指定版本：
+安装指定版本示例：
 
 ```bash
 curl -fsSL https://kinal.org/install.sh | bash -s -- --version v0.6.0

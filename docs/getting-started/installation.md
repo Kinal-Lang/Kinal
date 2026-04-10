@@ -16,13 +16,14 @@ This document explains how to install the Kinal compiler toolchain on various pl
 
 ### Install with the Official Script
 
-For macOS and Linux, the recommended way is the official install script:
+For macOS and Linux, the recommended way is the official install script.
+The command below installs the latest released version:
 
 ```bash
 curl -fsSL https://kinal.org/install.sh | bash
 ```
 
-Install a specific version:
+Install a specific version example:
 
 ```bash
 curl -fsSL https://kinal.org/install.sh | bash -s -- --version v0.6.0

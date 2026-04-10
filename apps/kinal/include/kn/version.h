@@ -3,12 +3,12 @@
 
 #define KN_VERSION_MAJOR  0
 #define KN_VERSION_MINOR  6
-#define KN_VERSION_PATCH  0
-#define KN_VERSION_STRING "0.6.0"
+#define KN_VERSION_PATCH  1
+#define KN_VERSION_STRING "0.6.1"
 
 #define KN_VM_VERSION_MAJOR  0
 #define KN_VM_VERSION_MINOR  6
-#define KN_VM_VERSION_PATCH  0
-#define KN_VM_VERSION_STRING "0.6.0"
+#define KN_VM_VERSION_PATCH  1
+#define KN_VM_VERSION_STRING "0.6.1"
 
 #endif /* KN_VERSION_H */
