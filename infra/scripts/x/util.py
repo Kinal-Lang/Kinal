@@ -81,14 +81,10 @@ def _validate_tar_link(dest: Path, member: tarfile.TarInfo) -> None:
     link_path = PurePosixPath(link)
     if link_path.is_absolute():
         raise SystemExit(f"archive link escapes destination: {member.name} -> {member.linkname}")
-    target = _get_safe_extract_target(dest, member.name)
-    resolved = (target.parent / Path(*link_path.parts)).resolve()
-    base = dest.resolve()
+    target = PurePosixPath(member.name.replace("\\", "/"))
     try:
-        common = os.path.commonpath([str(base), str(resolved)])
-    except ValueError as exc:
-        raise SystemExit(f"archive link escapes destination: {member.name} -> {member.linkname}") from exc
-    if common != str(base):
+        _get_safe_extract_target(dest, str(target.parent / link_path))
+    except SystemExit as exc:
         raise SystemExit(f"archive link escapes destination: {member.name} -> {member.linkname}")
 
 
