@@ -103,7 +103,7 @@ def extract_tar_safely(archive: Path, dest: Path, mode: str = "r:*") -> None:
             if member.issym() or member.islnk():
                 _validate_tar_link(dest, member)
             elif not (member.isdir() or member.isfile()):
-                raise SystemExit(f"archive entry type is not allowed: {member.name}")
+                raise SystemExit(f"archive entry type is not allowed: {member.name} (type={member.type!r})")
         for member in members:
             if _TAR_EXTRACT_SUPPORTS_FILTER:
                 tf.extract(member, dest, filter="fully_trusted")
@@ -122,6 +122,7 @@ def extract_zip_safely(archive: Path, dest: Path) -> None:
             target.parent.mkdir(parents=True, exist_ok=True)
             with zf.open(member) as src, target.open("wb") as fh:
                 shutil.copyfileobj(src, fh)
+            # ZIP stores Unix mode bits in the upper 16 bits of external_attr.
             mode = (member.external_attr >> 16) & 0o777
             if mode:
                 target.chmod(mode)
