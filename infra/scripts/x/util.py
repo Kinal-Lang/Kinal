@@ -16,7 +16,7 @@ from pathlib import PureWindowsPath
 from .context import ROOT
 
 
-_TAR_EXTRACT_SUPPORTS_FILTER = "filter" in inspect.signature(tarfile.TarFile.extract).parameters
+_HAS_TAR_FILTER_PARAM = "filter" in inspect.signature(tarfile.TarFile.extract).parameters
 
 
 def resolve_tool(name: str) -> str:
@@ -60,7 +60,8 @@ def download_file(url: str, dest: Path) -> None:
         raise SystemExit(f"download failed: {url}: {exc}") from exc
 
 
-def _extract_target(dest: Path, member_name: str) -> Path:
+def _get_safe_extract_target(dest: Path, member_name: str) -> Path:
+    # Normalize Windows-style separators so archive validation is consistent across hosts.
     normalized_name = member_name.replace("\\", "/")
     member = PurePosixPath(normalized_name)
     if PureWindowsPath(member_name).drive:
@@ -83,7 +84,7 @@ def _validate_tar_link(dest: Path, member: tarfile.TarInfo) -> None:
     link_path = PurePosixPath(link)
     if link_path.is_absolute():
         raise SystemExit(f"archive link escapes destination: {member.name} -> {member.linkname}")
-    target = _extract_target(dest, member.name)
+    target = _get_safe_extract_target(dest, member.name)
     resolved = (target.parent / Path(*link_path.parts)).resolve()
     base = dest.resolve()
     try:
@@ -99,13 +100,17 @@ def extract_tar_safely(archive: Path, dest: Path, mode: str = "r:*") -> None:
     with tarfile.open(archive, mode) as tf:
         members = tf.getmembers()
         for member in members:
-            _extract_target(dest, member.name)
+            _get_safe_extract_target(dest, member.name)
             if member.issym() or member.islnk():
                 _validate_tar_link(dest, member)
-            elif not (member.isdir() or member.isfile()):
+            elif member.isfile() or member.isdir():
+                pass
+            else:
+                # Only regular files, directories, symlinks, and hard links are allowed.
                 raise SystemExit(f"archive entry type is not allowed: {member.name} (type={member.type!r})")
         for member in members:
-            if _TAR_EXTRACT_SUPPORTS_FILTER:
+            if _HAS_TAR_FILTER_PARAM:
+                # Validation already ran above, so fully_trusted avoids duplicate filtering warnings.
                 tf.extract(member, dest, filter="fully_trusted")
             else:
                 tf.extract(member, dest)
@@ -115,7 +120,7 @@ def extract_zip_safely(archive: Path, dest: Path) -> None:
     dest.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(archive) as zf:
         for member in zf.infolist():
-            target = _extract_target(dest, member.filename)
+            target = _get_safe_extract_target(dest, member.filename)
             if member.is_dir():
                 target.mkdir(parents=True, exist_ok=True)
                 continue

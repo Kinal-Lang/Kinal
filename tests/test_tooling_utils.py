@@ -16,7 +16,7 @@ class ToolingUtilsTests(unittest.TestCase):
     def test_download_file_removes_partial_file_on_failure(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             dest = Path(temp_dir) / "artifact.bin"
-            with mock.patch("urllib.request.urlopen", side_effect=urllib.error.URLError("dns down")):
+            with mock.patch("infra.scripts.x.util.urllib.request.urlopen", side_effect=urllib.error.URLError("dns down")):
                 with self.assertRaises(SystemExit):
                     download_file("https://example.invalid/file", dest)
             self.assertFalse(dest.exists())
