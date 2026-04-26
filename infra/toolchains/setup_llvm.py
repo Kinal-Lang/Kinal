@@ -23,6 +23,7 @@ LLVM_PROJECT_DIR = SRC_ROOT / "llvm-project"
 LLVM_RELEASE = "21.1.8"
 LLVM_BRANCH = "release/21.x"
 LLVM_SRC_REPO = "https://github.com/llvm/llvm-project.git"
+TAR_EXTRACT_SUPPORTS_FILTER = "filter" in tarfile.TarFile.extract.__code__.co_varnames
 
 
 def host_default_prebuilt_url() -> str:
@@ -111,7 +112,10 @@ def extract_archive(archive: Path, dest: Path) -> None:
                 elif not (member.isdir() or member.isfile()):
                     raise SystemExit(f"archive entry type is not allowed: {member.name}")
             for index, member in enumerate(members, start=1):
-                tf.extract(member, dest)
+                if TAR_EXTRACT_SUPPORTS_FILTER:
+                    tf.extract(member, dest, filter="fully_trusted")
+                else:
+                    tf.extract(member, dest)
                 now = time.monotonic()
                 if total:
                     percent = index / total * 100.0

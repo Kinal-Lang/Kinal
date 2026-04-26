@@ -14,6 +14,9 @@ from pathlib import PurePosixPath
 from .context import ROOT
 
 
+_TAR_EXTRACT_SUPPORTS_FILTER = "filter" in tarfile.TarFile.extract.__code__.co_varnames
+
+
 def resolve_tool(name: str) -> str:
     path = shutil.which(name)
     if not path:
@@ -98,7 +101,10 @@ def extract_tar_safely(archive: Path, dest: Path, mode: str = "r:*") -> None:
             elif not (member.isdir() or member.isfile()):
                 raise SystemExit(f"archive entry type is not allowed: {member.name}")
         for member in members:
-            tf.extract(member, dest)
+            if _TAR_EXTRACT_SUPPORTS_FILTER:
+                tf.extract(member, dest, filter="fully_trusted")
+            else:
+                tf.extract(member, dest)
 
 
 def extract_zip_safely(archive: Path, dest: Path) -> None:
