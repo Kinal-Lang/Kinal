@@ -6,12 +6,9 @@ import os
 import shutil
 import subprocess
 import tarfile
-import urllib.error
 import urllib.request
 import zipfile
-from pathlib import Path
-from pathlib import PurePosixPath
-from pathlib import PureWindowsPath
+from pathlib import Path, PurePosixPath, PureWindowsPath
 
 from .context import ROOT
 
