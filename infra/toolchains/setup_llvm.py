@@ -2,19 +2,19 @@
 from __future__ import annotations
 
 import argparse
-import os
 import platform
 import shutil
 import subprocess
 import sys
-import tarfile
 import time
 import urllib.error
 import urllib.request
-import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT))
+
+from infra.scripts.x.util import extract_archive_safely  # noqa: E402
 THIRD_PARTY_ROOT = ROOT.parent / "Kinal-ThirdParty"
 LLVM_ROOT = THIRD_PARTY_ROOT / "llvm"
 PREBUILT_ROOT = THIRD_PARTY_ROOT / ".cache" / "llvm" / "prebuilt"
@@ -23,7 +23,6 @@ LLVM_PROJECT_DIR = SRC_ROOT / "llvm-project"
 LLVM_RELEASE = "21.1.8"
 LLVM_BRANCH = "release/21.x"
 LLVM_SRC_REPO = "https://github.com/llvm/llvm-project.git"
-TAR_EXTRACT_SUPPORTS_FILTER = "filter" in tarfile.TarFile.extract.__code__.co_varnames
 
 
 def host_default_prebuilt_url() -> str:
@@ -79,97 +78,8 @@ def format_size(size: int) -> str:
 
 def extract_archive(archive: Path, dest: Path) -> None:
     print(f"[INFO] extracting {archive.name} into {dest}", flush=True)
-    suffixes = archive.suffixes
-    if suffixes[-2:] == [".tar", ".xz"] or archive.name.endswith(".tar.xz"):
-        with tarfile.open(archive, "r:xz") as tf:
-            members = tf.getmembers()
-            total = len(members)
-            last_report = 0.0
-            last_bucket = -1
-            base = dest.resolve()
-            for member in members:
-                member_name = member.name.replace("\\", "/")
-                if Path(member_name).is_absolute():
-                    raise SystemExit(f"archive entry uses an absolute path: {member.name}")
-                target = (dest / member_name).resolve()
-                try:
-                    common = os.path.commonpath([str(base), str(target)])
-                except ValueError as exc:
-                    raise SystemExit(f"archive entry escapes destination: {member.name}") from exc
-                if common != str(base):
-                    raise SystemExit(f"archive entry escapes destination: {member.name}")
-                if member.issym() or member.islnk():
-                    link_name = member.linkname.replace("\\", "/")
-                    if Path(link_name).is_absolute():
-                        raise SystemExit(f"archive link escapes destination: {member.name} -> {member.linkname}")
-                    resolved_link = (target.parent / link_name).resolve()
-                    try:
-                        common = os.path.commonpath([str(base), str(resolved_link)])
-                    except ValueError as exc:
-                        raise SystemExit(f"archive link escapes destination: {member.name} -> {member.linkname}") from exc
-                    if common != str(base):
-                        raise SystemExit(f"archive link escapes destination: {member.name} -> {member.linkname}")
-                elif not (member.isdir() or member.isfile()):
-                    raise SystemExit(f"archive entry type is not allowed: {member.name}")
-            for index, member in enumerate(members, start=1):
-                if TAR_EXTRACT_SUPPORTS_FILTER:
-                    tf.extract(member, dest, filter="fully_trusted")
-                else:
-                    tf.extract(member, dest)
-                now = time.monotonic()
-                if total:
-                    percent = index / total * 100.0
-                    bucket = int(percent // 5)
-                    if bucket > last_bucket or now - last_report >= 2.0 or index == total:
-                        print(
-                            f"[INFO] extract progress: {percent:5.1f}% ({index} / {total})",
-                            flush=True,
-                        )
-                        last_report = now
-                        last_bucket = bucket
-        print(f"[OK] extracted {archive.name}", flush=True)
-        return
-    if archive.suffix == ".zip":
-        with zipfile.ZipFile(archive) as zf:
-            members = zf.infolist()
-            total = len(members)
-            last_report = 0.0
-            last_bucket = -1
-            base = dest.resolve()
-            for index, member in enumerate(members, start=1):
-                member_name = member.filename.replace("\\", "/")
-                if Path(member_name).is_absolute():
-                    raise SystemExit(f"archive entry uses an absolute path: {member.filename}")
-                target = (dest / member_name).resolve()
-                try:
-                    common = os.path.commonpath([str(base), str(target)])
-                except ValueError as exc:
-                    raise SystemExit(f"archive entry escapes destination: {member.filename}") from exc
-                if common != str(base):
-                    raise SystemExit(f"archive entry escapes destination: {member.filename}")
-                if member.is_dir():
-                    target.mkdir(parents=True, exist_ok=True)
-                else:
-                    target.parent.mkdir(parents=True, exist_ok=True)
-                    with zf.open(member) as src, target.open("wb") as fh:
-                        shutil.copyfileobj(src, fh)
-                    mode = (member.external_attr >> 16) & 0o777
-                    if mode:
-                        target.chmod(mode)
-                now = time.monotonic()
-                if total:
-                    percent = index / total * 100.0
-                    bucket = int(percent // 5)
-                    if bucket > last_bucket or now - last_report >= 2.0 or index == total:
-                        print(
-                            f"[INFO] extract progress: {percent:5.1f}% ({index} / {total})",
-                            flush=True,
-                        )
-                        last_report = now
-                        last_bucket = bucket
-        print(f"[OK] extracted {archive.name}", flush=True)
-        return
-    raise SystemExit(f"unsupported archive format: {archive.name}")
+    extract_archive_safely(archive, dest)
+    print(f"[OK] extracted {archive.name}", flush=True)
 
 
 def download(url: str, dest: Path) -> None:

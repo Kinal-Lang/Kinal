@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import inspect
 import os
 import shutil
 import subprocess
@@ -10,11 +11,12 @@ import urllib.request
 import zipfile
 from pathlib import Path
 from pathlib import PurePosixPath
+from pathlib import PureWindowsPath
 
 from .context import ROOT
 
 
-_TAR_EXTRACT_SUPPORTS_FILTER = "filter" in tarfile.TarFile.extract.__code__.co_varnames
+_TAR_EXTRACT_SUPPORTS_FILTER = "filter" in inspect.signature(tarfile.TarFile.extract).parameters
 
 
 def resolve_tool(name: str) -> str:
@@ -59,8 +61,10 @@ def download_file(url: str, dest: Path) -> None:
 
 
 def _extract_target(dest: Path, member_name: str) -> Path:
-    name = member_name.replace("\\", "/")
-    member = PurePosixPath(name)
+    normalized_name = member_name.replace("\\", "/")
+    member = PurePosixPath(normalized_name)
+    if PureWindowsPath(member_name).drive:
+        raise SystemExit(f"archive entry uses an invalid drive-qualified path: {member_name}")
     if member.is_absolute():
         raise SystemExit(f"archive entry uses an absolute path: {member_name}")
     target = (dest / Path(*member.parts)).resolve()
