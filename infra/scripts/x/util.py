@@ -85,7 +85,9 @@ def _validate_tar_link(dest: Path, member: tarfile.TarInfo) -> None:
     try:
         _get_safe_extract_target(dest, str(target.parent / link_path))
     except SystemExit as exc:
-        raise SystemExit(f"archive link escapes destination: {member.name} -> {member.linkname}")
+        raise SystemExit(
+            f"archive link resolves outside destination: {member.name} -> {member.linkname} ({exc})"
+        ) from exc
 
 
 def extract_tar_safely(archive: Path, dest: Path, mode: str = "r:*") -> None:
