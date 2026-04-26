@@ -793,7 +793,7 @@ static LLVMValueRef ensure_static_field_global(Codegen *g, const char *class_qna
     LLVMTypeRef ty = llvm_type(g, f->type);
     gv = LLVMAddGlobal(g->mod, ty, gname);
     LLVMSetLinkage(gv, LLVMInternalLinkage);
-    LLVMSetInitializer(gv, LLVMConstNull(ty));
+    LLVMSetInitializer(gv, build_zeroed_global_initializer(g, f->type));
     return gv;
 }
 

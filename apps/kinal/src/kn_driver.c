@@ -114,5 +114,6 @@ typedef enum
 
 #include "driver/kn_driver_support.inc"
 #include "driver/kn_driver_pkg.inc"
+#include "driver/kn_driver_project.inc"
 #include "driver/kn_driver_compile.inc"
 #include "driver/kn_driver_cli.inc"

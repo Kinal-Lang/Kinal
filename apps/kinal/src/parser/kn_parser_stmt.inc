@@ -327,6 +327,7 @@ static int decode_literal_escape(char esc, int64_t *out)
     switch (esc)
     {
     case '0': *out = 0; return 1;
+    case 'b': *out = '\b'; return 1;
     case 'n': *out = '\n'; return 1;
     case 'r': *out = '\r'; return 1;
     case 't': *out = '\t'; return 1;

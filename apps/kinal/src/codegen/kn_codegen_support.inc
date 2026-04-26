@@ -146,6 +146,29 @@ static LLVMTypeRef llvm_type(Codegen *g, Type t)
     }
 }
 
+static LLVMValueRef build_zeroed_global_initializer(Codegen *g, Type ty)
+{
+    LLVMTypeRef llvm_ty = llvm_type(g, ty);
+    if (ty.kind == TY_ARRAY && ty.array_len > 0)
+    {
+        Type elem = type_make(ty.elem);
+        elem.name = ty.name;
+        LLVMTypeRef elem_ty = llvm_type(g, elem);
+        LLVMTypeRef storage_ty = LLVMArrayType(elem_ty, (unsigned)ty.array_len);
+        LLVMValueRef storage = LLVMAddGlobal(g->mod, storage_ty, "");
+        LLVMSetLinkage(storage, LLVMPrivateLinkage);
+        LLVMSetInitializer(storage, LLVMConstNull(storage_ty));
+
+        LLVMValueRef idxs[2] = { LLVMConstInt(g->i32, 0, 0), LLVMConstInt(g->i32, 0, 0) };
+        LLVMValueRef fields[2];
+        fields[0] = LLVMConstInBoundsGEP2(storage_ty, storage, idxs, 2);
+        fields[1] = LLVMConstInt(g->i64, (uint64_t)ty.array_len, 0);
+        return LLVMConstNamedStruct(llvm_ty, fields, 2);
+    }
+
+    return LLVMConstNull(llvm_ty);
+}
+
 static bool type_equal(Type a, Type b)
 {
     if (a.kind != b.kind) return false;

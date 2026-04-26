@@ -2973,7 +2973,7 @@ static void declare_global_vars(Codegen *g, StmtList *globals)
         const char *gname = mangle_global_var_name(st->v.var.name);
         LLVMValueRef gv = LLVMAddGlobal(g->mod, ty, gname);
         LLVMSetLinkage(gv, LLVMInternalLinkage);
-        LLVMSetInitializer(gv, LLVMConstNull(ty));
+        LLVMSetInitializer(gv, build_zeroed_global_initializer(g, st->v.var.type));
         scope_add(g->global_scope, st->v.var.name, st->v.var.type, gv);
     }
 }

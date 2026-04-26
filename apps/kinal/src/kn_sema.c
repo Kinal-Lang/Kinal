@@ -106,6 +106,8 @@ static bool params_equal(const ParamList *a, const ParamList *b);
 static bool type_supported(Type t);
 static bool method_is_virtual(const Method *m);
 static bool type_assignable(Sema *s, Type dst, Type src);
+static VarSym *scope_find(Scope *s, const char *name);
+static bool eval_const_expr(Expr *e, int64_t *out);
 static bool builtin_is_vararg(KnBuiltinKind kind);
 static ClassDecl *find_class(Sema *s, const char *name);
 static InterfaceDecl *find_interface(Sema *s, const char *name);

@@ -82,6 +82,7 @@ static bool is_char_escape(char c)
     switch (c)
     {
     case '0':
+    case 'b':
     case 'n':
     case 'r':
     case 't':

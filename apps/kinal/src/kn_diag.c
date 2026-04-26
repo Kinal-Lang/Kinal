@@ -88,7 +88,8 @@ static const char g_help_full_en[] =
     "  --entry <symbol>   Override executable entry symbol (Main/KMain by default)\n"
     "\n"
     "Project:\n"
-    "  --project <file|dir>  Build from a project manifest (JSON)\n"
+    "  --project <file|dir>  Build from kinal.knproj or a legacy project manifest\n"
+    "  --profile <name>  Select a profile from kinal.knproj\n"
     "  --pkg-root <dir>  Add a local package root\n"
     "  --stdpkg-root <dir>  Add an official stdpkg root override\n"
     "\n"
@@ -1833,6 +1834,5 @@ void kn_diag_warn(const KnSource *src, KnDiagStage stage, int warn_level, int li
         return;
     g_warning_count++;
 }
-
 
 

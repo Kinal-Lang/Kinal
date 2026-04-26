@@ -25,13 +25,20 @@ kinal vm build <文件.kn> [-o <输出.knc>]
 | 选项 | 说明 |
 |------|------|
 | `-o, --output <文件>` | 输出文件路径（默认同名 `.knc`） |
+| `--project <文件\|目录>` | 从 `kinal.knproj` 或旧项目清单构建 |
+| `--profile <名称>` | 选择 `kinal.knproj` 中的 Profile |
 | `--no-superloop` | 禁用 KNC 超级循环融合 |
 | `--superloop` | 启用 KNC 超级循环融合（默认） |
 | `--no-module-discovery` | 禁用自动模块发现 |
+| `--pkg-root <目录>` | 添加本地包根目录 |
+| `--stdpkg-root <目录>` | 添加官方 stdpkg 根目录覆盖 |
 
 ```bash
 # 编译为字节码
 kinal vm build main.kn -o main.knc
+
+# 从项目文件构建
+kinal vm build --project . --profile vm
 
 # 禁用超级循环
 kinal vm build --no-superloop main.kn
@@ -49,6 +56,8 @@ kinal vm run <文件.kn|文件.knc> [-- 程序参数...]
 
 | 选项 | 说明 |
 |------|------|
+| `--project <文件\|目录>` | 从 `kinal.knproj` 或旧项目清单运行 |
+| `--profile <名称>` | 选择 `kinal.knproj` 中的 Profile |
 | `--superloop` | 启用超级循环（默认） |
 | `--no-superloop` | 禁用超级循环 |
 | `--vm-path <路径>` | 指定 KinalVM 可执行文件路径 |
@@ -58,6 +67,9 @@ kinal vm run <文件.kn|文件.knc> [-- 程序参数...]
 ```bash
 # 直接执行源码
 kinal vm run main.kn
+
+# 运行项目的默认 Profile
+kinal vm run --project .
 
 # 传递参数
 kinal vm run main.knc -- arg1 arg2
@@ -76,12 +88,22 @@ kinal vm pack <文件.kn|文件.knc> [-o <输出>]
 | 选项 | 说明 |
 |------|------|
 | `-o, --output <文件>` | 输出可执行文件路径 |
+| `--project <文件\|目录>` | 从 `kinal.knproj` 或旧项目清单打包 |
+| `--profile <名称>` | 选择 `kinal.knproj` 中的 Profile |
 | `--vm-path <路径>` | 指定用于打包的 KinalVM 路径 |
 | `--target <三元组>` | 目标平台（影响打包的 VM 二进制） |
+| `--superloop` | 启用超级循环融合 |
+| `--no-superloop` | 禁用超级循环融合 |
+| `--no-module-discovery` | 对源码输入禁用自动发现 |
+| `--pkg-root <目录>` | 添加本地包根目录 |
+| `--stdpkg-root <目录>` | 添加官方 stdpkg 根目录覆盖 |
 
 ```bash
 # 从源码打包
 kinal vm pack main.kn -o myapp
+
+# 从项目文件打包
+kinal vm pack --project . --profile vm -o myapp
 
 # 从已有字节码打包
 kinal vm pack main.knc -o myapp

@@ -59,6 +59,11 @@
     "expected": "2\n2\n7\n"
   },
   {
+    "name": "array_const_len",
+    "file": "tests/common/array_const_len.kn",
+    "expected": "65\n66\n4\n30\n99\n"
+  },
+  {
     "name": "numeric",
     "file": "tests/common/numeric.kn",
     "expected": "ok\n"
@@ -71,12 +76,12 @@
   {
     "name": "char_literals",
     "file": "tests/common/char_literals.kn",
-    "expected": "A\n65\n10\n39\n"
+    "expected": "A\n65\n10\n8\n39\n"
   },
   {
     "name": "string_escapes",
     "file": "tests/common/string_escapes.kn",
-    "expected": "line1\nline2\nquote:\"\nslash:\\\ntick:'\n10\n"
+    "expected": "line1\nline2\nquote:\"\nslash:\\\ntick:'\n8\n10\n"
   },
   {
     "name": "string_prefixes",

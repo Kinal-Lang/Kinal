@@ -1,5 +1,15 @@
-﻿Unit Tests.ExprOps;
+Unit Tests.ExprOps;
 Get Console By IO.Console;
+
+Class Box
+{
+    Public int Value;
+
+    Public Constructor(int value)
+    {
+        Value= value;
+    }
+}
 
 Static Function int Main()
 {
@@ -19,10 +29,25 @@ Static Function int Main()
     {
         b;
     };
+    int[] arr= {
+        1, 2
+    };
+    int e= arr[0]++;
+    int f= ++arr[1];
+    Box box= New Box(10);
+    int g= box.Value++;
+    int h= ++box.Value;
     Console.PrintLine(a);
     Console.PrintLine(b);
     Console.PrintLine(x);
     Console.PrintLine(c);
     Console.PrintLine(d);
+    Console.PrintLine(e);
+    Console.PrintLine(f);
+    Console.PrintLine(arr[0]);
+    Console.PrintLine(arr[1]);
+    Console.PrintLine(g);
+    Console.PrintLine(h);
+    Console.PrintLine(box.Value);
     Return 0;
 }

@@ -1,0 +1,29 @@
+Project PkgProjectSource
+{
+    DefaultProfile = "native";
+
+    Packages
+    {
+        Roots = ["../local"];
+    }
+
+    Profile "native"
+    {
+        Source
+        {
+            Entry = "src/Main.kn";
+            AutoDiscovery = true;
+        }
+
+        Build
+        {
+            Backend = Native;
+            Environment = Hosted;
+        }
+    }
+
+    Lsp
+    {
+        Profile = "native";
+    }
+}

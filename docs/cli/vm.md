@@ -25,13 +25,20 @@ kinal vm build <file.kn> [-o <output.knc>]
 | Option | Description |
 |--------|-------------|
 | `-o, --output <file>` | Output file path (default: same name with `.knc` extension) |
+| `--project <file\|dir>` | Build from `kinal.knproj` or a legacy project manifest |
+| `--profile <name>` | Select a profile from `kinal.knproj` |
 | `--no-superloop` | Disable KNC superloop fusion |
 | `--superloop` | Enable KNC superloop fusion (default) |
 | `--no-module-discovery` | Disable automatic module discovery |
+| `--pkg-root <dir>` | Add a local package root |
+| `--stdpkg-root <dir>` | Add an official stdpkg root override |
 
 ```bash
 # Compile to bytecode
 kinal vm build main.kn -o main.knc
+
+# Build from a project file
+kinal vm build --project . --profile vm
 
 # Disable superloop
 kinal vm build --no-superloop main.kn
@@ -49,6 +56,8 @@ kinal vm run <file.kn|file.knc> [-- program-args...]
 
 | Option | Description |
 |--------|-------------|
+| `--project <file\|dir>` | Run from `kinal.knproj` or a legacy project manifest |
+| `--profile <name>` | Select a profile from `kinal.knproj` |
 | `--superloop` | Enable superloop (default) |
 | `--no-superloop` | Disable superloop |
 | `--vm-path <path>` | Specify the KinalVM executable path |
@@ -60,6 +69,9 @@ kinal vm run <file.kn|file.knc> [-- program-args...]
 ```bash
 # Run source directly
 kinal vm run main.kn
+
+# Run the default project profile
+kinal vm run --project .
 
 # Pass arguments
 kinal vm run main.knc -- arg1 arg2
@@ -78,12 +90,22 @@ kinal vm pack <file.kn|file.knc> [-o <output>]
 | Option | Description |
 |--------|-------------|
 | `-o, --output <file>` | Output executable path |
+| `--project <file\|dir>` | Pack from `kinal.knproj` or a legacy project manifest |
+| `--profile <name>` | Select a profile from `kinal.knproj` |
 | `--vm-path <path>` | Specify the KinalVM path used for packing |
 | `--target <triple>` | Target platform (affects the VM binary bundled) |
+| `--superloop` | Enable superloop fusion |
+| `--no-superloop` | Disable superloop fusion |
+| `--no-module-discovery` | Disable auto-discovery for source input |
+| `--pkg-root <dir>` | Add a local package root |
+| `--stdpkg-root <dir>` | Add an official stdpkg root override |
 
 ```bash
 # Pack from source
 kinal vm pack main.kn -o myapp
+
+# Pack from a project file
+kinal vm pack --project . --profile vm -o myapp
 
 # Pack from existing bytecode
 kinal vm pack main.knc -o myapp

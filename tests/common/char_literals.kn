@@ -10,6 +10,7 @@ Static Function int Main()
     Console.PrintLine(a);
     Console.PrintLine([int](a));
     Console.PrintLine([int]('\n'));
+    Console.PrintLine([int]('\b'));
     Console.PrintLine([int](q));
     Return 0;
 }

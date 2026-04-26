@@ -8,6 +8,7 @@ Static Safe Function int Main(string args[])
     Console.PrintLine("quote:\"");
     Console.PrintLine("slash:\\");
     Console.PrintLine("tick:'");
+    Console.PrintLine([string]([int]("\b"[0])));
     Console.PrintLine([string]([int]('\n')));
     Return 0;
 }

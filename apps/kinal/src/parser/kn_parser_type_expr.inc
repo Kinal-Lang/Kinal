@@ -63,8 +63,10 @@ static Type parse_type(Parser *p)
 
     if (t.kind != TY_UNKNOWN && match(p, TOK_LBRACKET))
     {
-        int64_t len = parse_array_len_suffix(p);
+        int64_t len = -1;
+        Expr *len_expr = parse_array_len_suffix(p, &len);
         apply_array_type(&t, len);
+        t.array_len_expr = len_expr;
     }
 
     return t;

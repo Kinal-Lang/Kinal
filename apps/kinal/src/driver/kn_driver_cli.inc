@@ -46,7 +46,8 @@ static void print_help(void)
         "  --entry <symbol>   Override executable entry symbol (Main/KMain by default)\n"
         "\n"
         "Project:\n"
-        "  --project <file|dir>  Build from a project manifest (JSON)\n"
+        "  --project <file|dir>  Build from kinal.knproj or a legacy project manifest\n"
+        "  --profile <name>  Select a profile from kinal.knproj\n"
         "  --pkg-root <dir>  Add a local package root\n"
         "  --stdpkg-root <dir>  Add an official stdpkg root override\n"
         "\n"
@@ -86,6 +87,8 @@ static void print_help(void)
         "Run quick reference:\n"
         "  kinal run [options] <file.kn> [-- program-args...]\n"
         "  --no-module-discovery  Disable source/module auto-discovery\n"
+        "  --project <file|dir>  Run from kinal.knproj or a legacy project manifest\n"
+        "  --profile <name>  Select a profile from kinal.knproj\n"
         "  --keep-temps     Keep the temporary executable after execution\n"
         "  --pkg-root <dir>  Add a local package root\n"
         "  --stdpkg-root <dir>  Add an official stdpkg root override\n"
@@ -98,6 +101,7 @@ static void print_help(void)
         "\n"
         "VM / package quick reference:\n"
         "  kinal vm build <file.kn> -o <file.knc>\n"
+        "  kinal vm build --project <dir> --profile <name>\n"
         "  kinal vm run <file.kn|file.knc> [-- program-args...]\n"
         "  kinal vm pack <file.kn|file.knc> -o <file>\n"
         "  kinal pkg build --manifest <file|dir> -o <file.klib>\n"
@@ -136,7 +140,8 @@ static void print_build_help(void)
         "  --entry <symbol>   Override executable entry symbol (Main/KMain by default)\n"
         "\n"
         "Project:\n"
-        "  --project <file|dir>  Build from a project manifest (JSON)\n"
+        "  --project <file|dir>  Build from kinal.knproj or a legacy project manifest\n"
+        "  --profile <name>  Select a profile from kinal.knproj\n"
         "  --pkg-root <dir>  Add a local package root\n"
         "  --stdpkg-root <dir>  Add an official stdpkg root override\n"
         "\n"
@@ -184,9 +189,16 @@ static void print_run_help(void)
         "\n"
         "Options:\n"
         "  --no-module-discovery  Disable source/module auto-discovery\n"
+        "  --project <file|dir>  Run from kinal.knproj or a legacy project manifest\n"
+        "  --profile <name>  Select a profile from kinal.knproj\n"
         "  --pkg-root <dir>  Add a local package root\n"
         "  --stdpkg-root <dir>  Add an official stdpkg root override\n"
         "  --keep-temps     Keep the temporary executable after execution\n"
+        "  -L, --lib-dir <dir>  Add a library search directory\n"
+        "  -l, --lib <name>    Link a library by name\n"
+        "  --link-file <file>  Add an exact link input (.obj/.lib/.a)\n"
+        "  --link-root <dir>   Expand a dependency root into target-specific search dirs\n"
+        "  --link-arg <arg>    Pass one raw argument to the linker backend\n"
         "  --lang <en|zh>   Diagnostic language\n"
         "  --locale-file <file>  External locale JSON map\n"
         "  --color <auto|always|never>  Diagnostic color mode\n"
@@ -617,14 +629,21 @@ static int kn_build_main(int argc, char **argv)
     int show_link = 0;
     int show_link_search = 0;
     const char *project_manifest = 0;
+    const char *project_profile = 0;
     StrList pkg_roots = {0};
     StrList stdpkg_roots = {0};
+    int auto_link_explicit = 0;
+    int entry_explicit = 0;
+    int linker_path_explicit = 0;
+    int link_script_explicit = 0;
+    int no_crt_explicit = 0;
+    int no_default_libs_explicit = 0;
 
     for (int i = 1; i < argc; i++)
     {
         const char *arg = argv[i];
         if (kn_strcmp(arg, "-h") == 0 || kn_strcmp(arg, "--help") == 0) { print_build_help(); return 0; }
-        if (kn_strcmp(arg, "--no-module-discovery") == 0) { auto_link = 0; continue; }
+        if (kn_strcmp(arg, "--no-module-discovery") == 0) { auto_link = 0; auto_link_explicit = 1; continue; }
         if (kn_strcmp(arg, "--trace") == 0) { trace = 1; continue; }
         if (kn_strcmp(arg, "--time") == 0) { profile = 1; continue; }
         if (kn_strcmp(arg, "--show-link") == 0) { show_link = 1; continue; }
@@ -649,7 +668,9 @@ static int kn_build_main(int argc, char **argv)
         if (kn_strcmp(arg, "--freestanding") == 0) {
             freestanding_shortcut = 1; env_kind = KN_ENV_FREESTANDING;
             runtime_mode = KN_RUNTIME_NONE; no_crt = 1; no_default_libs = 1;
-            env_explicit = 1; runtime_explicit = 1; continue;
+            env_explicit = 1; runtime_explicit = 1;
+            no_crt_explicit = 1; no_default_libs_explicit = 1;
+            continue;
         }
         if (kn_strcmp(arg, "--color") == 0 && i + 1 < argc) {
             if (!parse_color_mode(argv[i + 1], &color_mode)) {
@@ -661,6 +682,7 @@ static int kn_build_main(int argc, char **argv)
         if (kn_strcmp(arg, "--locale-file") == 0 && i + 1 < argc) { locale_file = argv[++i]; continue; }
         if (kn_strcmp(arg, "--dump-locale-en") == 0 && i + 1 < argc) { dump_locale_en = argv[++i]; continue; }
         if (kn_strcmp(arg, "--project") == 0 && i + 1 < argc) { project_manifest = argv[++i]; continue; }
+        if (kn_strcmp(arg, "--profile") == 0 && i + 1 < argc) { project_profile = argv[++i]; continue; }
         if (kn_strcmp(arg, "--pkg-root") == 0 && i + 1 < argc) { append_root_list(&pkg_roots, argv[++i]); continue; }
         if (kn_strcmp(arg, "--stdpkg-root") == 0 && i + 1 < argc) { append_root_list(&stdpkg_roots, argv[++i]); continue; }
         if (kn_strcmp(arg, "--lto") == 0) { lto_mode = KN_LTO_FULL; continue; }
@@ -712,15 +734,15 @@ static int kn_build_main(int argc, char **argv)
             crt_explicit = 1; i++; continue;
         }
         if (kn_strcmp(arg, "--target") == 0 && i + 1 < argc) { target_raw = argv[++i]; target_explicit = 1; continue; }
-        if (kn_strcmp(arg, "--entry") == 0 && i + 1 < argc) { entry_symbol = argv[++i]; continue; }
-        if (kn_strcmp(arg, "--link-script") == 0 && i + 1 < argc) { link_script = argv[++i]; continue; }
+        if (kn_strcmp(arg, "--entry") == 0 && i + 1 < argc) { entry_symbol = argv[++i]; entry_explicit = 1; continue; }
+        if (kn_strcmp(arg, "--link-script") == 0 && i + 1 < argc) { link_script = argv[++i]; link_script_explicit = 1; continue; }
         if (kn_strcmp(arg, "--linker") == 0 && i + 1 < argc) {
             if (!parse_linker_kind(argv[i + 1], &linker_kind)) { kn_write_str("unknown linker: "); kn_write_str(argv[i + 1]); kn_write_str("\n"); return 1; }
             linker_explicit = 1; i++; continue;
         }
-        if (kn_strcmp(arg, "--linker-path") == 0 && i + 1 < argc) { linker_path = argv[++i]; continue; }
-        if (kn_strcmp(arg, "--no-crt") == 0) { no_crt = 1; continue; }
-        if (kn_strcmp(arg, "--no-default-libs") == 0) { no_default_libs = 1; continue; }
+        if (kn_strcmp(arg, "--linker-path") == 0 && i + 1 < argc) { linker_path = argv[++i]; linker_path_explicit = 1; continue; }
+        if (kn_strcmp(arg, "--no-crt") == 0) { no_crt = 1; no_crt_explicit = 1; continue; }
+        if (kn_strcmp(arg, "--no-default-libs") == 0) { no_default_libs = 1; no_default_libs_explicit = 1; continue; }
         if (kn_strcmp(arg, "--kind") == 0 && i + 1 < argc) {
             if (!parse_artifact_kind(argv[i + 1], &artifact_kind)) { kn_write_str("unknown kind: "); kn_write_str(argv[i + 1]); kn_write_str("\n"); return 1; }
             artifact_explicit = 1; i++; continue;
@@ -741,25 +763,84 @@ static int kn_build_main(int argc, char **argv)
 
     if (project_manifest) {
         KnPkgManifest manifest;
+        KnProjectConfig *project_cfg = 0;
+        const KnProjProfile *project = 0;
         char manifest_path[KN_MAX_PATH], manifest_entry[KN_MAX_PATH], manifest_out[KN_MAX_PATH], local_pkg_root[KN_MAX_PATH];
+        char selected_profile_name[64];
         if (!resolve_manifest_input_path(project_manifest, 1, manifest_path, sizeof(manifest_path))) {
             kn_write_str("invalid manifest path: "); kn_write_str(project_manifest); kn_write_str("\n"); return 1;
         }
-        if (!parse_pkg_manifest(manifest_path, &manifest)) {
-            kn_write_str("invalid manifest: "); kn_write_str(manifest_path); kn_write_str("\n"); return 1;
+        if (project_manifest_is_knproj(manifest_path))
+        {
+            project_cfg = knproj_alloc_config();
+            if (!project_cfg)
+            {
+                kn_write_str("out of memory while loading project file\n");
+                return 1;
+            }
+            project = load_selected_project_profile(manifest_path, project_profile, project_cfg,
+                                                    selected_profile_name, sizeof(selected_profile_name));
+            if (!project)
+            {
+                kn_write_str("invalid project file: ");
+                kn_write_str(manifest_path);
+                kn_write_str("\n");
+                if (g_knproj_error[0]) { kn_write_str(g_knproj_error); kn_write_str("\n"); }
+                knproj_free_config(project_cfg);
+                return 1;
+            }
+            if (project->has_backend && project->backend == KN_PROJ_BACKEND_VM)
+            {
+                kn_write_str("'kinal build --project' requires a Native profile; use 'kinal vm build --project' for VM profiles\n");
+                knproj_free_config(project_cfg);
+                return 1;
+            }
+            append_project_package_roots(&pkg_roots, project_cfg, project, 0);
+            append_project_package_roots(&stdpkg_roots, project_cfg, project, 1);
+            if (path_join(local_pkg_root, sizeof(local_pkg_root), project_cfg->project_dir, "kpkg"))
+                append_root_list(&pkg_roots, local_pkg_root);
+            if (!out && project->out_path[0] && knproj_resolve_path(project_cfg, project->out_path, manifest_out, sizeof(manifest_out)))
+                out = dup_str(manifest_out);
+            if (in_count == 0 && project->entry[0] && knproj_resolve_path(project_cfg, project->entry, manifest_entry, sizeof(manifest_entry)))
+                inputs[in_count++] = dup_str(manifest_entry);
+            if (!target_explicit && project->target[0]) { target_raw = dup_str(project->target); target_explicit = 1; }
+            if (!env_explicit && project->has_env) { env_kind = project->env_kind; env_explicit = 1; }
+            if (!runtime_explicit && project->has_runtime) { runtime_mode = project->runtime_mode; runtime_explicit = 1; }
+            if (!panic_explicit && project->has_panic) { panic_mode = project->panic_mode; panic_explicit = 1; }
+            if (!entry_explicit && project->entry_symbol[0]) entry_symbol = dup_str(project->entry_symbol);
+            if (!linker_explicit && project->has_linker_kind) { linker_kind = project->linker_kind; linker_explicit = 1; }
+            if (!linker_path_explicit && project->linker_path[0]) linker_path = dup_str(project->linker_path);
+            if (!link_script_explicit && project->link_script[0]) link_script = dup_str(project->link_script);
+            if (!no_crt_explicit && project->has_no_crt) no_crt = project->no_crt;
+            if (!no_default_libs_explicit && project->has_no_default_libs) no_default_libs = project->no_default_libs;
+            if (!auto_link_explicit && project->has_auto_link) auto_link = project->auto_link;
+            if (!append_project_link_items(project_cfg, project, raw_link_items, &raw_link_item_count,
+                                           (int)(sizeof(raw_link_items) / sizeof(raw_link_items[0]))))
+            {
+                kn_write_str("failed to apply link settings from project profile\n");
+                knproj_free_config(project_cfg);
+                return 1;
+            }
+            knproj_free_config(project_cfg);
         }
-        if (!manifest.is_project) { kn_write_str("--project expects a project manifest\n"); return 1; }
-        for (int pr = 0; pr < manifest.package_root_count; pr++) {
-            char resolved_root[KN_MAX_PATH];
-            if (manifest_resolve_path(&manifest, manifest.package_roots[pr], resolved_root, sizeof(resolved_root)))
-                append_root_list(&pkg_roots, resolved_root);
+        else
+        {
+            if (!parse_pkg_manifest(manifest_path, &manifest)) {
+                kn_write_str("invalid manifest: "); kn_write_str(manifest_path); kn_write_str("\n"); return 1;
+            }
+            if (!manifest.is_project) { kn_write_str("--project expects a project manifest\n"); return 1; }
+            for (int pr = 0; pr < manifest.package_root_count; pr++) {
+                char resolved_root[KN_MAX_PATH];
+                if (manifest_resolve_path(&manifest, manifest.package_roots[pr], resolved_root, sizeof(resolved_root)))
+                    append_root_list(&pkg_roots, resolved_root);
+            }
+            if (path_join(local_pkg_root, sizeof(local_pkg_root), manifest.manifest_dir, "kpkg"))
+                append_root_list(&pkg_roots, local_pkg_root);
+            if (!out && manifest.out_path[0] && manifest_resolve_path(&manifest, manifest.out_path, manifest_out, sizeof(manifest_out)))
+                out = dup_str(manifest_out);
+            if (in_count == 0 && manifest.entry[0] && manifest_resolve_path(&manifest, manifest.entry, manifest_entry, sizeof(manifest_entry)))
+                inputs[in_count++] = dup_str(manifest_entry);
         }
-        if (path_join(local_pkg_root, sizeof(local_pkg_root), manifest.manifest_dir, "kpkg"))
-            append_root_list(&pkg_roots, local_pkg_root);
-        if (!out && manifest.out_path[0] && manifest_resolve_path(&manifest, manifest.out_path, manifest_out, sizeof(manifest_out)))
-            out = dup_str(manifest_out);
-        if (in_count == 0 && manifest.entry[0] && manifest_resolve_path(&manifest, manifest.entry, manifest_entry, sizeof(manifest_entry)))
-            inputs[in_count++] = dup_str(manifest_entry);
     }
     collect_default_official_package_roots(&stdpkg_roots);
 
@@ -871,11 +952,19 @@ static int kn_run_main(int argc, char **argv)
     int warn_as_error = 0;
     int warn_level = 1;
     const char *input = 0;
+    const char *project_manifest = 0;
+    const char *project_profile = 0;
     const char *prog_args[256];
     int prog_argc = 0;
     int dashdash = 0;
     StrList pkg_roots = {0};
     StrList stdpkg_roots = {0};
+    int auto_link_explicit = 0;
+    KnLinkItem raw_link_items[128];
+    int raw_link_item_count = 0;
+    KnLinkItem link_items[256];
+    char link_item_storage[256][KN_MAX_PATH];
+    int link_item_storage_count = 0;
 
     for (int i = 1; i < argc; i++)
     {
@@ -888,8 +977,10 @@ static int kn_run_main(int argc, char **argv)
             continue;
         }
         if (kn_strcmp(arg, "-h") == 0 || kn_strcmp(arg, "--help") == 0) { print_run_help(); return 0; }
-        if (kn_strcmp(arg, "--no-module-discovery") == 0) { auto_link = 0; continue; }
+        if (kn_strcmp(arg, "--no-module-discovery") == 0) { auto_link = 0; auto_link_explicit = 1; continue; }
         if (kn_strcmp(arg, "--keep-temps") == 0) { keep_temps = 1; continue; }
+        if (kn_strcmp(arg, "--project") == 0 && i + 1 < argc) { project_manifest = argv[++i]; continue; }
+        if (kn_strcmp(arg, "--profile") == 0 && i + 1 < argc) { project_profile = argv[++i]; continue; }
         if (kn_strcmp(arg, "--lang") == 0 && i + 1 < argc) { lang = argv[++i]; continue; }
         if (kn_strcmp(arg, "--locale-file") == 0 && i + 1 < argc) { locale_file = argv[++i]; continue; }
         if (kn_strcmp(arg, "--color") == 0 && i + 1 < argc) {
@@ -904,10 +995,113 @@ static int kn_run_main(int argc, char **argv)
         }
         if (kn_strcmp(arg, "--pkg-root") == 0 && i + 1 < argc) { append_root_list(&pkg_roots, argv[++i]); continue; }
         if (kn_strcmp(arg, "--stdpkg-root") == 0 && i + 1 < argc) { append_root_list(&stdpkg_roots, argv[++i]); continue; }
+        if ((kn_strcmp(arg, "-L") == 0 || kn_strcmp(arg, "--lib-dir") == 0) && i + 1 < argc) {
+            if (!link_item_add(raw_link_items, &raw_link_item_count, (int)(sizeof(raw_link_items) / sizeof(raw_link_items[0])), KN_CLI_LINK_LIB_DIR, argv[++i])) { kn_write_str("too many link items\n"); return 1; }
+            continue;
+        }
+        if (kn_strncmp(arg, "-L", 2) == 0 && arg[2]) {
+            if (!link_item_add(raw_link_items, &raw_link_item_count, (int)(sizeof(raw_link_items) / sizeof(raw_link_items[0])), KN_CLI_LINK_LIB_DIR, arg + 2)) { kn_write_str("too many link items\n"); return 1; }
+            continue;
+        }
+        if ((kn_strcmp(arg, "-l") == 0 || kn_strcmp(arg, "--lib") == 0) && i + 1 < argc) {
+            if (!link_item_add(raw_link_items, &raw_link_item_count, (int)(sizeof(raw_link_items) / sizeof(raw_link_items[0])), KN_CLI_LINK_LIB_NAME, argv[++i])) { kn_write_str("too many link items\n"); return 1; }
+            continue;
+        }
+        if (kn_strncmp(arg, "-l", 2) == 0 && arg[2]) {
+            if (!link_item_add(raw_link_items, &raw_link_item_count, (int)(sizeof(raw_link_items) / sizeof(raw_link_items[0])), KN_CLI_LINK_LIB_NAME, arg + 2)) { kn_write_str("too many link items\n"); return 1; }
+            continue;
+        }
+        if (kn_strcmp(arg, "--link-root") == 0 && i + 1 < argc) {
+            if (!link_item_add(raw_link_items, &raw_link_item_count, (int)(sizeof(raw_link_items) / sizeof(raw_link_items[0])), KN_CLI_LINK_ROOT, argv[++i])) { kn_write_str("too many link items\n"); return 1; }
+            continue;
+        }
+        if (kn_strcmp(arg, "--link-arg") == 0 && i + 1 < argc) {
+            if (!link_item_add(raw_link_items, &raw_link_item_count, (int)(sizeof(raw_link_items) / sizeof(raw_link_items[0])), KN_CLI_LINK_ARG, argv[++i])) { kn_write_str("too many link items\n"); return 1; }
+            continue;
+        }
+        if (kn_strcmp(arg, "--link-file") == 0 && i + 1 < argc) {
+            if (!link_item_add(raw_link_items, &raw_link_item_count, (int)(sizeof(raw_link_items) / sizeof(raw_link_items[0])), KN_CLI_LINK_FILE, argv[++i])) { kn_write_str("too many link items\n"); return 1; }
+            continue;
+        }
         if (kn_strcmp(arg, "--") == 0) { dashdash = 1; continue; }
         if (arg[0] == '-' && arg[1]) { kn_write_str("unknown option: "); kn_write_str(arg); kn_write_str("\n"); print_run_help(); return 2; }
         if (!input) input = arg;
         else { kn_write_str("'kinal run' accepts exactly one input file\n"); return 2; }
+    }
+
+    if (project_manifest)
+    {
+        KnPkgManifest manifest;
+        KnProjectConfig *project_cfg = 0;
+        const KnProjProfile *project = 0;
+        char manifest_path[KN_MAX_PATH], manifest_entry[KN_MAX_PATH], local_pkg_root[KN_MAX_PATH], selected_profile_name[64];
+        if (!resolve_manifest_input_path(project_manifest, 1, manifest_path, sizeof(manifest_path))) {
+            kn_write_str("invalid manifest path: "); kn_write_str(project_manifest); kn_write_str("\n"); return 1;
+        }
+        if (project_manifest_is_knproj(manifest_path))
+        {
+            project_cfg = knproj_alloc_config();
+            if (!project_cfg)
+            {
+                kn_write_str("out of memory while loading project file\n");
+                return 1;
+            }
+            project = load_selected_project_profile(manifest_path, project_profile, project_cfg,
+                                                    selected_profile_name, sizeof(selected_profile_name));
+            if (!project)
+            {
+                kn_write_str("invalid project file: ");
+                kn_write_str(manifest_path);
+                kn_write_str("\n");
+                if (g_knproj_error[0]) { kn_write_str(g_knproj_error); kn_write_str("\n"); }
+                knproj_free_config(project_cfg);
+                return 1;
+            }
+            if (project->has_backend && project->backend == KN_PROJ_BACKEND_VM)
+            {
+                kn_write_str("'kinal run --project' requires a Native profile; use 'kinal vm run --project' for VM profiles\n");
+                knproj_free_config(project_cfg);
+                return 1;
+            }
+            if (project->has_env && project->env_kind == KN_ENV_FREESTANDING)
+            {
+                kn_write_str("'kinal run --project' does not support freestanding profiles\n");
+                knproj_free_config(project_cfg);
+                return 1;
+            }
+            append_project_package_roots(&pkg_roots, project_cfg, project, 0);
+            append_project_package_roots(&stdpkg_roots, project_cfg, project, 1);
+            if (path_join(local_pkg_root, sizeof(local_pkg_root), project_cfg->project_dir, "kpkg"))
+                append_root_list(&pkg_roots, local_pkg_root);
+            if (!input && project->entry[0] && knproj_resolve_path(project_cfg, project->entry, manifest_entry, sizeof(manifest_entry)))
+                input = dup_str(manifest_entry);
+            if (!auto_link_explicit && project->has_auto_link)
+                auto_link = project->auto_link;
+            if (!append_project_link_items(project_cfg, project, raw_link_items, &raw_link_item_count,
+                                           (int)(sizeof(raw_link_items) / sizeof(raw_link_items[0]))))
+            {
+                kn_write_str("failed to apply link settings from project profile\n");
+                knproj_free_config(project_cfg);
+                return 1;
+            }
+            knproj_free_config(project_cfg);
+        }
+        else
+        {
+            if (!parse_pkg_manifest(manifest_path, &manifest)) {
+                kn_write_str("invalid manifest: "); kn_write_str(manifest_path); kn_write_str("\n"); return 1;
+            }
+            if (!manifest.is_project) { kn_write_str("--project expects a project manifest\n"); return 1; }
+            for (int pr = 0; pr < manifest.package_root_count; pr++) {
+                char resolved_root[KN_MAX_PATH];
+                if (manifest_resolve_path(&manifest, manifest.package_roots[pr], resolved_root, sizeof(resolved_root)))
+                    append_root_list(&pkg_roots, resolved_root);
+            }
+            if (path_join(local_pkg_root, sizeof(local_pkg_root), manifest.manifest_dir, "kpkg"))
+                append_root_list(&pkg_roots, local_pkg_root);
+            if (!input && manifest.entry[0] && manifest_resolve_path(&manifest, manifest.entry, manifest_entry, sizeof(manifest_entry)))
+                input = dup_str(manifest_entry);
+        }
     }
 
     if (!input) { kn_write_str("no input file\n"); print_run_help(); return 1; }
@@ -939,6 +1133,21 @@ static int kn_run_main(int argc, char **argv)
 
     collect_default_official_package_roots(&stdpkg_roots);
 
+    int link_item_count = 0;
+    for (int li = 0; li < raw_link_item_count; li++) {
+        const KnLinkItem *raw = &raw_link_items[li];
+        if (!raw->value || !raw->value[0]) continue;
+        if (raw->kind == KN_CLI_LINK_ROOT) {
+            if (!expand_link_root(link_items, &link_item_count, (int)(sizeof(link_items) / sizeof(link_items[0])),
+                                  link_item_storage, &link_item_storage_count, (int)(sizeof(link_item_storage) / sizeof(link_item_storage[0])),
+                                  raw->value, default_target_triple()))
+            { kn_write_str("failed to expand link root: "); kn_write_str(raw->value); kn_write_str("\n"); return 1; }
+            continue;
+        }
+        if (!link_item_add(link_items, &link_item_count, (int)(sizeof(link_items) / sizeof(link_items[0])), raw->kind, raw->value))
+        { kn_write_str("too many link items\n"); return 1; }
+    }
+
     KnCompileConfig cfg;
     kn_memset(&cfg, 0, sizeof(cfg));
     cfg.out_path = temp_exe;
@@ -956,6 +1165,8 @@ static int kn_run_main(int argc, char **argv)
     cfg.package_root_count = pkg_roots.count;
     cfg.official_package_roots = stdpkg_roots.items;
     cfg.official_package_root_count = stdpkg_roots.count;
+    cfg.link_items = link_items;
+    cfg.link_item_count = link_item_count;
 
     const char *inputs[1];
     inputs[0] = input;
@@ -995,11 +1206,17 @@ static int kn_vm_build_main(int argc, char **argv)
 {
     const char *out = 0;
     const char *input = 0;
+    const char *project_manifest = 0;
+    const char *project_profile = 0;
     int auto_link = 1;
     int knc_superloop = 1;
     int color_mode = KN_COLOR_AUTO;
     const char *lang = "en";
     const char *locale_file = 0;
+    int auto_link_explicit = 0;
+    int superloop_explicit = 0;
+    StrList pkg_roots = {0};
+    StrList stdpkg_roots = {0};
 
     for (int i = 1; i < argc; i++)
     {
@@ -1007,20 +1224,97 @@ static int kn_vm_build_main(int argc, char **argv)
         if (kn_strcmp(arg, "-h") == 0 || kn_strcmp(arg, "--help") == 0) {
             kn_write_str("Usage: kinal vm build [options] <file.kn>\n\n"
                 "  -o, --output <file>  Output .knc path\n"
+                "  --project <file|dir>  Build from kinal.knproj or a legacy project manifest\n"
+                "  --profile <name>  Select a profile from kinal.knproj\n"
+                "  --superloop          Enable superloop fusion\n"
                 "  --no-superloop       Disable superloop fusion\n"
-                "  --no-module-discovery  Disable auto-discovery\n");
+                "  --no-module-discovery  Disable auto-discovery\n"
+                "  --pkg-root <dir>  Add a local package root\n"
+                "  --stdpkg-root <dir>  Add an official stdpkg root override\n");
             return 0;
         }
         if ((kn_strcmp(arg, "-o") == 0 || kn_strcmp(arg, "--output") == 0) && i + 1 < argc) { out = argv[++i]; continue; }
-        if (kn_strcmp(arg, "--no-superloop") == 0) { knc_superloop = 0; continue; }
-        if (kn_strcmp(arg, "--superloop") == 0) { knc_superloop = 1; continue; }
-        if (kn_strcmp(arg, "--no-module-discovery") == 0) { auto_link = 0; continue; }
+        if (kn_strcmp(arg, "--project") == 0 && i + 1 < argc) { project_manifest = argv[++i]; continue; }
+        if (kn_strcmp(arg, "--profile") == 0 && i + 1 < argc) { project_profile = argv[++i]; continue; }
+        if (kn_strcmp(arg, "--no-superloop") == 0) { knc_superloop = 0; superloop_explicit = 1; continue; }
+        if (kn_strcmp(arg, "--superloop") == 0) { knc_superloop = 1; superloop_explicit = 1; continue; }
+        if (kn_strcmp(arg, "--no-module-discovery") == 0) { auto_link = 0; auto_link_explicit = 1; continue; }
+        if (kn_strcmp(arg, "--pkg-root") == 0 && i + 1 < argc) { append_root_list(&pkg_roots, argv[++i]); continue; }
+        if (kn_strcmp(arg, "--stdpkg-root") == 0 && i + 1 < argc) { append_root_list(&stdpkg_roots, argv[++i]); continue; }
         if (kn_strcmp(arg, "--color") == 0 && i + 1 < argc) { parse_color_mode(argv[i + 1], &color_mode); i++; continue; }
         if (kn_strcmp(arg, "--lang") == 0 && i + 1 < argc) { lang = argv[++i]; continue; }
         if (kn_strcmp(arg, "--locale-file") == 0 && i + 1 < argc) { locale_file = argv[++i]; continue; }
         if (arg[0] == '-' && arg[1]) { kn_write_str("unknown option: "); kn_write_str(arg); kn_write_str("\n"); return 2; }
         if (!input) input = arg;
         else { kn_write_str("'kinal vm build' accepts exactly one input file\n"); return 2; }
+    }
+
+    if (project_manifest)
+    {
+        KnPkgManifest manifest;
+        KnProjectConfig *project_cfg = 0;
+        const KnProjProfile *project = 0;
+        char manifest_path[KN_MAX_PATH], manifest_entry[KN_MAX_PATH], manifest_out[KN_MAX_PATH], local_pkg_root[KN_MAX_PATH], selected_profile_name[64];
+        if (!resolve_manifest_input_path(project_manifest, 1, manifest_path, sizeof(manifest_path))) {
+            kn_write_str("invalid manifest path: "); kn_write_str(project_manifest); kn_write_str("\n"); return 1;
+        }
+        if (project_manifest_is_knproj(manifest_path))
+        {
+            project_cfg = knproj_alloc_config();
+            if (!project_cfg)
+            {
+                kn_write_str("out of memory while loading project file\n");
+                return 1;
+            }
+            project = load_selected_project_profile(manifest_path, project_profile, project_cfg,
+                                                    selected_profile_name, sizeof(selected_profile_name));
+            if (!project)
+            {
+                kn_write_str("invalid project file: ");
+                kn_write_str(manifest_path);
+                kn_write_str("\n");
+                if (g_knproj_error[0]) { kn_write_str(g_knproj_error); kn_write_str("\n"); }
+                knproj_free_config(project_cfg);
+                return 1;
+            }
+            if (project->has_backend && project->backend == KN_PROJ_BACKEND_NATIVE)
+            {
+                kn_write_str("'kinal vm build --project' requires a VM profile\n");
+                knproj_free_config(project_cfg);
+                return 1;
+            }
+            append_project_package_roots(&pkg_roots, project_cfg, project, 0);
+            append_project_package_roots(&stdpkg_roots, project_cfg, project, 1);
+            if (path_join(local_pkg_root, sizeof(local_pkg_root), project_cfg->project_dir, "kpkg"))
+                append_root_list(&pkg_roots, local_pkg_root);
+            if (!input && project->entry[0] && knproj_resolve_path(project_cfg, project->entry, manifest_entry, sizeof(manifest_entry)))
+                input = dup_str(manifest_entry);
+            if (!out && project->out_path[0] && knproj_resolve_path(project_cfg, project->out_path, manifest_out, sizeof(manifest_out)))
+                out = dup_str(manifest_out);
+            if (!auto_link_explicit && project->has_auto_link)
+                auto_link = project->auto_link;
+            if (!superloop_explicit && project->has_superloop)
+                knc_superloop = project->knc_superloop;
+            knproj_free_config(project_cfg);
+        }
+        else
+        {
+            if (!parse_pkg_manifest(manifest_path, &manifest)) {
+                kn_write_str("invalid manifest: "); kn_write_str(manifest_path); kn_write_str("\n"); return 1;
+            }
+            if (!manifest.is_project) { kn_write_str("--project expects a project manifest\n"); return 1; }
+            for (int pr = 0; pr < manifest.package_root_count; pr++) {
+                char resolved_root[KN_MAX_PATH];
+                if (manifest_resolve_path(&manifest, manifest.package_roots[pr], resolved_root, sizeof(resolved_root)))
+                    append_root_list(&pkg_roots, resolved_root);
+            }
+            if (path_join(local_pkg_root, sizeof(local_pkg_root), manifest.manifest_dir, "kpkg"))
+                append_root_list(&pkg_roots, local_pkg_root);
+            if (!input && manifest.entry[0] && manifest_resolve_path(&manifest, manifest.entry, manifest_entry, sizeof(manifest_entry)))
+                input = dup_str(manifest_entry);
+            if (!out && manifest.out_path[0] && manifest_resolve_path(&manifest, manifest.out_path, manifest_out, sizeof(manifest_out)))
+                out = dup_str(manifest_out);
+        }
     }
 
     if (!input) { kn_write_str("no input file\n"); return 1; }
@@ -1031,6 +1325,7 @@ static int kn_vm_build_main(int argc, char **argv)
     if (!locale_file || !locale_file[0]) locale_file = resolve_default_locale_path(lang);
     kn_diag_set_locale_file(locale_file);
     kn_std_set_profile(KN_STD_PROFILE_HOSTED);
+    collect_default_official_package_roots(&stdpkg_roots);
 
     char out_default[KN_MAX_PATH];
     if (!out) {
@@ -1050,6 +1345,10 @@ static int kn_vm_build_main(int argc, char **argv)
     cfg.runtime_mode = KN_RUNTIME_GC;
     cfg.entry_symbol = "Main";
     cfg.knc_superloop = knc_superloop;
+    cfg.package_roots = pkg_roots.items;
+    cfg.package_root_count = pkg_roots.count;
+    cfg.official_package_roots = stdpkg_roots.items;
+    cfg.official_package_root_count = stdpkg_roots.count;
 
     const char *inputs[1];
     inputs[0] = input;
@@ -1061,6 +1360,8 @@ static int kn_vm_build_main(int argc, char **argv)
 static int kn_vm_run_main(int argc, char **argv)
 {
     const char *input = 0;
+    const char *project_manifest = 0;
+    const char *project_profile = 0;
     const char *vm_path = 0;
     int knc_superloop = 1;
     int auto_link = 1;
@@ -1075,6 +1376,8 @@ static int kn_vm_run_main(int argc, char **argv)
     int dashdash = 0;
     StrList pkg_roots = {0};
     StrList stdpkg_roots = {0};
+    int auto_link_explicit = 0;
+    int superloop_explicit = 0;
 
     for (int i = 1; i < argc; i++)
     {
@@ -1087,7 +1390,10 @@ static int kn_vm_run_main(int argc, char **argv)
         }
         if (kn_strcmp(arg, "-h") == 0 || kn_strcmp(arg, "--help") == 0) {
             kn_write_str("Usage: kinal vm run [options] <file.kn|file.knc> [-- program-args...]\n\n"
+                "  --project <file|dir>  Run from kinal.knproj or a legacy project manifest\n"
+                "  --profile <name>  Select a profile from kinal.knproj\n"
                 "  --vm-path <file>  Explicit kinalvm path\n"
+                "  --superloop       Enable superloop when compiling source to .knc\n"
                 "  --no-superloop    Disable superloop when compiling source to .knc\n"
                 "  --no-module-discovery  Disable auto-discovery when compiling source\n"
                 "  --keep-temps      Keep the temporary .knc file\n"
@@ -1095,10 +1401,12 @@ static int kn_vm_run_main(int argc, char **argv)
                 "  --stdpkg-root <dir>  Add an official stdpkg root override\n");
             return 0;
         }
+        if (kn_strcmp(arg, "--project") == 0 && i + 1 < argc) { project_manifest = argv[++i]; continue; }
+        if (kn_strcmp(arg, "--profile") == 0 && i + 1 < argc) { project_profile = argv[++i]; continue; }
         if (kn_strcmp(arg, "--vm-path") == 0 && i + 1 < argc) { vm_path = argv[++i]; continue; }
-        if (kn_strcmp(arg, "--no-superloop") == 0) { knc_superloop = 0; continue; }
-        if (kn_strcmp(arg, "--superloop") == 0) { knc_superloop = 1; continue; }
-        if (kn_strcmp(arg, "--no-module-discovery") == 0) { auto_link = 0; continue; }
+        if (kn_strcmp(arg, "--no-superloop") == 0) { knc_superloop = 0; superloop_explicit = 1; continue; }
+        if (kn_strcmp(arg, "--superloop") == 0) { knc_superloop = 1; superloop_explicit = 1; continue; }
+        if (kn_strcmp(arg, "--no-module-discovery") == 0) { auto_link = 0; auto_link_explicit = 1; continue; }
         if (kn_strcmp(arg, "--keep-temps") == 0) { keep_temps = 1; continue; }
         if (kn_strcmp(arg, "--pkg-root") == 0 && i + 1 < argc) { append_root_list(&pkg_roots, argv[++i]); continue; }
         if (kn_strcmp(arg, "--stdpkg-root") == 0 && i + 1 < argc) { append_root_list(&stdpkg_roots, argv[++i]); continue; }
@@ -1111,6 +1419,70 @@ static int kn_vm_run_main(int argc, char **argv)
         if (arg[0] == '-' && arg[1]) { kn_write_str("unknown option: "); kn_write_str(arg); kn_write_str("\n"); return 2; }
         if (!input) input = arg;
         else { kn_write_str("'kinal vm run' accepts exactly one input file\n"); return 2; }
+    }
+
+    if (project_manifest)
+    {
+        KnPkgManifest manifest;
+        KnProjectConfig *project_cfg = 0;
+        const KnProjProfile *project = 0;
+        char manifest_path[KN_MAX_PATH], manifest_entry[KN_MAX_PATH], local_pkg_root[KN_MAX_PATH], selected_profile_name[64];
+        if (!resolve_manifest_input_path(project_manifest, 1, manifest_path, sizeof(manifest_path))) {
+            kn_write_str("invalid manifest path: "); kn_write_str(project_manifest); kn_write_str("\n"); return 1;
+        }
+        if (project_manifest_is_knproj(manifest_path))
+        {
+            project_cfg = knproj_alloc_config();
+            if (!project_cfg)
+            {
+                kn_write_str("out of memory while loading project file\n");
+                return 1;
+            }
+            project = load_selected_project_profile(manifest_path, project_profile, project_cfg,
+                                                    selected_profile_name, sizeof(selected_profile_name));
+            if (!project)
+            {
+                kn_write_str("invalid project file: ");
+                kn_write_str(manifest_path);
+                kn_write_str("\n");
+                if (g_knproj_error[0]) { kn_write_str(g_knproj_error); kn_write_str("\n"); }
+                knproj_free_config(project_cfg);
+                return 1;
+            }
+            if (project->has_backend && project->backend == KN_PROJ_BACKEND_NATIVE)
+            {
+                kn_write_str("'kinal vm run --project' requires a VM profile\n");
+                knproj_free_config(project_cfg);
+                return 1;
+            }
+            append_project_package_roots(&pkg_roots, project_cfg, project, 0);
+            append_project_package_roots(&stdpkg_roots, project_cfg, project, 1);
+            if (path_join(local_pkg_root, sizeof(local_pkg_root), project_cfg->project_dir, "kpkg"))
+                append_root_list(&pkg_roots, local_pkg_root);
+            if (!input && project->entry[0] && knproj_resolve_path(project_cfg, project->entry, manifest_entry, sizeof(manifest_entry)))
+                input = dup_str(manifest_entry);
+            if (!auto_link_explicit && project->has_auto_link)
+                auto_link = project->auto_link;
+            if (!superloop_explicit && project->has_superloop)
+                knc_superloop = project->knc_superloop;
+            knproj_free_config(project_cfg);
+        }
+        else
+        {
+            if (!parse_pkg_manifest(manifest_path, &manifest)) {
+                kn_write_str("invalid manifest: "); kn_write_str(manifest_path); kn_write_str("\n"); return 1;
+            }
+            if (!manifest.is_project) { kn_write_str("--project expects a project manifest\n"); return 1; }
+            for (int pr = 0; pr < manifest.package_root_count; pr++) {
+                char resolved_root[KN_MAX_PATH];
+                if (manifest_resolve_path(&manifest, manifest.package_roots[pr], resolved_root, sizeof(resolved_root)))
+                    append_root_list(&pkg_roots, resolved_root);
+            }
+            if (path_join(local_pkg_root, sizeof(local_pkg_root), manifest.manifest_dir, "kpkg"))
+                append_root_list(&pkg_roots, local_pkg_root);
+            if (!input && manifest.entry[0] && manifest_resolve_path(&manifest, manifest.entry, manifest_entry, sizeof(manifest_entry)))
+                input = dup_str(manifest_entry);
+        }
     }
 
     if (!input) { kn_write_str("no input file\n"); return 1; }
@@ -1190,6 +1562,8 @@ static int kn_vm_pack_main(int argc, char **argv)
 {
     const char *out = 0;
     const char *input = 0;
+    const char *project_manifest = 0;
+    const char *project_profile = 0;
     const char *vm_path = 0;
     const char *target_raw = default_target_triple();
     int color_mode = KN_COLOR_AUTO;
@@ -1198,6 +1572,11 @@ static int kn_vm_pack_main(int argc, char **argv)
     int auto_link = 1;
     int knc_superloop = 1;
     int keep_temps = 0;
+    int auto_link_explicit = 0;
+    int superloop_explicit = 0;
+    int target_explicit = 0;
+    StrList pkg_roots = {0};
+    StrList stdpkg_roots = {0};
 
     for (int i = 1; i < argc; i++)
     {
@@ -1205,23 +1584,103 @@ static int kn_vm_pack_main(int argc, char **argv)
         if (kn_strcmp(arg, "-h") == 0 || kn_strcmp(arg, "--help") == 0) {
             kn_write_str("Usage: kinal vm pack [options] <file.kn|file.knc>\n\n"
                 "  -o, --output <file>  Output executable path\n"
+                "  --project <file|dir>  Pack from kinal.knproj or a legacy project manifest\n"
+                "  --profile <name>  Select a profile from kinal.knproj\n"
                 "  --vm-path <file>     KinalVM executable path\n"
-                "  --target <triple>    Target platform\n");
+                "  --target <triple>    Target platform\n"
+                "  --superloop          Enable superloop fusion\n"
+                "  --no-superloop       Disable superloop fusion\n"
+                "  --no-module-discovery  Disable auto-discovery\n"
+                "  --pkg-root <dir>  Add a local package root\n"
+                "  --stdpkg-root <dir>  Add an official stdpkg root override\n");
             return 0;
         }
         if ((kn_strcmp(arg, "-o") == 0 || kn_strcmp(arg, "--output") == 0) && i + 1 < argc) { out = argv[++i]; continue; }
+        if (kn_strcmp(arg, "--project") == 0 && i + 1 < argc) { project_manifest = argv[++i]; continue; }
+        if (kn_strcmp(arg, "--profile") == 0 && i + 1 < argc) { project_profile = argv[++i]; continue; }
         if (kn_strcmp(arg, "--vm-path") == 0 && i + 1 < argc) { vm_path = argv[++i]; continue; }
-        if (kn_strcmp(arg, "--target") == 0 && i + 1 < argc) { target_raw = argv[++i]; continue; }
-        if (kn_strcmp(arg, "--no-module-discovery") == 0) { auto_link = 0; continue; }
-        if (kn_strcmp(arg, "--no-superloop") == 0) { knc_superloop = 0; continue; }
-        if (kn_strcmp(arg, "--superloop") == 0) { knc_superloop = 1; continue; }
+        if (kn_strcmp(arg, "--target") == 0 && i + 1 < argc) { target_raw = argv[++i]; target_explicit = 1; continue; }
+        if (kn_strcmp(arg, "--no-module-discovery") == 0) { auto_link = 0; auto_link_explicit = 1; continue; }
+        if (kn_strcmp(arg, "--no-superloop") == 0) { knc_superloop = 0; superloop_explicit = 1; continue; }
+        if (kn_strcmp(arg, "--superloop") == 0) { knc_superloop = 1; superloop_explicit = 1; continue; }
         if (kn_strcmp(arg, "--keep-temps") == 0) { keep_temps = 1; continue; }
+        if (kn_strcmp(arg, "--pkg-root") == 0 && i + 1 < argc) { append_root_list(&pkg_roots, argv[++i]); continue; }
+        if (kn_strcmp(arg, "--stdpkg-root") == 0 && i + 1 < argc) { append_root_list(&stdpkg_roots, argv[++i]); continue; }
         if (kn_strcmp(arg, "--color") == 0 && i + 1 < argc) { parse_color_mode(argv[i + 1], &color_mode); i++; continue; }
         if (kn_strcmp(arg, "--lang") == 0 && i + 1 < argc) { lang = argv[++i]; continue; }
         if (kn_strcmp(arg, "--locale-file") == 0 && i + 1 < argc) { locale_file = argv[++i]; continue; }
         if (arg[0] == '-' && arg[1]) { kn_write_str("unknown option: "); kn_write_str(arg); kn_write_str("\n"); return 2; }
         if (!input) input = arg;
         else { kn_write_str("'kinal vm pack' accepts exactly one input\n"); return 2; }
+    }
+
+    if (project_manifest)
+    {
+        KnPkgManifest manifest;
+        KnProjectConfig *project_cfg = 0;
+        const KnProjProfile *project = 0;
+        char manifest_path[KN_MAX_PATH], manifest_entry[KN_MAX_PATH], manifest_out[KN_MAX_PATH], local_pkg_root[KN_MAX_PATH], selected_profile_name[64];
+        if (!resolve_manifest_input_path(project_manifest, 1, manifest_path, sizeof(manifest_path))) {
+            kn_write_str("invalid manifest path: "); kn_write_str(project_manifest); kn_write_str("\n"); return 1;
+        }
+        if (project_manifest_is_knproj(manifest_path))
+        {
+            project_cfg = knproj_alloc_config();
+            if (!project_cfg)
+            {
+                kn_write_str("out of memory while loading project file\n");
+                return 1;
+            }
+            project = load_selected_project_profile(manifest_path, project_profile, project_cfg,
+                                                    selected_profile_name, sizeof(selected_profile_name));
+            if (!project)
+            {
+                kn_write_str("invalid project file: ");
+                kn_write_str(manifest_path);
+                kn_write_str("\n");
+                if (g_knproj_error[0]) { kn_write_str(g_knproj_error); kn_write_str("\n"); }
+                knproj_free_config(project_cfg);
+                return 1;
+            }
+            if (project->has_backend && project->backend == KN_PROJ_BACKEND_NATIVE)
+            {
+                kn_write_str("'kinal vm pack --project' requires a VM profile\n");
+                knproj_free_config(project_cfg);
+                return 1;
+            }
+            append_project_package_roots(&pkg_roots, project_cfg, project, 0);
+            append_project_package_roots(&stdpkg_roots, project_cfg, project, 1);
+            if (path_join(local_pkg_root, sizeof(local_pkg_root), project_cfg->project_dir, "kpkg"))
+                append_root_list(&pkg_roots, local_pkg_root);
+            if (!input && project->entry[0] && knproj_resolve_path(project_cfg, project->entry, manifest_entry, sizeof(manifest_entry)))
+                input = dup_str(manifest_entry);
+            if (!out && project->out_path[0] && knproj_resolve_path(project_cfg, project->out_path, manifest_out, sizeof(manifest_out)))
+                out = dup_str(manifest_out);
+            if (!target_explicit && project->target[0]) { target_raw = dup_str(project->target); target_explicit = 1; }
+            if (!auto_link_explicit && project->has_auto_link)
+                auto_link = project->auto_link;
+            if (!superloop_explicit && project->has_superloop)
+                knc_superloop = project->knc_superloop;
+            knproj_free_config(project_cfg);
+        }
+        else
+        {
+            if (!parse_pkg_manifest(manifest_path, &manifest)) {
+                kn_write_str("invalid manifest: "); kn_write_str(manifest_path); kn_write_str("\n"); return 1;
+            }
+            if (!manifest.is_project) { kn_write_str("--project expects a project manifest\n"); return 1; }
+            for (int pr = 0; pr < manifest.package_root_count; pr++) {
+                char resolved_root[KN_MAX_PATH];
+                if (manifest_resolve_path(&manifest, manifest.package_roots[pr], resolved_root, sizeof(resolved_root)))
+                    append_root_list(&pkg_roots, resolved_root);
+            }
+            if (path_join(local_pkg_root, sizeof(local_pkg_root), manifest.manifest_dir, "kpkg"))
+                append_root_list(&pkg_roots, local_pkg_root);
+            if (!input && manifest.entry[0] && manifest_resolve_path(&manifest, manifest.entry, manifest_entry, sizeof(manifest_entry)))
+                input = dup_str(manifest_entry);
+            if (!out && manifest.out_path[0] && manifest_resolve_path(&manifest, manifest.out_path, manifest_out, sizeof(manifest_out)))
+                out = dup_str(manifest_out);
+        }
     }
 
     if (!input) { kn_write_str("no input file\n"); return 1; }
@@ -1264,6 +1723,11 @@ static int kn_vm_pack_main(int argc, char **argv)
         knc_cfg.runtime_mode = KN_RUNTIME_GC;
         knc_cfg.entry_symbol = "Main";
         knc_cfg.knc_superloop = knc_superloop;
+        collect_default_official_package_roots(&stdpkg_roots);
+        knc_cfg.package_roots = pkg_roots.items;
+        knc_cfg.package_root_count = pkg_roots.count;
+        knc_cfg.official_package_roots = stdpkg_roots.items;
+        knc_cfg.official_package_root_count = stdpkg_roots.count;
         const char *inputs[1]; inputs[0] = input;
         int rc = kn_compile(1, inputs, &knc_cfg);
         kn_diag_print_summary();

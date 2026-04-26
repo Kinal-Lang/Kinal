@@ -1,0 +1,28 @@
+Unit Tests.ArrayConstLen;
+Get Console By IO.Console;
+
+Const int BUFFER_LEN = 8;
+Const int WORD_COUNT = 4;
+
+byte[BUFFER_LEN] gBuffer;
+int[WORD_COUNT] gWords;
+
+Static Function int Main()
+{
+    int[WORD_COUNT] localWords;
+    byte[BUFFER_LEN] localBytes;
+
+    gBuffer[0] = [byte](65);
+    gBuffer[1] = [byte](66);
+    gWords[3] = 4;
+
+    localWords[2] = 30;
+    localBytes[7] = [byte](99);
+
+    Console.PrintLine([int](gBuffer[0]));
+    Console.PrintLine([int](gBuffer[1]));
+    Console.PrintLine(gWords[3]);
+    Console.PrintLine(localWords[2]);
+    Console.PrintLine([int](localBytes[7]));
+    Return 0;
+}

@@ -2,6 +2,8 @@
 #include "kn/util.h"
 #include "kn/source.h"
 
+struct Expr;
+
 typedef enum
 {
     TY_VOID,
@@ -42,6 +44,7 @@ typedef struct
     int64_t array_len; // -1 for dynamic arrays
     int ptr_depth; // pointer depth for TY_PTR (0 for non-pointers)
     const char *name; // for class/struct/enum types
+    struct Expr *array_len_expr; // unresolved constant-length expression from parser
 } Type;
 
 static inline Type type_make(TypeKind k)
@@ -50,6 +53,7 @@ static inline Type type_make(TypeKind k)
     t.kind = k;
     t.elem = TY_UNKNOWN;
     t.array_len = 0;
+    t.array_len_expr = 0;
     t.ptr_depth = 0;
     t.name = 0;
     return t;
@@ -61,6 +65,7 @@ static inline Type type_ptr(TypeKind elem)
     t.kind = TY_PTR;
     t.elem = elem;
     t.array_len = 0;
+    t.array_len_expr = 0;
     t.ptr_depth = 1;
     t.name = 0;
     return t;
@@ -72,6 +77,7 @@ static inline Type type_array(TypeKind elem, int64_t len)
     t.kind = TY_ARRAY;
     t.elem = elem;
     t.array_len = len;
+    t.array_len_expr = 0;
     t.ptr_depth = 0;
     t.name = 0;
     return t;
@@ -88,6 +94,7 @@ static inline Type type_class(const char *name)
     t.kind = TY_CLASS;
     t.elem = TY_UNKNOWN;
     t.array_len = 0;
+    t.array_len_expr = 0;
     t.ptr_depth = 0;
     t.name = name;
     return t;
@@ -99,6 +106,7 @@ static inline Type type_struct(const char *name)
     t.kind = TY_STRUCT;
     t.elem = TY_UNKNOWN;
     t.array_len = 0;
+    t.array_len_expr = 0;
     t.ptr_depth = 0;
     t.name = name;
     return t;
@@ -110,6 +118,7 @@ static inline Type type_enum(const char *name)
     t.kind = TY_ENUM;
     t.elem = TY_UNKNOWN;
     t.array_len = 0;
+    t.array_len_expr = 0;
     t.ptr_depth = 0;
     t.name = name;
     return t;

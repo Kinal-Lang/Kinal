@@ -89,7 +89,7 @@ static void parse_string_lit_range(Parser *p, const Token *t, int start, int len
 static void parse_string_lit(Parser *p, const Token *t, const char **out_ptr, int *out_len);
 static bool is_type_tok(TokenType t);
 static bool looks_like_type_decl(Parser *p);
-static int64_t parse_array_len_suffix(Parser *p);
+static Expr *parse_array_len_suffix(Parser *p, int64_t *out_len);
 static void apply_array_type(Type *ty, int64_t len);
 static int parse_legacy_array_suffix(Parser *p, Type *ty, const Token *name_tok);
 static bool expect(Parser *p, TokenType t, const char *title, const char *detail);
@@ -433,29 +433,22 @@ static const char *normalize_type_alias(const char *qname)
     return qname;
 }
 
-static int64_t parse_array_len_suffix(Parser *p)
+static Expr *parse_array_len_suffix(Parser *p, int64_t *out_len)
 {
-    int64_t len = -1;
+    Expr *expr = 0;
+    if (out_len) *out_len = -1;
     if (cur(p)->type == TOK_NUMBER)
     {
         Token *num = cur(p);
         p->pos++;
-        len = parse_int_lit(num);
+        if (out_len) *out_len = parse_int_lit(num);
     }
     else if (cur(p)->type != TOK_RBRACKET)
     {
-        int depth = 0;
-        while ((cur(p)->type != TOK_RBRACKET || depth > 0) && cur(p)->type != TOK_EOF)
-        {
-            if (cur(p)->type == TOK_LPAREN || cur(p)->type == TOK_LBRACKET)
-                depth++;
-            else if (cur(p)->type == TOK_RPAREN || cur(p)->type == TOK_RBRACKET)
-                depth--;
-            p->pos++;
-        }
+        expr = parse_expr(p);
     }
     expect(p, TOK_RBRACKET, "Expected ']'", "Missing ']'");
-    return len;
+    return expr;
 }
 
 static void apply_array_type(Type *ty, int64_t len)
@@ -478,8 +471,10 @@ static int parse_legacy_array_suffix(Parser *p, Type *ty, const Token *name_tok)
     if (!p || !ty || ty->kind == TY_ARRAY || !match(p, TOK_LBRACKET))
         return 0;
     Token *lb = peek(p, -1);
-    int64_t len = parse_array_len_suffix(p);
+    int64_t len = -1;
+    Expr *len_expr = parse_array_len_suffix(p, &len);
     apply_array_type(ty, len);
+    ty->array_len_expr = len_expr;
     if (name_tok)
     {
         kn_diag_warn(p->src, KN_STAGE_PARSER, 1, lb->line, lb->col, (int)(lb->length ? lb->length : 1),

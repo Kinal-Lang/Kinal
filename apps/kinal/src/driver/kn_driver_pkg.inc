@@ -194,7 +194,7 @@ static bool pkg_manifest_file_name(const char *name)
 
 static bool project_manifest_file_name(const char *name)
 {
-    return name && (str_eq_ci(name, "kinal.pkg.json") || str_eq_ci(name, "kinal.pkg"));
+    return name && (str_eq_ci(name, "kinal.knproj") || str_eq_ci(name, "kinal.pkg.json") || str_eq_ci(name, "kinal.pkg"));
 }
 
 static const char *path_basename_local(const char *path);
@@ -218,6 +218,11 @@ static bool resolve_manifest_input_path(const char *arg, int want_project, char 
         return false;
     if (want_project)
     {
+        if (path_join(candidate, sizeof(candidate), arg, "kinal.knproj") && manifest_path_exists(candidate))
+        {
+            copy_str(out, cap, candidate);
+            return true;
+        }
         if (path_join(candidate, sizeof(candidate), arg, "kinal.pkg.json") && manifest_path_exists(candidate))
         {
             copy_str(out, cap, candidate);

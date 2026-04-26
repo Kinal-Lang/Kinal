@@ -66,6 +66,9 @@ kinal run main.kn
 # Build bytecode
 kinal vm build main.kn -o main.knc
 
+# Build from a project file
+kinal build --project .
+
 # Run via VM
 kinal vm run main.kn
 
@@ -148,9 +151,12 @@ kinal build [options] <file.kn> [file2.kn ...]
 
 | Option | Description |
 |--------|-------------|
-| `--project <dir>` | Build from a project manifest (`.knpkg.json`) |
+| `--project <file\|dir>` | Build from `kinal.knproj` or a legacy project manifest |
+| `--profile <name>` | Select a profile from `kinal.knproj` |
 | `--pkg-root <dir>` | Add a package search root directory |
 | `--stdpkg-root <dir>` | Override the standard package root directory |
+
+If `--project` points to a directory, `kinal` looks for `kinal.knproj` first. If `--profile` is omitted, the project file uses `DefaultProfile`.
 
 ### Frontend Options
 
@@ -204,9 +210,16 @@ kinal run [options] <file.kn> [-- program-args...]
 | Option | Description |
 |--------|-------------|
 | `--no-module-discovery` | Disable source file/module auto-discovery |
+| `--project <file\|dir>` | Run from `kinal.knproj` or a legacy project manifest |
+| `--profile <name>` | Select a profile from `kinal.knproj` |
 | `--pkg-root <dir>` | Add a local package root directory |
 | `--stdpkg-root <dir>` | Override the official stdpkg root directory |
 | `--keep-temps` | Retain the temporary executable after execution |
+| `-L, --lib-dir <dir>` | Add a library search directory |
+| `-l, --lib <name>` | Link the specified library |
+| `--link-file <file>` | Link a specific object/archive file |
+| `--link-root <dir>` | Add a link root directory |
+| `--link-arg <arg>` | Pass extra arguments to the linker |
 | `--lang <en\|zh>` | Diagnostic language |
 | `--locale-file <file>` | Custom locale file |
 | `--color <auto\|always\|never>` | Diagnostic color mode |
@@ -220,6 +233,9 @@ kinal run [options] <file.kn> [-- program-args...]
 ```bash
 # Quick run
 kinal run main.kn
+
+# Run from the default project profile
+kinal run --project .
 
 # Pass program arguments
 kinal run main.kn -- arg1 arg2
@@ -282,6 +298,7 @@ kinal build --lang zh main.kn
 ```bash
 # Bytecode operations
 kinal vm build main.kn -o main.knc
+kinal vm build --project . --profile vm
 kinal vm run main.kn                       # or main.knc
 kinal vm pack main.kn -o myapp             # Standalone executable
 

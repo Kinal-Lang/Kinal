@@ -1,5 +1,86 @@
 // Internal sema fragment: type validation, lookup, and declaration checks
 
+static bool eval_const_expr_scoped(Sema *s, Expr *e, int64_t *out)
+{
+    if (!e || !out) return false;
+    switch (e->kind)
+    {
+    case EXPR_VAR:
+    {
+        VarSym *v = scope_find(s ? s->scope : 0, e->v.var.name);
+        if (!v || !v->is_const || !v->origin)
+            return false;
+        return eval_const_expr_scoped(s, v->origin, out);
+    }
+    case EXPR_UNARY:
+    {
+        int64_t v = 0;
+        if (!eval_const_expr_scoped(s, e->v.unary.expr, &v)) return false;
+        if (e->v.unary.op == TOK_MINUS) { *out = -v; return true; }
+        if (e->v.unary.op == TOK_NOT) { *out = !v; return true; }
+        return false;
+    }
+    case EXPR_BINARY:
+    {
+        int64_t l = 0, r = 0;
+        if (!eval_const_expr_scoped(s, e->v.binary.left, &l)) return false;
+        if (!eval_const_expr_scoped(s, e->v.binary.right, &r)) return false;
+        switch ((TokenType)e->v.binary.op)
+        {
+        case TOK_PLUS: *out = l + r; return true;
+        case TOK_MINUS: *out = l - r; return true;
+        case TOK_STAR: *out = l * r; return true;
+        case TOK_SLASH: if (r == 0) return false; *out = l / r; return true;
+        case TOK_PERCENT: if (r == 0) return false; *out = l % r; return true;
+        case TOK_EQ: *out = (l == r); return true;
+        case TOK_NE: *out = (l != r); return true;
+        case TOK_LT: *out = (l < r); return true;
+        case TOK_LE: *out = (l <= r); return true;
+        case TOK_GT: *out = (l > r); return true;
+        case TOK_GE: *out = (l >= r); return true;
+        case TOK_ANDAND: *out = (l && r); return true;
+        case TOK_OROR: *out = (l || r); return true;
+        case TOK_AMP: *out = (l & r); return true;
+        case TOK_BITOR: *out = (l | r); return true;
+        case TOK_XOR: *out = (l ^ r); return true;
+        case TOK_SHL: *out = (l << r); return true;
+        case TOK_SHR: *out = (l >> r); return true;
+        default: return false;
+        }
+    }
+    default:
+        return eval_const_expr(e, out);
+    }
+}
+
+static void resolve_array_len_expr(Sema *s, Type *t, int line, int col)
+{
+    if (!s || !t || t->kind != TY_ARRAY || t->array_len >= 0 || !t->array_len_expr)
+        return;
+
+    Type it = sema_expr_with_expected(s, t->array_len_expr, type_make(TY_INT), "Array length requires integer type");
+    if (!is_integer_kind(it.kind))
+    {
+        sema_error(s, line, col, 1, "Array Length", "Array length must be an integer constant expression");
+        t->array_len_expr = 0;
+        return;
+    }
+
+    int64_t len = 0;
+    if (!eval_const_expr_scoped(s, t->array_len_expr, &len))
+    {
+        sema_error(s, line, col, 1, "Array Length", "Array length must be a constant integer expression");
+        t->array_len_expr = 0;
+        return;
+    }
+
+    if (len < 0)
+        sema_error(s, line, col, 1, "Array Length", "Array length cannot be negative");
+    else
+        t->array_len = len;
+    t->array_len_expr = 0;
+}
+
 static void validate_type_ref(Sema *s, Type *t, int line, int col, int allow_void)
 {
     int hidden_class_alias = (t && t->kind == TY_CLASS && t->name && qname_uses_hidden_module_alias(s, t->name));
@@ -11,6 +92,7 @@ static void validate_type_ref(Sema *s, Type *t, int line, int col, int allow_voi
                                    t->name && qname_uses_hidden_module_alias(s, t->name));
     int hidden_ptr_enum_alias = (t && (t->kind == TY_PTR || t->kind == TY_ARRAY) && t->elem == TY_ENUM &&
                                  t->name && qname_uses_hidden_module_alias(s, t->name));
+    resolve_array_len_expr(s, t, line, col);
     resolve_named_type(s, t);
     if (t->kind == TY_UNKNOWN)
         sema_error(s, line, col, 1, "Invalid Type", "Type not specified");
@@ -1709,6 +1791,7 @@ static Type subst_type(const TypeSubst *subst, Type t)
         {
             Type at = subst->types[idx];
             Type out = type_array(at.kind, t.array_len);
+            out.array_len_expr = t.array_len_expr;
             if (at.kind == TY_CLASS || at.kind == TY_STRUCT || at.kind == TY_ENUM)
                 out.name = at.name;
             return out;

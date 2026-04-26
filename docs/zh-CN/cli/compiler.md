@@ -66,6 +66,9 @@ kinal run main.kn
 # 构建字节码
 kinal vm build main.kn -o main.knc
 
+# 从项目文件构建
+kinal build --project .
+
 # 通过 VM 执行
 kinal vm run main.kn
 
@@ -148,9 +151,12 @@ kinal build [选项] <文件.kn> [文件2.kn ...]
 
 | 选项 | 说明 |
 |------|------|
-| `--project <目录>` | 从项目清单（`.knpkg.json`）构建 |
+| `--project <文件\|目录>` | 从 `kinal.knproj` 或旧项目清单构建 |
+| `--profile <名称>` | 选择 `kinal.knproj` 中的 Profile |
 | `--pkg-root <目录>` | 添加包搜索根目录 |
 | `--stdpkg-root <目录>` | 覆盖标准包根目录 |
+
+当 `--project` 传入目录时，`kinal` 会优先查找 `kinal.knproj`。如果没有显式传 `--profile`，则使用项目文件中的 `DefaultProfile`。
 
 ### 前端选项
 
@@ -204,9 +210,16 @@ kinal run [选项] <文件.kn> [-- 程序参数...]
 | 选项 | 说明 |
 |------|------|
 | `--no-module-discovery` | 禁用源文件/模块自动发现 |
+| `--project <文件\|目录>` | 从 `kinal.knproj` 或旧项目清单运行 |
+| `--profile <名称>` | 选择 `kinal.knproj` 中的 Profile |
 | `--pkg-root <目录>` | 添加本地包根目录 |
 | `--stdpkg-root <目录>` | 覆盖官方 stdpkg 根目录 |
 | `--keep-temps` | 执行完成后保留临时可执行文件 |
+| `-L, --lib-dir <目录>` | 添加库搜索目录 |
+| `-l, --lib <库名>` | 链接指定库 |
+| `--link-file <文件>` | 链接指定目标文件或归档文件 |
+| `--link-root <目录>` | 添加链接根目录 |
+| `--link-arg <参数>` | 传递额外参数给链接器 |
 | `--lang <en\|zh>` | 诊断语言 |
 | `--locale-file <文件>` | 自定义本地化文件 |
 | `--color <auto\|always\|never>` | 诊断颜色模式 |
@@ -220,6 +233,9 @@ kinal run [选项] <文件.kn> [-- 程序参数...]
 ```bash
 # 快速运行
 kinal run main.kn
+
+# 使用项目的默认 Profile 运行
+kinal run --project .
 
 # 传递程序参数
 kinal run main.kn -- arg1 arg2
@@ -282,6 +298,7 @@ kinal build --lang zh main.kn
 ```bash
 # 字节码操作
 kinal vm build main.kn -o main.knc
+kinal vm build --project . --profile vm
 kinal vm run main.kn                       # 或 main.knc
 kinal vm pack main.kn -o myapp             # 独立可执行文件
 
