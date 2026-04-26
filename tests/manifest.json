@@ -551,7 +551,7 @@
   {
     "name": "expr_ops",
     "file": "tests/common/expr_ops.kn",
-    "expected": "1\n3\n9\n9\n3\n"
+    "expected": "1\n3\n9\n9\n3\n1\n3\n2\n3\n10\n12\n12\n"
   },
   {
     "name": "switch_matcher",
