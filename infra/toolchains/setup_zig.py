@@ -2,16 +2,13 @@
 from __future__ import annotations
 
 import argparse
-import shutil
 import sys
-import tarfile
-import urllib.request
-import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
+from infra.scripts.x.util import download_file, extract_archive_safely  # noqa: E402
 from infra.scripts.x.zig import (  # noqa: E402
     ZIG_VERSION,
     detect_zig_path,
@@ -26,21 +23,11 @@ def ensure_dir(path: Path) -> None:
 
 
 def download(url: str, dest: Path) -> None:
-    print(f"+ download {url}")
-    with urllib.request.urlopen(url) as resp, dest.open("wb") as fh:
-        shutil.copyfileobj(resp, fh)
+    download_file(url, dest)
 
 
 def extract_archive(archive: Path, dest: Path) -> None:
-    if archive.name.endswith(".tar.xz"):
-        with tarfile.open(archive, "r:xz") as tf:
-            tf.extractall(dest)
-        return
-    if archive.suffix == ".zip":
-        with zipfile.ZipFile(archive) as zf:
-            zf.extractall(dest)
-        return
-    raise SystemExit(f"unsupported archive format: {archive.name}")
+    extract_archive_safely(archive, dest)
 
 
 def fetch_prebuilt(url: str) -> Path:

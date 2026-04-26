@@ -2,12 +2,14 @@
 from __future__ import annotations
 
 import argparse
+import os
 import platform
 import shutil
 import subprocess
 import sys
 import tarfile
 import time
+import urllib.error
 import urllib.request
 import zipfile
 from pathlib import Path
@@ -83,6 +85,31 @@ def extract_archive(archive: Path, dest: Path) -> None:
             total = len(members)
             last_report = 0.0
             last_bucket = -1
+            base = dest.resolve()
+            for member in members:
+                member_name = member.name.replace("\\", "/")
+                if Path(member_name).is_absolute():
+                    raise SystemExit(f"archive entry uses an absolute path: {member.name}")
+                target = (dest / member_name).resolve()
+                try:
+                    common = os.path.commonpath([str(base), str(target)])
+                except ValueError as exc:
+                    raise SystemExit(f"archive entry escapes destination: {member.name}") from exc
+                if common != str(base):
+                    raise SystemExit(f"archive entry escapes destination: {member.name}")
+                if member.issym() or member.islnk():
+                    link_name = member.linkname.replace("\\", "/")
+                    if Path(link_name).is_absolute():
+                        raise SystemExit(f"archive link escapes destination: {member.name} -> {member.linkname}")
+                    resolved_link = (target.parent / link_name).resolve()
+                    try:
+                        common = os.path.commonpath([str(base), str(resolved_link)])
+                    except ValueError as exc:
+                        raise SystemExit(f"archive link escapes destination: {member.name} -> {member.linkname}") from exc
+                    if common != str(base):
+                        raise SystemExit(f"archive link escapes destination: {member.name} -> {member.linkname}")
+                elif not (member.isdir() or member.isfile()):
+                    raise SystemExit(f"archive entry type is not allowed: {member.name}")
             for index, member in enumerate(members, start=1):
                 tf.extract(member, dest)
                 now = time.monotonic()
@@ -104,8 +131,27 @@ def extract_archive(archive: Path, dest: Path) -> None:
             total = len(members)
             last_report = 0.0
             last_bucket = -1
+            base = dest.resolve()
             for index, member in enumerate(members, start=1):
-                zf.extract(member, dest)
+                member_name = member.filename.replace("\\", "/")
+                if Path(member_name).is_absolute():
+                    raise SystemExit(f"archive entry uses an absolute path: {member.filename}")
+                target = (dest / member_name).resolve()
+                try:
+                    common = os.path.commonpath([str(base), str(target)])
+                except ValueError as exc:
+                    raise SystemExit(f"archive entry escapes destination: {member.filename}") from exc
+                if common != str(base):
+                    raise SystemExit(f"archive entry escapes destination: {member.filename}")
+                if member.is_dir():
+                    target.mkdir(parents=True, exist_ok=True)
+                else:
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    with zf.open(member) as src, target.open("wb") as fh:
+                        shutil.copyfileobj(src, fh)
+                    mode = (member.external_attr >> 16) & 0o777
+                    if mode:
+                        target.chmod(mode)
                 now = time.monotonic()
                 if total:
                     percent = index / total * 100.0
@@ -124,29 +170,36 @@ def extract_archive(archive: Path, dest: Path) -> None:
 
 def download(url: str, dest: Path) -> None:
     print(f"[INFO] downloading {url}", flush=True)
-    with urllib.request.urlopen(url) as resp, dest.open("wb") as fh:
-        total = resp.headers.get("Content-Length")
-        total_size = int(total) if total and total.isdigit() else 0
-        chunk_size = 1024 * 1024
-        downloaded = 0
-        last_report = 0.0
-        while True:
-            chunk = resp.read(chunk_size)
-            if not chunk:
-                break
-            fh.write(chunk)
-            downloaded += len(chunk)
-            now = time.monotonic()
-            if total_size and (now - last_report >= 0.5 or downloaded == total_size):
-                percent = downloaded / total_size * 100.0
-                print(
-                    f"[INFO] download progress: {percent:5.1f}% ({format_size(downloaded)} / {format_size(total_size)})",
-                    flush=True,
-                )
-                last_report = now
-            elif not total_size and now - last_report >= 0.5:
-                print(f"[INFO] download progress: {format_size(downloaded)}", flush=True)
-                last_report = now
+    temp = dest.with_name(f"{dest.name}.tmp")
+    temp.unlink(missing_ok=True)
+    try:
+        with urllib.request.urlopen(url, timeout=30) as resp, temp.open("wb") as fh:
+            total = resp.headers.get("Content-Length")
+            total_size = int(total) if total and total.isdigit() else 0
+            chunk_size = 1024 * 1024
+            downloaded = 0
+            last_report = 0.0
+            while True:
+                chunk = resp.read(chunk_size)
+                if not chunk:
+                    break
+                fh.write(chunk)
+                downloaded += len(chunk)
+                now = time.monotonic()
+                if total_size and (now - last_report >= 0.5 or downloaded == total_size):
+                    percent = downloaded / total_size * 100.0
+                    print(
+                        f"[INFO] download progress: {percent:5.1f}% ({format_size(downloaded)} / {format_size(total_size)})",
+                        flush=True,
+                    )
+                    last_report = now
+                elif not total_size and now - last_report >= 0.5:
+                    print(f"[INFO] download progress: {format_size(downloaded)}", flush=True)
+                    last_report = now
+        temp.replace(dest)
+    except (OSError, urllib.error.URLError) as exc:
+        temp.unlink(missing_ok=True)
+        raise SystemExit(f"download failed: {url}: {exc}") from exc
     print(f"[OK] download complete: {dest}", flush=True)
 
 

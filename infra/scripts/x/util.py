@@ -1,10 +1,15 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
+import tarfile
+import urllib.error
 import urllib.request
+import zipfile
 from pathlib import Path
+from pathlib import PurePosixPath
 
 from .context import ROOT
 
@@ -39,8 +44,87 @@ def copy_tree(src: Path, dst: Path) -> None:
 def download_file(url: str, dest: Path) -> None:
     print(f"+ download {url}", flush=True)
     dest.parent.mkdir(parents=True, exist_ok=True)
-    with urllib.request.urlopen(url) as resp, dest.open("wb") as fh:
-        shutil.copyfileobj(resp, fh)
+    temp = dest.with_name(f"{dest.name}.tmp")
+    temp.unlink(missing_ok=True)
+    try:
+        with urllib.request.urlopen(url, timeout=30) as resp, temp.open("wb") as fh:
+            shutil.copyfileobj(resp, fh)
+        temp.replace(dest)
+    except (OSError, urllib.error.URLError) as exc:
+        temp.unlink(missing_ok=True)
+        raise SystemExit(f"download failed: {url}: {exc}") from exc
+
+
+def _extract_target(dest: Path, member_name: str) -> Path:
+    name = member_name.replace("\\", "/")
+    member = PurePosixPath(name)
+    if member.is_absolute():
+        raise SystemExit(f"archive entry uses an absolute path: {member_name}")
+    target = (dest / Path(*member.parts)).resolve()
+    base = dest.resolve()
+    try:
+        common = os.path.commonpath([str(base), str(target)])
+    except ValueError as exc:
+        raise SystemExit(f"archive entry escapes destination: {member_name}") from exc
+    if common != str(base):
+        raise SystemExit(f"archive entry escapes destination: {member_name}")
+    return target
+
+
+def _validate_tar_link(dest: Path, member: tarfile.TarInfo) -> None:
+    link = member.linkname.replace("\\", "/")
+    link_path = PurePosixPath(link)
+    if link_path.is_absolute():
+        raise SystemExit(f"archive link escapes destination: {member.name} -> {member.linkname}")
+    target = _extract_target(dest, member.name)
+    resolved = (target.parent / Path(*link_path.parts)).resolve()
+    base = dest.resolve()
+    try:
+        common = os.path.commonpath([str(base), str(resolved)])
+    except ValueError as exc:
+        raise SystemExit(f"archive link escapes destination: {member.name} -> {member.linkname}") from exc
+    if common != str(base):
+        raise SystemExit(f"archive link escapes destination: {member.name} -> {member.linkname}")
+
+
+def extract_tar_safely(archive: Path, dest: Path, mode: str = "r:*") -> None:
+    dest.mkdir(parents=True, exist_ok=True)
+    with tarfile.open(archive, mode) as tf:
+        members = tf.getmembers()
+        for member in members:
+            _extract_target(dest, member.name)
+            if member.issym() or member.islnk():
+                _validate_tar_link(dest, member)
+            elif not (member.isdir() or member.isfile()):
+                raise SystemExit(f"archive entry type is not allowed: {member.name}")
+        for member in members:
+            tf.extract(member, dest)
+
+
+def extract_zip_safely(archive: Path, dest: Path) -> None:
+    dest.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(archive) as zf:
+        for member in zf.infolist():
+            target = _extract_target(dest, member.filename)
+            if member.is_dir():
+                target.mkdir(parents=True, exist_ok=True)
+                continue
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with zf.open(member) as src, target.open("wb") as fh:
+                shutil.copyfileobj(src, fh)
+            mode = (member.external_attr >> 16) & 0o777
+            if mode:
+                target.chmod(mode)
+
+
+def extract_archive_safely(archive: Path, dest: Path) -> None:
+    if archive.name.endswith(".tar.xz"):
+        extract_tar_safely(archive, dest, "r:xz")
+        return
+    if archive.suffix == ".zip":
+        extract_zip_safely(archive, dest)
+        return
+    raise SystemExit(f"unsupported archive format: {archive.name}")
 
 
 def write_text(path: Path, text: str) -> None:
