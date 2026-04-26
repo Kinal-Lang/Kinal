@@ -408,7 +408,7 @@ def run_driver_integration_tests(compiler: Path, out_dir: Path) -> int:
     run([str(compiler), "vm", "build", "--no-module-discovery", str(knc_char_fx), "-o", str(knc_char)], cwd=ROOT)
     knc_char_out = run([str(vm_exe), str(knc_char)], cwd=ROOT, capture=True)
     assert isinstance(knc_char_out, subprocess.CompletedProcess)
-    expected_char = "A\n65\n10\n39\n"
+    expected_char = "A\n65\n10\n8\n39\n"
     if knc_char_out.returncode != 0 or (knc_char_out.stdout or "").replace("\r\n", "\n") != expected_char:
         print("[FAIL] knc_vm_char_literals")
         return 1
