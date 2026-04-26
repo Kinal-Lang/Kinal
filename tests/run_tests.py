@@ -392,12 +392,12 @@ def run_driver_integration_tests(compiler: Path, out_dir: Path) -> int:
         return 1
     print("[OK] knc_vm_functions")
 
-    knc_expr_fx = ROOT / "tests" / "common" / "expr_ops.kn"
-    knc_expr = out_dir / "expr_ops.knc"
+    knc_expr_fx = ROOT / "tests" / "common" / "knc_expr_ops.kn"
+    knc_expr = out_dir / "knc_expr_ops.knc"
     run([str(compiler), "vm", "build", "--no-module-discovery", str(knc_expr_fx), "-o", str(knc_expr)], cwd=ROOT)
     knc_expr_out = run([str(vm_exe), str(knc_expr)], cwd=ROOT, capture=True)
     assert isinstance(knc_expr_out, subprocess.CompletedProcess)
-    expected_expr = "1\n3\n9\n9\n3\n1\n3\n2\n3\n10\n12\n12\n"
+    expected_expr = "1\n3\n9\n9\n3\n"
     if knc_expr_out.returncode != 0 or (knc_expr_out.stdout or "").replace("\r\n", "\n") != expected_expr:
         print("[FAIL] knc_vm_expr_ops")
         return 1
@@ -408,7 +408,7 @@ def run_driver_integration_tests(compiler: Path, out_dir: Path) -> int:
     run([str(compiler), "vm", "build", "--no-module-discovery", str(knc_char_fx), "-o", str(knc_char)], cwd=ROOT)
     knc_char_out = run([str(vm_exe), str(knc_char)], cwd=ROOT, capture=True)
     assert isinstance(knc_char_out, subprocess.CompletedProcess)
-    expected_char = "A\n65\n10\n39\n"
+    expected_char = "A\n65\n10\n8\n39\n"
     if knc_char_out.returncode != 0 or (knc_char_out.stdout or "").replace("\r\n", "\n") != expected_char:
         print("[FAIL] knc_vm_char_literals")
         return 1

@@ -38,7 +38,7 @@ from .context import (
 )
 from .llvm import llvm_lib_dir
 from .zig import detect_zig_path, ensure_zig_available
-from .util import copy_tree, download_file, run, write_text
+from .util import copy_tree, download_file, extract_zip_safely, run, write_text
 
 
 def windows_drive_roots() -> list[Path]:
@@ -398,8 +398,7 @@ def ensure_civetweb_source() -> None:
         extract_root.mkdir(parents=True, exist_ok=True)
 
         download_file(archive_url, archive_path)
-        with zipfile.ZipFile(archive_path) as zf:
-            zf.extractall(extract_root)
+        extract_zip_safely(archive_path, extract_root)
 
         extracted_roots = sorted(path for path in extract_root.iterdir() if path.is_dir())
         if not extracted_roots:

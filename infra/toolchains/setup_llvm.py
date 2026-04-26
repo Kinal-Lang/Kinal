@@ -6,13 +6,14 @@ import platform
 import shutil
 import subprocess
 import sys
-import tarfile
 import time
 import urllib.request
-import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT))
+
+from infra.scripts.x.util import extract_archive_safely  # noqa: E402
 THIRD_PARTY_ROOT = ROOT.parent / "Kinal-ThirdParty"
 LLVM_ROOT = THIRD_PARTY_ROOT / "llvm"
 PREBUILT_ROOT = THIRD_PARTY_ROOT / ".cache" / "llvm" / "prebuilt"
@@ -76,77 +77,42 @@ def format_size(size: int) -> str:
 
 def extract_archive(archive: Path, dest: Path) -> None:
     print(f"[INFO] extracting {archive.name} into {dest}", flush=True)
-    suffixes = archive.suffixes
-    if suffixes[-2:] == [".tar", ".xz"] or archive.name.endswith(".tar.xz"):
-        with tarfile.open(archive, "r:xz") as tf:
-            members = tf.getmembers()
-            total = len(members)
-            last_report = 0.0
-            last_bucket = -1
-            for index, member in enumerate(members, start=1):
-                tf.extract(member, dest)
-                now = time.monotonic()
-                if total:
-                    percent = index / total * 100.0
-                    bucket = int(percent // 5)
-                    if bucket > last_bucket or now - last_report >= 2.0 or index == total:
-                        print(
-                            f"[INFO] extract progress: {percent:5.1f}% ({index} / {total})",
-                            flush=True,
-                        )
-                        last_report = now
-                        last_bucket = bucket
-        print(f"[OK] extracted {archive.name}", flush=True)
-        return
-    if archive.suffix == ".zip":
-        with zipfile.ZipFile(archive) as zf:
-            members = zf.infolist()
-            total = len(members)
-            last_report = 0.0
-            last_bucket = -1
-            for index, member in enumerate(members, start=1):
-                zf.extract(member, dest)
-                now = time.monotonic()
-                if total:
-                    percent = index / total * 100.0
-                    bucket = int(percent // 5)
-                    if bucket > last_bucket or now - last_report >= 2.0 or index == total:
-                        print(
-                            f"[INFO] extract progress: {percent:5.1f}% ({index} / {total})",
-                            flush=True,
-                        )
-                        last_report = now
-                        last_bucket = bucket
-        print(f"[OK] extracted {archive.name}", flush=True)
-        return
-    raise SystemExit(f"unsupported archive format: {archive.name}")
+    extract_archive_safely(archive, dest)
+    print(f"[OK] extracted {archive.name}", flush=True)
 
 
 def download(url: str, dest: Path) -> None:
     print(f"[INFO] downloading {url}", flush=True)
-    with urllib.request.urlopen(url) as resp, dest.open("wb") as fh:
-        total = resp.headers.get("Content-Length")
-        total_size = int(total) if total and total.isdigit() else 0
-        chunk_size = 1024 * 1024
-        downloaded = 0
-        last_report = 0.0
-        while True:
-            chunk = resp.read(chunk_size)
-            if not chunk:
-                break
-            fh.write(chunk)
-            downloaded += len(chunk)
-            now = time.monotonic()
-            if total_size and (now - last_report >= 0.5 or downloaded == total_size):
-                percent = downloaded / total_size * 100.0
-                print(
-                    f"[INFO] download progress: {percent:5.1f}% ({format_size(downloaded)} / {format_size(total_size)})",
-                    flush=True,
-                )
-                last_report = now
-            elif not total_size and now - last_report >= 0.5:
-                print(f"[INFO] download progress: {format_size(downloaded)}", flush=True)
-                last_report = now
+    temp = dest.with_name(f"{dest.name}.tmp")
+    temp.unlink(missing_ok=True)
+    try:
+        with urllib.request.urlopen(url, timeout=30) as resp, temp.open("wb") as fh:
+            total = resp.headers.get("Content-Length")
+            total_size = int(total) if total and total.isdigit() else 0
+            chunk_size = 1024 * 1024
+            downloaded = 0
+            last_report = 0.0
+            while True:
+                chunk = resp.read(chunk_size)
+                if not chunk:
+                    break
+                fh.write(chunk)
+                downloaded += len(chunk)
+                now = time.monotonic()
+                if total_size and (now - last_report >= 0.5 or downloaded == total_size):
+                    percent = downloaded / total_size * 100.0
+                    print(
+                        f"[INFO] download progress: {percent:5.1f}% ({format_size(downloaded)} / {format_size(total_size)})",
+                        flush=True,
+                    )
+                    last_report = now
+                elif not total_size and now - last_report >= 0.5:
+                    print(f"[INFO] download progress: {format_size(downloaded)}", flush=True)
+                    last_report = now
+        temp.replace(dest)
+    except (OSError, urllib.error.URLError) as exc:
+        temp.unlink(missing_ok=True)
+        raise SystemExit(f"download failed: {url}: {exc}") from exc
     print(f"[OK] download complete: {dest}", flush=True)
 
 
