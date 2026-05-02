@@ -227,6 +227,11 @@ static int kn_triple_is_macos(const char *triple)
     return kn_str_contains_ci(triple, "darwin") || kn_str_contains_ci(triple, "apple") || kn_str_contains_ci(triple, "macos");
 }
 
+static int kn_triple_is_freestanding(const char *triple)
+{
+    return kn_str_contains_ci(triple, "unknown-none") || kn_str_contains_ci(triple, "none-elf");
+}
+
 static int kn_triple_is_x64(const char *triple)
 {
     return kn_str_contains_ci(triple, "x86_64") || kn_str_contains_ci(triple, "amd64");
@@ -1153,12 +1158,24 @@ static int kn_resolve_zig(char *out, size_t cap, int allow_download)
 static int kn_check_tool_version(const char *tool)
 {
     if (!tool || !tool[0]) return 0;
-    char cmd[2048];
-    size_t off = 0;
-    cmd[0] = 0;
-    kn_append_quoted(cmd, sizeof(cmd), &off, tool);
-    kn_append(cmd, sizeof(cmd), &off, " version");
-    return kn_run_process(tool, cmd) == 0;
+    if (kn_file_exists(tool))
+        return 1;
+
+    {
+        char resolved[1024];
+        if (kn_try_resolve_tool_on_path(resolved, sizeof(resolved), tool))
+            return 1;
+    }
+
+    {
+        char alt_name[1024];
+        char resolved_alt[1024];
+        if (kn_tool_name_without_exe_suffix(alt_name, sizeof(alt_name), tool) &&
+            kn_try_resolve_tool_on_path(resolved_alt, sizeof(resolved_alt), alt_name))
+            return 1;
+    }
+
+    return 0;
 }
 
 static int kn_dir_exists(const char *path)

@@ -838,6 +838,9 @@ static int kn_compile(int in_count, const char **in_paths, const KnCompileConfig
         emit_kind = KN_CODEGEN_LLVM_IR;
     }
 
+    const int emit_pic = (cfg->artifact_kind == KN_ARTIFACT_SHARED_LIB) ||
+                         (cfg->artifact_kind == KN_ARTIFACT_STATIC_LIB && cfg->env_kind == KN_ENV_FREESTANDING);
+
     trace_log(trace, "codegen:start");
     uint64_t t_codegen = now_ms();
     KnCodegenOptions cg_opts;
@@ -847,7 +850,7 @@ static int kn_compile(int in_count, const char **in_paths, const KnCompileConfig
     // Emit entry wrapper for executable artifacts so .ll/.s/.obj intermediates
     // can be resumed and linked later without re-running frontend.
     cg_opts.emit_entry = need_entry;
-    cg_opts.emit_pic = (cfg->artifact_kind == KN_ARTIFACT_SHARED_LIB);
+    cg_opts.emit_pic = emit_pic;
     cg_opts.env_kind = cfg->env_kind;
     cg_opts.runtime_mode = cfg->runtime_mode;
     cg_opts.panic_mode = cfg->panic_mode;
@@ -865,7 +868,7 @@ static int kn_compile(int in_count, const char **in_paths, const KnCompileConfig
             if (!derive_obj_path(out_path, cfg->target_triple, cg_obj, sizeof(cg_obj)))
                 return -1;
             if (compile_intermediate_to_obj(cg_out, cg_obj, cfg->target_triple, cfg->lto_mode,
-                                            cfg->artifact_kind == KN_ARTIFACT_SHARED_LIB) != 0)
+                                            emit_pic) != 0)
             {
                 kn_write_str("failed to compile generated llvm ir to object for lto\n");
                 return -1;
@@ -911,7 +914,7 @@ static int kn_compile(int in_count, const char **in_paths, const KnCompileConfig
                     if (!derive_temp_obj_path(out_path, cfg->target_triple, temp_count + 20, temp_objs[temp_count], sizeof(temp_objs[temp_count])))
                         return -1;
                     if (compile_intermediate_to_obj(p, temp_objs[temp_count], cfg->target_triple, cfg->lto_mode,
-                                                    cfg->artifact_kind == KN_ARTIFACT_SHARED_LIB) != 0)
+                                                    emit_pic) != 0)
                     {
                         kn_write_str("failed to compile intermediate input to object\n");
                         return -1;

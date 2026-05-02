@@ -193,6 +193,11 @@ static int kn_prepare_runtime_obj(const KnLinkOptions *opts, char *out, size_t c
 
     const char *triple = kn_effective_target_triple(opts->target_triple);
 
+    /* The current hosted runtime sources depend on libc / pthread style headers.
+       Do not auto-inject them for bare-metal freestanding targets. */
+    if (kn_triple_is_freestanding(triple))
+        return 0;
+
     const int need_pic = (opts->artifact_kind == KN_ARTIFACT_SHARED_LIB &&
                           (kn_triple_is_linux(triple) || kn_triple_is_macos(triple))) ? 1 : 0;
 
@@ -226,6 +231,12 @@ static int kn_prepare_math_obj(const KnLinkOptions *opts, char *out, size_t cap)
     out[0] = 0;
 
     const char *triple = kn_effective_target_triple(opts->target_triple);
+
+    /* The bundled math shim currently relies on hosted headers and should not
+       be auto-added to bare-metal freestanding static-library outputs. */
+    if (kn_triple_is_freestanding(triple))
+        return 0;
+
     const int need_pic = (opts->artifact_kind == KN_ARTIFACT_SHARED_LIB &&
                           (kn_triple_is_linux(triple) || kn_triple_is_macos(triple))) ? 1 : 0;
 
