@@ -84,7 +84,7 @@ curl -sSL https://kinal.org/install.sh | bash
 
 选项2：手动安装
 
-从 [Releases](https://github.com/user/kinal/releases) 下载对应平台的预编译包，将 `kinal`（和可选的 `kinalvm`）放入 `PATH`。
+从 [Releases](https://github.com/Kinal-Lang/Kinal/releases) 下载对应平台的预编译包，将 `kinal`（和可选的 `kinalvm`）放入 `PATH`。
 
 
 最后验证安装：

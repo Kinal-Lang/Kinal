@@ -66,7 +66,7 @@ curl -sSL https://kinal.org/install.sh | bash
 
 Option 2: install manually
 
-Download the pre-built package for your platform from [Releases](https://github.com/user/kinal/releases) and place kinal (and optionally kinalvm) on your PATH.
+Download the pre-built package for your platform from [Releases](https://github.com/Kinal-Lang/Kinal/releases) and place kinal (and optionally kinalvm) on your PATH.
 
 Then verify the installation:
 
