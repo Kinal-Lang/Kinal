@@ -568,7 +568,7 @@ static void kn_resolve_tool(char *out, size_t cap, const char *name)
     char p[1024];
     char exe_dir[1024];
     const char *env_exe = 0;
-    if (kn_strcmp(name, "lld-link.exe") == 0) env_exe = "KINAL_LINKER_LLD";
+    if (kn_strcmp(name, "lld-link.exe") == 0 || kn_strcmp(name, "ld.lld.exe") == 0) env_exe = "KINAL_LINKER_LLD";
     else if (kn_strcmp(name, "link.exe") == 0) env_exe = "KINAL_LINKER_MSVC";
     else if (kn_strcmp(name, "clang.exe") == 0) env_exe = "KINAL_CLANG";
     else if (kn_strcmp(name, "llvm-lib.exe") == 0) env_exe = "KINAL_LLVM_LIB";

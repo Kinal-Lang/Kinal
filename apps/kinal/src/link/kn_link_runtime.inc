@@ -184,6 +184,60 @@ static int kn_compile_math_with_zig(const char *triple, const char *out_obj, int
     return kn_file_exists(out_obj);
 }
 
+static int kn_compile_math_with_clang(const char *triple, const char *out_obj, int pic)
+{
+    char math_src[1024];
+    if (!kn_resolve_math_src(math_src, sizeof(math_src)))
+        return 0;
+
+    char clang[1024];
+    kn_resolve_tool(clang, sizeof(clang), "clang.exe");
+    if (!kn_check_tool_version(clang))
+        return 0;
+
+    char target_arg[512];
+    size_t off = 0;
+    target_arg[0] = 0;
+    kn_append(target_arg, sizeof(target_arg), &off, "--target=");
+    kn_append(target_arg, sizeof(target_arg), &off, triple);
+
+    char cmd[8192];
+    off = 0;
+    cmd[0] = 0;
+    kn_append_quoted(cmd, sizeof(cmd), &off, clang);
+    kn_append(cmd, sizeof(cmd), &off, " ");
+    kn_append(cmd, sizeof(cmd), &off, target_arg);
+    kn_append(cmd, sizeof(cmd), &off, " -c ");
+    kn_append_quoted(cmd, sizeof(cmd), &off, math_src);
+    kn_append(cmd, sizeof(cmd), &off, " -o ");
+    kn_append_quoted(cmd, sizeof(cmd), &off, out_obj);
+    kn_append(cmd, sizeof(cmd), &off, " -O2");
+    if (pic)
+        kn_append(cmd, sizeof(cmd), &off, " -fPIC");
+    if (kn_run_process(clang, cmd) != 0)
+        return 0;
+    return kn_file_exists(out_obj);
+}
+
+static int kn_resolve_requested_zig(const KnLinkOptions *opts, char *out, size_t cap)
+{
+    if (!opts || !out || cap == 0)
+        return 0;
+    out[0] = 0;
+    if (opts->linker_kind != KN_LINKER_ZIG)
+        return 0;
+    if (opts->linker_path && opts->linker_path[0])
+    {
+        if (!kn_file_exists(opts->linker_path))
+            return 0;
+        kn_copy_str(out, cap, opts->linker_path);
+        return 1;
+    }
+    if (!kn_resolve_zig(out, cap, 0))
+        return 0;
+    return kn_check_tool_version(out);
+}
+
 static int kn_prepare_runtime_obj(const KnLinkOptions *opts, char *out, size_t cap)
 {
     if (!opts || !out || cap == 0) return 0;
@@ -220,9 +274,12 @@ static int kn_prepare_runtime_obj(const KnLinkOptions *opts, char *out, size_t c
         return 0;
     }
 
-    if (kn_compile_runtime_with_zig(triple, out, need_pic, opts->linker_path))
-        return 1;
-    return 0;
+    {
+        char zig[1024];
+        if (kn_resolve_requested_zig(opts, zig, sizeof(zig)))
+            return kn_compile_runtime_with_zig(triple, out, need_pic, zig);
+    }
+    return kn_compile_runtime_with_clang(triple, out, need_pic);
 }
 
 static int kn_prepare_math_obj(const KnLinkOptions *opts, char *out, size_t cap)
@@ -249,7 +306,13 @@ static int kn_prepare_math_obj(const KnLinkOptions *opts, char *out, size_t cap)
     const char *ext = need_pic ? ".kn_math.pic.o" : ".kn_math.o";
     if (!kn_path_with_suffix(out, cap, opts->out_path, ext))
         return 0;
-    return kn_compile_math_with_zig(triple, out, need_pic, opts->linker_path);
+
+    {
+        char zig[1024];
+        if (kn_resolve_requested_zig(opts, zig, sizeof(zig)))
+            return kn_compile_math_with_zig(triple, out, need_pic, zig);
+    }
+    return kn_compile_math_with_clang(triple, out, need_pic);
 }
 
 static int kn_ensure_import_lib(const char *base_out, const char *tag, const char *machine, const char *def_text,

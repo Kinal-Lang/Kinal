@@ -547,7 +547,7 @@ static int kn_link_linux_with_zig(const KnLinkOptions *opts)
     }
     else
     {
-        kn_resolve_zig(zig, sizeof(zig), 1);
+        kn_resolve_zig(zig, sizeof(zig), 0);
     }
     if (!kn_check_tool_version(zig))
     {
@@ -626,7 +626,7 @@ static int kn_link_macos_with_zig(const KnLinkOptions *opts)
     }
     else
     {
-        kn_resolve_zig(zig, sizeof(zig), 1);
+        kn_resolve_zig(zig, sizeof(zig), 0);
     }
     if (!kn_check_tool_version(zig))
     {
@@ -686,6 +686,130 @@ static int kn_link_macos_with_zig(const KnLinkOptions *opts)
         kn_write_str("\n");
     }
     return kn_run_process(zig, cmd);
+}
+
+static void kn_warn_hosted_posix_lld_fallback(const char *triple)
+{
+    static int warned_linux = 0;
+    static int warned_macos = 0;
+
+    if (kn_triple_is_macos(triple))
+    {
+        if (warned_macos)
+            return;
+        warned_macos = 1;
+        kn_write_str("[Warn] zig was not found for hosted macOS linking; falling back to lld. Zig is recommended in the current environment because hosted macOS linking is more reliable with Zig than raw lld.\n");
+        return;
+    }
+
+    if (warned_linux)
+        return;
+    warned_linux = 1;
+    kn_write_str("[Warn] zig was not found for hosted Linux linking; falling back to lld. Zig is recommended in the current environment because hosted Linux linking is more reliable with Zig than raw lld.\n");
+}
+
+static int kn_link_posix_with_lld_driver(const KnLinkOptions *opts, int is_macos)
+{
+    kn_dump_link_search_dirs(opts);
+
+    char lld[1024];
+    if (opts->linker_path && opts->linker_path[0])
+    {
+        kn_copy_str(lld, sizeof(lld), opts->linker_path);
+        if (!kn_file_exists(lld))
+        {
+            kn_write_str("link failed: configured linker not found\n");
+            return -1;
+        }
+    }
+    else
+    {
+        kn_resolve_tool(lld, sizeof(lld), "ld.lld.exe");
+    }
+    if (!kn_check_tool_version(lld))
+    {
+        kn_write_str("link failed: lld toolchain is not available\n");
+        return -1;
+    }
+
+    char clang[1024];
+    kn_resolve_tool(clang, sizeof(clang), "clang.exe");
+    if (!kn_check_tool_version(clang))
+    {
+        kn_write_str("link failed: clang toolchain is not available for lld driver mode\n");
+        return -1;
+    }
+
+    char runtime_obj[1024];
+    int has_runtime = kn_prepare_runtime_obj(opts, runtime_obj, sizeof(runtime_obj));
+    if (opts->include_runtime && !has_runtime)
+    {
+        kn_write_str("link failed: cannot prepare runtime object\n");
+        return -1;
+    }
+    char math_obj[1024];
+    int has_math = kn_prepare_math_obj(opts, math_obj, sizeof(math_obj));
+
+    const char *triple = kn_effective_target_triple(opts->target_triple);
+
+    char cmd[16384];
+    size_t off = 0;
+    cmd[0] = 0;
+    kn_append_quoted(cmd, sizeof(cmd), &off, clang);
+    kn_append(cmd, sizeof(cmd), &off, " --target=");
+    kn_append(cmd, sizeof(cmd), &off, triple);
+    kn_append(cmd, sizeof(cmd), &off, " -fuse-ld=lld --ld-path=");
+    kn_append_quoted(cmd, sizeof(cmd), &off, lld);
+    if (opts->lto_mode == KN_LTO_FULL)
+        kn_append(cmd, sizeof(cmd), &off, " -flto ");
+    else if (opts->lto_mode == KN_LTO_THIN)
+        kn_append(cmd, sizeof(cmd), &off, " -flto=thin ");
+    if (opts->artifact_kind == KN_ARTIFACT_SHARED_LIB)
+    {
+        if (is_macos)
+            kn_append(cmd, sizeof(cmd), &off, " -dynamiclib");
+        else
+            kn_append(cmd, sizeof(cmd), &off, " -shared -fPIC");
+    }
+    kn_append(cmd, sizeof(cmd), &off, " -o ");
+    kn_append_quoted(cmd, sizeof(cmd), &off, opts->out_path);
+    kn_append(cmd, sizeof(cmd), &off, " ");
+    kn_append_quoted(cmd, sizeof(cmd), &off, opts->obj_path);
+
+    if (has_runtime)
+    {
+        kn_append(cmd, sizeof(cmd), &off, " ");
+        kn_append_quoted(cmd, sizeof(cmd), &off, runtime_obj);
+    }
+    if (has_math)
+    {
+        kn_append(cmd, sizeof(cmd), &off, " ");
+        kn_append_quoted(cmd, sizeof(cmd), &off, math_obj);
+    }
+
+    kn_append_link_items_gnu(cmd, sizeof(cmd), &off, opts->items, opts->item_count);
+
+    if (!is_macos && !opts->no_default_libs)
+        kn_append(cmd, sizeof(cmd), &off, " -ldl");
+    if (has_math && !opts->no_default_libs)
+        kn_append(cmd, sizeof(cmd), &off, " -lm");
+    if (opts->trace || opts->show_link)
+    {
+        kn_write_str("[Trace] link cmd: ");
+        kn_write_str(cmd);
+        kn_write_str("\n");
+    }
+    return kn_run_process(clang, cmd);
+}
+
+static int kn_link_linux_with_lld(const KnLinkOptions *opts)
+{
+    return kn_link_posix_with_lld_driver(opts, 0);
+}
+
+static int kn_link_macos_with_lld(const KnLinkOptions *opts)
+{
+    return kn_link_posix_with_lld_driver(opts, 1);
 }
 
 static int kn_link_static_windows(const KnLinkOptions *opts)
@@ -928,11 +1052,19 @@ int kn_link(const KnLinkOptions *opts)
             return -1;
         }
         if (opts->linker_kind == KN_LINKER_LLD)
+            return kn_link_linux_with_lld(opts);
+        if (opts->linker_path && opts->linker_path[0] && !kn_file_exists(opts->linker_path))
         {
-            kn_write_str("link failed: lld backend for Linux target is not available in this build\n");
+            kn_write_str("link failed: configured linker not found\n");
             return -1;
         }
-        return kn_link_linux_with_zig(opts);
+        {
+            char zig[1024];
+            if (kn_resolve_requested_zig(opts, zig, sizeof(zig)))
+                return kn_link_linux_with_zig(opts);
+        }
+        kn_warn_hosted_posix_lld_fallback(triple);
+        return kn_link_linux_with_lld(opts);
     }
 
     if (is_macos)
@@ -943,11 +1075,19 @@ int kn_link(const KnLinkOptions *opts)
             return -1;
         }
         if (opts->linker_kind == KN_LINKER_LLD)
+            return kn_link_macos_with_lld(opts);
+        if (opts->linker_path && opts->linker_path[0] && !kn_file_exists(opts->linker_path))
         {
-            kn_write_str("link failed: lld backend for macOS target is not available in this build\n");
+            kn_write_str("link failed: configured linker not found\n");
             return -1;
         }
-        return kn_link_macos_with_zig(opts);
+        {
+            char zig[1024];
+            if (kn_resolve_requested_zig(opts, zig, sizeof(zig)))
+                return kn_link_macos_with_zig(opts);
+        }
+        kn_warn_hosted_posix_lld_fallback(triple);
+        return kn_link_macos_with_lld(opts);
     }
 
     kn_write_str("link failed: unsupported target triple\n");

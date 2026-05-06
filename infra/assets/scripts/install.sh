@@ -13,6 +13,7 @@ ROOT_DIR="${HOME}/.local/share/kinal"
 VERIFY_CHECKSUMS=1
 UNINSTALL=0
 PROXY_URL="${KINAL_PROXY:-}"
+ZIG_EXTENSION_VERSION="0.15.2"
 
 UPDATE=0
 FORCE=0
@@ -32,6 +33,9 @@ KEEP_DOWNLOAD=0
 TIMEOUT="${KINAL_INSTALL_TIMEOUT:-15}"
 GITHUB_TOKEN_VALUE="${GITHUB_TOKEN:-}"
 LINK_DIR=""
+INSTALL_ZIG_EXTENSION=-1
+SKIP_BUNDLE_DOWNLOAD=0
+KINAL_WRAPPER_MARKER="# kinal-install-wrapper"
 
 usage() {
   cat <<'EOF'
@@ -69,6 +73,14 @@ Inspection:
   --print-root-dir         Print the toolchain root directory and exit.
   --current                Print the current selected version and exit.
 
+Extensions:
+  --with-extension <name>  Install an optional extension for the selected version.
+                           Currently supported: zig
+  --without-extension <name>
+                           Skip an optional extension prompt for the selected version.
+  --with-zig               Convenience alias for --with-extension zig.
+  --without-zig            Convenience alias for --without-extension zig.
+
 Network and verification:
   --proxy <url>            Use a proxy for GitHub downloads. Standard proxy env vars also work.
   --timeout <seconds>      Network connection timeout. Defaults to 15.
@@ -88,6 +100,7 @@ Examples:
   curl -fsSL https://kinal.org/install.sh | bash -s -- --list-versions
   curl -fsSL https://kinal.org/install.sh | bash -s -- --set-default v0.6.1
   curl -fsSL https://kinal.org/install.sh | bash -s -- --remove-version v0.6.0
+  curl -fsSL https://kinal.org/install.sh | bash -s -- --with-zig
   curl -fsSL https://kinal.org/install.sh | bash -s -- --proxy http://127.0.0.1:7890
   curl -fsSL https://kinal.org/install.sh | bash -s -- --uninstall
 EOF
@@ -151,6 +164,157 @@ expand_path() {
       printf '%s\n' "$1"
       ;;
   esac
+}
+
+resolve_extension_name() {
+  case "$1" in
+    zig)
+      printf 'zig\n'
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+enable_extension() {
+  local name
+  name="$(resolve_extension_name "$1" 2>/dev/null || true)"
+  [ -n "$name" ] || fail "unknown extension: $1"
+  case "$name" in
+    zig)
+      INSTALL_ZIG_EXTENSION=1
+      ;;
+  esac
+}
+
+disable_extension() {
+  local name
+  name="$(resolve_extension_name "$1" 2>/dev/null || true)"
+  [ -n "$name" ] || fail "unknown extension: $1"
+  case "$name" in
+    zig)
+      INSTALL_ZIG_EXTENSION=0
+      ;;
+  esac
+}
+
+host_supports_zig_extension() {
+  case "$1" in
+    linux-*|macos-*)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+zig_extension_url() {
+  case "$1" in
+    linux-x64)
+      printf 'https://ziglang.org/download/%s/zig-x86_64-linux-%s.tar.xz\n' "$ZIG_EXTENSION_VERSION" "$ZIG_EXTENSION_VERSION"
+      ;;
+    linux-arm64)
+      printf 'https://ziglang.org/download/%s/zig-aarch64-linux-%s.tar.xz\n' "$ZIG_EXTENSION_VERSION" "$ZIG_EXTENSION_VERSION"
+      ;;
+    macos-x64)
+      printf 'https://ziglang.org/download/%s/zig-x86_64-macos-%s.tar.xz\n' "$ZIG_EXTENSION_VERSION" "$ZIG_EXTENSION_VERSION"
+      ;;
+    macos-arm64)
+      printf 'https://ziglang.org/download/%s/zig-aarch64-macos-%s.tar.xz\n' "$ZIG_EXTENSION_VERSION" "$ZIG_EXTENSION_VERSION"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+zig_extension_binary_for_dir() {
+  printf '%s/extensions/zig/zig\n' "$1"
+}
+
+zig_extension_installed_for_dir() {
+  local install_dir="$1"
+  [ -n "$install_dir" ] || return 1
+  [ -x "$(zig_extension_binary_for_dir "$install_dir")" ]
+}
+
+can_prompt_tty() {
+  [ -r /dev/tty ] && [ -w /dev/tty ]
+}
+
+prompt_yes_no_default_yes() {
+  local prompt="$1"
+  local reply=""
+  while true; do
+    printf '%s [Y/n] ' "$prompt" > /dev/tty
+    if ! IFS= read -r reply < /dev/tty; then
+      return 1
+    fi
+    case "$reply" in
+      ''|y|Y|yes|YES|Yes)
+        return 0
+        ;;
+      n|N|no|NO|No)
+        return 1
+        ;;
+      *)
+        printf 'Please answer y or n.\n' > /dev/tty
+        ;;
+    esac
+  done
+}
+
+decide_optional_extensions() {
+  if ! host_supports_zig_extension "$HOST_TAG"; then
+    if [ "$INSTALL_ZIG_EXTENSION" -eq 1 ]; then
+      warn "the Zig extension is only supported by this installer on macOS and Linux"
+      INSTALL_ZIG_EXTENSION=0
+    elif [ "$INSTALL_ZIG_EXTENSION" -lt 0 ]; then
+      INSTALL_ZIG_EXTENSION=0
+    fi
+    return 0
+  fi
+
+  if [ "$INSTALL_ZIG_EXTENSION" -ge 0 ]; then
+    return 0
+  fi
+
+  if zig_extension_installed_for_dir "$INSTALL_DIR"; then
+    INSTALL_ZIG_EXTENSION=1
+    note "keeping the existing Zig extension for ${TAG}"
+    return 0
+  fi
+
+  if [ -n "${CURRENT_VERSION:-}" ] && zig_extension_installed_for_dir "${ROOT_DIR}/versions/${CURRENT_VERSION}"; then
+    INSTALL_ZIG_EXTENSION=1
+    note "preserving the Zig extension from the current installation"
+    return 0
+  fi
+
+  if can_prompt_tty; then
+    cat > /dev/tty <<EOF
+
+Optional extension available: zig
+
+Recommended on ${HOST_TAG}:
+- Kinal prefers Zig first for hosted Linux/macOS linking.
+- Zig handles libc, sysroot, and platform linker details more reliably than raw lld.
+- If Zig is missing, Kinal can fall back to lld with a warning, but the current environment still recommends Zig.
+
+EOF
+    if prompt_yes_no_default_yes "Install the Zig extension now?"; then
+      INSTALL_ZIG_EXTENSION=1
+    else
+      INSTALL_ZIG_EXTENSION=0
+    fi
+    return 0
+  fi
+
+  INSTALL_ZIG_EXTENSION=0
+  note "non-interactive install detected; skipping the optional Zig extension"
+  warn "Zig is recommended on Linux/macOS. Re-run with --with-extension zig if you want the preferred linker toolchain installed."
 }
 
 apply_proxy_settings() {
@@ -349,6 +513,13 @@ write_wrapper() {
   cat > "$target" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
+$KINAL_WRAPPER_MARKER
+tool_root="\$(CDPATH= cd -- "\$(dirname -- "$binary_path")" && pwd -P)"
+if [ -x "\$tool_root/extensions/zig/zig" ]; then
+  : "\${KINAL_LINKER_ZIG:=\$tool_root/extensions/zig/zig}"
+  : "\${KINAL_ZIG:=\$tool_root/extensions/zig/zig}"
+  export KINAL_LINKER_ZIG KINAL_ZIG
+fi
 exec "$binary_path" "\$@"
 EOF
   chmod 0755 "$target"
@@ -359,7 +530,7 @@ wrapper_matches_target() {
   local expected_binary="$2"
   [ -f "$wrapper_path" ] || return 1
   case "$(cat "$wrapper_path" 2>/dev/null || true)" in
-    *"exec \"$expected_binary\" \"\$@\""*)
+    *"$KINAL_WRAPPER_MARKER"*"exec \"$expected_binary\" \"\$@\""*)
       return 0
       ;;
     *)
@@ -625,6 +796,53 @@ link_local_bundle() {
   print_path_instructions
 }
 
+install_zig_extension() {
+  local install_dir="$1"
+  local zig_url
+  local zig_archive_name
+  local zig_archive_path
+  local zig_extract_dir
+  local zig_bundle_dir
+  local entry_count
+  local zig_extension_dir="${install_dir}/extensions/zig"
+
+  zig_url="$(zig_extension_url "$HOST_TAG" 2>/dev/null || true)"
+  [ -n "$zig_url" ] || fail "the Zig extension is not available for ${HOST_TAG}"
+
+  zig_archive_name="${zig_url##*/}"
+  zig_archive_path="${TMP_DIR}/${zig_archive_name}"
+  note "downloading Zig ${ZIG_EXTENSION_VERSION} extension for ${HOST_TAG}"
+  download_file "$zig_url" "$zig_archive_path" || fail "failed to download the Zig extension archive"
+
+  if [ "$KEEP_DOWNLOAD" -eq 1 ]; then
+    local extension_download_dir="${ROOT_DIR}/downloads/${TAG}/extensions"
+    mkdir -p "$extension_download_dir"
+    cp -f "$zig_archive_path" "${extension_download_dir}/${zig_archive_name}"
+    note "kept Zig extension archive under ${extension_download_dir}"
+  fi
+
+  zig_extract_dir="${TMP_DIR}/zig-extension"
+  rm -rf "$zig_extract_dir"
+  mkdir -p "$zig_extract_dir"
+  tar -xf "$zig_archive_path" -C "$zig_extract_dir"
+
+  entry_count="$(find "$zig_extract_dir" -mindepth 1 -maxdepth 1 | wc -l | tr -d ' ')"
+  if [ "$entry_count" = "1" ] && [ -d "$(find "$zig_extract_dir" -mindepth 1 -maxdepth 1 -type d | head -n 1)" ]; then
+    zig_bundle_dir="$(find "$zig_extract_dir" -mindepth 1 -maxdepth 1 -type d | head -n 1)"
+  else
+    zig_bundle_dir="$zig_extract_dir"
+  fi
+
+  [ -f "${zig_bundle_dir}/zig" ] || fail "the Zig extension archive does not contain the zig executable"
+
+  rm -rf "$zig_extension_dir"
+  mkdir -p "$zig_extension_dir"
+  cp -a "$zig_bundle_dir"/. "$zig_extension_dir"/
+  chmod +x "${zig_extension_dir}/zig" || true
+  printf '%s\n' "$ZIG_EXTENSION_VERSION" > "${zig_extension_dir}/.kinal-extension-version" 2>/dev/null || true
+  note "installed Zig extension into ${zig_extension_dir}"
+}
+
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --version)
@@ -720,6 +938,24 @@ while [ "$#" -gt 0 ]; do
       [ "$#" -ge 2 ] || fail "--remove-version requires a value"
       REMOVE_VERSION="$2"
       shift 2
+      ;;
+    --with-extension)
+      [ "$#" -ge 2 ] || fail "--with-extension requires a value"
+      enable_extension "$2"
+      shift 2
+      ;;
+    --without-extension)
+      [ "$#" -ge 2 ] || fail "--without-extension requires a value"
+      disable_extension "$2"
+      shift 2
+      ;;
+    --with-zig)
+      enable_extension zig
+      shift
+      ;;
+    --without-zig)
+      disable_extension zig
+      shift
       ;;
     --link)
       [ "$#" -ge 2 ] || fail "--link requires a directory"
@@ -835,33 +1071,59 @@ CURRENT_VERSION="$(current_tag 2>/dev/null || true)"
 note "target release: ${TAG}"
 note "detected host platform: ${HOST_TAG}"
 
-if [ "$UPDATE" -eq 1 ] && [ "$CURRENT_VERSION" = "$TAG" ] && [ "$FORCE" -ne 1 ]; then
-  note "Kinal is already up to date: ${TAG}"
-  activate_installation "$TAG" "$INSTALL_DIR"
-  print_path_instructions
-  exit 0
+decide_optional_extensions
+
+ZIG_EXTENSION_PRESENT=0
+if [ "$INSTALL_ZIG_EXTENSION" -eq 1 ] && zig_extension_installed_for_dir "$INSTALL_DIR"; then
+  ZIG_EXTENSION_PRESENT=1
 fi
 
-if [ -e "$INSTALL_DIR" ] || [ -L "$INSTALL_DIR" ]; then
-  if [ "$FORCE" -ne 1 ]; then
-    note "version is already installed: ${TAG}"
-    note "activating existing version; use --force to reinstall it"
+if [ "$UPDATE" -eq 1 ] && [ "$CURRENT_VERSION" = "$TAG" ] && [ "$FORCE" -ne 1 ]; then
+  if [ "$INSTALL_ZIG_EXTENSION" -eq 1 ] && [ "$ZIG_EXTENSION_PRESENT" -eq 0 ]; then
+    note "Kinal is already up to date: ${TAG}"
+    note "keeping the installed bundle and adding the requested Zig extension"
+    SKIP_BUNDLE_DOWNLOAD=1
+  else
+    note "Kinal is already up to date: ${TAG}"
     activate_installation "$TAG" "$INSTALL_DIR"
     print_path_instructions
     exit 0
   fi
 fi
 
+if [ -e "$INSTALL_DIR" ] || [ -L "$INSTALL_DIR" ]; then
+  if [ "$FORCE" -ne 1 ]; then
+    if [ "$INSTALL_ZIG_EXTENSION" -eq 1 ] && [ "$ZIG_EXTENSION_PRESENT" -eq 0 ]; then
+      note "version is already installed: ${TAG}"
+      note "keeping the existing bundle and adding the requested Zig extension"
+      SKIP_BUNDLE_DOWNLOAD=1
+    else
+      note "version is already installed: ${TAG}"
+      note "activating existing version; use --force to reinstall it"
+      activate_installation "$TAG" "$INSTALL_DIR"
+      print_path_instructions
+      exit 0
+    fi
+  fi
+fi
+
 if [ "$DRY_RUN" -eq 1 ]; then
-  note "would download one of:"
-  note "  ${RELEASE_BASE}/${ARCHIVE_PREFIX}.tar.xz"
-  note "  ${RELEASE_BASE}/${ARCHIVE_PREFIX}.tar.gz"
-  if [ "$VERIFY_CHECKSUMS" -eq 1 ]; then
-    note "would verify using SHA256SUMS-${HOST_TAG}.txt or SHA256SUMS.txt"
+  if [ "$SKIP_BUNDLE_DOWNLOAD" -eq 1 ]; then
+    note "would reuse the existing bundle at: ${INSTALL_DIR}"
   else
-    note "would skip checksum verification"
+    note "would download one of:"
+    note "  ${RELEASE_BASE}/${ARCHIVE_PREFIX}.tar.xz"
+    note "  ${RELEASE_BASE}/${ARCHIVE_PREFIX}.tar.gz"
+    if [ "$VERIFY_CHECKSUMS" -eq 1 ]; then
+      note "would verify using SHA256SUMS-${HOST_TAG}.txt or SHA256SUMS.txt"
+    else
+      note "would skip checksum verification"
+    fi
   fi
   note "would install into: ${INSTALL_DIR}"
+  if [ "$INSTALL_ZIG_EXTENSION" -eq 1 ]; then
+    note "would install optional extension: zig ${ZIG_EXTENSION_VERSION}"
+  fi
   if [ "$NO_WRAPPER" -eq 0 ]; then
     note "would create launchers under: ${BIN_DIR}"
   else
@@ -876,88 +1138,94 @@ cleanup() {
 }
 trap cleanup EXIT
 
-ARCHIVE_PATH=""
-ARCHIVE_NAME=""
-for ext in tar.xz tar.gz; do
-  candidate_name="${ARCHIVE_PREFIX}.${ext}"
-  candidate_path="${TMP_DIR}/${candidate_name}"
-  candidate_url="${RELEASE_BASE}/${candidate_name}"
-  note "downloading ${candidate_name}"
-  if download_file "$candidate_url" "$candidate_path"; then
-    ARCHIVE_NAME="$candidate_name"
-    ARCHIVE_PATH="$candidate_path"
-    break
-  fi
-done
-
-[ -n "$ARCHIVE_PATH" ] || fail "failed to download a release archive for ${HOST_TAG}"
-
-CHECKSUM_FILE=""
-if [ "$VERIFY_CHECKSUMS" -eq 1 ]; then
-  for checksum_name in "SHA256SUMS-${HOST_TAG}.txt" "SHA256SUMS.txt"; do
-    candidate_checksum="${TMP_DIR}/${checksum_name}"
-    note "downloading ${checksum_name}"
-    if download_file "${RELEASE_BASE}/${checksum_name}" "$candidate_checksum"; then
-      CHECKSUM_FILE="$candidate_checksum"
+if [ "$SKIP_BUNDLE_DOWNLOAD" -eq 0 ]; then
+  ARCHIVE_PATH=""
+  ARCHIVE_NAME=""
+  for ext in tar.xz tar.gz; do
+    candidate_name="${ARCHIVE_PREFIX}.${ext}"
+    candidate_path="${TMP_DIR}/${candidate_name}"
+    candidate_url="${RELEASE_BASE}/${candidate_name}"
+    note "downloading ${candidate_name}"
+    if download_file "$candidate_url" "$candidate_path"; then
+      ARCHIVE_NAME="$candidate_name"
+      ARCHIVE_PATH="$candidate_path"
       break
     fi
   done
 
-  [ -n "$CHECKSUM_FILE" ] || fail "failed to download a checksum manifest for ${TAG}"
+  [ -n "$ARCHIVE_PATH" ] || fail "failed to download a release archive for ${HOST_TAG}"
 
-  expected_checksum="$(awk -v name="$ARCHIVE_NAME" '$2 == name { print $1; exit }' "$CHECKSUM_FILE")"
-  [ -n "$expected_checksum" ] || fail "could not find ${ARCHIVE_NAME} in ${CHECKSUM_FILE##*/}"
+  CHECKSUM_FILE=""
+  if [ "$VERIFY_CHECKSUMS" -eq 1 ]; then
+    for checksum_name in "SHA256SUMS-${HOST_TAG}.txt" "SHA256SUMS.txt"; do
+      candidate_checksum="${TMP_DIR}/${checksum_name}"
+      note "downloading ${checksum_name}"
+      if download_file "${RELEASE_BASE}/${checksum_name}" "$candidate_checksum"; then
+        CHECKSUM_FILE="$candidate_checksum"
+        break
+      fi
+    done
 
-  actual_checksum="$(compute_sha256 "$ARCHIVE_PATH" || true)"
-  [ -n "$actual_checksum" ] || fail "sha256sum or shasum is required for checksum verification"
+    [ -n "$CHECKSUM_FILE" ] || fail "failed to download a checksum manifest for ${TAG}"
 
-  if [ "$expected_checksum" != "$actual_checksum" ]; then
-    fail "checksum verification failed for ${ARCHIVE_NAME}"
+    expected_checksum="$(awk -v name="$ARCHIVE_NAME" '$2 == name { print $1; exit }' "$CHECKSUM_FILE")"
+    [ -n "$expected_checksum" ] || fail "could not find ${ARCHIVE_NAME} in ${CHECKSUM_FILE##*/}"
+
+    actual_checksum="$(compute_sha256 "$ARCHIVE_PATH" || true)"
+    [ -n "$actual_checksum" ] || fail "sha256sum or shasum is required for checksum verification"
+
+    if [ "$expected_checksum" != "$actual_checksum" ]; then
+      fail "checksum verification failed for ${ARCHIVE_NAME}"
+    fi
+    note "verified checksum for ${ARCHIVE_NAME}"
+  else
+    warn "skipping checksum verification"
   fi
-  note "verified checksum for ${ARCHIVE_NAME}"
-else
-  warn "skipping checksum verification"
-fi
 
-if [ "$KEEP_DOWNLOAD" -eq 1 ]; then
-  DOWNLOAD_DIR="${ROOT_DIR}/downloads/${TAG}"
-  mkdir -p "$DOWNLOAD_DIR"
-  cp -f "$ARCHIVE_PATH" "${DOWNLOAD_DIR}/${ARCHIVE_NAME}"
-  if [ -n "$CHECKSUM_FILE" ]; then
-    cp -f "$CHECKSUM_FILE" "${DOWNLOAD_DIR}/${CHECKSUM_FILE##*/}"
+  if [ "$KEEP_DOWNLOAD" -eq 1 ]; then
+    DOWNLOAD_DIR="${ROOT_DIR}/downloads/${TAG}"
+    mkdir -p "$DOWNLOAD_DIR"
+    cp -f "$ARCHIVE_PATH" "${DOWNLOAD_DIR}/${ARCHIVE_NAME}"
+    if [ -n "$CHECKSUM_FILE" ]; then
+      cp -f "$CHECKSUM_FILE" "${DOWNLOAD_DIR}/${CHECKSUM_FILE##*/}"
+    fi
+    note "kept downloaded files under ${DOWNLOAD_DIR}"
   fi
-  note "kept downloaded files under ${DOWNLOAD_DIR}"
+
+  EXTRACT_DIR="${TMP_DIR}/extract"
+  mkdir -p "$EXTRACT_DIR"
+  note "extracting ${ARCHIVE_NAME}"
+  tar -xf "$ARCHIVE_PATH" -C "$EXTRACT_DIR"
+
+  entry_count="$(find "$EXTRACT_DIR" -mindepth 1 -maxdepth 1 | wc -l | tr -d ' ')"
+  if [ "$entry_count" = "1" ] && [ -d "$(find "$EXTRACT_DIR" -mindepth 1 -maxdepth 1 -type d | head -n 1)" ]; then
+    BUNDLE_DIR="$(find "$EXTRACT_DIR" -mindepth 1 -maxdepth 1 -type d | head -n 1)"
+  else
+    BUNDLE_DIR="$EXTRACT_DIR"
+  fi
+
+  [ -f "$BUNDLE_DIR/kinal" ] || fail "release bundle does not contain the kinal executable"
+
+  mkdir -p "${ROOT_DIR}/versions"
+  if [ -e "$INSTALL_DIR" ] || [ -L "$INSTALL_DIR" ]; then
+    [ "$FORCE" -eq 1 ] || fail "version already exists: ${TAG}; use --force to overwrite it"
+    note "overwriting existing version: ${TAG}"
+    rm -rf "$INSTALL_DIR"
+  fi
+
+  mkdir -p "$INSTALL_DIR"
+  note "installing into ${INSTALL_DIR}"
+  cp -a "$BUNDLE_DIR"/. "$INSTALL_DIR"/
+  printf '%s\n' "$TAG" > "${INSTALL_DIR}/.kinal-install-tag" 2>/dev/null || true
+
+  chmod +x "$INSTALL_DIR/kinal" || true
+  if [ -f "$INSTALL_DIR/kinalvm" ]; then
+    chmod +x "$INSTALL_DIR/kinalvm" || true
+  fi
 fi
 
-EXTRACT_DIR="${TMP_DIR}/extract"
-mkdir -p "$EXTRACT_DIR"
-note "extracting ${ARCHIVE_NAME}"
-tar -xf "$ARCHIVE_PATH" -C "$EXTRACT_DIR"
-
-entry_count="$(find "$EXTRACT_DIR" -mindepth 1 -maxdepth 1 | wc -l | tr -d ' ')"
-if [ "$entry_count" = "1" ] && [ -d "$(find "$EXTRACT_DIR" -mindepth 1 -maxdepth 1 -type d | head -n 1)" ]; then
-  BUNDLE_DIR="$(find "$EXTRACT_DIR" -mindepth 1 -maxdepth 1 -type d | head -n 1)"
-else
-  BUNDLE_DIR="$EXTRACT_DIR"
-fi
-
-[ -f "$BUNDLE_DIR/kinal" ] || fail "release bundle does not contain the kinal executable"
-
-mkdir -p "${ROOT_DIR}/versions"
-if [ -e "$INSTALL_DIR" ] || [ -L "$INSTALL_DIR" ]; then
-  [ "$FORCE" -eq 1 ] || fail "version already exists: ${TAG}; use --force to overwrite it"
-  note "overwriting existing version: ${TAG}"
-  rm -rf "$INSTALL_DIR"
-fi
-
-mkdir -p "$INSTALL_DIR"
-note "installing into ${INSTALL_DIR}"
-cp -a "$BUNDLE_DIR"/. "$INSTALL_DIR"/
-printf '%s\n' "$TAG" > "${INSTALL_DIR}/.kinal-install-tag" 2>/dev/null || true
-
-chmod +x "$INSTALL_DIR/kinal" || true
-if [ -f "$INSTALL_DIR/kinalvm" ]; then
-  chmod +x "$INSTALL_DIR/kinalvm" || true
+if [ "$INSTALL_ZIG_EXTENSION" -eq 1 ]; then
+  install_zig_extension "$INSTALL_DIR"
 fi
 
 activate_installation "$TAG" "$INSTALL_DIR"
@@ -966,6 +1234,12 @@ note "installed Kinal ${TAG} for ${HOST_TAG}"
 note "toolchain root: ${INSTALL_DIR}"
 if [ "$NO_WRAPPER" -eq 0 ]; then
   note "command shims: ${BIN_DIR}"
+fi
+if [ "$INSTALL_ZIG_EXTENSION" -eq 1 ]; then
+  note "installed optional extension: zig ${ZIG_EXTENSION_VERSION}"
+  if [ "$NO_WRAPPER" -eq 1 ]; then
+    warn "wrappers are disabled; export KINAL_LINKER_ZIG=\"$(zig_extension_binary_for_dir "$INSTALL_DIR")\" before invoking kinal directly if you want to use the installed Zig extension"
+  fi
 fi
 
 if [ "$NO_WRAPPER" -eq 0 ]; then
