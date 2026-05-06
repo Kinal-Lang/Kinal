@@ -6,24 +6,28 @@ This document covers Kinal's linker integration, including linker backend select
 
 ## Linker Backends
 
-Kinal supports three linker backends:
+Kinal supports three linker backends. The default depends on the platform and target rather than using one global setting.
 
 | Backend | Option | Description |
 |---------|--------|-------------|
-| **lld** | `--linker lld` (default) | LLVM built-in linker, fastest, cross-platform |
-| **zig** | `--linker zig` | Uses zig toolchain, best cross-compilation support |
+| **lld** | `--linker lld` | Available wherever an `lld` tool is present; on hosted Linux/macOS it is the fallback when Zig is unavailable |
+| **zig** | `--linker zig` | Preferred for hosted Linux/macOS and recommended for cross-compilation |
 | **msvc** | `--linker msvc` | Windows MSVC linker, requires Visual Studio |
 
 ```bash
-# Default (lld)
+# Hosted Linux/macOS: prefers zig, warns and falls back to lld if zig is unavailable
 kinal build main.kn -o app
 
-# zig linker (recommended for cross-compilation)
+# Explicit zig linker
 kinal build main.kn -o app --linker zig
 
-# Specify linker path
-kinal build main.kn -o app --linker-path /usr/local/bin/ld.lld
+# Explicit lld linker
+kinal build main.kn -o app --linker lld --linker-path /usr/local/bin/ld.lld
 ```
+
+### Hosted Linux and macOS
+
+When the target is hosted Linux or macOS, Kinal resolves Zig first. If Zig is not available, it falls back to `lld` and prints a warning.
 
 ---
 

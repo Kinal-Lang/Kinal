@@ -6,24 +6,28 @@
 
 ## 链接器后端
 
-Kinal 支持三种链接器后端：
+Kinal 支持三种链接器后端。默认选择会跟着平台和目标一起变化，并不是所有情况都固定用同一个后端。
 
 | 后端 | 选项 | 说明 |
 |------|------|------|
-| **lld** | `--linker lld`（默认） | LLVM 内置链接器，速度最快，跨平台 |
-| **zig** | `--linker zig` | 使用 zig 工具链，最佳交叉编译支持 |
+| **lld** | `--linker lld` | 只要环境里有 `lld` 就可以使用；在 hosted Linux/macOS 上，它也是 Zig 缺失时的回退方案 |
+| **zig** | `--linker zig` | hosted Linux/macOS 上的优先选择，也更适合交叉编译 |
 | **msvc** | `--linker msvc` | Windows MSVC 链接器，需安装 Visual Studio |
 
 ```bash
-# 默认（lld）
+# hosted Linux/macOS：优先 zig，找不到时会警告并回退到 lld
 kinal build main.kn -o app
 
-# zig 链接器（推荐用于交叉编译）
+# 显式指定 zig 链接器
 kinal build main.kn -o app --linker zig
 
-# 指定链接器路径
-kinal build main.kn -o app --linker-path /usr/local/bin/ld.lld
+# 显式指定 lld 链接器
+kinal build main.kn -o app --linker lld --linker-path /usr/local/bin/ld.lld
 ```
+
+### Hosted Linux 和 macOS
+
+当目标是 hosted Linux 或 macOS 时，Kinal 会先解析 Zig。当前环境里没有 Zig 的话，就回退到 `lld`，同时打印一条警告。
 
 ---
 

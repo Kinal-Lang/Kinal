@@ -36,6 +36,23 @@ curl -fsSL https://kinal.org/install.sh | bash -s -- --version v0.6.0
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
+### Linux 和 macOS 上的 Zig
+
+在 Linux 和 macOS 上，安装脚本还可以把 Zig 一起装到当前 Kinal 版本目录旁边。交互式终端里，脚本会直接询问你是否需要安装。
+
+之所以推荐装，是因为 Kinal 在这两个平台上的 hosted 链接会优先使用 Zig。它在 libc、sysroot 和平台链接细节上通常比单独使用 `lld` 更稳一些。
+
+如果你先不装 Zig，也还是能继续用。hosted Linux/macOS 构建会回退到 `lld`，同时给出一条警告，提醒你当前环境没有走推荐路径。
+
+如果你想在命令里直接定下来，可以这样写：
+
+```bash
+curl -fsSL https://kinal.org/install.sh | bash -s -- --with-zig
+curl -fsSL https://kinal.org/install.sh | bash -s -- --without-zig
+```
+
+`--with-extension zig` 和 `--without-extension zig` 也可以，效果相同。通过安装脚本装上的 Zig 会由当前版本的启动脚本自动导出对应路径，不需要再额外配置环境变量。
+
 ### 使用代理
 
 安装脚本支持标准代理环境变量，比如 `HTTPS_PROXY`、`HTTP_PROXY`、`ALL_PROXY` 和 `NO_PROXY`。

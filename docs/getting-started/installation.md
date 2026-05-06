@@ -37,6 +37,23 @@ If `~/.local/bin` is not already on your `PATH`, add it:
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
+### Zig on Linux and macOS
+
+On Linux and macOS, the installer can also place a Zig toolchain next to the selected Kinal version. In an interactive shell, the script asks whether you want to install it.
+
+Zig is recommended there because Kinal prefers Zig for hosted Linux/macOS linking. It handles libc, sysroot, and platform linker details more reliably than using `lld` by itself.
+
+If you skip Zig, hosted Linux/macOS builds can still fall back to `lld`. The compiler prints a warning in that case so it is clear that the current environment is using the less preferred path.
+
+To decide up front, pass one of these flags:
+
+```bash
+curl -fsSL https://kinal.org/install.sh | bash -s -- --with-zig
+curl -fsSL https://kinal.org/install.sh | bash -s -- --without-zig
+```
+
+The more general forms `--with-extension zig` and `--without-extension zig` work the same way. When Zig is installed by the script, the launcher for that Kinal version exports the matching Zig path automatically.
+
 ### Using a Proxy
 
 The installer supports standard proxy environment variables such as `HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY`, and `NO_PROXY`.

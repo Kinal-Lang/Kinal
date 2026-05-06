@@ -61,6 +61,7 @@
 | Document | Description |
 |----------|-------------|
 | [Compilation Pipeline](advanced/compilation-pipeline.md) | Lexing → Parsing → Semantics → Code Generation |
+| [Diagnostic Code Reference](advanced/error-codes/index.md) | Shared compiler and LSP diagnostic codes, examples, explanations, and fixes |
 | [Freestanding / Embedded](advanced/freestanding.md) | `--freestanding`, `--runtime`, hostless environments |
 | [Cross-Compilation](advanced/cross-compilation.md) | `--target`, target triples, and platform aliases |
 | [Linking and LTO](advanced/linking.md) | Linker backends, LTO, static/dynamic libraries |
