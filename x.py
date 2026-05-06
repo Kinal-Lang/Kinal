@@ -63,6 +63,7 @@ from infra.scripts.x.runtime_build import (
     build_civetweb_for_available_targets,
     build_runtime_for_host,
 )
+from infra.scripts.x.stress_ops import run_stress_suite
 from infra.scripts.x.selfhost_ops import (
     default_staged_compiler,
     prepare_selfhost_stage0,
@@ -457,6 +458,23 @@ def cmd_test(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_stress(args: argparse.Namespace) -> int:
+    ensure_build_prereqs()
+    compiler = Path(args.compiler).resolve() if args.compiler else default_staged_compiler(args.release)
+    if args.build or not compiler.exists():
+        cmd_dev(argparse.Namespace(release=args.release, clean=False))
+    compiler = Path(args.compiler).resolve() if args.compiler else default_staged_compiler(args.release)
+    out_dir = Path(args.out_dir).resolve() if args.out_dir else OUT / "stress"
+    run_stress_suite(
+        compiler,
+        out_dir=out_dir,
+        profile=args.profile,
+        cases=args.case,
+        keep_generated=args.keep_generated,
+    )
+    return 0
+
+
 def cmd_selfhost(args: argparse.Namespace) -> int:
     ensure_build_prereqs()
     stage0 = prepare_selfhost_stage0(clean_first=args.clean, cmd_dist=cmd_dist)
@@ -531,6 +549,15 @@ def build_parser() -> argparse.ArgumentParser:
     test.add_argument("--release", action="store_true", help="use the release staged compiler")
     test.add_argument("--full", action="store_true", help="run the full legacy regression manifest")
 
+    stress = sub.add_parser("stress", help="run generated compiler stress tests")
+    stress.add_argument("--compiler", type=str, default="", help="explicit compiler path")
+    stress.add_argument("--build", action="store_true", help="build before running stress tests")
+    stress.add_argument("--release", action="store_true", help="use the release staged compiler")
+    stress.add_argument("--profile", choices=["quick", "full", "max"], default="full", help="stress profile size")
+    stress.add_argument("--case", action="append", default=[], help="run only the named stress case (repeatable)")
+    stress.add_argument("--out-dir", type=str, default="", help="output directory for generated stress artifacts")
+    stress.add_argument("--keep-generated", action="store_true", help="preserve existing stress output directory contents")
+
     clean = sub.add_parser("clean", help="remove generated output")
     clean.add_argument("--dist", action="store_true", help="also remove the current host release bundle")
 
@@ -570,6 +597,8 @@ def main() -> int:
         return cmd_stdpkg(args)
     if args.cmd == "test":
         return cmd_test(args)
+    if args.cmd == "stress":
+        return cmd_stress(args)
     if args.cmd == "clean":
         return cmd_clean(args)
     if args.cmd == "export-gui-locales":

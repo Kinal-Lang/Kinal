@@ -20,6 +20,7 @@ Kinal's standard library is unified under the `IO.*` namespace, grouped by funct
 | `IO.Target` | Compile-time platform constants | Built-in |
 | `IO.Math` | Mathematical functions | Via IO.Core package |
 | `IO.Char` | Character utility functions | Via IO.Core package |
+| `IO.Request` | Outbound HTTP requests | [→](request.md) |
 | `IO.UI` | Graphical interface (UI components) | Via IO.UI package |
 | `IO.Web` | Web services (Civet) | Via IO.Web package |
 
@@ -137,7 +138,13 @@ IO.UI.Window window = New IO.UI.Window("My App", 800, 600);
 IO.UI.Button btn = New IO.UI.Button("OK", 10, 10, 80, 30);
 window.Add(btn);
 Return window.Run();
-```
+kinal
+
+## IO.Request Package (HTTP Client)
+
+Provides outbound HTTP request support through the bundled CivetWeb client bridge.
+
+Current bundled builds support `http://` URLs. `https://` is intentionally rejected until the official CivetWeb/TLS packaging flow is enabled.
 
 ## IO.Web Package (Web Services)
 

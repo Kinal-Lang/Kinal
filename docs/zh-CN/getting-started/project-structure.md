@@ -193,7 +193,7 @@ Project MyApp
     Profile "native" { ... }
     Lsp { ... }
 }
-```
+kinal
 
 - `Project <Name>`：声明项目名
 - `DefaultProfile`：当命令行未传 `--profile` 时使用的 Profile
@@ -207,14 +207,14 @@ Project MyApp
 
 ```kinal
 DefaultProfile = "native";
-```
+kinal
 
 这个字段决定了以下命令默认使用哪个 Profile：
 
 ```bash
 kinal build --project .
 kinal run --project .
-```
+kinal
 
 如果省略 `DefaultProfile`，则默认使用第一个声明的 Profile。
 
@@ -226,7 +226,7 @@ Packages
     Roots = ["./kpkg", "../shared-packages"];
     OfficialRoots = ["../stdpkg"];
 }
-```
+kinal
 
 - `Roots`：本地包根目录，等价于命令行里的 `--pkg-root`
 - `OfficialRoots`：官方包根目录，等价于命令行里的 `--stdpkg-root`
@@ -240,7 +240,7 @@ Lsp
 {
     Profile = "native";
 }
-```
+kinal
 
 这个块只影响编辑器中的语义分析、跳转、诊断和补全，不会强制 CLI 使用该 Profile 编译。
 
@@ -262,7 +262,7 @@ Profile "native"
     Link { ... }
     Packages { ... }
 }
-```
+kinal
 
 每个 Profile 可以包含这些部分：
 
@@ -279,7 +279,7 @@ Source
     Entry = "src/Main.kn";
     AutoDiscovery = true;
 }
-```
+kinal
 
 - `Entry`：该 Profile 的入口源文件
 - `AutoDiscovery`：是否自动发现入口附近的其他 `.kn` 文件
@@ -298,7 +298,7 @@ Build
     Environment = Hosted;
     Output = "out/myapp";
 }
-```
+kinal
 
 支持的字段有：
 
@@ -317,7 +317,7 @@ Build
 
 ```kinal
 Backend = Native;
-```
+kinal
 
 支持值：
 
@@ -333,7 +333,7 @@ Backend = Native;
 
 ```kinal
 Environment = Hosted;
-```
+kinal
 
 支持值：
 
@@ -346,7 +346,7 @@ Environment = Hosted;
 
 ```kinal
 Runtime = None;
-```
+kinal
 
 支持值：
 
@@ -360,7 +360,7 @@ Runtime = None;
 
 ```kinal
 Panic = Trap;
-```
+kinal
 
 支持值：
 
@@ -373,7 +373,7 @@ Panic = Trap;
 
 ```kinal
 Target = "x86_64-linux-gnu";
-```
+kinal
 
 用于显式指定目标三元组。
 
@@ -381,7 +381,7 @@ Target = "x86_64-linux-gnu";
 
 ```kinal
 Output = "out/myapp";
-```
+kinal
 
 当命令行没有传 `-o` 或 `--output` 时，使用这里定义的输出路径。
 
@@ -389,7 +389,7 @@ Output = "out/myapp";
 
 ```kinal
 EntrySymbol = "KernelMain";
-```
+kinal
 
 用于覆盖默认入口符号推断。
 
@@ -403,7 +403,7 @@ EntrySymbol = "KernelMain";
 
 ```kinal
 Linker = LLD;
-```
+kinal
 
 支持值：
 
@@ -415,7 +415,7 @@ Linker = LLD;
 
 ```kinal
 LinkerPath = "C:/toolchains/lld-link.exe";
-```
+kinal
 
 当链接器不在 `PATH` 中，或你希望固定使用某个工具链里的链接器时使用。
 
@@ -423,7 +423,7 @@ LinkerPath = "C:/toolchains/lld-link.exe";
 
 ```kinal
 Superloop = true;
-```
+kinal
 
 这个字段主要用于 VM Profile，用来控制生成的字节码 / VM bundle 是否启用 superloop 模式。
 
@@ -441,7 +441,7 @@ Link
     LinkArgs = ["--gc-sections"];
     LinkRoots = ["./deps"];
 }
-```
+kinal
 
 支持的字段：
 
@@ -468,7 +468,7 @@ Profile "native"
         Roots = ["./native-packages"];
     }
 }
-```
+kinal
 
 适合某个 Profile 需要额外包，而其他 Profile 不需要的情况。
 
@@ -521,7 +521,7 @@ Project MyApp
         Profile = "native";
     }
 }
-```
+kinal
 
 ### 示例：Freestanding 内核 Profile
 
@@ -563,7 +563,7 @@ Project KinalOS
         Profile = "kernel";
     }
 }
-```
+kinal
 
 这种 Profile 就很适合内核、引导阶段代码或其他裸机目标。
 

@@ -158,8 +158,6 @@ Combined with `If` for pattern matching:
 
 ```kinal
 If (a Is Dog d)
-
-
 {
     d.Bark();   // d has type Dog within this block
 }
@@ -195,3 +193,4 @@ bool check = (x > 0) && (y < 100);
 
 - [Control Flow](control-flow.md)
 - [Type System](types.md)
+

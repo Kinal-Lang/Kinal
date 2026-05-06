@@ -89,8 +89,6 @@ Get IO.Console;
 Get IO.Text;
 
 Static Function int Main()
-
-
 {
     string text = "  Hello, Kinal World!  ";
 
@@ -117,3 +115,4 @@ Static Function int Main()
 - [字符串特性](../language/strings.md) — 字符串字面量前缀
 - [IO.Console](console.md) — 控制台输出
 - [IO.File](filesystem.md) — 文件文本读写
+

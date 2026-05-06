@@ -1,0 +1,12 @@
+{
+  "kind": "package",
+  "name": "IO.Request",
+  "version": "1.0.0",
+  "summary": "Official outbound HTTP request package bundled with Kinal.",
+  "source_root": "src",
+  "klib": "lib/IO.Request.klib",
+  "entry": "src/IO/Request.kn",
+  "dependencies": [
+    "IO.Core"
+  ]
+}

@@ -181,13 +181,9 @@ Static Function int Main()
     dict counts = IO.Collection.dict.Create();
     int i = 0;
     While (i < IO.Collection.list.Count(words))
-
-
     {
         string w = [string](IO.Collection.list.Fetch(words, i));
         If (IO.Collection.dict.Contains(counts, w))
-
-
         {
             int c = [int](IO.Collection.dict.Fetch(counts, w));
             IO.Collection.dict.Set(counts, w, c + 1);
@@ -203,8 +199,6 @@ Static Function int Main()
     set unique = IO.Collection.set.Create();
     int j = 0;
     While (j < IO.Collection.list.Count(words))
-
-
     {
         IO.Collection.set.Add(unique, IO.Collection.list.Fetch(words, j));
         j = j + 1;
@@ -219,3 +213,4 @@ Static Function int Main()
 
 - [类型系统](../language/types.md) — `list`/`dict`/`set` 作为内置类型别名
 - [异常处理](../language/exceptions.md) — `Fetch` 越界和键不存在时抛出异常
+

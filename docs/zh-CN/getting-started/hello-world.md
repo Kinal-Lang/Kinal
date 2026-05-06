@@ -105,8 +105,6 @@ Get IO.Console;
 Get IO.Async;
 
 Static Async Function int Main()
-
-
 {
     Await IO.Async.Sleep(100);
     IO.Console.PrintLine("异步 Hello!");
@@ -126,3 +124,4 @@ Static Async Function int Main()
 
 - [项目结构](project-structure.md) — 多文件与 Package 组织
 - [语言概览](../language/overview.md) — 深入了解 Kinal 的核心概念
+

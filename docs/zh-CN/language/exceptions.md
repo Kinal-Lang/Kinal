@@ -184,8 +184,6 @@ Catch (IO.Error err)
 
 IO.Error e1 = New IO.Error("标题", "消息");
 
-
-
 // 通过字段设置 Inner
 
 IO.Error e2 = New IO.Error("外层", "外层消息");
@@ -245,8 +243,6 @@ Function int SafeDivide(int a, int b)
 
 }
 
-
-
 Try
 {
 
@@ -272,11 +268,7 @@ Catch (IO.Error err)
 
 Unit App.ExceptionDemo;
 
-
-
 Get IO.Console;
-
-
 
 Function int Divide(int a, int b)
 {
@@ -290,8 +282,6 @@ Function int Divide(int a, int b)
     Return a / b;
 
 }
-
-
 
 Function void Risky()
 {
@@ -314,8 +304,6 @@ Function void Risky()
     }
 
 }
-
-
 
 Static Function int Main()
 {
@@ -374,4 +362,5 @@ Static Function int Main()
 - [类与继承](classes.md)
 
 - [安全等级](safety.md)
+
 

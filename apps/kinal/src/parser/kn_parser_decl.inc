@@ -1435,6 +1435,29 @@ static bool is_top_level_func_start(TokenType t)
            t == TOK_SAFE || t == TOK_TRUSTED || t == TOK_UNSAFE || t == TOK_ASYNC;
 }
 
+static bool is_top_level_func_modifier(TokenType t)
+{
+    return t == TOK_EXTERN || t == TOK_DELEGATE || t == TOK_STATIC ||
+           t == TOK_SAFE || t == TOK_TRUSTED || t == TOK_UNSAFE || t == TOK_ASYNC;
+}
+
+static bool starts_invalid_top_level_global_modifier(Parser *p)
+{
+    Parser probe;
+    int saw_modifier = 0;
+    if (!p)
+        return false;
+    probe = *p;
+    while (is_top_level_func_modifier(cur(&probe)->type))
+    {
+        saw_modifier = 1;
+        probe.pos++;
+    }
+    if (!saw_modifier)
+        return false;
+    return looks_like_type_decl(&probe);
+}
+
 static bool is_top_level_decl_start(TokenType t)
 {
     return t == TOK_ENUM || t == TOK_STRUCT || t == TOK_INTERFACE || t == TOK_CLASS ||

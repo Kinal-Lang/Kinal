@@ -158,8 +158,6 @@ bool isCat = a Is Cat;      // false
 
 ```kinal
 If (a Is Dog d)
-
-
 {
     d.Bark();   // d 类型为 Dog
 }
@@ -195,3 +193,4 @@ bool check = (x > 0) && (y < 100);
 
 - [控制流](control-flow.md)
 - [类型系统](types.md)
+

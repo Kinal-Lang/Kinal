@@ -1,0 +1,23 @@
+Unit Tests.StdRequestCompile;
+
+Get IO.Request;
+
+Static Function int Main()
+{
+    IO.Request.Options options = New IO.Request.Options("http://127.0.0.1:8080/api/echo", IO.Request.Method.POST);
+    options.SetHeader("X-Test", "kinal");
+    options.SetBody("{\"hello\":true}", "application/json");
+    options.RemoveHeader("Missing");
+    options.SetTimeout(500);
+
+    IO.Request.Response response = IO.Request.Send(options);
+    response.EnsureSuccess();
+
+    IO.Request.Fetch("http://127.0.0.1:8080/", 250);
+    IO.Request.Head("http://127.0.0.1:8080/health", 250);
+    IO.Request.Post("http://127.0.0.1:8080/post", "hello");
+    IO.Request.Put("http://127.0.0.1:8080/put", "hello");
+    IO.Request.Patch("http://127.0.0.1:8080/patch", "hello");
+    IO.Request.DeleteRequest("http://127.0.0.1:8080/delete", 250);
+    Return 0;
+}

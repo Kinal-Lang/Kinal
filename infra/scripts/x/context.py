@@ -47,6 +47,8 @@ CIVETWEB_VERSION_FILE = CIVETWEB_DIR / "VERSION.txt"
 CIVETWEB_SRC_ARCHIVE_URL = "https://github.com/civetweb/civetweb/archive/{commit}.zip"
 WEB_BRIDGE_SRC = RUNTIME_DIR / "src" / "kn_web_civet.c"
 IO_WEB_NATIVE_TARGETS = ("win-x64", "win-arm64", "linux-x64", "linux-arm64")
+REQUEST_BRIDGE_SRC = RUNTIME_DIR / "src" / "kn_request_civet.c"
+IO_REQUEST_NATIVE_TARGETS = ("win-x64", "win-arm64", "linux-x64", "linux-arm64")
 
 CJSON_DIR = THIRD_PARTY_ROOT / "cjson"
 CJSON_INCLUDE = CJSON_DIR / "include"

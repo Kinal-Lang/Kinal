@@ -24,8 +24,10 @@ from .context import (
     CIVETWEB_VERSION_FILE,
     IO_WEB_NATIVE_TARGETS,
     IO_JSON_NATIVE_TARGETS,
+    IO_REQUEST_NATIVE_TARGETS,
     JSON_BRIDGE_SRC,
     MATH_SRC,
+    REQUEST_BRIDGE_SRC,
     ROOT,
     RUNTIME_DIR,
     RUNTIME_INCLUDE,
@@ -443,20 +445,28 @@ def build_civetweb_for_target(target: str, llvm_bin: Path) -> bool:
     out_dir = civetweb_prebuilt_root() / target
     out_dir.mkdir(parents=True, exist_ok=True)
     if target.startswith("win-"):
-        if not is_windows() or host_tag() != target:
+        if not is_windows():
             return False
         clang = llvm_bin / "clang.exe"
         llvm_lib = llvm_bin / "llvm-lib.exe"
         if not clang.exists() or not llvm_lib.exists():
             return False
+        if target == "win-x64":
+            triple = "x86_64-pc-windows-msvc"
+        elif target == "win-arm64":
+            triple = "aarch64-pc-windows-msvc"
+        else:
+            return False
 
         civet_obj = out_dir / "CivetWeb.obj"
         civet_lib = out_dir / "CivetWeb.lib"
         bridge_obj = out_dir / "kn_web_civet.obj"
+        request_bridge_obj = out_dir / "kn_request_civet.obj"
 
-        run([clang, "-c", str(CIVETWEB_SRC), "-o", str(civet_obj), "-std=c11", "-O2", "-DNO_SSL", "-DNO_CGI", "-DNO_CACHING", "-I", str(CIVETWEB_INCLUDE)])
+        run([clang, "--target=" + triple, "-c", str(CIVETWEB_SRC), "-o", str(civet_obj), "-std=c11", "-O2", "-DNO_SSL", "-DNO_CGI", "-DNO_CACHING", "-I", str(CIVETWEB_INCLUDE)])
         run([llvm_lib, "/nologo", f"/out:{civet_lib}", str(civet_obj)])
-        run([clang, "-c", str(WEB_BRIDGE_SRC), "-o", str(bridge_obj), "-std=c11", "-O2", "-I", str(CIVETWEB_INCLUDE), "-I", str(RUNTIME_INCLUDE)])
+        run([clang, "--target=" + triple, "-c", str(WEB_BRIDGE_SRC), "-o", str(bridge_obj), "-std=c11", "-O2", "-I", str(CIVETWEB_INCLUDE), "-I", str(RUNTIME_INCLUDE)])
+        run([clang, "--target=" + triple, "-c", str(REQUEST_BRIDGE_SRC), "-o", str(request_bridge_obj), "-std=c11", "-O2", "-I", str(CIVETWEB_INCLUDE), "-I", str(RUNTIME_INCLUDE)])
         return True
 
     if target.startswith("linux-"):
@@ -478,9 +488,11 @@ def build_civetweb_for_target(target: str, llvm_bin: Path) -> bool:
 
         civet_obj = out_dir / "CivetWeb.o"
         bridge_obj = out_dir / "kn_web_civet.o"
+        request_bridge_obj = out_dir / "kn_request_civet.o"
 
         run(cc_cmd + ["-c", str(CIVETWEB_SRC), "-o", str(civet_obj), "-std=c11", "-O2", "-Wno-error=date-time", "-fPIC", "-pthread", "-D_POSIX_C_SOURCE=200809L", "-DNO_SSL", "-DNO_CGI", "-DNO_CACHING", "-I", str(CIVETWEB_INCLUDE)])
         run(cc_cmd + ["-c", str(WEB_BRIDGE_SRC), "-o", str(bridge_obj), "-std=c11", "-O2", "-Wno-error=date-time", "-fPIC", "-pthread", "-D_POSIX_C_SOURCE=200809L", "-I", str(CIVETWEB_INCLUDE), "-I", str(RUNTIME_INCLUDE)])
+        run(cc_cmd + ["-c", str(REQUEST_BRIDGE_SRC), "-o", str(request_bridge_obj), "-std=c11", "-O2", "-Wno-error=date-time", "-fPIC", "-pthread", "-D_POSIX_C_SOURCE=200809L", "-I", str(CIVETWEB_INCLUDE), "-I", str(RUNTIME_INCLUDE)])
         return True
 
     return False
@@ -631,6 +643,37 @@ def sync_io_web_native_assets(stdpkg_dir: Path, targets: list[str] | None = None
                 if src.is_file():
                     shutil.copy2(src, native_dir / src.name)
             if target not in copied:
+                copied.append(target)
+    return copied
+
+
+def sync_io_request_native_assets(stdpkg_dir: Path, targets: list[str] | None = None) -> list[str]:
+    copied: list[str] = []
+    prebuilt_root = civetweb_prebuilt_root()
+    if targets:
+        target_names = list(targets)
+    else:
+        if not prebuilt_root.exists():
+            return copied
+        target_names = [p.name for p in sorted(prebuilt_root.iterdir()) if p.is_dir()]
+    if not target_names:
+        return copied
+
+    version_dirs = sorted((stdpkg_dir / "IO.Request").glob("*/"))
+    for version_dir in version_dirs:
+        if not version_dir.is_dir():
+            continue
+        for target in target_names:
+            prebuilt_src = prebuilt_root / target
+            if not prebuilt_src.exists():
+                continue
+            native_dir = version_dir / "native" / target
+            native_dir.mkdir(parents=True, exist_ok=True)
+            for name in ("CivetWeb.lib", "CivetWeb.o", "kn_request_civet.obj", "kn_request_civet.o"):
+                src = prebuilt_src / name
+                if src.is_file():
+                    shutil.copy2(src, native_dir / src.name)
+            if target not in copied and any((native_dir / name).exists() for name in ("kn_request_civet.obj", "kn_request_civet.o")):
                 copied.append(target)
     return copied
 

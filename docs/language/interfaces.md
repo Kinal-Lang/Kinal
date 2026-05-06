@@ -82,8 +82,6 @@ Use the `Is` operator to check whether an object implements an interface:
 ```kinal
 Object obj = ...;
 If (obj Is IShape shape)
-
-
 {
     IO.Console.PrintLine(shape.Area());
 }
@@ -192,3 +190,4 @@ Static Function int Main()
 - [Structs and Enums](structs-enums.md)
 - [Classes and Inheritance](classes.md)
 - [Generics](generics.md)
+

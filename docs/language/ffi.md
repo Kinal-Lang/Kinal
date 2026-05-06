@@ -104,8 +104,6 @@ Delegate Function int dyn_add(int a, int b) By C;
 Unsafe Static Function int Main(string[] args)
 {
     If (args.Length() == 0)
-
-
     {
         IO.Console.PrintLine("Missing library path argument");
         Return 1;
@@ -113,8 +111,6 @@ Unsafe Static Function int Main(string[] args)
 
     byte* lib = IO.System.LoadLibrary(args[0]);
     If (lib == null)
-
-
     {
         IO.Console.PrintLine(IO.System.LastError());
         Return 2;
@@ -122,8 +118,6 @@ Unsafe Static Function int Main(string[] args)
 
     byte* addPtr = IO.System.GetSymbol(lib, dyn_add);
     If (addPtr == null)
-
-
     {
         IO.Console.PrintLine(IO.System.LastError());
         IO.System.CloseLibrary(lib);
@@ -146,8 +140,6 @@ Raw pointers can be used in `Unsafe` contexts:
 Unsafe Function void MemCopy(byte* dst, byte* src, usize len)
 {
     For (usize i = 0; i < len; i++)
-
-
     {
         dst[i] = src[i];
     }
@@ -160,8 +152,6 @@ Pointer arithmetic:
 Unsafe Function void PrintBytes(byte* ptr, int count)
 {
     For (int i = 0; i < count; i++)
-
-
     {
         IO.Console.PrintLine([int](ptr[i]));
     }
@@ -292,3 +282,4 @@ Static Function int Main()
 - [Safety Levels](safety.md)
 - [Meta Metadata](meta.md)
 - [Bare-Metal and Embedded](../advanced/freestanding.md)
+

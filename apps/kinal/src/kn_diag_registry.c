@@ -265,6 +265,8 @@ static const KnDiagSeedEntry g_diag_registry[] = {
     { "E-GEN-00018", 0, "Unsupported Generic Local Function", "Generic local named functions are not supported yet" },
     { "E-GEN-00019", 0, "Unsupported Generic Method", "Generic methods are not supported yet" },
     { "E-SYN-00106", 0, "Unexpected Top-Level Token", "Expected a top-level declaration (Function/Class/Struct/Enum/Interface/variable declaration)" },
+    { "E-SYN-00107", 0, "Invalid Global Modifier", "Top-level global variables cannot use function modifiers like Static/Extern/Delegate/Safe/Trusted/Unsafe/Async" },
+    { "E-SYN-00108", 0, "Statement Too Deep", "Statement nesting exceeds parser recursion limit" },
 };
 
 void kn_diag_register_builtin_templates(void)

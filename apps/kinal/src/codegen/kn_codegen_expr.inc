@@ -1933,13 +1933,16 @@ static LLVMValueRef build_array_value(Codegen *g, Type arr_type, Expr *init)
     Type elem_type = type_make(arr_type.elem);
     elem_type.name = arr_type.name;
     LLVMTypeRef elem_ty = llvm_type(g, elem_type);
+    LLVMTypeRef arr_struct = llvm_array_type(g, elem_type);
     LLVMValueRef data_ptr = LLVMConstNull(LLVMPointerType(elem_ty, 0));
+    LLVMValueRef len_val = LLVMConstInt(g->i64, (uint64_t)alloc_len, 0);
+    LLVMValueRef root_slot = 0;
 
     if (alloc_len > 0)
     {
         LLVMTypeRef arr_ty = LLVMArrayType(elem_ty, (unsigned)alloc_len);
         uint64_t arr_bytes = g->target_data ? LLVMABISizeOfType(g->target_data, arr_ty) : 0;
-        int use_heap = (g->env_kind == KN_ENV_HOSTED && g->fn_gc_alloc && arr_bytes > (uint64_t)(64 * 1024));
+        int use_heap = (g->env_kind == KN_ENV_HOSTED && g->fn_gc_alloc);
 
         if (use_heap)
         {
@@ -1950,6 +1953,9 @@ static LLVMValueRef build_array_value(Codegen *g, Type arr_type, Expr *init)
             LLVMValueRef bytes = LLVMBuildMul(g->builder, len_val, elem_size, "arr.bytes");
             LLVMValueRef raw = LLVMBuildCall2(g->builder, g->fn_gc_alloc_ty, g->fn_gc_alloc, (LLVMValueRef[]){ bytes }, 1, "arr.mem");
             data_ptr = LLVMBuildBitCast(g->builder, raw, LLVMPointerType(elem_ty, 0), "arr.data");
+            LLVMValueRef raw_i8 = LLVMBuildBitCast(g->builder, data_ptr, g->i8ptr, "arr.mem.i8");
+            unsigned zero_align = g->target_data ? LLVMABIAlignmentOfType(g->target_data, elem_ty) : 1;
+            LLVMBuildMemSet(g->builder, raw_i8, LLVMConstInt(g->i8, 0, 0), bytes, zero_align);
         }
         else
         {
@@ -1962,6 +1968,20 @@ static LLVMValueRef build_array_value(Codegen *g, Type arr_type, Expr *init)
 
             LLVMValueRef idxs0[2] = { zero, zero };
             data_ptr = LLVMBuildInBoundsGEP2(g->builder, arr_ty, alloca, idxs0, 2, "arr.data");
+        }
+
+        if (g->gc_frame && is_gc_root_type(arr_type))
+        {
+            LLVMValueRef fn = LLVMGetBasicBlockParent(LLVMGetInsertBlock(g->builder));
+            if (fn)
+            {
+                LLVMValueRef out = LLVMGetUndef(arr_struct);
+                out = LLVMBuildInsertValue(g->builder, out, data_ptr, 0, "");
+                out = LLVMBuildInsertValue(g->builder, out, len_val, 1, "");
+                root_slot = build_entry_alloca(g, fn, arr_struct, "arr.root");
+                LLVMBuildStore(g->builder, out, root_slot);
+                gc_add_root(g, root_slot, arr_type);
+            }
         }
 
         // init provided elements
@@ -1978,11 +1998,14 @@ static LLVMValueRef build_array_value(Codegen *g, Type arr_type, Expr *init)
         }
     }
 
-    LLVMTypeRef arr_struct = llvm_array_type(g, elem_type);
     LLVMValueRef out = LLVMGetUndef(arr_struct);
     out = LLVMBuildInsertValue(g->builder, out, data_ptr, 0, "");
-    LLVMValueRef len_val = LLVMConstInt(g->i64, (uint64_t)alloc_len, 0);
     out = LLVMBuildInsertValue(g->builder, out, len_val, 1, "");
+    if (root_slot)
+    {
+        LLVMBuildStore(g->builder, out, root_slot);
+        out = LLVMBuildLoad2(g->builder, arr_struct, root_slot, "arr.rooted");
+    }
     return out;
 }
 
@@ -2036,6 +2059,9 @@ static LLVMValueRef build_heap_array_value(Codegen *g, Type arr_type)
         LLVMValueRef bytes = LLVMBuildMul(g->builder, len_val, elem_size, "arr.bytes");
         LLVMValueRef raw = LLVMBuildCall2(g->builder, g->fn_gc_alloc_ty, g->fn_gc_alloc, (LLVMValueRef[]){ bytes }, 1, "arr.mem");
         data_ptr = LLVMBuildBitCast(g->builder, raw, LLVMPointerType(elem_ty, 0), "arr.data");
+        LLVMValueRef raw_i8 = LLVMBuildBitCast(g->builder, data_ptr, g->i8ptr, "arr.mem.i8");
+        unsigned zero_align = g->target_data ? LLVMABIAlignmentOfType(g->target_data, elem_ty) : 1;
+        LLVMBuildMemSet(g->builder, raw_i8, LLVMConstInt(g->i8, 0, 0), bytes, zero_align);
     }
 
     LLVMTypeRef arr_struct = llvm_array_type(g, elem_type);

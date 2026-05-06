@@ -94,8 +94,6 @@ Static Function int Main()
     int x = 1;          // function scope
 
     If (x > 0)
-
-
     {
         int y = 2;      // If block scope
         x = y;          // valid: x is visible in the outer scope
@@ -103,8 +101,6 @@ Static Function int Main()
     // y is not accessible here
 
     For (int i = 0; i < 3; i++)
-
-
     {
         IO.Console.PrintLine(i);  // i is only visible inside the for loop
     }
@@ -145,8 +141,6 @@ MyClass obj = null;
 any a = null;
 
 If (s == null)
-
-
 {
     IO.Console.PrintLine("null string reference");
 }
@@ -187,8 +181,6 @@ A variable can be declared in an inner scope with the same name as one in an out
 ```kinal
 int x = 1;
 If (true)
-
-
 {
     int x = 2;  // shadows outer x; x = 2 within this block
     IO.Console.PrintLine(x);  // 2
@@ -201,3 +193,4 @@ IO.Console.PrintLine(x);  // 1 (outer x was not modified)
 - [Operators](operators.md)
 - [Control Flow](control-flow.md)
 - [Functions](functions.md)
+

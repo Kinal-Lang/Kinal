@@ -61,12 +61,7 @@ static Stmt *parse_if(Parser *p)
     Stmt *then_s = parse_stmt(p);
     Stmt *else_s = 0;
     if (match(p, TOK_ELSE))
-    {
-        if (cur(p)->type == TOK_IF)
-            else_s = parse_if(p);
-        else
-            else_s = parse_stmt(p);
-    }
+        else_s = parse_stmt(p);
     Stmt *s = new_stmt(ST_IF, t->line, t->col);
     s->v.ifs.cond = cond;
     s->v.ifs.then_s = then_s;
@@ -490,7 +485,7 @@ static Stmt *parse_local_named_function_stmt(Parser *p)
     return s;
 }
 
-static Stmt *parse_stmt(Parser *p)
+static Stmt *parse_stmt_impl(Parser *p)
 {
     Token *t = cur(p);
     if (p->in_block_literal && t->type == TOK_RECORD)
@@ -631,6 +626,16 @@ static Stmt *parse_stmt(Parser *p)
     expect_semi_after_expr(p, e);
     Stmt *s = new_stmt(ST_EXPR, t->line, t->col);
     s->v.expr.expr = e;
+    return s;
+}
+
+static Stmt *parse_stmt(Parser *p)
+{
+    Token *t = cur(p);
+    if (!parser_enter_stmt(p, t))
+        return new_stmt(ST_BLOCK, t ? t->line : 0, t ? t->col : 0);
+    Stmt *s = parse_stmt_impl(p);
+    parser_leave_stmt(p);
     return s;
 }
 

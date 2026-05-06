@@ -55,8 +55,6 @@ bool hasDesc = IO.Meta.Has(User, "Description");
 // 获取属性实例
 any attr = IO.Meta.Of(User, "Description");
 If (attr != null)
-
-
 {
     // 访问属性的参数（通过字典键）
     dict d = IO.Meta.Query(User);
@@ -72,8 +70,6 @@ list keys = IO.Collection.dict.Keys(allAttrs);
 
 int i = 0;
 While (i < IO.Collection.list.Count(keys))
-
-
 {
     string attrName = [string](IO.Collection.list.Fetch(keys, i));
     IO.Console.PrintLine("属性: " + attrName);
@@ -177,3 +173,4 @@ Static Function int Main()
 
 - [Meta 属性](../language/meta.md) — Meta 定义和应用语法
 - [IO.Collection](collections.md) — `dict` 和 `list` 操作
+

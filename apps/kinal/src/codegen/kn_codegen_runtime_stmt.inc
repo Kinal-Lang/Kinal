@@ -38,15 +38,6 @@ static void build_runtime_hosted(Codegen *g)
         LLVMSetInitializer(flt, LLVMConstInt(t_i32, 0, 0));
     }
 
-    // Minimal __chkstk stub to satisfy COFF link without CRT.
-    {
-        LLVMTypeRef chk_ty = LLVMFunctionType(t_void, 0, 0, 0);
-        LLVMValueRef chk = LLVMAddFunction(g->mod, "__chkstk", chk_ty);
-        LLVMBasicBlockRef chk_bb = LLVMAppendBasicBlockInContext(g->ctx, chk, "entry");
-        LLVMPositionBuilderAtEnd(g->builder, chk_bb);
-        LLVMBuildRetVoid(g->builder);
-    }
-
     LLVMTypeRef getstd_ty = LLVMFunctionType(t_i8ptr, &t_i32, 1, 0);
     LLVMValueRef getstd = LLVMAddFunction(g->mod, "GetStdHandle", getstd_ty);
     LLVMTypeRef setcp_ty = LLVMFunctionType(g->i1, &t_i32, 1, 0);
@@ -3085,7 +3076,7 @@ static void codegen_global_init(Codegen *g, StmtList *globals)
     g->current_class = 0;
     g->current_this = 0;
     g->current_func_name = build_trace_label("<global init>", 0, 0, 0);
-    g->gc_frame = 0;
+    g->gc_frame = frame;
     g->loop_depth = 0;
     g->try_depth = 0;
 

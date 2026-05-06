@@ -72,6 +72,17 @@ static Type parse_type(Parser *p)
     return t;
 }
 
+static bool looks_like_anon_function_expr(Parser *p, int func_off)
+{
+    if (!p || peek(p, func_off)->type != TOK_FUNCTION)
+        return false;
+
+    Parser probe = *p;
+    probe.pos += func_off + 1;
+    Type ret = parse_type(&probe);
+    return ret.kind != TY_UNKNOWN && cur(&probe)->type == TOK_LPAREN;
+}
+
 static bool type_name_segment_tok(TokenType t)
 {
     if (t == TOK_ID || is_type_tok(t))
@@ -908,12 +919,13 @@ static Expr *parse_primary(Parser *p)
     if (t->type == TOK_SWITCH)
         return parse_switch_expr(p);
 
-    if ((t->type == TOK_SAFE || t->type == TOK_TRUSTED || t->type == TOK_UNSAFE) && peek(p, 1)->type == TOK_FUNCTION)
+    if ((t->type == TOK_SAFE || t->type == TOK_TRUSTED || t->type == TOK_UNSAFE) &&
+        looks_like_anon_function_expr(p, 1))
     {
         Safety safety = parse_optional_safety(p, SAFETY_SAFE);
         return parse_anon_function_expr(p, safety);
     }
-    if (t->type == TOK_FUNCTION)
+    if (looks_like_anon_function_expr(p, 0))
         return parse_anon_function_expr(p, SAFETY_SAFE);
     if ((t->type == TOK_SAFE || t->type == TOK_TRUSTED || t->type == TOK_UNSAFE) && peek(p, 1)->type == TOK_BLOCK)
     {

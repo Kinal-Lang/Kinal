@@ -196,8 +196,25 @@ static Type sema_mark_async_task_expr(Expr *e, Type result_type)
     return e->type;
 }
 
+static Type sema_expr_impl(Sema *s, Expr *e);
+
 static Type sema_expr(Sema *s, Expr *e)
 {
+    Type unknown = type_make(TY_UNKNOWN);
+    if (!e) return unknown;
+    if (!sema_enter_expr(s, e))
+    {
+        e->type = unknown;
+        return unknown;
+    }
+    Type result = sema_expr_impl(s, e);
+    sema_leave_expr(s);
+    return result;
+}
+
+static Type sema_expr_impl(Sema *s, Expr *e)
+{
+    if (!e) return type_make(TY_UNKNOWN);
     switch (e->kind)
     {
     case EXPR_INT:
@@ -2258,6 +2275,11 @@ static Type sema_expr(Sema *s, Expr *e)
         Type lt = sema_expr(s, e->v.binary.left);
         Type rt = sema_expr(s, e->v.binary.right);
         TokenType op = (TokenType)e->v.binary.op;
+        if (lt.kind == TY_UNKNOWN || rt.kind == TY_UNKNOWN)
+        {
+            e->type = type_make(TY_UNKNOWN);
+            return e->type;
+        }
         if (op == TOK_PLUS || op == TOK_MINUS)
         {
             if (lt.kind == TY_PTR && is_integer_kind(rt.kind))

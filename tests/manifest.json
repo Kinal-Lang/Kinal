@@ -220,6 +220,17 @@
     ]
   },
   {
+    "name": "stdlib_request_compile",
+    "file": "tests/common/stdlib_request_compile.kn",
+    "expected": "",
+    "auto_link": true,
+    "compile_only": true,
+    "platforms": [
+      "windows",
+      "linux"
+    ]
+  },
+  {
     "name": "stdlib_ui_alias_nested_new",
     "file": "tests/windows/stdlib_ui_alias_nested_new.kn",
     "expected": "",
@@ -776,6 +787,16 @@
     "name": "error_get_position",
     "file": "tests/common/error_get_position.kn",
     "expect_error": "[Parser] Invalid Get Position"
+  },
+  {
+    "name": "error_global_modifier",
+    "file": "tests/common/error_global_modifier.kn",
+    "expect_error": "[Parser] Invalid Global Modifier"
+  },
+  {
+    "name": "error_bare_function_expr",
+    "file": "tests/common/error_bare_function_expr.kn",
+    "expect_error": "[Parser] Unexpected Token"
   },
   {
     "name": "error_get_alias_reversed",

@@ -28,8 +28,6 @@ Get IO.System;
 list args = IO.System.CommandLine();
 int argc = IO.Collection.list.Count(args);
 If (argc < 2)
-
-
 {
     IO.Console.PrintLine("需要一个参数");
     IO.System.Exit(1);
@@ -45,8 +43,6 @@ Trusted
 {
     int code = IO.System.Exec("git status");
     If (code != 0)
-
-
     {
         IO.Console.PrintLine("命令执行失败");
     }
@@ -61,8 +57,6 @@ Trusted
 
 ```kinal
 If (!IO.System.FileExists("config.json"))
-
-
 {
     IO.Console.PrintLine("配置文件不存在");
     IO.System.Exit(1);
@@ -102,13 +96,9 @@ Trusted
 
 ```kinal
 Trusted
-
-
 {
     any lib = IO.System.LoadLibrary("missing.so");
     If (lib == null)
-
-
     {
         IO.Console.PrintLine("加载失败: " + IO.System.LastError());
     }
@@ -129,8 +119,6 @@ Get IO.Collection;
 Get IO.Text;
 
 Static Function void PrintUsage()
-
-
 {
     IO.Console.PrintLine("用法: myapp <命令> [选项]");
     IO.Console.PrintLine("命令:");
@@ -140,15 +128,11 @@ Static Function void PrintUsage()
 }
 
 Static Function int Main()
-
-
 {
     list args = IO.System.CommandLine();
     int argc  = IO.Collection.list.Count(args);
 
     If (argc < 2)
-
-
     {
         PrintUsage();
         Return 1;
@@ -157,28 +141,20 @@ Static Function int Main()
     string cmd = [string](IO.Collection.list.Fetch(args, 1));
 
     If (IO.Text.Contains(cmd, "build"))
-
-
     {
         IO.Console.PrintLine("构建中...");
         Trusted { IO.System.Exec("make all"); }
     }
     Else If (IO.Text.Contains(cmd, "clean"))
-
-
     {
         IO.Console.PrintLine("清理中...");
         Trusted { IO.System.Exec("make clean"); }
     }
     Else If (IO.Text.Contains(cmd, "help"))
-
-
     {
         PrintUsage();
     }
     Else
-
-
     {
         IO.Console.PrintLine("未知命令: " + cmd);
         Return 1;
@@ -195,3 +171,4 @@ Static Function int Main()
 - [安全级别](../language/safety.md) — Trusted 上下文的使用
 - [FFI](../language/ffi.md) — 与动态库符号配合使用
 - [IO.Path](path.md) — 路径操作
+

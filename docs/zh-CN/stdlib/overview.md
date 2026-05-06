@@ -20,6 +20,7 @@ Kinal 的标准库统一位于 `IO.*` 命名空间下，按功能模块分组。
 | `IO.Target` | 编译期平台常量 | 内置 |
 | `IO.Math` | 数学函数 | 通过 IO.Core 包 |
 | `IO.Char` | 字符工具函数 | 通过 IO.Core 包 |
+| `IO.Request` | 发起 HTTP 请求 | [→](request.md) |
 | `IO.UI` | 图形界面（UI 组件） | 通过 IO.UI 包 |
 | `IO.Web` | Web 服务（Civet） | 通过 IO.Web 包 |
 
@@ -137,7 +138,13 @@ IO.UI.Window window = New IO.UI.Window("我的应用", 800, 600);
 IO.UI.Button btn = New IO.UI.Button("确定", 10, 10, 80, 30);
 window.Add(btn);
 Return window.Run();
-```
+kinal
+
+## IO.Request 包（HTTP 客户端）
+
+通过内置的 CivetWeb client bridge 提供对外 HTTP 请求能力。
+
+当前随包发布的官方构建仅支持 `http://` URL。`https://` 会被显式拒绝，直到官方 CivetWeb/TLS 打包链启用为止。
 
 ## IO.Web 包（Web 服务）
 

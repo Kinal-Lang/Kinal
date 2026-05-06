@@ -21,9 +21,13 @@ typedef struct
     StructList *structs_out;
     EnumList *enums_out;
     int in_block_literal;
+    int stmt_depth;
+    int saw_stmt_depth_limit;
     int next_anon_func_id;
     int next_block_id;
 } Parser;
+
+#define KN_PARSER_STMT_DEPTH_LIMIT 192
 
 static void tok_push(Token **arr, int *count, int *cap, Token t)
 {
@@ -491,6 +495,59 @@ static const char *qualify_decl_name(Parser *p, const char *name)
     return qualify_name(p ? p->unit_name : 0, name);
 }
 
+static void parser_skip_to_enclosing_block_end(Parser *p)
+{
+    int nested_braces = 0;
+    while (cur(p)->type != TOK_EOF)
+    {
+        TokenType t = cur(p)->type;
+        if (t == TOK_LBRACE)
+        {
+            nested_braces++;
+            p->pos++;
+            continue;
+        }
+        if (t == TOK_RBRACE)
+        {
+            if (nested_braces == 0)
+                break;
+            nested_braces--;
+            p->pos++;
+            continue;
+        }
+        p->pos++;
+    }
+}
+
+static bool parser_enter_stmt(Parser *p, Token *site)
+{
+    if (!p) return false;
+    p->stmt_depth++;
+    if (p->stmt_depth <= KN_PARSER_STMT_DEPTH_LIMIT)
+        return true;
+
+    if (!p->saw_stmt_depth_limit)
+    {
+        p->saw_stmt_depth_limit = 1;
+        kn_diag_report(p->src, KN_STAGE_PARSER,
+                       site ? site->line : cur(p)->line,
+                       site ? site->col : cur(p)->col,
+                       (int)((site && site->length) ? site->length : 1),
+                       "Statement Too Deep",
+                       "Statement nesting exceeds parser recursion limit",
+                       tok_got(p));
+    }
+    parser_skip_to_enclosing_block_end(p);
+    p->stmt_depth--;
+    return false;
+}
+
+static void parser_leave_stmt(Parser *p)
+{
+    if (p && p->stmt_depth > 0)
+        p->stmt_depth--;
+}
+
 
 #include "parser/kn_parser_type_expr.inc"
 #include "parser/kn_parser_stmt.inc"
@@ -522,6 +579,8 @@ void parse_program(const KnSource *src, MetaList *metas, FuncList *funcs, Import
     p.structs_out = structs;
     p.enums_out = enums;
     p.in_block_literal = 0;
+    p.stmt_depth = 0;
+    p.saw_stmt_depth_limit = 0;
     p.next_anon_func_id = 0;
     p.next_block_id = 0;
 
@@ -546,6 +605,16 @@ void parse_program(const KnSource *src, MetaList *metas, FuncList *funcs, Import
         AttrList attrs = parse_attributes(&p);
         TokenType t0 = cur(&p)->type;
         TokenType t1 = peek(&p, 1)->type;
+        if (starts_invalid_top_level_global_modifier(&p))
+        {
+            Token *g = cur(&p);
+            kn_diag_report(src, KN_STAGE_PARSER, g->line, g->col, (int)g->length,
+                           "Invalid Global Modifier",
+                           "Top-level global variables cannot use function modifiers like Static/Extern/Delegate/Safe/Trusted/Unsafe/Async",
+                           tok_got(&p));
+            sync_top_level(&p);
+            continue;
+        }
         if (cur(&p)->type == TOK_ID && token_text_eq(cur(&p), "Meta") &&
             peek(&p, 1)->type == TOK_ID && peek(&p, 2)->type == TOK_LPAREN)
         {
@@ -604,12 +673,6 @@ void parse_program(const KnSource *src, MetaList *metas, FuncList *funcs, Import
                 kn_diag_report(src, KN_STAGE_PARSER, g->line, g->col, (int)g->length,
                     "Invalid Attribute", "Attributes are not supported on global variables", tok_got(&p));
             }
-            // Parse Static/Const/Trusted/Unsafe modifiers for global variables
-            int is_static = 0;
-            Safety safety = SAFETY_SAFE;
-            if (match(&p, TOK_STATIC)) is_static = 1;
-            if (cur(&p)->type == TOK_SAFE || cur(&p)->type == TOK_TRUSTED || cur(&p)->type == TOK_UNSAFE)
-                safety = parse_optional_safety(&p, SAFETY_SAFE);
             int is_const = 0;
             if (match(&p, TOK_CONST)) is_const = 1;
             Type ty = type_make(TY_UNKNOWN);

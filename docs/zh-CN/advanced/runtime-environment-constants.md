@@ -64,7 +64,7 @@ Static Function void PrintBackend()
         IO.Console.PrintLine("native build");
     }
 }
-```
+kinal
 
 整数比较同样有效：
 
@@ -73,7 +73,7 @@ If (IO.Runtime == IO.Runtime.VM)
 {
     // ...
 }
-```
+kinal
 
 ---
 

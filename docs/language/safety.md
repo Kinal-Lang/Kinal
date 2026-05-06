@@ -59,8 +59,6 @@ An `Unsafe` function can perform all operations:
 Unsafe Function void Copy(byte* dst, byte* src, usize len)
 {
     For (usize i = 0; i < len; i++)
-
-
     {
         dst[i] = src[i];
     }
@@ -186,3 +184,4 @@ Static Unsafe Function int Main() { ... }
 - [FFI External Function Interface](ffi.md)
 - [Async Programming](async.md)
 - [Bare-Metal and Embedded](../advanced/freestanding.md)
+

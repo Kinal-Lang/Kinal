@@ -343,8 +343,6 @@ Class Container
 MyClass obj = null;
 
 If (obj != null)
-
-
 {
     obj.DoSomething();
 }
@@ -395,3 +393,4 @@ Static Safe Function int Main(string[] args)
 - [接口](interfaces.md)
 - [结构体与枚举](structs-enums.md)
 - [安全等级](safety.md)
+

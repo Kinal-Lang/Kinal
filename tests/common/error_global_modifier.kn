@@ -1,0 +1,8 @@
+Unit Tests.ErrorGlobalModifier;
+
+Static int GlobalCounter = 0;
+
+Static Function int Main()
+{
+    Return GlobalCounter;
+}

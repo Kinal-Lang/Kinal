@@ -28,6 +28,7 @@ from .runtime_build import (
     copy_host_linker_tools,
     copy_llvm_dev_files,
     copy_llvm_runtime_files,
+    sync_io_request_native_assets,
     sync_io_json_native_assets,
     sync_io_web_native_assets,
     write_linux_compiler_launcher,
@@ -96,6 +97,7 @@ def build_official_stdpkg_klibs(compiler: Path, llvm_bin: Path | None = None) ->
         build_civetweb_for_available_targets(llvm_bin)
         build_cjson_for_available_targets(llvm_bin)
     sync_io_web_native_assets(STDPKG_DIR)
+    sync_io_request_native_assets(STDPKG_DIR)
     sync_io_json_native_assets(STDPKG_DIR)
     for manifest in manifests:
         data = read_json(manifest)

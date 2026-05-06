@@ -343,8 +343,6 @@ Class instance variables can be `null`; access should be checked first:
 MyClass obj = null;
 
 If (obj != null)
-
-
 {
     obj.DoSomething();
 }
@@ -395,3 +393,4 @@ Static Safe Function int Main(string[] args)
 - [Interfaces](interfaces.md)
 - [Structs and Enums](structs-enums.md)
 - [Safety Levels](safety.md)
+

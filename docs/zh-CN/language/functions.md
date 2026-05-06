@@ -38,8 +38,6 @@ Function void PrintValue(int n)
 
 ```kinal
 Static Function int Square(int n)
-
-
 {
     Return n * n;
 }
@@ -49,16 +47,12 @@ Static Function int Square(int n)
 
 ```kinal
 Static Function int Main()
-
-
 {
     Return 0;
 }
 
 // 接受命令行参数版本
 Static Function int Main(string[] args)
-
-
 {
     Return 0;
 }
@@ -70,13 +64,9 @@ Static Function int Main(string[] args)
 
 ```kinal
 Function int Power(int base, int exp = 2)
-
-
 {
     int result = 1;
     For (int i = 0; i < exp; i++)
-
-
     {
         result = result * base;
     }
@@ -231,8 +221,6 @@ Unsafe Function void RawOp() { ... }      // 可以使用裸指针
 
 ```kinal
 Async Function int Compute()
-
-
 {
     int a = Await StepOne();
     int b = Await StepTwo(a);
@@ -257,12 +245,8 @@ Kinal 完整支持递归，包括间接递归：
 
 ```kinal
 Function int Fibonacci(int n)
-
-
 {
     If (n <= 1)
-
-
     {
         Return n;
     }
@@ -288,8 +272,6 @@ Kinal **不支持**同名函数重载（即同一 Unit 内不能有两个同名�
 Block ScopeDecl
 </
     Function int LocalAdd(int a, int b)
-
-
     {
         Return a + b;
     }
@@ -304,3 +286,4 @@ ScopeDecl.Run();
 - [泛型](generics.md)
 - [异步编程](async.md)
 - [安全等级](safety.md)
+

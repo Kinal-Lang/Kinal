@@ -107,8 +107,6 @@ Type checking and conversion:
 ```kinal
 any x = 100;
 If (x.IsInt())
-
-
 {
     int n = [int](x);
 }
@@ -258,3 +256,4 @@ Struct Point
 ```
 
 See [Structs and Enums](structs-enums.md) for details.
+

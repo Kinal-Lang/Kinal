@@ -169,7 +169,18 @@ static bool stmt_contains_unsafe_block(Stmt *st)
     }
 }
 
+static void sema_stmt_impl(Sema *s, Stmt *st);
+
 static void sema_stmt(Sema *s, Stmt *st)
+{
+    if (!st) return;
+    if (!sema_enter_stmt(s, st))
+        return;
+    sema_stmt_impl(s, st);
+    sema_leave_stmt(s);
+}
+
+static void sema_stmt_impl(Sema *s, Stmt *st)
 {
     if (!st) return;
     switch (st->kind)
@@ -310,7 +321,7 @@ static void sema_stmt(Sema *s, Stmt *st)
         if (!(ct.kind == TY_BOOL || is_integer_kind(ct.kind)))
             sema_error(s, st->line, st->col, 1, "Type Mismatch", "If condition must be bool or integer");
         int64_t cval = 0;
-        if (eval_const_expr(st->v.ifs.cond, &cval))
+        if (eval_const_expr(s, st->v.ifs.cond, &cval))
         {
             st->v.ifs.is_const = 1;
             st->v.ifs.const_value = cval != 0;
@@ -824,7 +835,7 @@ int kn_sema_check(const KnSource *src, MetaList *metas, FuncList *funcs, ImportL
         if (f->body)
         {
             sema_stmt(&s, f->body);
-            if (f->ret_type.kind != TY_VOID && !stmt_guarantees_return(f->body))
+            if (!s.saw_stmt_depth_limit && f->ret_type.kind != TY_VOID && !stmt_guarantees_return(f->body))
                 sema_error(&s, f->body ? f->body->line : f->line, f->body ? f->body->col : f->col, 1,
                            "Missing Return", "Non-void function must return a value on all paths");
         }
@@ -865,7 +876,7 @@ int kn_sema_check(const KnSource *src, MetaList *metas, FuncList *funcs, ImportL
             }
 
             sema_stmt(&s, md->body);
-            if (md->ret_type.kind != TY_VOID && !stmt_guarantees_return(md->body))
+            if (!s.saw_stmt_depth_limit && md->ret_type.kind != TY_VOID && !stmt_guarantees_return(md->body))
                 sema_error(&s, md->body ? md->body->line : md->line, md->body ? md->body->col : md->col, 1,
                            "Missing Return", "Non-void method must return a value on all paths");
         }

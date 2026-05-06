@@ -191,8 +191,6 @@ Unit App.BlockRegion;
 Get IO.Console;
 
 Static Function int Main()
-
-
 {
     Block Pipeline
     </
@@ -246,8 +244,6 @@ Unit App.BlockCapture;
 Get IO.Console;
 
 Static Function int Main()
-
-
 {
     Var state = "idle";
 
@@ -291,8 +287,6 @@ Unit App.BlockLocal;
 Get IO.Console;
 
 Static Function int Main()
-
-
 {
     Block WithLocalFunc
     </
@@ -336,8 +330,6 @@ IO.Type.Object.Block[] blocks =
 
 int i = 0;
 While (i < blocks.Length())
-
-
 {
     blocks[i].Run();
     i = i + 1;
@@ -364,8 +356,6 @@ To use `Record` inside nested control flow, the Block must be declared as `Unsaf
 Block Bad
 </
     If (true)
-
-
     {
         Record A;    // compile error: E-SEM-00045 Unsafe Block
     }
@@ -378,8 +368,6 @@ Unsafe Block Good
 </
     IO.Console.PrintLine("before");
     If (true)
-
-
     {
         Record Inner;
         IO.Console.PrintLine("inner");
@@ -416,8 +404,6 @@ Unit App.StateMachine;
 Get IO.Console;
 
 Static Function int Main()
-
-
 {
     Var phase = 0;
 
@@ -468,3 +454,4 @@ State: Stopped
 - [Meta (Metadata Annotations)](meta.md)
 - [Control Flow](control-flow.md)
 - [Async Programming](async.md)
+

@@ -1,6 +1,19 @@
 // Internal sema fragment: type validation, lookup, and declaration checks
 
+static bool eval_const_expr_impl(Sema *s, Expr *e, int64_t *out);
+static bool eval_const_expr_scoped_impl(Sema *s, Expr *e, int64_t *out);
+
 static bool eval_const_expr_scoped(Sema *s, Expr *e, int64_t *out)
+{
+    if (!e || !out) return false;
+    if (!sema_enter_const_eval(s, e))
+        return false;
+    bool ok = eval_const_expr_scoped_impl(s, e, out);
+    sema_leave_const_eval(s);
+    return ok;
+}
+
+static bool eval_const_expr_scoped_impl(Sema *s, Expr *e, int64_t *out)
 {
     if (!e || !out) return false;
     switch (e->kind)
@@ -49,7 +62,7 @@ static bool eval_const_expr_scoped(Sema *s, Expr *e, int64_t *out)
         }
     }
     default:
-        return eval_const_expr(e, out);
+        return eval_const_expr(s, e, out);
     }
 }
 
@@ -1315,7 +1328,17 @@ static const char *sema_host_static_library_suffix(const Sema *s)
     return (s && s->host_static_library_suffix) ? s->host_static_library_suffix : ".a";
 }
 
-static bool eval_const_expr(Expr *e, int64_t *out)
+static bool eval_const_expr(Sema *s, Expr *e, int64_t *out)
+{
+    if (!e || !out) return false;
+    if (!sema_enter_const_eval(s, e))
+        return false;
+    bool ok = eval_const_expr_impl(s, e, out);
+    sema_leave_const_eval(s);
+    return ok;
+}
+
+static bool eval_const_expr_impl(Sema *s, Expr *e, int64_t *out)
 {
     if (!e || !out) return false;
     switch (e->kind)
@@ -1332,7 +1355,7 @@ static bool eval_const_expr(Expr *e, int64_t *out)
     case EXPR_UNARY:
     {
         int64_t v = 0;
-        if (!eval_const_expr(e->v.unary.expr, &v)) return false;
+        if (!eval_const_expr(s, e->v.unary.expr, &v)) return false;
         if (e->v.unary.op == TOK_MINUS) { *out = -v; return true; }
         if (e->v.unary.op == TOK_NOT) { *out = !v; return true; }
         return false;
@@ -1340,8 +1363,8 @@ static bool eval_const_expr(Expr *e, int64_t *out)
     case EXPR_BINARY:
     {
         int64_t l = 0, r = 0;
-        if (!eval_const_expr(e->v.binary.left, &l)) return false;
-        if (!eval_const_expr(e->v.binary.right, &r)) return false;
+        if (!eval_const_expr(s, e->v.binary.left, &l)) return false;
+        if (!eval_const_expr(s, e->v.binary.right, &r)) return false;
         switch ((TokenType)e->v.binary.op)
         {
         case TOK_PLUS: *out = l + r; return true;

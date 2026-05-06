@@ -71,18 +71,12 @@ While (i < 5)
 ```kinal
 int n = 0;
 While (true)
-
-
 {
     If (n >= 10)
-
-
     {
         Break;
     }
     If (n % 2 == 0)
-
-
     {
         n++;
         Continue;
@@ -96,8 +90,6 @@ While (true)
 
 ```kinal
 For (int i = 0; i < 10; i++)
-
-
 {
     IO.Console.PrintLine(i);
 }
@@ -108,16 +100,12 @@ For (int i = 0; i < 10; i++)
 ```kinal
 int i = 0;
 For (; i < 10; )
-
-
 {
     i++;
 }
 
 // 无限循环
 For (;;)
-
-
 {
     Break;
 }
@@ -127,8 +115,6 @@ For 循环的初始化部分可以是变量声明或表达式：
 
 ```kinal
 For (Var i = 0; i < 5; i++)
-
-
 {
     IO.Console.PrintLine(i);
 }
@@ -141,24 +127,16 @@ Switch 提供基于值的多分支选择：
 ```kinal
 int code = 2;
 Switch (code)
-
-
 {
     Case (1)
-
-
     {
         IO.Console.PrintLine("一");
     }
     Case (2)
-
-
     {
         IO.Console.PrintLine("二");
     }
     Case (default)
-
-
     {
         IO.Console.PrintLine("其他");
     }
@@ -173,8 +151,6 @@ Switch 也可以作为**表达式**使用，返回一个值：
 
 ```kinal
 string label = Switch (code)
-
-
 {
     Case (1) { "一" }
     Case (2) { "二" }
@@ -187,8 +163,6 @@ IO.Console.PrintLine(label);
 
 ```kinal
 int doubled = Switch (x)
-
-
 {
     Case (1) { 2 }
     Case (2) { 4 }
@@ -203,8 +177,6 @@ Switch 也可对 `any` 或引用类型按值分支：
 ```kinal
 any val = 42;
 Switch (val)
-
-
 {
     Case (42) { IO.Console.PrintLine("四十二"); }
     Case ("hello") { IO.Console.PrintLine("问好"); }
@@ -231,13 +203,9 @@ string label = If (score >= 60) { "及格" } Else { "不及格" };
 
 ```kinal
 While (true)
-
-
 {
     int input = GetInput();
     If (input < 0)
-
-
     {
         Break;
     }
@@ -306,3 +274,4 @@ Static Function int Main()
 - [函数](functions.md)
 - [异常处理](exceptions.md)
 - [Block（代码块对象）](blocks.md)
+

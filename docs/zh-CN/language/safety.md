@@ -59,8 +59,6 @@ Trusted 函数：
 Unsafe Function void Copy(byte* dst, byte* src, usize len)
 {
     For (usize i = 0; i < len; i++)
-
-
     {
         dst[i] = src[i];
     }
@@ -186,3 +184,4 @@ Static Unsafe Function int Main() { ... }
 - [FFI 外部函数接口](ffi.md)
 - [异步编程](async.md)
 - [裸机与嵌入式](../advanced/freestanding.md)
+

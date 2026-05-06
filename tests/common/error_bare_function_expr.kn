@@ -1,0 +1,6 @@
+Unit Tests.ErrorBareFunctionExpr;
+
+Function int Main()
+{
+    Return Function;
+}

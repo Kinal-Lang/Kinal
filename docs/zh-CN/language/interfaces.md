@@ -82,8 +82,6 @@ IO.Console.PrintLine([string](t.Area()));
 ```kinal
 Object obj = ...;
 If (obj Is IShape shape)
-
-
 {
     IO.Console.PrintLine(shape.Area());
 }
@@ -192,3 +190,4 @@ Static Function int Main()
 - [结构体与枚举](structs-enums.md)
 - [类与继承](classes.md)
 - [泛型](generics.md)
+

@@ -61,6 +61,7 @@
 | 文档 | 说明 |
 |------|------|
 | [编译流程详解](advanced/compilation-pipeline.md) | 词法 → 解析 → 语义 → 代码生成 |
+| [错误码参考](advanced/error-codes/index.md) | 编译器与 LSP 共享诊断码、错误示例、原因与修复方式 |
 | [裸机与嵌入式](advanced/freestanding.md) | `--freestanding`、`--runtime`、无宿主环境 |
 | [跨平台交叉编译](advanced/cross-compilation.md) | `--target`、目标三元组与平台别名 |
 | [链接与 LTO](advanced/linking.md) | 链接器后端、LTO、静态/动态库 |

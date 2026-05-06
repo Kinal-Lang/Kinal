@@ -22,8 +22,6 @@ Get IO.File;
 
 ```kinal
 If (IO.File.Exists("config.json"))
-
-
 {
     int size = IO.File.Size("config.json");
     IO.Console.PrintLine(size);
@@ -118,8 +116,6 @@ Static Function int Main()
     string csvPath = "data.csv";
 
     If (!IO.File.Exists(csvPath))
-
-
     {
         IO.Console.PrintLine("文件不存在");
         Return 1;
@@ -131,8 +127,6 @@ Static Function int Main()
 
     int i = 0;
     While (i < total)
-
-
     {
         string line = [string](IO.Collection.list.Fetch(lines, i));
         list fields = IO.Text.Split(line, ",");
@@ -189,3 +183,4 @@ Try
 - [IO.Path](path.md) — 路径拼接与操作
 - [IO.Text](text.md) — 文本内容处理
 - [异常处理](../language/exceptions.md) — Try/Catch
+

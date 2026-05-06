@@ -38,8 +38,6 @@ Unit App.Services;
 
 Unit App.Services;
 
-
-
 Function string GetVersion() { Return "1.0"; }
 
 // 完整限定名：App.Services.GetVersion
@@ -90,8 +88,6 @@ Get FS By IO.File;
 
 Get Dir By IO.Directory;
 
-
-
 FS.ReadAllText("data.txt");
 
 Dir.Exists("logs/");
@@ -111,8 +107,6 @@ Dir.Exists("logs/");
 ```kinal
 
 Get PrintLine By IO.Console.PrintLine;
-
-
 
 // 现在可以直接调用 PrintLine(...)
 
@@ -150,13 +144,9 @@ Get IO.Utils { ReadFile By ReadAllText, WriteFile By WriteAllText };
 
 Unit App.Main;          // ← 首先 Unit
 
-
-
 Get IO.Console;         // ← 然后是所有 Get
 
 Get FS By IO.File;
-
-
 
 Static Function int Main() { ... }  // ← 然后是其他声明
 
@@ -285,8 +275,6 @@ Else If (IO.Target.OS == IO.Target.OS.Linux)
 
 Unit App.Math;
 
-
-
 Function int GCD(int a, int b)
 {
 
@@ -303,8 +291,6 @@ Function int GCD(int a, int b)
     Return a;
 
 }
-
-
 
 Function int LCM(int a, int b)
 {
@@ -323,13 +309,9 @@ Function int LCM(int a, int b)
 
 Unit App.Main;
 
-
-
 Get Console By IO.Console;
 
 Get App.Math;              // 打开 App.Math 模块
-
-
 
 Static Function int Main()
 {
@@ -359,4 +341,5 @@ Static Function int Main()
 - [标准库概览](../stdlib/overview.md)
 
 - [Package 系统](../cli/packages.md)
+
 

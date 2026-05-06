@@ -71,18 +71,12 @@ While (i < 5)
 ```kinal
 int n = 0;
 While (true)
-
-
 {
     If (n >= 10)
-
-
     {
         Break;
     }
     If (n % 2 == 0)
-
-
     {
         n++;
         Continue;
@@ -96,8 +90,6 @@ While (true)
 
 ```kinal
 For (int i = 0; i < 10; i++)
-
-
 {
     IO.Console.PrintLine(i);
 }
@@ -108,16 +100,12 @@ Any part can be omitted:
 ```kinal
 int i = 0;
 For (; i < 10; )
-
-
 {
     i++;
 }
 
 // Infinite loop
 For (;;)
-
-
 {
     Break;
 }
@@ -127,8 +115,6 @@ The initialization part of a For loop can be a variable declaration or an expres
 
 ```kinal
 For (Var i = 0; i < 5; i++)
-
-
 {
     IO.Console.PrintLine(i);
 }
@@ -141,24 +127,16 @@ Switch provides multi-branch selection based on a value:
 ```kinal
 int code = 2;
 Switch (code)
-
-
 {
     Case (1)
-
-
     {
         IO.Console.PrintLine("one");
     }
     Case (2)
-
-
     {
         IO.Console.PrintLine("two");
     }
     Case (default)
-
-
     {
         IO.Console.PrintLine("other");
     }
@@ -173,8 +151,6 @@ Switch can also be used as an **expression**, returning a value:
 
 ```kinal
 string label = Switch (code)
-
-
 {
     Case (1) { "one" }
     Case (2) { "two" }
@@ -187,8 +163,6 @@ Or in a more compact form (Case contains an expression directly):
 
 ```kinal
 int doubled = Switch (x)
-
-
 {
     Case (1) { 2 }
     Case (2) { 4 }
@@ -203,8 +177,6 @@ Switch can also branch on `any` or reference types by value:
 ```kinal
 any val = 42;
 Switch (val)
-
-
 {
     Case (42) { IO.Console.PrintLine("forty-two"); }
     Case ("hello") { IO.Console.PrintLine("greeting"); }
@@ -231,13 +203,9 @@ string label = If (score >= 60) { "pass" } Else { "fail" };
 
 ```kinal
 While (true)
-
-
 {
     int input = GetInput();
     If (input < 0)
-
-
     {
         Break;
     }
@@ -306,3 +274,4 @@ Static Function int Main()
 - [Functions](functions.md)
 - [Exception Handling](exceptions.md)
 - [Block (Code Block Objects)](blocks.md)
+

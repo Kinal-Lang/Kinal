@@ -191,8 +191,6 @@ Unit App.BlockRegion;
 Get IO.Console;
 
 Static Function int Main()
-
-
 {
     Block Pipeline
     </
@@ -246,8 +244,6 @@ Unit App.BlockCapture;
 Get IO.Console;
 
 Static Function int Main()
-
-
 {
     Var state = "idle";
 
@@ -291,14 +287,10 @@ Unit App.BlockLocal;
 Get IO.Console;
 
 Static Function int Main()
-
-
 {
     Block WithLocalFunc
     </
         Function int Multiply(int a, int b)
-
-
         {
             Return a * b;
         }
@@ -338,8 +330,6 @@ IO.Type.Object.Block[] blocks =
 
 int i = 0;
 While (i < blocks.Length())
-
-
 {
     blocks[i].Run();
     i = i + 1;
@@ -366,8 +356,6 @@ IO.Type.Object.Class c = b;     // 合法，向上转型
 Block Bad
 </
     If (true)
-
-
     {
         Record A;    // 编译错误: E-SEM-00045 Unsafe Block
     }
@@ -380,8 +368,6 @@ Unsafe Block Good
 </
     IO.Console.PrintLine("before");
     If (true)
-
-
     {
         Record Inner;
         IO.Console.PrintLine("inner");
@@ -418,8 +404,6 @@ Unit App.StateMachine;
 Get IO.Console;
 
 Static Function int Main()
-
-
 {
     Var phase = 0;
 
@@ -470,3 +454,4 @@ Static Function int Main()
 - [Meta（元数据注解）](meta.md)
 - [控制流](control-flow.md)
 - [异步编程](async.md)
+

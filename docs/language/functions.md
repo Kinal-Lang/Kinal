@@ -38,8 +38,6 @@ The `Static` modifier indicates the function does not belong to any class instan
 
 ```kinal
 Static Function int Square(int n)
-
-
 {
     Return n * n;
 }
@@ -49,16 +47,12 @@ Module-level (global) utility functions are typically declared as `Static`. The 
 
 ```kinal
 Static Function int Main()
-
-
 {
     Return 0;
 }
 
 // Version accepting command-line arguments
 Static Function int Main(string[] args)
-
-
 {
     Return 0;
 }
@@ -70,13 +64,9 @@ Parameters can have default values; parameters with defaults must come after par
 
 ```kinal
 Function int Power(int base, int exp = 2)
-
-
 {
     int result = 1;
     For (int i = 0; i < exp; i++)
-
-
     {
         result = result * base;
     }
@@ -231,8 +221,6 @@ Unsafe Function void RawOp() { ... }      // can use raw pointers
 
 ```kinal
 Async Function int Compute()
-
-
 {
     int a = Await StepOne();
     int b = Await StepTwo(a);
@@ -257,12 +245,8 @@ Kinal fully supports recursion, including indirect recursion:
 
 ```kinal
 Function int Fibonacci(int n)
-
-
 {
     If (n <= 1)
-
-
     {
         Return n;
     }
@@ -288,8 +272,6 @@ Local functions, classes, and other declarations can be defined inside Block lit
 Block ScopeDecl
 </
     Function int LocalAdd(int a, int b)
-
-
     {
         Return a + b;
     }
@@ -304,3 +286,4 @@ ScopeDecl.Run();
 - [Generics](generics.md)
 - [Async Programming](async.md)
 - [Safety Levels](safety.md)
+

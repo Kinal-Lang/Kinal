@@ -99,7 +99,20 @@ typedef struct
     const char *host_dynamic_library_suffix;
     const char *host_static_library_suffix;
     int runtime_backend;
+    int expr_depth;
+    int stmt_depth;
+    int const_eval_depth;
+    int saw_expr_depth_limit;
+    int saw_stmt_depth_limit;
+    int saw_const_eval_depth_limit;
 } Sema;
+
+enum
+{
+    KN_SEMA_EXPR_DEPTH_LIMIT = 32,
+    KN_SEMA_STMT_DEPTH_LIMIT = 192,
+    KN_SEMA_CONST_EVAL_DEPTH_LIMIT = 32
+};
 
 static bool type_equal(Type a, Type b);
 static bool params_equal(const ParamList *a, const ParamList *b);
@@ -107,7 +120,7 @@ static bool type_supported(Type t);
 static bool method_is_virtual(const Method *m);
 static bool type_assignable(Sema *s, Type dst, Type src);
 static VarSym *scope_find(Scope *s, const char *name);
-static bool eval_const_expr(Expr *e, int64_t *out);
+static bool eval_const_expr(Sema *s, Expr *e, int64_t *out);
 static bool builtin_is_vararg(KnBuiltinKind kind);
 static ClassDecl *find_class(Sema *s, const char *name);
 static InterfaceDecl *find_interface(Sema *s, const char *name);
@@ -148,6 +161,75 @@ static void sema_warn(Sema *s, int warn_level, int line, int col, int len, const
     if (!s || !s->src)
         return;
     kn_diag_warn(s->src, KN_STAGE_SEMA, warn_level, line, col, len, title, detail);
+}
+
+static bool sema_enter_expr(Sema *s, Expr *e)
+{
+    if (!s || !e) return true;
+    if (s->expr_depth >= KN_SEMA_EXPR_DEPTH_LIMIT)
+    {
+        if (!s->saw_expr_depth_limit)
+        {
+            s->saw_expr_depth_limit = 1;
+            sema_error(s, e->line, e->col, 1, "Expression Too Complex",
+                       "Expression nesting exceeds compiler semantic-analysis limit");
+        }
+        return false;
+    }
+    s->expr_depth++;
+    return true;
+}
+
+static void sema_leave_expr(Sema *s)
+{
+    if (s && s->expr_depth > 0)
+        s->expr_depth--;
+}
+
+static bool sema_enter_stmt(Sema *s, Stmt *st)
+{
+    if (!s || !st) return true;
+    if (s->stmt_depth >= KN_SEMA_STMT_DEPTH_LIMIT)
+    {
+        if (!s->saw_stmt_depth_limit)
+        {
+            s->saw_stmt_depth_limit = 1;
+            sema_error(s, st->line, st->col, 1, "Statement Too Deep",
+                       "Statement nesting exceeds compiler semantic-analysis limit");
+        }
+        return false;
+    }
+    s->stmt_depth++;
+    return true;
+}
+
+static void sema_leave_stmt(Sema *s)
+{
+    if (s && s->stmt_depth > 0)
+        s->stmt_depth--;
+}
+
+static bool sema_enter_const_eval(Sema *s, Expr *e)
+{
+    if (!s || !e) return true;
+    if (s->const_eval_depth >= KN_SEMA_CONST_EVAL_DEPTH_LIMIT)
+    {
+        if (!s->saw_const_eval_depth_limit)
+        {
+            s->saw_const_eval_depth_limit = 1;
+            sema_error(s, e->line, e->col, 1, "Constant Expression Too Complex",
+                       "Constant-expression evaluation exceeds compiler recursion limit");
+        }
+        return false;
+    }
+    s->const_eval_depth++;
+    return true;
+}
+
+static void sema_leave_const_eval(Sema *s)
+{
+    if (s && s->const_eval_depth > 0)
+        s->const_eval_depth--;
 }
 
 static void sema_u32_to_text(uint32_t v, char out[16])

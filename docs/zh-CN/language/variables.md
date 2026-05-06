@@ -94,8 +94,6 @@ Static Function int Main()
     int x = 1;          // 函数作用域
 
     If (x > 0)
-
-
     {
         int y = 2;      // If 块作用域
         x = y;          // 合法：x 在外层可见
@@ -103,8 +101,6 @@ Static Function int Main()
     // y 在此处不可访问
 
     For (int i = 0; i < 3; i++)
-
-
     {
         IO.Console.PrintLine(i);  // i 仅在 for 内部可见
     }
@@ -145,8 +141,6 @@ MyClass obj = null;
 any a = null;
 
 If (s == null)
-
-
 {
     IO.Console.PrintLine("空字符串引用");
 }
@@ -187,8 +181,6 @@ Static Function void Init()
 ```kinal
 int x = 1;
 If (true)
-
-
 {
     int x = 2;  // 遮蔽外层 x，在此块内 x = 2
     IO.Console.PrintLine(x);  // 2
@@ -201,3 +193,4 @@ IO.Console.PrintLine(x);  // 1（外层 x 未被修改）
 - [运算符](operators.md)
 - [控制流](control-flow.md)
 - [函数](functions.md)
+

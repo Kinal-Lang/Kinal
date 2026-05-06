@@ -45,8 +45,6 @@ p.X = 3;
 
 p.Y = 4;
 
-
-
 int dist = p.X * p.X + p.Y * p.Y;
 
 ```
@@ -67,8 +65,6 @@ Struct Rectangle
     int Height;
 
 }
-
-
 
 Rectangle r;
 
@@ -261,8 +257,6 @@ Enum Irq By u8
 
 }
 
-
-
 Enum BigFlag By u64
 {
 
@@ -291,8 +285,6 @@ Enum BigFlag By u64
 ```kinal
 
 Direction d = Direction.North;
-
-
 
 Switch (d)
 {
@@ -393,8 +385,6 @@ Class Network
 
 }
 
-
-
 Network.Protocol p = Network.Protocol.TCP;
 
 ```
@@ -413,11 +403,7 @@ Network.Protocol p = Network.Protocol.TCP;
 
 Unit App.HardwareDemo;
 
-
-
 Get IO.Console;
-
-
 
 // 中断号枚举
 
@@ -432,8 +418,6 @@ Enum IrqKind By u8
 
 }
 
-
-
 // 中断描述符结构体（紧凑排列）
 
 Struct IrqDescriptor By Packed
@@ -446,8 +430,6 @@ Struct IrqDescriptor By Packed
     u8  flags;
 
 }
-
-
 
 Static Function void HandleIrq(IrqKind kind)
 {
@@ -480,8 +462,6 @@ Static Function void HandleIrq(IrqKind kind)
 
 }
 
-
-
 Static Function int Main()
 {
 
@@ -492,8 +472,6 @@ Static Function int Main()
     desc.handler = 0x1000;
 
     desc.flags   = 0x01;
-
-
 
     HandleIrq([IrqKind](desc.irq));
 
@@ -514,4 +492,5 @@ Static Function int Main()
 - [FFI 外部函数接口](ffi.md)
 
 - [安全等级](safety.md)
+
 

@@ -194,8 +194,6 @@ any obj = "hello";
 
 any none = null;
 
-
-
 value.IsNull();      // false
 
 value.TypeName();    // "int"
@@ -215,8 +213,6 @@ value.IsInt();       // true
 any x = 100;
 
 If (x.IsInt())
-
-
 {
 
     int n = [int](x);
@@ -270,8 +266,6 @@ int len = nums.Length();
 int first = nums[0];
 
 nums[1] = 99;
-
-
 
 // 数组支持 Add 方法（返回新数组）
 
@@ -345,8 +339,6 @@ Class Point
 
     Public int Y;
 
-
-
     Public Constructor(int x, int y)
     {
 
@@ -357,8 +349,6 @@ Class Point
     }
 
 }
-
-
 
 Point p = New Point(3, 4);
 
@@ -500,8 +490,6 @@ Struct Point
 
 }
 
-
-
 Point p;
 
 p.X = 3;
@@ -533,11 +521,7 @@ Enum Color
 
 }
 
-
-
 Color c = Color.Red;
-
-
 
 Switch (c)
 {
@@ -589,15 +573,11 @@ string s = [string](i);     // "65"
 
 float f = [float](i);       // 65.0
 
-
-
 // any 解包
 
 any a = 42;
 
 int n = [int](a);
-
-
 
 // 字符串转数值
 
@@ -640,8 +620,6 @@ Kinal 内置了几个特殊运行时类型：
 IO.Type.Object.Function fn = Console.PrintLine;
 
 fn("hello");    // 通过函数对象调用
-
-
 
 IO.Type.Object.Class obj = fn;
 
@@ -688,4 +666,5 @@ n.IsNull();     // false
 - [运算符](operators.md)
 
 - [结构体与枚举](structs-enums.md)
+
 
