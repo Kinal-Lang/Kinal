@@ -182,4 +182,5 @@ Try
 
 - [IO.Path](path.md) — Path joining and operations
 - [IO.Text](text.md) — Text content processing
+- [IO.System](system.md) — File existence checks and process-level helpers
 - [Exception Handling](../language/exceptions.md) — Try/Catch

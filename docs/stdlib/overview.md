@@ -1,158 +1,133 @@
 # Standard Library Overview
 
-Kinal's standard library is unified under the `IO.*` namespace, grouped by functional module. All standard library modules can be imported and used via `Get`.
+Kinal's standard library is organized under the `IO.*` namespace. Core runtime modules are available directly, while package modules such as `IO.Core`, `IO.Request`, `IO.UI`, and `IO.Web` are brought in through project package configuration.
 
 ## Module Quick Reference
 
 | Module | Description | Docs |
 |--------|-------------|------|
 | `IO.Console` | Console input/output | [→](console.md) |
-| `IO.Text` | String manipulation utilities | [→](text.md) |
-| `IO.File` | File read/write operations | [→](filesystem.md) |
+| `IO.Text` | String processing helpers | [→](text.md) |
+| `IO.File` | File operations | [→](filesystem.md) |
 | `IO.Directory` | Directory operations | [→](filesystem.md) |
-| `IO.Path` | Path joining and parsing | [→](path.md) |
-| `IO.Collection` | list / dict / set | [→](collections.md) |
-| `IO.Time` | Time and timers | [→](time.md) |
-| `IO.Async` | Coroutine tasks and process management | [→](async.md) |
-| `IO.System` | System calls and dynamic library loading | [→](system.md) |
-| `IO.Meta` | Runtime metadata queries | [→](meta.md) |
-| `IO.Type` | Type conversion functions | Built-in, no separate import needed |
+| `IO.Path` | Path join / split / normalize helpers | [→](path.md) |
+| `IO.Collection` | `list` / `dict` / `set` | [→](collections.md) |
+| `IO.Time` | Time helpers and timers | [→](time.md) |
+| `IO.Async` | Async tasks and process helpers | [→](async.md) |
+| `IO.System` | Process, command line, and dynamic library APIs | [→](system.md) |
+| `IO.Meta` | Runtime metadata access | [→](meta.md) |
+| `IO.Request` | Outbound HTTP client | [→](request.md) |
+| `IO.Char` | Character classification helpers | [→](core.md) |
+| `IO.Math` | Integer and floating-point math helpers | [→](core.md) |
+| `IO.UI` | Native desktop UI toolkit | [→](ui.md) |
+| `IO.Web` | Embedded HTTP server toolkit | [→](web.md) |
+| `IO.Cat` | Sample package with the `Rommy` class | [→](cat.md) |
+| `IO.Type` | Built-in conversion helpers | Built-in |
 | `IO.Target` | Compile-time platform constants | Built-in |
-| `IO.Math` | Mathematical functions | Via IO.Core package |
-| `IO.Char` | Character utility functions | Via IO.Core package |
-| `IO.Request` | Outbound HTTP requests | [→](request.md) |
-| `IO.UI` | Graphical interface (UI components) | Via IO.UI package |
-| `IO.Web` | Web services (Civet) | Via IO.Web package |
 
-## Import Methods
+## Import Forms
 
 ```kinal
-// Open entire module (requires fully qualified names when used)
 Get IO.Console;
 IO.Console.PrintLine("hello");
 
-// Alias import
-Get IO.Console;
-IO.Console.PrintLine("hello");
-
-// Symbol import
 Get PrintLine By IO.Console.PrintLine;
 PrintLine("hello");
 ```
 
-## Built-in Type Methods
+## Built-in Value Helpers
 
-The following methods are available on **all values** through the `IO.Type.any` interface, with no import required:
+All values expose the `IO.Type.any` helper surface without an extra import:
 
 ```kinal
 42.ToString();       // "42"
 42.TypeName();       // "int"
 42.Equals(42);       // true
 42.IsNull();         // false
-true.ToString();     // "true"
 ```
 
-Type detection for `any` values:
+The same surface is available on `any` values for runtime type checks:
 
 ```kinal
-any v = 3.14;
-v.IsNull();     // false
-v.IsFloat();    // true
-v.IsInt();      // false
-v.IsString();   // false
-v.IsNumber();   // true
-v.IsObject();   // false
-v.IsPointer();  // false
-v.IsBool();     // false
-v.IsChar();     // false
-v.Tag();        // internal type tag (int)
+any value = 3.14;
+value.IsFloat();     // true
+value.IsNumber();    // true
+value.IsString();    // false
+value.Tag();         // internal runtime tag
 ```
 
-## Standard Output Entry Point
-
-The two most commonly used standard library functions:
+## Common Entry Points
 
 ```kinal
 Get IO.Console;
 
-IO.Console.PrintLine("Hello!");           // Print with newline
-IO.Console.Print("Print without newline");
-string input = IO.Console.ReadLine();     // Read one line of input
+IO.Console.PrintLine("Hello");
+IO.Console.Print("Without newline");
+string input = IO.Console.ReadLine();
 ```
-
-Supports multiple variadic arguments (`varargs`):
 
 ```kinal
-IO.Console.PrintLine("a=", 1, ", b=", true);  // Print all arguments
+Get IO.Text;
+
+IO.Text.Contains("kinal", "na");
+IO.Text.ToUpper("hello");
+IO.Text.Split("a,b,c", ",");
 ```
 
-## Type System Supplement: IO.Type
+## Package Modules
 
-`IO.Type` provides type conversion functions (equivalent to the `[type](expr)` syntax):
+### IO.Core
+
+`IO.Core` provides `IO.Char` and `IO.Math`.
 
 ```kinal
-IO.Type.int(any_value);      // Convert to int
-IO.Type.string(any_value);   // Convert to string
-IO.Type.bool(any_value);     // Convert to bool
-IO.Type.float(any_value);    // Convert to float
-// ...
+Get IO;
+
+IO.Char.IsDigit('5');
+IO.Math.Abs(-5);
+IO.Math.Sqrt(16.0);
 ```
 
-## IO.Target — Compile-Time Constants
+### IO.Request
+
+`IO.Request` is the synchronous outbound HTTP client package.
 
 ```kinal
-// Current compilation target (used with Const If)
-IO.Target           // Target platform value
-IO.Target.OS        // Operating system enum
-IO.Target.OS.Windows
-IO.Target.OS.Linux
-IO.Target.OS.MacOS
+Get IO.Request;
+
+IO.Request.Response response = IO.Request.Fetch("http://127.0.0.1:8000/");
 ```
 
-Used for compile-time conditional branches (see [Control Flow → Const If](../language/control-flow.md#const-if-compile-time-condition)).
+### IO.UI
 
-## IO.Core Package (Official Core Package)
-
-`IO.Core` includes foundational tools such as `IO.Char` and `IO.Math`:
-
-```kinal
-// Requires IO.Core package to be configured in your project first
-Get IO;   // Import IO namespace
-
-IO.Char.IsDigit('5');   // true
-IO.Char.IsLetter('A');  // true
-IO.Char.ToLower('Z');   // 'z'
-IO.Char.ToUpper('a');   // 'A'
-
-IO.Math.Abs(-5);        // 5.0
-IO.Math.Sqrt(16.0);     // 4.0
-IO.Math.Max(3, 7);      // 7
-```
-
-## IO.UI Package (Graphical Interface)
+`IO.UI` provides a native window / control layer for desktop apps.
 
 ```kinal
 Get IO.UI;
 
-IO.UI.Window window = New IO.UI.Window("My App", 800, 600);
-IO.UI.Button btn = New IO.UI.Button("OK", 10, 10, 80, 30);
-window.Add(btn);
-Return window.Run();
-kinal
+IO.UI.Window window = New IO.UI.Window("Demo", 640, 480);
+window.Add(New IO.UI.Button("OK", 20, 20, 100, 28));
+```
 
-## IO.Request Package (HTTP Client)
+### IO.Web
 
-Provides outbound HTTP request support through the bundled CivetWeb client bridge.
+`IO.Web` provides an embedded HTTP server with route metadata and static mounts.
 
-Current bundled builds support `http://` URLs. `https://` is intentionally rejected until the official CivetWeb/TLS packaging flow is enabled.
+```kinal
+Get IO.Web;
 
-## IO.Web Package (Web Services)
+IO.Web.Server server = New IO.Web.Server(8080);
+server.UseStatic("/static", "public").UseRoutes();
+```
 
-Provides HTTP service capabilities through the Civet framework (platform-specific feature).
-
-## Next Steps
+## See Also
 
 - [IO.Console](console.md)
 - [IO.Text](text.md)
-- [IO.Collections](collections.md)
+- [IO.Collection](collections.md)
 - [IO.File / IO.Directory](filesystem.md)
+- [IO.Path](path.md)
+- [IO.Core](core.md)
+- [IO.Request](request.md)
+- [IO.UI](ui.md)
+- [IO.Web](web.md)

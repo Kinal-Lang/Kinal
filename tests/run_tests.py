@@ -449,6 +449,8 @@ def run_driver_integration_tests(compiler: Path, out_dir: Path) -> int:
 
     if run_knc_case("knc_vm_cast_more", "knc_cast_more.kn", "42\n2\n1\n0\nfalse\ntrue\nB\n") != 0:
         return 1
+    if run_knc_case("knc_vm_object_casts", "object_casts_knc.kn", "dog\ntrue\ntrue\ndog\ndog\ntrue\nInvalid Cast\ntrue\ntrue\n") != 0:
+        return 1
 
     knc_time_file_fx = ROOT / "tests" / "common" / "knc_time_file.kn"
     knc_time_file = out_dir / "knc_time_file.knc"

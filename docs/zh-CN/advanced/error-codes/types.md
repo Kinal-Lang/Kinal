@@ -22,6 +22,7 @@
 | `E-TYP-00010` | Type Inference Failed | Var requires initializer |
 | `E-TYP-00011` | Type Mismatch | Type mismatch |
 | `E-TYP-00012` | Unsupported Type | Type not supported yet |
+| `E-TYP-00013` | Invalid Cast | Cannot cast value to target type |
 
 ---
 
@@ -29,7 +30,7 @@
 
 - 级别：错误
 - 默认详情：Cannot cast Object values; use Object conversions instead
-- 说明：对象体系不能按普通数值 cast 规则直接转换成基础类型。
+- 说明：对象值正在被 cast 到非对象目标，这仍然不是合法的显式转换。
 
 错误示例：
 
@@ -46,9 +47,9 @@ IO.Type.Object.Class obj = fn;
 string text = obj.ToString();
 ```
 
-原因：`IO.Type.Object.*` 有独立的对象语义，不适用普通标量转换。
+原因：对象引用走的是受检对象转换规则，不适用普通标量转换。
 
-修复方式：对对象使用对象 API 或对象层允许的赋值 / 向上转型。
+修复方式：保持它作为对象引用使用，或者把它 cast 到同一层级中的其他类 / 接口类型。
 
 ---
 
@@ -56,7 +57,7 @@ string text = obj.ToString();
 
 - 级别：错误
 - 默认详情：Cannot cast to Object types; use Object conversions instead
-- 说明：不能把任意值用普通 cast 直接变成对象体系类型。
+- 说明：非对象值正在被直接 cast 成对象 / 类目标类型，这不是受支持的显式转换。
 
 错误示例：
 
@@ -71,9 +72,51 @@ IO.Type.Object.Function fn = IO.Console.PrintLine;
 IO.Type.Object.Class obj = fn;
 ```
 
-原因：对象层类型不是普通 cast 的落点，而是运行时对象系统的一部分。
+原因：对象目标参与的是受检引用转换，不是任意值经由 cast 的装箱入口。
 
 修复方式：通过合法对象值赋给对象类型，而不是直接 cast 基础值。
+
+---
+
+## E-TYP-00013 — Invalid Cast
+
+- 级别：错误
+- 默认详情：Cannot cast value to target type
+- 说明：显式 cast 的目标是对象类型，但源类型和目标类型之间不存在可转换的类 / 接口关系。
+
+错误示例：
+
+```kinal
+Class Stone
+{
+}
+
+Class River
+{
+}
+
+Stone value = New Stone();
+River bad = [River](value);
+```
+
+正确示例：
+
+```kinal
+Class Animal
+{
+}
+
+Class Dog By Animal
+{
+}
+
+Animal value = New Dog();
+Dog dog = [Dog](value);
+```
+
+原因：受检对象转换只允许发生在编译期能确认层级关系、并且运行时还能继续校验的类 / 接口之间。
+
+修复方式：只在有关联的类 / 接口之间做 cast；如果本质上是业务转换，就改成构造函数、工厂方法或普通 API。
 
 ---
 

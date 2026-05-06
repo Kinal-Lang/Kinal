@@ -2597,6 +2597,8 @@ static Type sema_expr_impl(Sema *s, Expr *e)
     {
         Type cast_type = e->v.cast.type;
         Type value_type = sema_expr(s, e->v.cast.expr);
+        validate_type_ref(s, &cast_type, e->line, e->col, 1);
+        e->v.cast.type = cast_type;
 
         // Validate that cast_type is a valid type
         if (cast_type.kind == TY_UNKNOWN)
@@ -2610,11 +2612,19 @@ static Type sema_expr_impl(Sema *s, Expr *e)
             return e->type;
         }
 
-        // Disallow casting to Object types (only primitives and pointers)
+        if (cast_type.kind == TY_CLASS && (value_type.kind == TY_CLASS || value_type.kind == TY_NULL))
+        {
+            if (!explicit_object_cast_allowed(s, cast_type, value_type))
+                sema_error(s, e->line, e->col, 1, "Invalid Cast", invalid_cast_detail(value_type, cast_type));
+            e->type = cast_type;
+            return e->type;
+        }
+
+        // Disallow casting to object/schema types outside checked object-reference casts.
         if (cast_type.kind == TY_CLASS || cast_type.kind == TY_STRUCT)
             sema_error(s, e->line, e->col, 1, "Invalid Cast", "Cannot cast to Object types; use Object conversions instead");
 
-        // Object source values are also disallowed for explicit casts.
+        // Object source values are also disallowed for non-object explicit casts.
         if (value_type.kind == TY_CLASS || value_type.kind == TY_STRUCT)
             sema_error(s, e->line, e->col, 1, "Invalid Cast", "Cannot cast Object values; use Object conversions instead");
 

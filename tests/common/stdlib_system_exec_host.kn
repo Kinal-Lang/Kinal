@@ -1,0 +1,30 @@
+Unit Tests.StdlibSystemExecHost;
+
+Get Console By IO.Console;
+Get IO.System;
+Get IO.Target;
+
+Static Function string SuccessCommand()
+{
+    If (IO.Target == IO.Target.Windows)
+    {
+        Return "cmd /c exit 0";
+    }
+    Return "sh -c \"exit 0\"";
+}
+
+Static Function string FailCommand()
+{
+    If (IO.Target == IO.Target.Windows)
+    {
+        Return "cmd /c exit 7";
+    }
+    Return "sh -c \"exit 7\"";
+}
+
+Static Function int Main()
+{
+    Console.PrintLine(IO.System.Exec(SuccessCommand()));
+    Console.PrintLine(IO.System.Exec(FailCommand()));
+    Return 0;
+}

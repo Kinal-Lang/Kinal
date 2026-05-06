@@ -153,3 +153,4 @@ Static Function void Log(string level, string msg)
 
 - [IO.Async.Sleep](async.md) — Non-blocking sleep
 - [IO.File](filesystem.md) — Persistent timestamp logging
+- [IO.Core](core.md) — Math helpers often used with timing code

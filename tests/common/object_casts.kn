@@ -1,0 +1,82 @@
+Unit Tests.ObjectCasts;
+
+Get Console By IO.Console;
+Get IO.Text;
+
+Interface IRunner
+{
+    Function string Run();
+}
+
+Interface ITalker
+{
+    Function string Talk();
+}
+
+Class Animal
+{
+    Public Virtual Function string Kind()
+    {
+        Return "animal";
+    }
+}
+
+Class Dog By Animal, IRunner, ITalker
+{
+    Public Override Function string Kind()
+    {
+        Return "dog";
+    }
+
+    Public Function string Run()
+    {
+        Return "run";
+    }
+
+    Public Function string Talk()
+    {
+        Return "talk";
+    }
+}
+
+Class Cat By Animal
+{
+    Public Override Function string Kind()
+    {
+        Return "cat";
+    }
+}
+
+Static Function int Main()
+{
+    Animal animal = New Dog();
+    Dog dog = [Dog](animal);
+    Console.PrintLine(dog.Kind());
+
+    IRunner runner = [IRunner](animal);
+    Console.PrintLine(runner.Run());
+
+    Animal from_runner = [Animal](runner);
+    Console.PrintLine(from_runner.Kind());
+
+    ITalker talker = [ITalker](runner);
+    Console.PrintLine(talker.Talk());
+
+    Dog none = [Dog](null);
+    Console.PrintLine(none == null);
+
+    Try
+    {
+        Animal wrong = New Cat();
+        Dog bad = [Dog](wrong);
+        Console.PrintLine(bad.Kind());
+    }
+    Catch (IO.Error e)
+    {
+        Console.PrintLine(e.Title);
+        Console.PrintLine(IO.Text.Contains(e.Message, "Animal"));
+        Console.PrintLine(IO.Text.Contains(e.Message, "Dog"));
+    }
+
+    Return 0;
+}

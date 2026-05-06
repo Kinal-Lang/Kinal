@@ -1,14 +1,12 @@
 # IO.Request
 
-`IO.Request` is the outbound HTTP client package for Kinal.
-
-It is designed as a small synchronous wrapper over the bundled CivetWeb client API, exposed through Kinal FFI.
+`IO.Request` is Kinal's outbound HTTP client package. It wraps the bundled CivetWeb client API through Kinal FFI and exposes a synchronous text-oriented request surface.
 
 ## Import
 
 ```kinal
 Get IO.Request;
-kinal
+```
 
 ## Quick Start
 
@@ -23,9 +21,37 @@ Static Function int Main()
     Console.PrintLine(response.BodyText);
     Return 0;
 }
-kinal
+```
+
+## Method Enum
+
+`IO.Request.Method` defines:
+
+- `GET`
+- `POST`
+- `PUT`
+- `PATCH`
+- `DELETE`
+- `HEAD`
+- `OPTIONS`
 
 ## Request Options
+
+`IO.Request.Options` is the main configuration object.
+
+Important fields and helpers:
+
+- `Url`
+- `Method`
+- `Body`
+- `ContentType`
+- `TimeoutMs`
+- `Headers`
+- `SetMethod(method)`
+- `SetBody(body, contentType = "text/plain; charset=utf-8")`
+- `SetTimeout(timeoutMs)`
+- `SetHeader(name, value)`
+- `RemoveHeader(name)`
 
 ```kinal
 IO.Request.Options options = New IO.Request.Options(
@@ -38,7 +64,7 @@ options.SetBody("{\"ok\":true}", "application/json");
 options.SetTimeout(3000);
 
 IO.Request.Response response = IO.Request.Send(options);
-kinal
+```
 
 ## Response
 
@@ -54,6 +80,17 @@ kinal
 - `IsSuccess()`
 - `EnsureSuccess()`
 
+```kinal
+If (response.IsSuccess())
+{
+    Console.PrintLine(response.ContentType);
+}
+Else
+{
+    response.EnsureSuccess();
+}
+```
+
 ## Convenience Functions
 
 - `IO.Request.Fetch(url, timeoutMs = 10000)`
@@ -66,5 +103,11 @@ kinal
 ## Notes
 
 - Current official bundled builds support `http://` only.
-- `https://` is rejected by design in the current runtime because the bundled CivetWeb assets are compiled without TLS.
-- The package is synchronous and text-oriented.
+- `https://` is rejected in the current runtime because the bundled CivetWeb assets are built without TLS support.
+- The package is synchronous.
+- Header names and values are validated before the request is sent.
+
+## See Also
+
+- [IO.Web](web.md) — Embedded HTTP server package
+- [IO.System](system.md) — Lower-level system and FFI helpers

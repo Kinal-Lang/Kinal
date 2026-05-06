@@ -70,6 +70,7 @@ static const KnDiagSeedEntry g_diag_registry[] = {
     { "E-SEM-00017", 0, "Invalid Call", "Static method requires class name" },
     { "E-TYP-00001", 0, "Invalid Cast", "Cannot cast Object values; use Object conversions instead" },
     { "E-TYP-00002", 0, "Invalid Cast", "Cannot cast to Object types; use Object conversions instead" },
+    { "E-TYP-00013", 0, "Invalid Cast", "Cannot cast value to target type" },
     { "E-SEM-00018", 0, "Invalid Catch", "Catch parameter must be string or IO.Error" },
     { "E-SEM-00019", 0, "Invalid Constructor", "Constructor cannot be static/virtual/override/abstract/sealed" },
     { "E-CTL-00001", 0, "Invalid Control Flow", "break/continue not in loop" },

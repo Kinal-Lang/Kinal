@@ -182,6 +182,12 @@
     "expected": "Title\nMessage\nMessage\nT\nM\n"
   },
   {
+    "name": "object_casts",
+    "file": "tests/common/object_casts.kn",
+    "expected": "dog\nrun\ndog\ntalk\ntrue\nInvalid Cast\ntrue\ntrue\n",
+    "auto_link": true
+  },
+  {
     "name": "time",
     "file": "tests/common/time.kn",
     "expected": "ok\n",
@@ -191,6 +197,18 @@
     "name": "time_nano",
     "file": "tests/common/time_nano.kn",
     "expected": "ok\n",
+    "auto_link": true
+  },
+  {
+    "name": "stdlib_time_more",
+    "file": "tests/common/stdlib_time_more.kn",
+    "expected": "true\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\n",
+    "auto_link": true
+  },
+  {
+    "name": "stdlib_time_file_more",
+    "file": "tests/common/stdlib_time_file_more.kn",
+    "expected": "true\ntrue\ntrue\ntrue\nalpha\nfallback\ntrue\nalphabeta\ntrue\nfalse\n",
     "auto_link": true
   },
   {
@@ -207,6 +225,12 @@
     "name": "stdlib_console",
     "file": "tests/common/stdlib_console.kn",
     "expected": "ABC\nD\n42!true\n"
+  },
+  {
+    "name": "stdlib_text_roundtrip",
+    "file": "tests/common/stdlib_text_roundtrip.kn",
+    "expected": "Hello, Kinal!\ntrue\ntrue\n7\n4\n2\nHELLO\nworld\na-bc\nKinal\n3\na|b|c\n2\nline2\n",
+    "auto_link": true
   },
   {
     "name": "stdlib_web_compile",
@@ -281,6 +305,11 @@
     "expected": "b\n0\n-1\nkinal\nnone\n"
   },
   {
+    "name": "stdlib_collections_roundtrip",
+    "file": "tests/common/stdlib_collections_roundtrip.kn",
+    "expected": "3\nblue\ntrue\ncyan\n3\nfalse\n2\n2\n7\n2\ntrue\nfalse\n1\ntrue\ntrue\n"
+  },
+  {
     "name": "std_more2",
     "file": "tests/common/std_more2.kn",
     "expected": "true\nfalse\n3\nfallback\n",
@@ -335,6 +364,12 @@
     "auto_link": true
   },
   {
+    "name": "stdlib_file_text_roundtrip",
+    "file": "tests/common/stdlib_file_text_roundtrip.kn",
+    "expected": "true\ntrue\ntrue\n3\nalpha,beta,gamma\ntrue\ntrue\ntrue\ntrue\nfallback\ntrue\ntrue\ntrue\n",
+    "auto_link": true
+  },
+  {
     "name": "stdlib_directory_more",
     "file": "tests/common/stdlib_directory_more.kn",
     "expected": "true\ntrue\ntrue\nfalse\ntrue\ntrue\nfalse\ntrue\ntrue\ntrue\ntrue\ntrue\n",
@@ -355,6 +390,12 @@
     "name": "system_gc",
     "file": "tests/common/system_gc.kn",
     "expected": "hi!\nfile\n"
+  },
+  {
+    "name": "stdlib_system_exec_host",
+    "file": "tests/common/stdlib_system_exec_host.kn",
+    "expected": "0\n7\n",
+    "auto_link": true
   },
   {
     "name": "system_exec",
@@ -762,6 +803,11 @@
     "name": "error_pointer_cast",
     "file": "tests/common/error_pointer_cast.kn",
     "expect_error": "[Sema] Unsafe Pointer"
+  },
+  {
+    "name": "error_object_cast_unrelated",
+    "file": "tests/common/error_object_cast_unrelated.kn",
+    "expect_error": "[Sema] Invalid Cast"
   },
   {
     "name": "error_char_ptr_concat_both",

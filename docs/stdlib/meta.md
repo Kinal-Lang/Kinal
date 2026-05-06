@@ -173,3 +173,4 @@ Static Function int Main()
 
 - [Meta Attributes](../language/meta.md) — Meta definition and application syntax
 - [IO.Collection](collections.md) — `dict` and `list` operations
+- [IO.Web](web.md) — Route metadata and web handlers

@@ -213,4 +213,5 @@ Static Function int Main()
 
 - [类型系统](../language/types.md) — `list`/`dict`/`set` 作为内置类型别名
 - [异常处理](../language/exceptions.md) — `Fetch` 越界和键不存在时抛出异常
+- [IO.Text](text.md) — `Split`、`Join` 等常见 `list` 生产/消费接口
 

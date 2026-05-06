@@ -436,6 +436,36 @@ static LLVMValueRef class_vtable_const_ptr(Codegen *g, ClassSymbol *cs)
     return LLVMConstInBoundsGEP2(vtbl_ty, cs->vtable_global, idxs, 2);
 }
 
+static LLVMValueRef gen_object_match_nonnull(Codegen *g, CGValue value, Type target)
+{
+    int candidate_count = 0;
+    for (int i = 0; i < g->classes.count; i++)
+    {
+        ClassSymbol *cand = &g->classes.items[i];
+        if (!class_symbol_matches_is_target(g, cand, target))
+            continue;
+        candidate_count++;
+    }
+    if (candidate_count == 0)
+        return const_bool(g, 0);
+
+    LLVMValueRef obj_i8 = cast_value(g, value, type_ptr(TY_BYTE));
+    ClassSymbol *src_sym = value.type.name ? classtable_find(&g->classes, value.type.name) : 0;
+    LLVMValueRef vtbl = src_sym ? load_vtable_ptr(g, value.value, src_sym) : load_vtable_ptr_any(g, obj_i8);
+    LLVMValueRef matched = const_bool(g, 0);
+    int built_count = 0;
+    for (int i = 0; i < g->classes.count; i++)
+    {
+        ClassSymbol *cand = &g->classes.items[i];
+        if (!class_symbol_matches_is_target(g, cand, target))
+            continue;
+        LLVMValueRef eq = LLVMBuildICmp(g->builder, LLVMIntEQ, vtbl, class_vtable_const_ptr(g, cand), "is.obj.vtbl");
+        matched = built_count == 0 ? eq : LLVMBuildOr(g->builder, matched, eq, "is.obj.or");
+        built_count++;
+    }
+    return matched;
+}
+
 static LLVMValueRef gen_is_any(Codegen *g, CGValue value, Type target)
 {
     LLVMValueRef anyv = cast_value(g, value, type_make(TY_ANY));
@@ -459,18 +489,6 @@ static LLVMValueRef gen_is_object(Codegen *g, CGValue value, Type target)
 {
     LLVMValueRef obj_i8 = cast_value(g, value, type_ptr(TY_BYTE));
     LLVMValueRef is_null = LLVMBuildICmp(g->builder, LLVMIntEQ, obj_i8, LLVMConstNull(g->i8ptr), "is.obj.null");
-    int candidate_count = 0;
-
-    for (int i = 0; i < g->classes.count; i++)
-    {
-        ClassSymbol *cand = &g->classes.items[i];
-        if (!class_symbol_matches_is_target(g, cand, target))
-            continue;
-        candidate_count++;
-    }
-
-    if (candidate_count == 0)
-        return const_bool(g, 0);
 
     LLVMBasicBlockRef entry_bb = LLVMGetInsertBlock(g->builder);
     LLVMValueRef fn = LLVMGetBasicBlockParent(entry_bb);
@@ -479,19 +497,7 @@ static LLVMValueRef gen_is_object(Codegen *g, CGValue value, Type target)
     LLVMBuildCondBr(g->builder, is_null, done_bb, nonnull_bb);
 
     LLVMPositionBuilderAtEnd(g->builder, nonnull_bb);
-    ClassSymbol *src_sym = value.type.name ? classtable_find(&g->classes, value.type.name) : 0;
-    LLVMValueRef vtbl = src_sym ? load_vtable_ptr(g, value.value, src_sym) : load_vtable_ptr_any(g, obj_i8);
-    LLVMValueRef matched = const_bool(g, 0);
-    int built_count = 0;
-    for (int i = 0; i < g->classes.count; i++)
-    {
-        ClassSymbol *cand = &g->classes.items[i];
-        if (!class_symbol_matches_is_target(g, cand, target))
-            continue;
-        LLVMValueRef eq = LLVMBuildICmp(g->builder, LLVMIntEQ, vtbl, class_vtable_const_ptr(g, cand), "is.obj.vtbl");
-        matched = built_count == 0 ? eq : LLVMBuildOr(g->builder, matched, eq, "is.obj.or");
-        built_count++;
-    }
+    LLVMValueRef matched = gen_object_match_nonnull(g, value, target);
     LLVMBuildBr(g->builder, done_bb);
 
     LLVMBasicBlockRef matched_bb = LLVMGetInsertBlock(g->builder);
@@ -837,6 +843,22 @@ static LLVMValueRef build_error_object(Codegen *g, LLVMValueRef title, LLVMValue
     return LLVMBuildBitCast(g->builder, obj, g->i8ptr, "err.i8");
 }
 
+static const char *cg_invalid_cast_detail(Type src, Type dst)
+{
+    const char *st = cg_type_name(src);
+    const char *dt = cg_type_name(dst);
+    char buf[192];
+    size_t off = 0;
+    kn_append(buf, sizeof(buf), &off, "Cannot cast ");
+    kn_append(buf, sizeof(buf), &off, st);
+    kn_append(buf, sizeof(buf), &off, " to ");
+    kn_append(buf, sizeof(buf), &off, dt);
+    char *out = (char *)kn_malloc(off + 1);
+    if (!out) return "Invalid cast";
+    kn_memcpy(out, buf, off + 1);
+    return out;
+}
+
 static LLVMValueRef run_async_task_any(Codegen *g, LLVMValueRef taskv, const char *tag_name)
 {
     LLVMValueRef fn = LLVMGetBasicBlockParent(LLVMGetInsertBlock(g->builder));
@@ -914,6 +936,81 @@ static void link_error_inner_from_last(Codegen *g, LLVMValueRef err_i8)
     LLVMBuildBr(g->builder, end_bb);
 
     LLVMPositionBuilderAtEnd(g->builder, end_bb);
+}
+
+static bool object_cast_is_statically_safe(Codegen *g, Type src, Type dst)
+{
+    if (!g || src.kind != TY_CLASS || dst.kind != TY_CLASS || !src.name || !dst.name)
+        return false;
+    if (type_equal(src, dst))
+        return true;
+    ClassSymbol *src_sym = classtable_find(&g->classes, src.name);
+    return src_sym ? class_symbol_matches_is_target(g, src_sym, dst) : false;
+}
+
+static void emit_runtime_error(Codegen *g, const char *title_text, const char *message_text)
+{
+    LLVMValueRef title = build_string_const(g, title_text ? title_text : "Error",
+                                            (int)kn_strlen(title_text ? title_text : "Error"));
+    LLVMValueRef message = build_string_const(g, message_text ? message_text : "",
+                                              (int)kn_strlen(message_text ? message_text : ""));
+    LLVMValueRef errp = build_error_object(g, title, message);
+    link_error_inner_from_last(g, errp);
+    if (g->fn_exc_set)
+        LLVMBuildCall2(g->builder, g->fn_exc_set_ty, g->fn_exc_set, &errp, 1, "");
+    trace_push_current_func(g);
+    update_error_trace_field(g, errp);
+    if (g->try_depth > 0)
+    {
+        int idx = g->try_depth - 1;
+        LLVMValueRef ev = errp;
+        if (g->fn_exc_get)
+            ev = LLVMBuildCall2(g->builder, g->fn_exc_get_ty, g->fn_exc_get, 0, 0, "exc.get");
+        LLVMBuildStore(g->builder, ev, g->try_stack[idx].exc_slot);
+        LLVMBuildBr(g->builder, g->try_stack[idx].catch_bb);
+    }
+    else
+    {
+        emit_return_default(g);
+    }
+}
+
+static LLVMValueRef gen_checked_object_cast(Codegen *g, CGValue value, Type dst)
+{
+    LLVMTypeRef dst_ty = llvm_type(g, dst);
+    if (value.type.kind == TY_NULL)
+        return LLVMConstNull(dst_ty);
+    if (object_cast_is_statically_safe(g, value.type, dst))
+        return cast_value(g, value, dst);
+
+    LLVMValueRef obj_i8 = cast_value(g, value, type_ptr(TY_BYTE));
+    LLVMValueRef is_null = LLVMBuildICmp(g->builder, LLVMIntEQ, obj_i8, LLVMConstNull(g->i8ptr), "cast.obj.null");
+    LLVMBasicBlockRef entry_bb = LLVMGetInsertBlock(g->builder);
+    LLVMValueRef fn = LLVMGetBasicBlockParent(entry_bb);
+    LLVMBasicBlockRef nonnull_bb = LLVMAppendBasicBlockInContext(g->ctx, fn, "cast.obj.nonnull");
+    LLVMBasicBlockRef success_bb = LLVMAppendBasicBlockInContext(g->ctx, fn, "cast.obj.ok");
+    LLVMBasicBlockRef fail_bb = LLVMAppendBasicBlockInContext(g->ctx, fn, "cast.obj.fail");
+    LLVMBasicBlockRef done_bb = LLVMAppendBasicBlockInContext(g->ctx, fn, "cast.obj.done");
+    LLVMBuildCondBr(g->builder, is_null, done_bb, nonnull_bb);
+
+    LLVMPositionBuilderAtEnd(g->builder, nonnull_bb);
+    LLVMValueRef matched = gen_object_match_nonnull(g, value, dst);
+    LLVMBuildCondBr(g->builder, matched, success_bb, fail_bb);
+
+    LLVMPositionBuilderAtEnd(g->builder, success_bb);
+    LLVMValueRef casted = cast_value(g, value, dst);
+    LLVMBuildBr(g->builder, done_bb);
+    LLVMBasicBlockRef success_end_bb = LLVMGetInsertBlock(g->builder);
+
+    LLVMPositionBuilderAtEnd(g->builder, fail_bb);
+    emit_runtime_error(g, "Invalid Cast", cg_invalid_cast_detail(value.type, dst));
+
+    LLVMPositionBuilderAtEnd(g->builder, done_bb);
+    LLVMValueRef result = LLVMBuildPhi(g->builder, dst_ty, "cast.obj");
+    LLVMValueRef incoming_vals[2] = { LLVMConstNull(dst_ty), casted };
+    LLVMBasicBlockRef incoming_bbs[2] = { entry_bb, success_end_bb };
+    LLVMAddIncoming(result, incoming_vals, incoming_bbs, 2);
+    return result;
 }
 
 static LLVMValueRef datetime_field_ptr(Codegen *g, LLVMValueRef obj, int field_index, const char *tag)
@@ -1144,6 +1241,11 @@ static CGValue gen_expr(Codegen *g, Expr *e)
         {
             LLVMValueRef invoke_ptr = LLVMBuildBitCast(g->builder, val.value, g->i8ptr, "fcast.inv");
             out.value = build_callable_object(g, "IO.Type.Object.Function", invoke_ptr, 0);
+            return out;
+        }
+        if (e->v.cast.type.kind == TY_CLASS && (val.type.kind == TY_CLASS || val.type.kind == TY_NULL))
+        {
+            out.value = gen_checked_object_cast(g, val, e->v.cast.type);
             return out;
         }
         out.value = cast_value(g, val, e->v.cast.type);

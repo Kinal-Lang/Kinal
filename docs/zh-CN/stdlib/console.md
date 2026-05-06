@@ -105,4 +105,5 @@ Static Function int Main()
 ## 相关
 
 - [IO.Text](text.md) — 字符串处理
+- [IO.Core](core.md) — `IO.Char` 与 `IO.Math`
 - [字符串特性](../language/strings.md)

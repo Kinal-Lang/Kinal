@@ -146,6 +146,24 @@ string s = IO.Type.string(42);   // "42"
 int n = IO.Type.int("100");      // 100
 ```
 
+类 / 接口层级内的引用转换也使用同一套语法：
+
+```kinal
+Animal a = New Dog();
+Dog d = [Dog](a);            // 受检向下转型
+IRunner r = [IRunner](a);    // 受检接口转型
+Animal b = [Animal](r);      // 受检转回基类
+Dog none = [Dog](null);      // null 仍然是 null
+```
+
+规则：
+
+- 向上转型仍然可以直接赋值，所以显式 cast 通常只在向下转型或接口之间转换时需要。
+- 受检对象转换只有在运行时对象真实匹配目标类型时才会成功。
+- 受检对象转换失败会抛出 `IO.Error`。
+- Hosted native 与 bootstrap VM/KNC 后端在这里保持同样的受检转换语义。
+- 如果你希望走分支而不是异常，优先用 `Is`。
+
 ## Is 类型检查运算符
 
 ```kinal

@@ -885,6 +885,15 @@ static Expr *parse_primary(Parser *p)
     Token *t = cur(p);
     Expr *expr = 0;
 
+    // Handle type cast first so object/class names like [Dog](x) are not
+    // misread as unknown string prefixes.
+    if (looks_like_cast(p))
+    {
+        expr = parse_cast_expr(p);
+        // Fall through to postfix loop so that (args) / .member are handled.
+        goto postfix;
+    }
+
     {
         int prefix_flags = 0;
         int prefix_count = 0;
@@ -904,14 +913,6 @@ static Expr *parse_primary(Parser *p)
                            tok_text(bad));
         }
         (void)string_tok;
-    }
-
-    // Handle type cast: [type](value)
-    if (looks_like_cast(p))
-    {
-        expr = parse_cast_expr(p);
-        // Fall through to postfix loop so that (args) / .member are handled.
-        goto postfix;
     }
 
     if (t->type == TOK_IF)

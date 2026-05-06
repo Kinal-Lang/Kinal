@@ -166,4 +166,5 @@ KinalVM 的异步调度器基于"超级循环"（superloop）模型。默认情�
 - [异步编程](../language/async.md) — Async / Await 语言特性详解
 - [安全级别](../language/safety.md) — Trusted / Safe 上下文
 - [IO.System](system.md) — `Exec` 等进程级操作
+- [IO.Time](time.md) — Sleep 与计时辅助接口
 

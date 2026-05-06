@@ -2785,6 +2785,153 @@ static KncValue emit_stringify_value(KncFuncState *st, KncValue value)
     return emit_builtin_call_regs(st, type_make(TY_STRING), map_builtin_id(KN_BUILTIN_IO_ANY_TOSTRING), 1, regs);
 }
 
+static bool knc_class_is_derived_from(KncProgram *program, const ClassDecl *c, const ClassDecl *base)
+{
+    const ClassDecl *cur = c;
+    int guard = 0;
+    if (!program || !c || !base)
+        return false;
+    while (cur && guard++ < 256)
+    {
+        if (cur == base)
+            return true;
+        if (!cur->base)
+            break;
+        cur = program_find_class(program, cur->base);
+    }
+    return false;
+}
+
+static bool knc_class_implements_interface(KncProgram *program, const ClassDecl *c, const char *iface)
+{
+    if (!program || !c || !iface)
+        return false;
+    for (int i = 0; i < c->interface_count; i++)
+        if (kn_strcmp(c->interfaces[i], iface) == 0)
+            return true;
+    if (c->base)
+    {
+        ClassDecl *base = program_find_class(program, c->base);
+        if (base && knc_class_implements_interface(program, base, iface))
+            return true;
+    }
+    return false;
+}
+
+static bool knc_object_cast_is_statically_safe(KncProgram *program, Type src, Type dst)
+{
+    ClassDecl *src_class;
+    ClassDecl *dst_class;
+    if (!program || src.kind != TY_CLASS || dst.kind != TY_CLASS || !src.name || !dst.name)
+        return false;
+    if (knc_type_equal(src, dst))
+        return true;
+    src_class = program_find_class(program, src.name);
+    if (!src_class)
+        return false;
+    dst_class = program_find_class(program, dst.name);
+    if (dst_class)
+        return knc_class_is_derived_from(program, src_class, dst_class);
+    if (program_find_interface(program, dst.name))
+        return knc_class_implements_interface(program, src_class, dst.name);
+    return false;
+}
+
+static const char *knc_invalid_cast_detail(Type src, Type dst)
+{
+    char buf[192];
+    size_t off = 0;
+    kn_memset(buf, 0, sizeof(buf));
+    kn_append(buf, sizeof(buf), &off, "Cannot cast ");
+    knc_append_type_text(buf, sizeof(buf), &off, src);
+    kn_append(buf, sizeof(buf), &off, " to ");
+    knc_append_type_text(buf, sizeof(buf), &off, dst);
+    return knc_dup_text(buf);
+}
+
+static int emit_invalid_cast_throw(KncFuncState *st, Expr *site, Type src, Type dst)
+{
+    ClassDecl *error_class;
+    Type field_type;
+    int error_type_index;
+    int title_field_index;
+    int message_field_index;
+    int error_reg;
+    KncValue title_value;
+    KncValue message_value;
+
+    if (!st || !st->program)
+        return -1;
+
+    error_type_index = program_find_type(st->program, "IO.Error");
+    error_class = program_find_class(st->program, "IO.Error");
+    if (error_type_index < 0 || !error_class)
+    {
+        knc_diag_expr(st, site, "Bootstrap KNC emitter could not find IO.Error metadata for checked object casts");
+        return -1;
+    }
+
+    field_type = type_make(TY_UNKNOWN);
+    title_field_index = class_find_field_index(st->program, error_class, "Title", &field_type);
+    message_field_index = class_find_field_index(st->program, error_class, "Message", &field_type);
+    if (title_field_index < 0 || message_field_index < 0)
+    {
+        knc_diag_expr(st, site, "Bootstrap KNC emitter could not find IO.Error fields for checked object casts");
+        return -1;
+    }
+
+    error_reg = alloc_reg(st);
+    emit_u8(st->code, KNC_OP_NEW_OBJECT);
+    emit_u8(st->code, error_reg);
+    emit_u16(st->code, error_type_index);
+
+    title_value = emit_string_const(st, "Invalid Cast");
+    message_value = emit_string_const(st, knc_invalid_cast_detail(src, dst));
+
+    emit_u8(st->code, KNC_OP_STORE_FIELD);
+    emit_u8(st->code, error_reg);
+    emit_u8(st->code, title_value.reg);
+    emit_u16(st->code, title_field_index);
+
+    emit_u8(st->code, KNC_OP_STORE_FIELD);
+    emit_u8(st->code, error_reg);
+    emit_u8(st->code, message_value.reg);
+    emit_u16(st->code, message_field_index);
+
+    emit_u8(st->code, KNC_OP_THROW);
+    emit_u8(st->code, error_reg);
+    return 0;
+}
+
+static KncValue emit_checked_object_cast(KncFuncState *st, Expr *site, KncValue value, Type dst)
+{
+    KncValue out = value;
+    KncValue matched;
+    int success_patch;
+
+    out.type = dst;
+    if (value.type.kind == TY_NULL)
+        return out;
+    if (knc_object_cast_is_statically_safe(st->program, value.type, dst))
+        return out;
+
+    matched = compile_is_check_from_value(st, site, value, dst);
+    if (kn_diag_error_count() > 0)
+    {
+        out.reg = -1;
+        return out;
+    }
+
+    success_patch = emit_branch_placeholder(st->code, KNC_OP_JUMP_IF_TRUE, matched.reg);
+    if (emit_invalid_cast_throw(st, site, value.type, dst) != 0)
+    {
+        out.reg = -1;
+        return out;
+    }
+    patch_u16(st->code, success_patch, current_ip(st->code));
+    return out;
+}
+
 static KncValue compile_builtin_invoke(KncFuncState *st,
                                        Type result_type,
                                        int builtin_id,
@@ -4422,6 +4569,8 @@ static KncValue compile_expr(KncFuncState *st, Expr *e)
             out.type = e->type;
             return out;
         }
+        if (e->type.kind == TY_CLASS && (value.type.kind == TY_CLASS || value.type.kind == TY_NULL))
+            return emit_checked_object_cast(st, e, value, e->type);
 
         out.reg = alloc_reg(st);
         out.type = e->type;

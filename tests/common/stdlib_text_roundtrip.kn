@@ -1,0 +1,28 @@
+Unit Tests.StdlibTextRoundtrip;
+
+Get Console By IO.Console;
+Get IO.Text;
+
+Static Function int Main()
+{
+    string raw= "  Hello, Kinal!  ";
+    string trimmed= IO.Text.Trim(raw);
+    list parts= IO.Text.Split("a,b,c", ",");
+    list lines= IO.Text.Lines("line1\nline2");
+
+    Console.PrintLine(trimmed);
+    Console.PrintLine(IO.Text.StartsWith(trimmed, "Hello"));
+    Console.PrintLine(IO.Text.EndsWith(trimmed, "!"));
+    Console.PrintLine(IO.Text.IndexOf(trimmed, "Kinal"));
+    Console.PrintLine(IO.Text.LastIndexOf("abcabc", "bc"));
+    Console.PrintLine(IO.Text.Count("banana", "an"));
+    Console.PrintLine(IO.Text.ToUpper("hello"));
+    Console.PrintLine(IO.Text.ToLower("WORLD"));
+    Console.PrintLine(IO.Text.Replace("aXbc", "X", "-"));
+    Console.PrintLine(IO.Text.Slice(trimmed, 7, 5));
+    Console.PrintLine(parts.Count());
+    Console.PrintLine(IO.Text.Join(parts, "|"));
+    Console.PrintLine(lines.Count());
+    Console.PrintLine([string](lines.Fetch(1)));
+    Return 0;
+}

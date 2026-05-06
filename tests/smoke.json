@@ -37,6 +37,29 @@
     "auto_link": true
   },
   {
+    "name": "stdlib_text_roundtrip",
+    "file": "tests/common/stdlib_text_roundtrip.kn",
+    "expected": "Hello, Kinal!\ntrue\ntrue\n7\n4\n2\nHELLO\nworld\na-bc\nKinal\n3\na|b|c\n2\nline2\n",
+    "auto_link": true
+  },
+  {
+    "name": "stdlib_collections_roundtrip",
+    "file": "tests/common/stdlib_collections_roundtrip.kn",
+    "expected": "3\nblue\ntrue\ncyan\n3\nfalse\n2\n2\n7\n2\ntrue\nfalse\n1\ntrue\ntrue\n"
+  },
+  {
+    "name": "stdlib_file_text_roundtrip",
+    "file": "tests/common/stdlib_file_text_roundtrip.kn",
+    "expected": "true\ntrue\ntrue\n3\nalpha,beta,gamma\ntrue\ntrue\ntrue\ntrue\nfallback\ntrue\ntrue\ntrue\n",
+    "auto_link": true
+  },
+  {
+    "name": "object_casts",
+    "file": "tests/common/object_casts.kn",
+    "expected": "dog\nrun\ndog\ntalk\ntrue\nInvalid Cast\ntrue\ntrue\n",
+    "auto_link": true
+  },
+  {
     "name": "stdlib_request_compile",
     "file": "tests/common/stdlib_request_compile.kn",
     "compile_only": true,
@@ -55,6 +78,11 @@
     "name": "error_bare_function_expr",
     "file": "tests/common/error_bare_function_expr.kn",
     "expect_error": "[Parser] Unexpected Token"
+  },
+  {
+    "name": "error_object_cast_unrelated",
+    "file": "tests/common/error_object_cast_unrelated.kn",
+    "expect_error": "[Sema] Invalid Cast"
   },
   {
     "name": "stdlib_ui",

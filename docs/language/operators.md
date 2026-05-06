@@ -146,6 +146,24 @@ string s = IO.Type.string(42);   // "42"
 int n = IO.Type.int("100");      // 100
 ```
 
+Reference casts inside a class/interface hierarchy use the same syntax:
+
+```kinal
+Animal a = New Dog();
+Dog d = [Dog](a);            // checked downcast
+IRunner r = [IRunner](a);    // checked interface cast
+Animal b = [Animal](r);      // checked cast back to a base class
+Dog none = [Dog](null);      // null stays null
+```
+
+Rules:
+
+- Upcasts still work through normal assignment, so an explicit cast is usually only needed for downcasts or interface cross-casts.
+- Checked object casts succeed only when the runtime object actually matches the target type.
+- A failed checked object cast throws `IO.Error`.
+- Hosted native and bootstrap VM/KNC backends use the same checked-cast behavior.
+- If you want branch-based control flow instead of an exception, prefer `Is`.
+
 ## The `Is` Type Check Operator
 
 ```kinal

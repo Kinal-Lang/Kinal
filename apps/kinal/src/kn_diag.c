@@ -187,6 +187,18 @@ static const char *canonical_detail_for_code(const char *title, const char *deta
     // Keep one stable code for all type-mismatch diagnostics.
     if (kn_strcmp(safe_title, "Type Mismatch") == 0)
         return "Type mismatch";
+    if (kn_strcmp(safe_title, "Invalid Cast") == 0)
+    {
+        if (kn_strncmp(safe_detail, "Cannot cast ", 12) == 0)
+        {
+            for (const char *p = safe_detail + 12; *p; p++)
+            {
+                if (p[0] == ' ' && p[1] == 't' && p[2] == 'o' && p[3] == ' ')
+                    return "Cannot cast value to target type";
+            }
+        }
+        return safe_detail;
+    }
     if (kn_strcmp(safe_title, "Unknown Parameter") == 0)
         return "Unknown named argument";
     if (kn_strcmp(safe_title, "Duplicate Named Argument") == 0)
@@ -1834,5 +1846,4 @@ void kn_diag_warn(const KnSource *src, KnDiagStage stage, int warn_level, int li
         return;
     g_warning_count++;
 }
-
 

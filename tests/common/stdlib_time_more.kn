@@ -1,0 +1,30 @@
+Unit Tests.StdlibTimeMore;
+
+Get Console By IO.Console;
+Get IO.Time;
+Get IO.Text;
+
+Static Function int Main()
+{
+    int tick_before = IO.Time.GetTick();
+    IO.Time.Sleep(2);
+    int tick_after = IO.Time.GetTick();
+
+    int nano_before = IO.Time.GetNanoTick();
+    int nano_after = IO.Time.GetNanoTick();
+
+    IO.Time.DateTime now = IO.Time.Now();
+    string date_text = IO.Time.Format(now, "yyyy-MM-dd");
+    string time_text = IO.Time.Format(now, "HH:mm:ss");
+    string millis_text = IO.Time.Format(now, "fff");
+
+    Console.PrintLine(tick_after >= tick_before);
+    Console.PrintLine(nano_after >= nano_before);
+    Console.PrintLine(now.Ticks >= 0);
+    Console.PrintLine(IO.Text.Length(date_text) == 10);
+    Console.PrintLine(IO.Text.Contains(date_text, "-"));
+    Console.PrintLine(IO.Text.Length(time_text) == 8);
+    Console.PrintLine(IO.Text.Contains(time_text, ":"));
+    Console.PrintLine(IO.Text.Length(millis_text) == 3);
+    Return 0;
+}

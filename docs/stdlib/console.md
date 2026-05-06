@@ -105,4 +105,5 @@ Static Function int Main()
 ## See Also
 
 - [IO.Text](text.md) — String processing
+- [IO.Core](core.md) — `IO.Char` and `IO.Math`
 - [String Features](../language/strings.md)

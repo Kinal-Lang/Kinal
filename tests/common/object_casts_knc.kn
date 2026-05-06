@@ -1,0 +1,85 @@
+Unit Tests.ObjectCastsKnc;
+
+Get Console By IO.Console;
+Get IO.Text;
+
+Interface IRunner
+{
+    Function int Step();
+}
+
+Interface ITalker
+{
+    Function int Voice();
+}
+
+Class Animal
+{
+    Public Virtual Function string Kind()
+    {
+        Return "animal";
+    }
+}
+
+Class Dog By Animal, IRunner, ITalker
+{
+    Public Override Function string Kind()
+    {
+        Return "dog";
+    }
+
+    Public Function int Step()
+    {
+        Return 1;
+    }
+
+    Public Function int Voice()
+    {
+        Return 2;
+    }
+}
+
+Class Cat By Animal
+{
+    Public Override Function string Kind()
+    {
+        Return "cat";
+    }
+}
+
+Static Function int Main()
+{
+    Animal animal = New Dog();
+    Dog dog = [Dog](animal);
+    Console.PrintLine(dog.Kind());
+
+    IRunner runner = [IRunner](animal);
+    Console.PrintLine(runner Is IRunner);
+
+    ITalker talker = [ITalker](runner);
+    Console.PrintLine(talker Is ITalker);
+
+    Animal from_talker = [Animal](talker);
+    Console.PrintLine(from_talker.Kind());
+
+    Dog roundtrip = [Dog](talker);
+    Console.PrintLine(roundtrip.Kind());
+
+    Dog none = [Dog](null);
+    Console.PrintLine(none == null);
+
+    Try
+    {
+        Animal wrong = New Cat();
+        Dog bad = [Dog](wrong);
+        Console.PrintLine(bad.Kind());
+    }
+    Catch (IO.Error e)
+    {
+        Console.PrintLine(e.Title);
+        Console.PrintLine(IO.Text.Contains(e.Message, "Animal"));
+        Console.PrintLine(IO.Text.Contains(e.Message, "Dog"));
+    }
+
+    Return 0;
+}

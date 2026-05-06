@@ -87,6 +87,16 @@ If (obj Is IShape shape)
 }
 ```
 
+如果你希望直接做一次受检转换，可以使用显式 cast：
+
+```kinal
+Animal a = New Dog();
+IRunner runner = [IRunner](a);
+Dog dog = [Dog](runner);
+```
+
+这类转换会在运行时检查对象是否真的匹配目标接口或类；不匹配时会抛出 `IO.Error`。
+
 ## 方法访问修饰符
 
 接口方法默认是 `Public`。在类中实现接口方法时，仍需显式写访问修饰符：

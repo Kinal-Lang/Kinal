@@ -87,6 +87,16 @@ If (obj Is IShape shape)
 }
 ```
 
+Use an explicit cast when you want the checked conversion itself:
+
+```kinal
+Animal a = New Dog();
+IRunner runner = [IRunner](a);
+Dog dog = [Dog](runner);
+```
+
+These casts are checked at runtime. If the object does not match the target interface or class, the cast throws `IO.Error`.
+
 ## Method Access Modifiers
 
 Interface methods are `Public` by default. When implementing interface methods in a class, the access modifier must still be written explicitly:

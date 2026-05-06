@@ -1,0 +1,44 @@
+Unit Tests.StdlibFileTextRoundtrip;
+
+Get Console By IO.Console;
+Get IO.Directory;
+Get IO.File;
+Get IO.Path;
+Get IO.Text;
+
+Static Function int Main()
+{
+    string root= IO.Path.Combine("out", "test");
+    string dir= IO.Path.Combine(root, "stdlib_file_text_roundtrip");
+    string file= IO.Path.Combine(dir, "data.txt");
+    string copy= IO.Path.Combine(dir, "copy.txt");
+    string missing= IO.Path.Combine(dir, "missing.txt");
+
+    IO.File.DeleteIfExists(file);
+    IO.File.DeleteIfExists(copy);
+    IO.Directory.DeleteIfExists(dir);
+
+    Console.PrintLine(IO.Directory.Ensure(dir));
+
+    list lines= list.Create();
+    lines.Add("alpha");
+    lines.Add("beta");
+    lines.Add("gamma");
+
+    IO.File.WriteLines(file, lines);
+    Console.PrintLine(IO.File.Exists(file));
+    Console.PrintLine(IO.File.Size(file) > 0);
+
+    list from_file= IO.File.ReadLines(file);
+    Console.PrintLine(from_file.Count());
+    Console.PrintLine(IO.Text.Join(from_file, ","));
+    Console.PrintLine(IO.Text.Contains(IO.File.ReadAllText(file), "beta"));
+    Console.PrintLine(IO.Path.FileName(IO.Path.Directory(file))== "stdlib_file_text_roundtrip");
+    Console.PrintLine(IO.File.Copy(file, copy));
+    Console.PrintLine(IO.File.Exists(copy));
+    Console.PrintLine(IO.File.ReadOrDefault(missing, "fallback"));
+    Console.PrintLine(IO.File.DeleteIfExists(file));
+    Console.PrintLine(IO.File.DeleteIfExists(copy));
+    Console.PrintLine(IO.Directory.Delete(dir));
+    Return 0;
+}

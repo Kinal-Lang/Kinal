@@ -22,6 +22,7 @@ The examples in this document are minimal reproductions of the most common way e
 | `E-TYP-00010` | Type Inference Failed | Var requires initializer |
 | `E-TYP-00011` | Type Mismatch | Type mismatch |
 | `E-TYP-00012` | Unsupported Type | Type not supported yet |
+| `E-TYP-00013` | Invalid Cast | Cannot cast value to target type |
 
 ---
 
@@ -29,7 +30,7 @@ The examples in this document are minimal reproductions of the most common way e
 
 - Severity: Error
 - Default Detail: Cannot cast Object values; use Object conversions instead
-- Description: An object hierarchy cannot be directly converted to a base type by ordinary numeric cast rules.
+- Description: An object value is being cast to a non-object target, which is still not a legal explicit cast.
 
 Incorrect Example:
 
@@ -46,9 +47,9 @@ IO.Type.Object.Class obj = fn;
 string text = obj.ToString();
 ```
 
-Reason: `IO.Type.Object.*` has independent object semantics and does not apply to ordinary scalar conversions.
+Reason: Object references use checked object-cast rules, not scalar conversion rules.
 
-Fix: Use object API or object layer allowed assignment/up-transition for objects.
+Fix: Keep the value as an object reference, or cast it to another class/interface type inside the same hierarchy.
 
 ---
 
@@ -56,7 +57,7 @@ Fix: Use object API or object layer allowed assignment/up-transition for objects
 
 - Severity: Error
 - Default Detail: Cannot cast to Object types; use Object conversions instead
-- Description: Arbitrary values cannot be changed directly into object schema types with ordinary casts.
+- Description: A non-object value is being cast directly into an object/class target, which is not a supported explicit cast.
 
 Incorrect Example:
 
@@ -71,9 +72,51 @@ IO.Type.Object.Function fn = IO.Console.PrintLine;
 IO.Type.Object.Class obj = fn;
 ```
 
-Reason: The object layer type is not the landing point of a normal cast, but is part of the runtime object system.
+Reason: Object targets participate in checked reference conversions, not arbitrary value boxing by cast syntax.
 
 Fix: Assign the object type through a legal object value, rather than casting the base value directly.
+
+---
+
+## E-TYP-00013 — Invalid Cast
+
+- Severity: Error
+- Default Detail: Cannot cast value to target type
+- Description: The explicit cast target is an object type, but the source and target are not in a castable class/interface relationship.
+
+Incorrect Example:
+
+```kinal
+Class Stone
+{
+}
+
+Class River
+{
+}
+
+Stone value = New Stone();
+River bad = [River](value);
+```
+
+Correct Example:
+
+```kinal
+Class Animal
+{
+}
+
+Class Dog By Animal
+{
+}
+
+Animal value = New Dog();
+Dog dog = [Dog](value);
+```
+
+Reason: Checked object casts are limited to class/interface hierarchies that can be verified at compile time and checked again at runtime.
+
+Fix: Cast only between related classes/interfaces, or redesign the conversion as a constructor/factory/API call.
 
 ---
 

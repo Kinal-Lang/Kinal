@@ -166,3 +166,4 @@ Compiler options:
 - [Async Programming](../language/async.md) — Async / Await language features in detail
 - [Safety Levels](../language/safety.md) — Trusted / Safe contexts
 - [IO.System](system.md) — Process-level operations such as `Exec`
+- [IO.Time](time.md) — Sleep and timing helpers

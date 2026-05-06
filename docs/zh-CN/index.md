@@ -48,6 +48,11 @@
 | [IO.Time](stdlib/time.md) | 时间与计时 |
 | [IO.System](stdlib/system.md) | 系统调用、动态库 |
 | [IO.Meta](stdlib/meta.md) | 运行时元数据查询 |
+| [IO.Core](stdlib/core.md) | `IO.Char` 与 `IO.Math` |
+| [IO.Request](stdlib/request.md) | 对外 HTTP 客户端 |
+| [IO.UI](stdlib/ui.md) | 原生桌面 UI 包 |
+| [IO.Web](stdlib/web.md) | 内嵌 HTTP 服务包 |
+| [IO.Cat](stdlib/cat.md) | 示例包 |
 
 ### 🔧 CLI 工具链
 | 文档 | 说明 |

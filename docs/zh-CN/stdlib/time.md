@@ -153,3 +153,4 @@ Static Function void Log(string level, string msg)
 
 - [IO.Async.Sleep](async.md) — 非阻塞休眠
 - [IO.File](filesystem.md) — 持久化时间戳日志
+- [IO.Core](core.md) — 计时代码里常见的数学辅助函数

@@ -213,3 +213,4 @@ Static Function int Main()
 
 - [Type System](../language/types.md) — `list`/`dict`/`set` as built-in type aliases
 - [Exception Handling](../language/exceptions.md) — Exceptions thrown when `Fetch` goes out-of-bounds or key does not exist
+- [IO.Text](text.md) — `Split`, `Join`, and other helpers that frequently produce or consume `list`

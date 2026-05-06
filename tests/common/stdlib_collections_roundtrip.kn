@@ -1,0 +1,48 @@
+Unit Tests.StdlibCollectionsRoundtrip;
+
+Get Console By IO.Console;
+
+Static Function int Main()
+{
+    list items= list.Create();
+    items.Add("red");
+    items.Add("green");
+    items.Insert(1, "blue");
+    Console.PrintLine(items.Count());
+    Console.PrintLine([string](items.Fetch(1)));
+
+    list.Set(items, 1, "cyan");
+    Console.PrintLine(list.Contains(items, "cyan"));
+    list.RemoveAt(items, 0);
+    Console.PrintLine([string](items.Fetch(0)));
+
+    dict meta= dict.Create();
+    dict.Set(meta, "name", "kinal");
+    dict.Set(meta, "version", 7);
+    dict.Set(meta, "stable", true);
+    Console.PrintLine(dict.Count(meta));
+    dict.Remove(meta, "stable");
+    Console.PrintLine(dict.Contains(meta, "stable"));
+    list keys= dict.Keys(meta);
+    list values= dict.Values(meta);
+    Console.PrintLine(keys.Count());
+    Console.PrintLine(values.Count());
+    Console.PrintLine([int](dict.Fetch(meta, "version")));
+
+    set tags= set.Create();
+    set.Add(tags, "core");
+    set.Add(tags, "tests");
+    set.Add(tags, "core");
+    Console.PrintLine(set.Count(tags));
+    Console.PrintLine(set.Contains(tags, "core"));
+    set.Remove(tags, "core");
+    Console.PrintLine(set.Contains(tags, "core"));
+    list tag_values= set.Values(tags);
+    Console.PrintLine(tag_values.Count());
+
+    list.Clear(items);
+    set.Clear(tags);
+    Console.PrintLine(list.IsEmpty(items));
+    Console.PrintLine(set.IsEmpty(tags));
+    Return 0;
+}

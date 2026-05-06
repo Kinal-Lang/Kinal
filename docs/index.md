@@ -48,6 +48,11 @@
 | [IO.Time](stdlib/time.md) | Time and timing |
 | [IO.System](stdlib/system.md) | System calls and dynamic libraries |
 | [IO.Meta](stdlib/meta.md) | Runtime metadata queries |
+| [IO.Core](stdlib/core.md) | `IO.Char` and `IO.Math` |
+| [IO.Request](stdlib/request.md) | Outbound HTTP client |
+| [IO.UI](stdlib/ui.md) | Native desktop UI package |
+| [IO.Web](stdlib/web.md) | Embedded HTTP server package |
+| [IO.Cat](stdlib/cat.md) | Sample package |
 
 ### 🔧 CLI Toolchain
 | Document | Description |

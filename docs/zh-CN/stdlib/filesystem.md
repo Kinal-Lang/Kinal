@@ -182,5 +182,6 @@ Try
 
 - [IO.Path](path.md) — 路径拼接与操作
 - [IO.Text](text.md) — 文本内容处理
+- [IO.System](system.md) — 文件存在检查与进程级辅助接口
 - [异常处理](../language/exceptions.md) — Try/Catch
 

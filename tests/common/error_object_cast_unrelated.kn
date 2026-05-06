@@ -1,0 +1,16 @@
+Unit Tests.ErrorObjectCastUnrelated;
+
+Class Stone
+{
+}
+
+Class River
+{
+}
+
+Static Function int Main()
+{
+    Stone value = New Stone();
+    River bad = [River](value);
+    Return 0;
+}

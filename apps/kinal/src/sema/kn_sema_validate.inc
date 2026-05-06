@@ -3053,6 +3053,61 @@ static bool class_implements_interface(Sema *s, ClassDecl *c, const char *iface)
     return false;
 }
 
+static const char *invalid_cast_detail(Type src, Type dst)
+{
+    const char *st = type_name(src);
+    const char *dt = type_name(dst);
+    char buf[192];
+    size_t off = 0;
+    kn_append(buf, sizeof(buf), &off, "Cannot cast ");
+    kn_append(buf, sizeof(buf), &off, st);
+    kn_append(buf, sizeof(buf), &off, " to ");
+    kn_append(buf, sizeof(buf), &off, dt);
+    char *out = (char *)kn_malloc(off + 1);
+    if (!out) return "Invalid cast";
+    kn_memcpy(out, buf, off + 1);
+    return out;
+}
+
+static bool explicit_object_cast_allowed(Sema *s, Type dst, Type src)
+{
+    if (!s || dst.kind != TY_CLASS)
+        return false;
+    if (src.kind == TY_NULL)
+        return true;
+    if (src.kind != TY_CLASS || !dst.name || !src.name)
+        return false;
+    if (type_equal(dst, src))
+        return true;
+
+    ClassDecl *dst_c = find_class(s, dst.name);
+    ClassDecl *src_c = find_class(s, src.name);
+    InterfaceDecl *dst_i = find_interface(s, dst.name);
+    InterfaceDecl *src_i = find_interface(s, src.name);
+
+    if (dst_c && src_c)
+        return class_is_derived_from(s, src_c, dst_c) || class_is_derived_from(s, dst_c, src_c);
+
+    if (dst_i && src_i)
+        return true;
+
+    if (dst_i && src_c)
+    {
+        if (class_implements_interface(s, src_c, dst.name))
+            return true;
+        return !src_c->is_sealed;
+    }
+
+    if (dst_c && src_i)
+    {
+        if (class_implements_interface(s, dst_c, src.name))
+            return true;
+        return !dst_c->is_sealed;
+    }
+
+    return false;
+}
+
 static bool any_is_supported_target(Type t)
 {
     if (t.kind == TY_ANY || t.kind == TY_BOOL || t.kind == TY_CHAR ||
