@@ -9,9 +9,11 @@ Unit IO.__Web;
 [LinkFileTarget("linux64", "../../../native/linux-x64/kn_web_civet.o")]
 [LinkFileTarget("linux64", "../../../native/linux-x64/CivetWeb.o")]
 [LinkLibTarget("linux64", "pthread")]
+[LinkLibTarget("linux64", "dl")]
 [LinkFileTarget("linux-arm64", "../../../native/linux-arm64/kn_web_civet.o")]
 [LinkFileTarget("linux-arm64", "../../../native/linux-arm64/CivetWeb.o")]
 [LinkLibTarget("linux-arm64", "pthread")]
+[LinkLibTarget("linux-arm64", "dl")]
 [LinkName("__kn_web_server_create")]
 Extern Function byte* ServerCreate(string host, int port) By C;
 
@@ -24,9 +26,11 @@ Extern Function byte* ServerCreate(string host, int port) By C;
 [LinkFileTarget("linux64", "../../../native/linux-x64/kn_web_civet.o")]
 [LinkFileTarget("linux64", "../../../native/linux-x64/CivetWeb.o")]
 [LinkLibTarget("linux64", "pthread")]
+[LinkLibTarget("linux64", "dl")]
 [LinkFileTarget("linux-arm64", "../../../native/linux-arm64/kn_web_civet.o")]
 [LinkFileTarget("linux-arm64", "../../../native/linux-arm64/CivetWeb.o")]
 [LinkLibTarget("linux-arm64", "pthread")]
+[LinkLibTarget("linux-arm64", "dl")]
 [LinkName("__kn_web_server_last_error")]
 Extern Function string ServerLastError(byte* server) By C;
 
@@ -39,9 +43,11 @@ Extern Function string ServerLastError(byte* server) By C;
 [LinkFileTarget("linux64", "../../../native/linux-x64/kn_web_civet.o")]
 [LinkFileTarget("linux64", "../../../native/linux-x64/CivetWeb.o")]
 [LinkLibTarget("linux64", "pthread")]
+[LinkLibTarget("linux64", "dl")]
 [LinkFileTarget("linux-arm64", "../../../native/linux-arm64/kn_web_civet.o")]
 [LinkFileTarget("linux-arm64", "../../../native/linux-arm64/CivetWeb.o")]
 [LinkLibTarget("linux-arm64", "pthread")]
+[LinkLibTarget("linux-arm64", "dl")]
 [LinkName("__kn_web_server_set_dispatcher")]
 Extern Function int ServerSetDispatcher(byte* server, byte* dispatcher) By C;
 
@@ -54,9 +60,11 @@ Extern Function int ServerSetDispatcher(byte* server, byte* dispatcher) By C;
 [LinkFileTarget("linux64", "../../../native/linux-x64/kn_web_civet.o")]
 [LinkFileTarget("linux64", "../../../native/linux-x64/CivetWeb.o")]
 [LinkLibTarget("linux64", "pthread")]
+[LinkLibTarget("linux64", "dl")]
 [LinkFileTarget("linux-arm64", "../../../native/linux-arm64/kn_web_civet.o")]
 [LinkFileTarget("linux-arm64", "../../../native/linux-arm64/CivetWeb.o")]
 [LinkLibTarget("linux-arm64", "pthread")]
+[LinkLibTarget("linux-arm64", "dl")]
 [LinkName("__kn_web_server_mount")]
 Extern Function int ServerMount(byte* server, string prefix, string directory, string defaultFile) By C;
 
@@ -69,9 +77,11 @@ Extern Function int ServerMount(byte* server, string prefix, string directory, s
 [LinkFileTarget("linux64", "../../../native/linux-x64/kn_web_civet.o")]
 [LinkFileTarget("linux64", "../../../native/linux-x64/CivetWeb.o")]
 [LinkLibTarget("linux64", "pthread")]
+[LinkLibTarget("linux64", "dl")]
 [LinkFileTarget("linux-arm64", "../../../native/linux-arm64/kn_web_civet.o")]
 [LinkFileTarget("linux-arm64", "../../../native/linux-arm64/CivetWeb.o")]
 [LinkLibTarget("linux-arm64", "pthread")]
+[LinkLibTarget("linux-arm64", "dl")]
 [LinkName("__kn_web_server_start")]
 Extern Function int ServerStart(byte* server) By C;
 
@@ -84,9 +94,11 @@ Extern Function int ServerStart(byte* server) By C;
 [LinkFileTarget("linux64", "../../../native/linux-x64/kn_web_civet.o")]
 [LinkFileTarget("linux64", "../../../native/linux-x64/CivetWeb.o")]
 [LinkLibTarget("linux64", "pthread")]
+[LinkLibTarget("linux64", "dl")]
 [LinkFileTarget("linux-arm64", "../../../native/linux-arm64/kn_web_civet.o")]
 [LinkFileTarget("linux-arm64", "../../../native/linux-arm64/CivetWeb.o")]
 [LinkLibTarget("linux-arm64", "pthread")]
+[LinkLibTarget("linux-arm64", "dl")]
 [LinkName("__kn_web_server_wait")]
 Extern Function void ServerWait(byte* server) By C;
 
@@ -99,9 +111,11 @@ Extern Function void ServerWait(byte* server) By C;
 [LinkFileTarget("linux64", "../../../native/linux-x64/kn_web_civet.o")]
 [LinkFileTarget("linux64", "../../../native/linux-x64/CivetWeb.o")]
 [LinkLibTarget("linux64", "pthread")]
+[LinkLibTarget("linux64", "dl")]
 [LinkFileTarget("linux-arm64", "../../../native/linux-arm64/kn_web_civet.o")]
 [LinkFileTarget("linux-arm64", "../../../native/linux-arm64/CivetWeb.o")]
 [LinkLibTarget("linux-arm64", "pthread")]
+[LinkLibTarget("linux-arm64", "dl")]
 [LinkName("__kn_web_server_stop")]
 Extern Function void ServerStop(byte* server) By C;
 
@@ -114,9 +128,11 @@ Extern Function void ServerStop(byte* server) By C;
 [LinkFileTarget("linux64", "../../../native/linux-x64/kn_web_civet.o")]
 [LinkFileTarget("linux64", "../../../native/linux-x64/CivetWeb.o")]
 [LinkLibTarget("linux64", "pthread")]
+[LinkLibTarget("linux64", "dl")]
 [LinkFileTarget("linux-arm64", "../../../native/linux-arm64/kn_web_civet.o")]
 [LinkFileTarget("linux-arm64", "../../../native/linux-arm64/CivetWeb.o")]
 [LinkLibTarget("linux-arm64", "pthread")]
+[LinkLibTarget("linux-arm64", "dl")]
 [LinkName("__kn_web_current_server")]
 Extern Function byte* CurrentServer() By C;
 
@@ -129,9 +145,11 @@ Extern Function byte* CurrentServer() By C;
 [LinkFileTarget("linux64", "../../../native/linux-x64/kn_web_civet.o")]
 [LinkFileTarget("linux64", "../../../native/linux-x64/CivetWeb.o")]
 [LinkLibTarget("linux64", "pthread")]
+[LinkLibTarget("linux64", "dl")]
 [LinkFileTarget("linux-arm64", "../../../native/linux-arm64/kn_web_civet.o")]
 [LinkFileTarget("linux-arm64", "../../../native/linux-arm64/CivetWeb.o")]
 [LinkLibTarget("linux-arm64", "pthread")]
+[LinkLibTarget("linux-arm64", "dl")]
 [LinkName("__kn_web_current_method")]
 Extern Function string CurrentMethod() By C;
 
@@ -144,9 +162,11 @@ Extern Function string CurrentMethod() By C;
 [LinkFileTarget("linux64", "../../../native/linux-x64/kn_web_civet.o")]
 [LinkFileTarget("linux64", "../../../native/linux-x64/CivetWeb.o")]
 [LinkLibTarget("linux64", "pthread")]
+[LinkLibTarget("linux64", "dl")]
 [LinkFileTarget("linux-arm64", "../../../native/linux-arm64/kn_web_civet.o")]
 [LinkFileTarget("linux-arm64", "../../../native/linux-arm64/CivetWeb.o")]
 [LinkLibTarget("linux-arm64", "pthread")]
+[LinkLibTarget("linux-arm64", "dl")]
 [LinkName("__kn_web_current_uri")]
 Extern Function string CurrentUri() By C;
 
@@ -159,9 +179,11 @@ Extern Function string CurrentUri() By C;
 [LinkFileTarget("linux64", "../../../native/linux-x64/kn_web_civet.o")]
 [LinkFileTarget("linux64", "../../../native/linux-x64/CivetWeb.o")]
 [LinkLibTarget("linux64", "pthread")]
+[LinkLibTarget("linux64", "dl")]
 [LinkFileTarget("linux-arm64", "../../../native/linux-arm64/kn_web_civet.o")]
 [LinkFileTarget("linux-arm64", "../../../native/linux-arm64/CivetWeb.o")]
 [LinkLibTarget("linux-arm64", "pthread")]
+[LinkLibTarget("linux-arm64", "dl")]
 [LinkName("__kn_web_current_query")]
 Extern Function string CurrentQuery() By C;
 
@@ -174,9 +196,11 @@ Extern Function string CurrentQuery() By C;
 [LinkFileTarget("linux64", "../../../native/linux-x64/kn_web_civet.o")]
 [LinkFileTarget("linux64", "../../../native/linux-x64/CivetWeb.o")]
 [LinkLibTarget("linux64", "pthread")]
+[LinkLibTarget("linux64", "dl")]
 [LinkFileTarget("linux-arm64", "../../../native/linux-arm64/kn_web_civet.o")]
 [LinkFileTarget("linux-arm64", "../../../native/linux-arm64/CivetWeb.o")]
 [LinkLibTarget("linux-arm64", "pthread")]
+[LinkLibTarget("linux-arm64", "dl")]
 [LinkName("__kn_web_current_query_value")]
 Extern Function string CurrentQueryValue(string name) By C;
 
@@ -189,9 +213,11 @@ Extern Function string CurrentQueryValue(string name) By C;
 [LinkFileTarget("linux64", "../../../native/linux-x64/kn_web_civet.o")]
 [LinkFileTarget("linux64", "../../../native/linux-x64/CivetWeb.o")]
 [LinkLibTarget("linux64", "pthread")]
+[LinkLibTarget("linux64", "dl")]
 [LinkFileTarget("linux-arm64", "../../../native/linux-arm64/kn_web_civet.o")]
 [LinkFileTarget("linux-arm64", "../../../native/linux-arm64/CivetWeb.o")]
 [LinkLibTarget("linux-arm64", "pthread")]
+[LinkLibTarget("linux-arm64", "dl")]
 [LinkName("__kn_web_current_header")]
 Extern Function string CurrentHeader(string name) By C;
 
@@ -204,9 +230,11 @@ Extern Function string CurrentHeader(string name) By C;
 [LinkFileTarget("linux64", "../../../native/linux-x64/kn_web_civet.o")]
 [LinkFileTarget("linux64", "../../../native/linux-x64/CivetWeb.o")]
 [LinkLibTarget("linux64", "pthread")]
+[LinkLibTarget("linux64", "dl")]
 [LinkFileTarget("linux-arm64", "../../../native/linux-arm64/kn_web_civet.o")]
 [LinkFileTarget("linux-arm64", "../../../native/linux-arm64/CivetWeb.o")]
 [LinkLibTarget("linux-arm64", "pthread")]
+[LinkLibTarget("linux-arm64", "dl")]
 [LinkName("__kn_web_current_content_length")]
 Extern Function int CurrentContentLength() By C;
 
@@ -219,9 +247,11 @@ Extern Function int CurrentContentLength() By C;
 [LinkFileTarget("linux64", "../../../native/linux-x64/kn_web_civet.o")]
 [LinkFileTarget("linux64", "../../../native/linux-x64/CivetWeb.o")]
 [LinkLibTarget("linux64", "pthread")]
+[LinkLibTarget("linux64", "dl")]
 [LinkFileTarget("linux-arm64", "../../../native/linux-arm64/kn_web_civet.o")]
 [LinkFileTarget("linux-arm64", "../../../native/linux-arm64/CivetWeb.o")]
 [LinkLibTarget("linux-arm64", "pthread")]
+[LinkLibTarget("linux-arm64", "dl")]
 [LinkName("__kn_web_current_body_text")]
 Extern Function string CurrentBodyText() By C;
 
@@ -234,9 +264,11 @@ Extern Function string CurrentBodyText() By C;
 [LinkFileTarget("linux64", "../../../native/linux-x64/kn_web_civet.o")]
 [LinkFileTarget("linux64", "../../../native/linux-x64/CivetWeb.o")]
 [LinkLibTarget("linux64", "pthread")]
+[LinkLibTarget("linux64", "dl")]
 [LinkFileTarget("linux-arm64", "../../../native/linux-arm64/kn_web_civet.o")]
 [LinkFileTarget("linux-arm64", "../../../native/linux-arm64/CivetWeb.o")]
 [LinkLibTarget("linux-arm64", "pthread")]
+[LinkLibTarget("linux-arm64", "dl")]
 [LinkName("__kn_web_current_replied")]
 Extern Function int CurrentReplied() By C;
 
@@ -249,9 +281,11 @@ Extern Function int CurrentReplied() By C;
 [LinkFileTarget("linux64", "../../../native/linux-x64/kn_web_civet.o")]
 [LinkFileTarget("linux64", "../../../native/linux-x64/CivetWeb.o")]
 [LinkLibTarget("linux64", "pthread")]
+[LinkLibTarget("linux64", "dl")]
 [LinkFileTarget("linux-arm64", "../../../native/linux-arm64/kn_web_civet.o")]
 [LinkFileTarget("linux-arm64", "../../../native/linux-arm64/CivetWeb.o")]
 [LinkLibTarget("linux-arm64", "pthread")]
+[LinkLibTarget("linux-arm64", "dl")]
 [LinkName("__kn_web_server_try_serve_static")]
 Extern Function int ServerTryServeStatic(byte* server) By C;
 
@@ -264,9 +298,11 @@ Extern Function int ServerTryServeStatic(byte* server) By C;
 [LinkFileTarget("linux64", "../../../native/linux-x64/kn_web_civet.o")]
 [LinkFileTarget("linux64", "../../../native/linux-x64/CivetWeb.o")]
 [LinkLibTarget("linux64", "pthread")]
+[LinkLibTarget("linux64", "dl")]
 [LinkFileTarget("linux-arm64", "../../../native/linux-arm64/kn_web_civet.o")]
 [LinkFileTarget("linux-arm64", "../../../native/linux-arm64/CivetWeb.o")]
 [LinkLibTarget("linux-arm64", "pthread")]
+[LinkLibTarget("linux-arm64", "dl")]
 [LinkName("__kn_web_reply_text")]
 Extern Function int ReplyText(int status, string contentType, string body) By C;
 
@@ -279,9 +315,11 @@ Extern Function int ReplyText(int status, string contentType, string body) By C;
 [LinkFileTarget("linux64", "../../../native/linux-x64/kn_web_civet.o")]
 [LinkFileTarget("linux64", "../../../native/linux-x64/CivetWeb.o")]
 [LinkLibTarget("linux64", "pthread")]
+[LinkLibTarget("linux64", "dl")]
 [LinkFileTarget("linux-arm64", "../../../native/linux-arm64/kn_web_civet.o")]
 [LinkFileTarget("linux-arm64", "../../../native/linux-arm64/CivetWeb.o")]
 [LinkLibTarget("linux-arm64", "pthread")]
+[LinkLibTarget("linux-arm64", "dl")]
 [LinkName("__kn_web_server_reload_version")]
 Extern Function int ServerReloadVersion(byte* server) By C;
 
@@ -294,8 +332,10 @@ Extern Function int ServerReloadVersion(byte* server) By C;
 [LinkFileTarget("linux64", "../../../native/linux-x64/kn_web_civet.o")]
 [LinkFileTarget("linux64", "../../../native/linux-x64/CivetWeb.o")]
 [LinkLibTarget("linux64", "pthread")]
+[LinkLibTarget("linux64", "dl")]
 [LinkFileTarget("linux-arm64", "../../../native/linux-arm64/kn_web_civet.o")]
 [LinkFileTarget("linux-arm64", "../../../native/linux-arm64/CivetWeb.o")]
 [LinkLibTarget("linux-arm64", "pthread")]
+[LinkLibTarget("linux-arm64", "dl")]
 [LinkName("__kn_web_server_context_info")]
 Extern Function string ServerContextInfo(byte* server) By C;

@@ -1,0 +1,23 @@
+Unit Tests.StdRequestHttps;
+
+Get Console By IO.Console;
+Get IO.Request;
+
+Static Function int Main()
+{
+    IO.Request.Response getResponse = IO.Request.Fetch("https://127.0.0.1:18443/hello", 2000);
+    getResponse.EnsureSuccess();
+    Console.PrintLine(getResponse.StatusCode);
+    Console.PrintLine(getResponse.BodyText);
+
+    IO.Request.Response postResponse = IO.Request.Post(
+        "https://127.0.0.1:18443/echo",
+        "ping",
+        "text/plain; charset=utf-8",
+        2000
+    );
+    postResponse.EnsureSuccess();
+    Console.PrintLine(postResponse.StatusCode);
+    Console.PrintLine(postResponse.BodyText);
+    Return 0;
+}

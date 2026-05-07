@@ -18,11 +18,15 @@
 typedef volatile LONG KnRequestAtomicInt;
 static int kn_request_atomic_inc(KnRequestAtomicInt *value) { return (int)InterlockedIncrement(value); }
 static int kn_request_atomic_dec(KnRequestAtomicInt *value) { return (int)InterlockedDecrement(value); }
+static int kn_request_atomic_load(const KnRequestAtomicInt *value) { return (int)(*value); }
+static void kn_request_atomic_store(KnRequestAtomicInt *value, int next) { *value = (LONG)next; }
 #else
 #define KN_REQUEST_TLS __thread
 typedef _Atomic int KnRequestAtomicInt;
 static int kn_request_atomic_inc(KnRequestAtomicInt *value) { return atomic_fetch_add_explicit(value, 1, memory_order_relaxed) + 1; }
 static int kn_request_atomic_dec(KnRequestAtomicInt *value) { return atomic_fetch_sub_explicit(value, 1, memory_order_relaxed) - 1; }
+static int kn_request_atomic_load(const KnRequestAtomicInt *value) { return atomic_load_explicit(value, memory_order_relaxed); }
+static void kn_request_atomic_store(KnRequestAtomicInt *value, int next) { atomic_store_explicit(value, next, memory_order_relaxed); }
 #endif
 
 typedef struct
@@ -51,6 +55,7 @@ typedef struct
 
 static KN_REQUEST_TLS char g_kn_request_error[512];
 static KnRequestAtomicInt g_kn_request_lib_refs = 0;
+static KnRequestAtomicInt g_kn_request_ssl_ready = 0;
 
 void *__kn_gc_alloc(size_t size);
 
@@ -138,14 +143,25 @@ static void kn_request_url_clear(KnRequestUrl *url)
 static int kn_request_library_retain(void)
 {
     if (kn_request_atomic_inc(&g_kn_request_lib_refs) == 1)
-        mg_init_library(MG_FEATURES_DEFAULT);
+    {
+        unsigned features = mg_init_library(MG_FEATURES_SSL);
+        kn_request_atomic_store(&g_kn_request_ssl_ready, (features & MG_FEATURES_SSL) ? 1 : 0);
+    }
     return 1;
 }
 
 static void kn_request_library_release(void)
 {
     if (kn_request_atomic_dec(&g_kn_request_lib_refs) == 0)
+    {
+        kn_request_atomic_store(&g_kn_request_ssl_ready, 0);
         mg_exit_library();
+    }
+}
+
+static int kn_request_library_has_ssl(void)
+{
+    return kn_request_atomic_load(&g_kn_request_ssl_ready) != 0;
 }
 
 static int kn_request_parse_port(const char *text, size_t len, int *out_port)
@@ -197,12 +213,13 @@ static int kn_request_parse_url(const char *url_text, KnRequestUrl *out)
     }
     else if (strncmp(url_text, "https://", 8) == 0)
     {
-        kn_request_set_error("HTTPS is not enabled in the bundled IO.Request runtime");
-        return 0;
+        out->use_ssl = 1;
+        out->port = 443;
+        cursor = url_text + 8;
     }
     else
     {
-        kn_request_set_error("Only absolute http:// URLs are supported");
+        kn_request_set_error("Only absolute http:// and https:// URLs are supported");
         return 0;
     }
 
@@ -443,6 +460,13 @@ void *__kn_request_send(const char *method,
         return 0;
     if (!kn_request_library_retain())
     {
+        kn_request_url_clear(&url);
+        return 0;
+    }
+    if (url.use_ssl && !kn_request_library_has_ssl())
+    {
+        kn_request_set_error("HTTPS requires the OpenSSL 3 runtime; ensure libssl/libcrypto are visible to the process");
+        kn_request_library_release();
         kn_request_url_clear(&url);
         return 0;
     }

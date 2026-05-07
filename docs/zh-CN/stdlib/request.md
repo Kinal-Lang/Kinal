@@ -23,6 +23,21 @@ Static Function int Main()
 }
 ```
 
+`https://` 的用法和 `http://` 一样：
+
+```kinal
+Get Console By IO.Console;
+Get IO.Request;
+
+Static Function int Main()
+{
+    IO.Request.Response response = IO.Request.Fetch("https://127.0.0.1:8443/hello");
+    Console.PrintLine(response.StatusCode);
+    Console.PrintLine(response.BodyText);
+    Return 0;
+}
+```
+
 ## Method 枚举
 
 `IO.Request.Method` 包含：
@@ -102,8 +117,12 @@ Else
 
 ## 说明
 
-- 当前官方随包构建仅支持 `http://`。
-- 现阶段运行时会拒绝 `https://`，因为内置 CivetWeb 资产没有启用 TLS。
+- 官方随包构建现在同时接受 `http://` 和 `https://`。
+- `https://` 走 CivetWeb 的 OpenSSL client 路径。运行进程需要能加载 OpenSSL 3 运行时：
+  - Windows：`libssl-3-x64.dll` / `libcrypto-3-x64.dll`，或对应的 ARM64 版本
+  - Linux：`libssl.so.3` 和 `libcrypto.so.3`
+- 如果 OpenSSL 运行时缺失，`IO.Request` 会直接给出运行时错误，不会悄悄降级成明文 HTTP。
+- 当前桥接层还没有暴露 CA 或对端证书校验选项。也就是说 `IO.Request` 现在的 HTTPS 已经加密传输，但还不会校验服务端证书。
 - 这个包是同步接口。
 - 发送前会校验请求头名称和值。
 

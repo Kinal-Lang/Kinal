@@ -255,6 +255,18 @@
     ]
   },
   {
+    "name": "stdlib_request_https",
+    "file": "tests/common/stdlib_request_https.kn",
+    "expected": "200\nhello-secure\n200\necho:ping\n",
+    "auto_link": true,
+    "platforms": [
+      "windows",
+      "linux"
+    ],
+    "https_fixture": "request_echo",
+    "needs_openssl_runtime": true
+  },
+  {
     "name": "stdlib_ui_alias_nested_new",
     "file": "tests/windows/stdlib_ui_alias_nested_new.kn",
     "expected": "",

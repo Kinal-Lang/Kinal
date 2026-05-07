@@ -444,6 +444,7 @@ def build_civetweb_for_target(target: str, llvm_bin: Path) -> bool:
     ensure_civetweb_source()
     out_dir = civetweb_prebuilt_root() / target
     out_dir.mkdir(parents=True, exist_ok=True)
+    civet_defs: list[str] = ["-DOPENSSL_API_3_0", "-DNO_CGI", "-DNO_CACHING"]
     if target.startswith("win-"):
         if not is_windows():
             return False
@@ -457,13 +458,17 @@ def build_civetweb_for_target(target: str, llvm_bin: Path) -> bool:
             triple = "aarch64-pc-windows-msvc"
         else:
             return False
+        if target == "win-x64":
+            civet_defs.extend(['-DSSL_LIB="libssl-3-x64.dll"', '-DCRYPTO_LIB="libcrypto-3-x64.dll"'])
+        else:
+            civet_defs.extend(['-DSSL_LIB="libssl-3-arm64.dll"', '-DCRYPTO_LIB="libcrypto-3-arm64.dll"'])
 
         civet_obj = out_dir / "CivetWeb.obj"
         civet_lib = out_dir / "CivetWeb.lib"
         bridge_obj = out_dir / "kn_web_civet.obj"
         request_bridge_obj = out_dir / "kn_request_civet.obj"
 
-        run([clang, "--target=" + triple, "-c", str(CIVETWEB_SRC), "-o", str(civet_obj), "-std=c11", "-O2", "-DNO_SSL", "-DNO_CGI", "-DNO_CACHING", "-I", str(CIVETWEB_INCLUDE)])
+        run([clang, "--target=" + triple, "-c", str(CIVETWEB_SRC), "-o", str(civet_obj), "-std=c11", "-O2", *civet_defs, "-I", str(CIVETWEB_INCLUDE)])
         run([llvm_lib, "/nologo", f"/out:{civet_lib}", str(civet_obj)])
         run([clang, "--target=" + triple, "-c", str(WEB_BRIDGE_SRC), "-o", str(bridge_obj), "-std=c11", "-O2", "-I", str(CIVETWEB_INCLUDE), "-I", str(RUNTIME_INCLUDE)])
         run([clang, "--target=" + triple, "-c", str(REQUEST_BRIDGE_SRC), "-o", str(request_bridge_obj), "-std=c11", "-O2", "-I", str(CIVETWEB_INCLUDE), "-I", str(RUNTIME_INCLUDE)])
@@ -485,12 +490,13 @@ def build_civetweb_for_target(target: str, llvm_bin: Path) -> bool:
                 cc_cmd = [clang]
             else:
                 return False
+        civet_defs.extend(['-DSSL_LIB="libssl.so.3"', '-DCRYPTO_LIB="libcrypto.so.3"'])
 
         civet_obj = out_dir / "CivetWeb.o"
         bridge_obj = out_dir / "kn_web_civet.o"
         request_bridge_obj = out_dir / "kn_request_civet.o"
 
-        run(cc_cmd + ["-c", str(CIVETWEB_SRC), "-o", str(civet_obj), "-std=c11", "-O2", "-Wno-error=date-time", "-fPIC", "-pthread", "-D_POSIX_C_SOURCE=200809L", "-DNO_SSL", "-DNO_CGI", "-DNO_CACHING", "-I", str(CIVETWEB_INCLUDE)])
+        run(cc_cmd + ["-c", str(CIVETWEB_SRC), "-o", str(civet_obj), "-std=c11", "-O2", "-Wno-error=date-time", "-fPIC", "-pthread", "-D_POSIX_C_SOURCE=200809L", *civet_defs, "-I", str(CIVETWEB_INCLUDE)])
         run(cc_cmd + ["-c", str(WEB_BRIDGE_SRC), "-o", str(bridge_obj), "-std=c11", "-O2", "-Wno-error=date-time", "-fPIC", "-pthread", "-D_POSIX_C_SOURCE=200809L", "-I", str(CIVETWEB_INCLUDE), "-I", str(RUNTIME_INCLUDE)])
         run(cc_cmd + ["-c", str(REQUEST_BRIDGE_SRC), "-o", str(request_bridge_obj), "-std=c11", "-O2", "-Wno-error=date-time", "-fPIC", "-pthread", "-D_POSIX_C_SOURCE=200809L", "-I", str(CIVETWEB_INCLUDE), "-I", str(RUNTIME_INCLUDE)])
         return True

@@ -2,18 +2,188 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
+import http.server
 import json
 import os
 import platform
 import re
 import shutil
+import socket
+import ssl
 import subprocess
 import sys
+import tempfile
+import threading
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_OUT = ROOT / "out" / "test"
 DEFAULT_MANIFEST = ROOT / "tests" / "manifest.json"
+REQUEST_HTTPS_PORT = 18443
+REQUEST_HTTPS_CERT_PEM = """-----BEGIN CERTIFICATE-----
+MIIDGjCCAgKgAwIBAgIUWzerGOS0nvJv+eW5KGWmzk6fs2MwDQYJKoZIhvcNAQEL
+BQAwNzELMAkGA1UEBhMCVVMxFDASBgNVBAoMC0tpbmFsIFRlc3RzMRIwEAYDVQQD
+DAkxMjcuMC4wLjEwHhcNMjYwNTA2MDAwNTMyWhcNMzYwNTA0MDAwNTMyWjA3MQsw
+CQYDVQQGEwJVUzEUMBIGA1UECgwLS2luYWwgVGVzdHMxEjAQBgNVBAMMCTEyNy4w
+LjAuMTCCASIwDQYJKoZIhvcNAQEBBQADggEPADCCAQoCggEBAKzie4X2hS6Znzhv
+wjptzKP38VpngioW6p/G10YrXWTnTArHTSJdClyExyQMaoYsc5KouBM+kUAJGrGW
+cz4wvPTNhB/lyNREIZBLjkXjTrh/NaroLiYPFVeljW51nMnejq8DqYOzduCTKJsu
+rZBqErObD13+1UN2aKMOCT7EkGna5HJY5wyP+CjtfdRAAOer40hay3F0lb6YuX4J
+gAkHv4hGF0xHqYziTegIzTNOgZCfy42dT8GGS4S7wtSbbnGSNvyLRFb8kUM2Hw5s
+3nS7pb/ryx0TeEpHwzroZ/kkXp6UV6Y0gRyvmOkcgQwz1j2rqKcQo2hV7YvA7ElZ
+OhCHYKUCAwEAAaMeMBwwGgYDVR0RBBMwEYIJbG9jYWxob3N0hwR/AAABMA0GCSqG
+SIb3DQEBCwUAA4IBAQAWcqMBcOIIj+WjR2NVPULm0Iuyi+RgrCATsUcJLbMFsjis
+/NhB3jwz30NkJWDgjdKue2L/wODu7hMj/126qeIdee3GhNGp56X0fnKOW7KG+1OQ
+9L+3/OsmmHZyIieG6juQDsF2kVTw/wwrKQ3oYAFm/BnrqD2uxX7Fo5+wZvhkbFfZ
+GHTDScRXq3MtGTotuotlcF8KNMe6mcwIUaatSzzXJzNxCW7p2k8k3zQXlzutfmLZ
+p+jNvcHotZQcJGoAFMBJe2jwx19lXN288Wx43R+1Z5yZi3QUKZoOoc+lUMquBJ6c
+gZlWoM2KCyruMiWAJ78lSTT3hOxuPfkUlWb3P4Gs
+-----END CERTIFICATE-----
+"""
+REQUEST_HTTPS_KEY_PEM = """-----BEGIN RSA PRIVATE KEY-----
+MIIEowIBAAKCAQEArOJ7hfaFLpmfOG/COm3Mo/fxWmeCKhbqn8bXRitdZOdMCsdN
+Il0KXITHJAxqhixzkqi4Ez6RQAkasZZzPjC89M2EH+XI1EQhkEuOReNOuH81qugu
+Jg8VV6WNbnWcyd6OrwOpg7N24JMomy6tkGoSs5sPXf7VQ3Zoow4JPsSQadrkcljn
+DI/4KO191EAA56vjSFrLcXSVvpi5fgmACQe/iEYXTEepjOJN6AjNM06BkJ/LjZ1P
+wYZLhLvC1JtucZI2/ItEVvyRQzYfDmzedLulv+vLHRN4SkfDOuhn+SRenpRXpjSB
+HK+Y6RyBDDPWPauopxCjaFXti8DsSVk6EIdgpQIDAQABAoIBAAwn4IeKzdJ4+rj9
+Iqr5DWp6BH5WyNAszFJvqLNGWUq++JnJaaMA57mZnGbseJD2jynAszCnNY9LFJVn
+/rJguuh7is6zWWuTXsjGhzpiwSY3y444xQXoCZggC9G4c02+WEn19/VKqREhR7mh
+jpKY4re+L1ZslJIpwTG1yvCe4YiPvdgxfvC+9EaK7sqWFyKBJmAQPuQvt6zgXc1F
+ZvE967qpoXBuM4E+/tWO4+QbRKbW847oxIV8DX1r/9CYWlEEaLasbrY7+UkXCpgm
+4JzPZu/uKOz/OauTmbGDTqhhieB0Z7e7sN8ppsLwP6YpYAGhks08u1AyJivU/KT4
+ClqqwAECgYEA4Z5Pk8VVhwnPW/HbaHBDxhOUhghTKxIkSxbOneyKKcyd/wrpGyY+
+ecmqp+RYxc0iYTG9IyEIp83u1zMKAvFpbqzrL9mLoE+qrkzd6bQdwqq0Qb4W2tde
+uhZIk+DDMjZvS4gPOr2+OGOxApjGUblkZ/BDNy8ULeRLFA61svEGMUkCgYEAxCpL
+mHytt+1iR8zJ1VKAgnjZ4n9uF06suhcNUNpxTwixM0CAHYryC92a9EDIzWyfgST3
++9XKzr5F9nyrevrlk0A6cpBnMKuGypQksP3zAx62J9zBk/W6hU2uCo6XRS9Z7Tif
+dqgi02CWBFEmEFmGHh0M8p3Xnf0QCle2O2rG0H0CgYBfDAtoLFTYm7hgeqY8/DaB
+BpSmVnF7Dpx9ibEndJPMAih5XkZPqq/dLKkZK6h+Q+n82jBc0TjNQIMi45yPGtaY
+yn4V3Wbl9UnpPfaq0rdK4BEqNQN51AtTB7oxmhmBWM9QGZSY4YB2TwEuH+BEY366
+DsyyPcIZhzhdzcicBs/eCQKBgEOGy78SLDrEXLCarl/gppxDPb3aX+tmCc+FX/AV
+QiwSse0SpweEbQ3omw65vmX4nm+2aicm0UmZ9juDbwRGmgC2e2g0jVETurLBjF/h
+C2ZnjAzs0TY9wJdixiacLzaBtlMSytHtzw80kG+r/45hQuna1jouW6rnEj59Mx4B
+A6+BAoGBAKFHVdYUTrqtJveuSTdIBqklxQFk45cSbPZxYLeouiEj8v/lJOnXLzpZ
+GXwGuZTwOtwC9qU8Y2jInqvVL1FqLxENvXd/VoiWXAKwkgFzD7B+PU06SzAxy5MX
+pT+RfEK8vO020K1LbB//cspl8BDal9NfAe/xU8Ej1telWbZa1gNq
+-----END RSA PRIVATE KEY-----
+"""
+
+
+class RequestHttpsTestServer(http.server.ThreadingHTTPServer):
+    allow_reuse_address = True
+
+
+class RequestHttpsHandler(http.server.BaseHTTPRequestHandler):
+    protocol_version = "HTTP/1.1"
+
+    def log_message(self, format: str, *args: object) -> None:
+        return
+
+    def _reply(self, status: int, body: bytes, content_type: str = "text/plain; charset=utf-8") -> None:
+        self.send_response(status)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Connection", "close")
+        self.end_headers()
+        if self.command != "HEAD":
+            self.wfile.write(body)
+
+    def _read_body(self) -> bytes:
+        length = int(self.headers.get("Content-Length") or "0")
+        if length <= 0:
+            return b""
+        return self.rfile.read(length)
+
+    def do_GET(self) -> None:
+        if self.path == "/hello":
+            self._reply(200, b"hello-secure")
+            return
+        if self.path == "/health":
+            self._reply(200, b"ok")
+            return
+        self._reply(404, b"not-found")
+
+    def do_HEAD(self) -> None:
+        if self.path in {"/hello", "/health"}:
+            self._reply(200, b"")
+            return
+        self._reply(404, b"")
+
+    def do_POST(self) -> None:
+        if self.path == "/echo":
+            payload = self._read_body()
+            self._reply(200, b"echo:" + payload)
+            return
+        self._reply(404, b"not-found")
+
+
+@contextlib.contextmanager
+def request_https_fixture() -> object:
+    with tempfile.TemporaryDirectory(prefix="kinal_request_https_") as temp_dir:
+        temp_root = Path(temp_dir)
+        cert_path = temp_root / "cert.pem"
+        key_path = temp_root / "key.pem"
+        cert_path.write_text(REQUEST_HTTPS_CERT_PEM, encoding="utf-8")
+        key_path.write_text(REQUEST_HTTPS_KEY_PEM, encoding="utf-8")
+
+        server = RequestHttpsTestServer(("127.0.0.1", REQUEST_HTTPS_PORT), RequestHttpsHandler)
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        context.load_cert_chain(str(cert_path), str(key_path))
+        server.socket = context.wrap_socket(server.socket, server_side=True)
+
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            with socket.create_connection(("127.0.0.1", REQUEST_HTTPS_PORT), timeout=1):
+                pass
+            yield
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
+
+
+def find_windows_openssl_runtime() -> list[Path]:
+    for ssl_name, crypto_name in (
+        ("libssl-3-x64.dll", "libcrypto-3-x64.dll"),
+        ("libssl-3-arm64.dll", "libcrypto-3-arm64.dll"),
+        ("libssl-3.dll", "libcrypto-3.dll"),
+    ):
+        paths: list[Path] = []
+        for name in (ssl_name, crypto_name):
+            found = shutil.which(name)
+            if not found and is_windows():
+                probe = subprocess.run(
+                    ["where.exe", name],
+                    cwd=str(ROOT),
+                    text=True,
+                    capture_output=True,
+                    encoding="utf-8",
+                    errors="replace",
+                )
+                if probe.returncode == 0:
+                    lines = [line.strip() for line in (probe.stdout or "").splitlines() if line.strip()]
+                    if lines:
+                        found = lines[0]
+            if not found:
+                paths = []
+                break
+            paths.append(Path(found).resolve())
+        if len(paths) == 2:
+            return paths
+    return []
+
+
+def copy_windows_openssl_runtime(out_dir: Path) -> None:
+    if not is_windows():
+        return
+    runtime_files = find_windows_openssl_runtime()
+    if not runtime_files:
+        raise SystemExit("https regression tests require OpenSSL 3 runtime DLLs on PATH")
+    for src in runtime_files:
+        shutil.copy2(src, out_dir / src.name)
 
 
 def is_windows() -> bool:
@@ -1574,7 +1744,15 @@ def main() -> int:
             dst = out_dir / Path(runtime_file).name
             if src.resolve() != dst.resolve():
                 shutil.copy2(src, dst)
-        output = run([str(out_exe)], cwd=ROOT, capture=True)
+        if case.get("needs_openssl_runtime", False):
+            copy_windows_openssl_runtime(out_dir)
+
+        runtime_context = contextlib.nullcontext()
+        if case.get("https_fixture") == "request_echo":
+            runtime_context = request_https_fixture()
+
+        with runtime_context:
+            output = run([str(out_exe)], cwd=ROOT, capture=True)
         assert isinstance(output, subprocess.CompletedProcess)
         out_text = (output.stdout or "").replace("\r\n", "\n")
 
