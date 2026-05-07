@@ -9,7 +9,7 @@ Get IO.Text;
 Static Function int Main()
 {
     string root= IO.Path.Combine("out", "test");
-    string dir= IO.Path.Combine(root, "stdlib_file_text_roundtrip");
+    string dir= IO.Path.Combine(root, "stdlib_file_text_roundtrip_data");
     string file= IO.Path.Combine(dir, "data.txt");
     string copy= IO.Path.Combine(dir, "copy.txt");
     string missing= IO.Path.Combine(dir, "missing.txt");
@@ -33,7 +33,7 @@ Static Function int Main()
     Console.PrintLine(from_file.Count());
     Console.PrintLine(IO.Text.Join(from_file, ","));
     Console.PrintLine(IO.Text.Contains(IO.File.ReadAllText(file), "beta"));
-    Console.PrintLine(IO.Path.FileName(IO.Path.Directory(file))== "stdlib_file_text_roundtrip");
+    Console.PrintLine(IO.Path.FileName(IO.Path.Directory(file))== "stdlib_file_text_roundtrip_data");
     Console.PrintLine(IO.File.Copy(file, copy));
     Console.PrintLine(IO.File.Exists(copy));
     Console.PrintLine(IO.File.ReadOrDefault(missing, "fallback"));
