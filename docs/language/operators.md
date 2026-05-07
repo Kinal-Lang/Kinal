@@ -170,6 +170,7 @@ Rules:
 Animal a = New Dog();
 bool isDog = a Is Dog;      // true
 bool isCat = a Is Cat;      // false
+bool hasValue = a Is any;   // true
 ```
 
 Combined with `If` for pattern matching:

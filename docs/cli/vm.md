@@ -183,4 +183,5 @@ kinalvm [--superloop|--no-superloop] <file.knc> [-- program-args...]
 - [Async Programming](../language/async.md) — Superloop and coroutines
 - [Freestanding](../advanced/freestanding.md) — Using the VM in constrained environments
 - [IO.Runtime Constants](../advanced/runtime-environment-constants.md) — Detecting the current execution backend in source code
+- [IO.Version Constants](../advanced/version-constants.md) — Reading compiler and VM version information in source code
 - [CLI Specification](cli-spec.md) — CLI design specification (developer reference)

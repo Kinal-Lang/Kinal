@@ -171,6 +171,170 @@ static Stmt *parse_for(Parser *p)
     return s;
 }
 
+static const char *make_foreach_temp_name(Token *t, const char *prefix)
+{
+    char buf[96];
+    int line = t ? t->line : 0;
+    int col = t ? t->col : 0;
+    int n = snprintf(buf, sizeof(buf), "__kn_%s_%d_%d", prefix ? prefix : "foreach", line, col);
+    if (n < 0)
+        n = 0;
+    if ((size_t)n >= sizeof(buf))
+        n = (int)sizeof(buf) - 1;
+    {
+        char *out = (char *)kn_malloc((size_t)n + 1);
+        kn_memcpy(out, buf, (size_t)n);
+        out[n] = 0;
+        return out;
+    }
+}
+
+static Expr *new_foreach_var_expr(const char *name, int line, int col)
+{
+    Expr *e = new_expr(EXPR_VAR, line, col);
+    e->v.var.name = name;
+    return e;
+}
+
+static Expr *new_foreach_int_expr(int64_t value, int line, int col)
+{
+    Expr *e = new_expr(EXPR_INT, line, col);
+    e->v.int_val = value;
+    return e;
+}
+
+static Expr *new_foreach_binary_expr(int op, Expr *left, Expr *right, int line, int col)
+{
+    Expr *e = new_expr(EXPR_BINARY, line, col);
+    e->v.binary.op = op;
+    e->v.binary.left = left;
+    e->v.binary.right = right;
+    return e;
+}
+
+static Expr *new_foreach_member_call_expr(Expr *recv, const char *name, int line, int col)
+{
+    Expr *e = new_expr(EXPR_MEMBER_CALL, line, col);
+    e->v.member_call.recv = recv;
+    e->v.member_call.name = name;
+    return e;
+}
+
+static Expr *new_foreach_index_expr(Expr *recv, Expr *index, int line, int col)
+{
+    Expr *e = new_expr(EXPR_INDEX, line, col);
+    e->v.index.recv = recv;
+    e->v.index.index = index;
+    return e;
+}
+
+static Expr *new_foreach_post_inc_expr(const char *name, int line, int col)
+{
+    Expr *e = new_expr(EXPR_UNARY, line, col);
+    e->v.unary.op = TOK_PLUSPLUS;
+    e->v.unary.expr = new_foreach_var_expr(name, line, col);
+    e->v.unary.is_postfix = 1;
+    return e;
+}
+
+static Stmt *parse_foreach(Parser *p)
+{
+    Token *t = cur(p);
+    Type item_type = type_make(TY_UNKNOWN);
+    Token *name_tok = 0;
+    const char *item_name = 0;
+    Expr *source = 0;
+    Stmt *body = 0;
+    const char *source_name = 0;
+    const char *index_name = 0;
+    Stmt *outer_block = 0;
+    Stmt *source_decl = 0;
+    Stmt *for_stmt = 0;
+    Stmt *for_init = 0;
+    Stmt *for_body = 0;
+    Stmt *item_decl = 0;
+    Expr *length_call = 0;
+    Expr *cond = 0;
+    Expr *post = 0;
+    Expr *item_value = 0;
+
+    expect(p, TOK_FOREACH, "Expected Foreach", "Expected 'Foreach' keyword");
+    expect(p, TOK_LPAREN, "Expected '('", "Missing '(' after Foreach");
+
+    if (match(p, TOK_VAR))
+    {
+        item_type = type_make(TY_UNKNOWN);
+    }
+    else
+    {
+        item_type = parse_type(p);
+    }
+
+    name_tok = cur(p);
+    expect(p, TOK_ID, "Expected Identifier", "Expected Foreach variable name");
+    item_name = tok_text(name_tok);
+
+    if (!(match(p, TOK_IN) || match(p, TOK_IS)))
+        expect(p, TOK_IN, "Expected In", "Foreach requires 'In' or 'Is' before the source expression");
+
+    source = parse_expr(p);
+    expect(p, TOK_RPAREN, "Expected ')'", "Missing ')' after Foreach clause");
+    body = parse_stmt(p);
+
+    source_name = make_foreach_temp_name(t, "foreach_source");
+    index_name = make_foreach_temp_name(t, "foreach_index");
+
+    outer_block = new_stmt(ST_BLOCK, t->line, t->col);
+
+    source_decl = new_stmt(ST_VAR, t->line, t->col);
+    source_decl->v.var.type = type_make(TY_UNKNOWN);
+    source_decl->v.var.name = source_name;
+    source_decl->v.var.name_line = t->line;
+    source_decl->v.var.name_col = t->col;
+    source_decl->v.var.init = source;
+    stmtlist_push(&outer_block->v.block.stmts, source_decl);
+
+    for_stmt = new_stmt(ST_FOR, t->line, t->col);
+    for_init = new_stmt(ST_VAR, t->line, t->col);
+    for_init->v.var.type = type_make(TY_INT);
+    for_init->v.var.name = index_name;
+    for_init->v.var.name_line = t->line;
+    for_init->v.var.name_col = t->col;
+    for_init->v.var.init = new_foreach_int_expr(0, t->line, t->col);
+
+    length_call = new_foreach_member_call_expr(
+        new_foreach_var_expr(source_name, t->line, t->col),
+        "Length",
+        t->line, t->col);
+    cond = new_foreach_binary_expr(
+        TOK_LT,
+        new_foreach_var_expr(index_name, t->line, t->col),
+        length_call,
+        t->line, t->col);
+    post = new_foreach_post_inc_expr(index_name, t->line, t->col);
+
+    for_body = new_stmt(ST_BLOCK, t->line, t->col);
+    item_decl = new_stmt(ST_VAR, name_tok->line, name_tok->col);
+    item_decl->v.var.type = item_type;
+    item_decl->v.var.name = item_name;
+    item_decl->v.var.name_line = name_tok->line;
+    item_decl->v.var.name_col = name_tok->col;
+    item_value = new_foreach_index_expr(
+        new_foreach_var_expr(source_name, t->line, t->col),
+        new_foreach_var_expr(index_name, t->line, t->col),
+        t->line, t->col);
+    item_decl->v.var.init = item_value;
+    stmtlist_push(&for_body->v.block.stmts, item_decl);
+    stmtlist_push(&for_body->v.block.stmts, body);
+
+    for_stmt->v.fors.init = for_init;
+    for_stmt->v.fors.cond = cond;
+    for_stmt->v.fors.post = post;
+    for_stmt->v.fors.body = for_body;
+    stmtlist_push(&outer_block->v.block.stmts, for_stmt);
+    return outer_block;
+}
+
 static bool is_type_tok(TokenType t)
 {
     switch (t)
@@ -632,6 +796,8 @@ static Stmt *parse_stmt_impl(Parser *p)
 static Stmt *parse_stmt(Parser *p)
 {
     Token *t = cur(p);
+    if (t && t->type == TOK_FOREACH)
+        return parse_foreach(p);
     if (!parser_enter_stmt(p, t))
         return new_stmt(ST_BLOCK, t ? t->line : 0, t ? t->col : 0);
     Stmt *s = parse_stmt_impl(p);

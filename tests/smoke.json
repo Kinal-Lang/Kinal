@@ -60,6 +60,11 @@
     "auto_link": true
   },
   {
+    "name": "is_keyword",
+    "file": "tests/common/is_keyword.kn",
+    "expected": "true\ntrue\nfalse\ntrue\ntrue\ntrue\ntrue\nfalse\ntrue\nfalse\ntrue\n1\n2\n3\no\nk\n"
+  },
+  {
     "name": "stdlib_request_compile",
     "file": "tests/common/stdlib_request_compile.kn",
     "compile_only": true,

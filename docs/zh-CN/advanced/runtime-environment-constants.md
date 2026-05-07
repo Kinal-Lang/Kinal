@@ -64,7 +64,7 @@ Static Function void PrintBackend()
         IO.Console.PrintLine("native build");
     }
 }
-kinal
+```
 
 整数比较同样有效：
 
@@ -73,7 +73,7 @@ If (IO.Runtime == IO.Runtime.VM)
 {
     // ...
 }
-kinal
+```
 
 ---
 
@@ -117,6 +117,7 @@ kinal
 ## 相关
 
 - [编译流程详解](compilation-pipeline.md) — 语义阶段常量折叠的时机
+- [IO.Version 版本常量](version-constants.md) — 在源码中读取编译器与 VM 版本信息
 - [KinalVM](../cli/vm.md) — `kinal vm build`、`kinal vm run` 命令
 - [裸机与嵌入式](freestanding.md) — `--runtime` 内存模式
 - [交叉编译](cross-compilation.md) — `IO.Target.*` 与平台信息常量

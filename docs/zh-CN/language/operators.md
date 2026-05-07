@@ -170,6 +170,7 @@ Dog none = [Dog](null);      // null 仍然是 null
 Animal a = New Dog();
 bool isDog = a Is Dog;      // true
 bool isCat = a Is Cat;      // false
+bool hasValue = a Is any;   // true
 ```
 
 结合 `If` 实现模式匹配：

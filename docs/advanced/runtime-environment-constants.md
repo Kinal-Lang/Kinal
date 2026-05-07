@@ -117,6 +117,7 @@ All three constant groups are folded at the semantic phase, differing in origin 
 ## See Also
 
 - [Compilation Pipeline](compilation-pipeline.md) — Timing of constant folding in the semantic phase
+- [IO.Version Constants](version-constants.md) — Reading compiler and VM version information in source code
 - [KinalVM](../cli/vm.md) — `kinal vm build`, `kinal vm run` commands
 - [Freestanding and Embedded](freestanding.md) — `--runtime` memory modes
 - [Cross-Compilation](cross-compilation.md) — `IO.Target.*` and platform info constants

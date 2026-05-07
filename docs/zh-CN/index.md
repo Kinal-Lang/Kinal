@@ -71,6 +71,7 @@
 | [跨平台交叉编译](advanced/cross-compilation.md) | `--target`、目标三元组与平台别名 |
 | [链接与 LTO](advanced/linking.md) | 链接器后端、LTO、静态/动态库 |
 | [运行时环境常量提案](advanced/runtime-environment-constants.md) | 区分 KinalVM 与原生运行时的编译期常量设计 |
+| [IO.Version 版本常量](advanced/version-constants.md) | 在源码中获取编译器与 KinalVM 版本信息的编译期常量 |
 
 ---
 

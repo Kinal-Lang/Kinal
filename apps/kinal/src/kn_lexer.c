@@ -155,6 +155,7 @@ static const Kw g_keywords[] = {
     {"ElseIf", TOK_ELSEIF},
     {"While", TOK_WHILE},
     {"For", TOK_FOR},
+    {"Foreach", TOK_FOREACH},
     {"Switch", TOK_SWITCH},
     {"Case", TOK_CASE},
     {"Break", TOK_BREAK},
@@ -193,6 +194,7 @@ static const Kw g_keywords[] = {
     {"true", TOK_TRUE},
     {"false", TOK_FALSE},
     {"Is", TOK_IS},
+    {"In", TOK_IN},
     {"default", TOK_DEFAULT},
     {"null", TOK_NULL},
 

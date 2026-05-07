@@ -512,6 +512,8 @@ static LLVMValueRef gen_is_object(Codegen *g, CGValue value, Type target)
 static LLVMValueRef gen_is_value(Codegen *g, CGValue value, Type target)
 {
     Type src = value.type;
+    if (target.kind == TY_ANY)
+        return src.kind == TY_VOID ? const_bool(g, 0) : const_bool(g, 1);
     if (src.kind == TY_ANY)
         return gen_is_any(g, value, target);
     if (src.kind == TY_NULL)

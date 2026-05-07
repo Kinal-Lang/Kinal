@@ -2,6 +2,7 @@
 #include "kn/diag.h"
 #include "kn/source.h"
 #include "kn/std.h"
+#include <stdio.h>
 
 // ----------------------
 // Parser

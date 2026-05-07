@@ -630,7 +630,7 @@
   {
     "name": "is_keyword",
     "file": "tests/common/is_keyword.kn",
-    "expected": "true\ntrue\nfalse\ntrue\ntrue\ntrue\nfalse\nfalse\n"
+    "expected": "true\ntrue\nfalse\ntrue\ntrue\ntrue\ntrue\nfalse\ntrue\nfalse\ntrue\n1\n2\n3\no\nk\n"
   },
   {
     "name": "is_pattern_if",

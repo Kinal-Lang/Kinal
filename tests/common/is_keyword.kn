@@ -29,13 +29,25 @@ Static Safe Function int Main(string[] args)
     INode n= New Node();
     string s= "ok";
     Animal none= null;
+    int[] values= {1, 2, 3};
     Console.PrintLine(a Is Animal);
     Console.PrintLine(a Is Dog);
     Console.PrintLine(a Is Node);
     Console.PrintLine(n Is INode);
     Console.PrintLine(n Is Node);
     Console.PrintLine(s Is string);
+    Console.PrintLine(s Is any);
     Console.PrintLine(1 Is float);
+    Console.PrintLine(1 Is any);
     Console.PrintLine(none Is Animal);
+    Console.PrintLine(none Is any);
+    Foreach (int value In values)
+    {
+        Console.PrintLine(value);
+    }
+    Foreach (char ch Is s)
+    {
+        Console.PrintLine(ch);
+    }
     Return 0;
 }

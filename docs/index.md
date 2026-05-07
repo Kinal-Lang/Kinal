@@ -71,6 +71,7 @@
 | [Cross-Compilation](advanced/cross-compilation.md) | `--target`, target triples, and platform aliases |
 | [Linking and LTO](advanced/linking.md) | Linker backends, LTO, static/dynamic libraries |
 | [Runtime Environment Constants Proposal](advanced/runtime-environment-constants.md) | Compile-time constants for distinguishing KinalVM vs. native runtime |
+| [IO.Version Constants](advanced/version-constants.md) | Compile-time constants for compiler and KinalVM version information |
 
 ---
 

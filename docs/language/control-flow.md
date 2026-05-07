@@ -120,6 +120,37 @@ For (Var i = 0; i < 5; i++)
 }
 ```
 
+## Foreach Loop
+
+`Foreach` iterates over arrays and strings without writing the index loop manually.
+
+```kinal
+int[] values = {1, 2, 3};
+Foreach (int value In values)
+{
+    IO.Console.PrintLine(value);
+}
+```
+
+`Is` is also accepted in the loop clause:
+
+```kinal
+string text = "ok";
+Foreach (char ch Is text)
+{
+    IO.Console.PrintLine(ch);
+}
+```
+
+`Var` works the same way as other local declarations:
+
+```kinal
+Foreach (Var value In values)
+{
+    IO.Console.PrintLine(value);
+}
+```
+
 ## Switch Statement
 
 Switch provides multi-branch selection based on a value:

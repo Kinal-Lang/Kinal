@@ -30,6 +30,8 @@ kinal -V                   # Same (short form)
 kinal --version --verbose  # Also show KinalVM version
 ```
 
+For source-level access to the same version families, use `IO.Version` and `IO.Version.VM`. See [IO.Version Constants](../advanced/version-constants.md).
+
 ### Diagnostic Language and Localization
 
 `--lang` and `--locale-file` can be placed **before** (global) or **after** (local) a subcommand with the same effect:

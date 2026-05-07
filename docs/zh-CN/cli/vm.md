@@ -181,4 +181,5 @@ kinalvm [--superloop|--no-superloop] <文件.knc> [-- 程序参数...]
 - [异步编程](../language/async.md) — 超级循环与协程
 - [裸机开发](../advanced/freestanding.md) — VM 在受限环境中的使用
 - [IO.Runtime 常量](../advanced/runtime-environment-constants.md) — 在源码中判断当前执行后端
+- [IO.Version 版本常量](../advanced/version-constants.md) — 在源码中读取编译器与 VM 版本信息
 - [CLI 规范](cli-spec.md) — CLI 设计规范（开发者参考）

@@ -120,6 +120,37 @@ For (Var i = 0; i < 5; i++)
 }
 ```
 
+## Foreach 循环
+
+`Foreach` 用来遍历数组和字符串，不需要手写索引循环。
+
+```kinal
+int[] values = {1, 2, 3};
+Foreach (int value In values)
+{
+    IO.Console.PrintLine(value);
+}
+```
+
+循环子句里也可以写 `Is`：
+
+```kinal
+string text = "ok";
+Foreach (char ch Is text)
+{
+    IO.Console.PrintLine(ch);
+}
+```
+
+和其他局部声明一样，也可以使用 `Var`：
+
+```kinal
+Foreach (Var value In values)
+{
+    IO.Console.PrintLine(value);
+}
+```
+
 ## Switch 语句
 
 Switch 提供基于值的多分支选择：

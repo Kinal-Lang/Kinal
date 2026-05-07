@@ -30,6 +30,8 @@ kinal -V                   # 同上（简写）
 kinal --version --verbose  # 同时显示 KinalVM 版本
 ```
 
+如果要在源码中读取同一组版本信息，请使用 `IO.Version` 与 `IO.Version.VM`。参见 [IO.Version 版本常量](../advanced/version-constants.md)。
+
 ### 诊断语言与本地化
 
 `--lang` 和 `--locale-file` 可放在子命令**之前**（全局）或**之后**（局部），效果相同：

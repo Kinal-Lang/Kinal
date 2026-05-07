@@ -23,6 +23,7 @@ typedef enum
     TOK_ELSEIF,
     TOK_WHILE,
     TOK_FOR,
+    TOK_FOREACH,
     TOK_SWITCH,
     TOK_CASE,
     TOK_BREAK,
@@ -62,6 +63,7 @@ typedef enum
     TOK_TRUE,
     TOK_FALSE,
     TOK_IS,
+    TOK_IN,
     TOK_DEFAULT,
     TOK_NULL,
 
