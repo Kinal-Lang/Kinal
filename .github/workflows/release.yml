@@ -35,6 +35,7 @@ jobs:
     outputs:
       matrix: ${{ steps.meta.outputs.matrix }}
       version: ${{ steps.meta.outputs.version }}
+      vm_version: ${{ steps.meta.outputs.vm_version }}
       tag: ${{ steps.meta.outputs.tag }}
       release_name: ${{ steps.meta.outputs.release_name }}
       commit_sha: ${{ steps.meta.outputs.commit_sha }}
@@ -64,14 +65,20 @@ jobs:
           import subprocess
 
           root = pathlib.Path.cwd()
-          version = None
+          versions = {}
           for line in (root / "VERSION").read_text(encoding="utf-8").splitlines():
               line = line.strip()
-              if line.startswith("kinal="):
-                  version = line.split("=", 1)[1].strip()
-                  break
+              if not line or line.startswith("#") or "=" not in line:
+                  continue
+              key, value = line.split("=", 1)
+              versions[key.strip()] = value.strip()
+
+          version = versions.get("kinal")
+          vm_version = versions.get("kinalvm")
           if not version:
               raise SystemExit("failed to read kinal version from VERSION")
+          if not vm_version:
+              raise SystemExit("failed to read kinalvm version from VERSION")
 
           expected_tag = f"v{version}"
           event_name = os.environ["EVENT_NAME"]
@@ -153,6 +160,7 @@ jobs:
           outputs = {
               "matrix": json.dumps({"include": entries}, separators=(",", ":")),
               "version": version,
+              "vm_version": vm_version,
               "tag": tag,
               "release_name": f"Kinal {version}",
               "commit_sha": commit_sha,
@@ -290,6 +298,30 @@ jobs:
         working-directory: Kinal
         run: python -m infra.scripts.release_assets merge --input-dir ../release-assets --output ../release-assets/SHA256SUMS.txt
 
+      - name: Render release preamble
+        shell: bash
+        env:
+          KINAL_VERSION: ${{ needs.metadata.outputs.version }}
+          KINAL_VM_VERSION: ${{ needs.metadata.outputs.vm_version }}
+        run: |
+          cat > release-body.md <<EOF
+          <p align="center">
+            <img width="80" alt="Kinal" src="https://github.com/user-attachments/assets/26568c19-2ed3-4e05-8e9c-ce6dbcdc7b30" />
+          </p>
+          <div align="center">
+            <h3>Kinal — v${KINAL_VERSION}</h3>
+          </div>
+
+          ---
+
+          This release records:
+
+          ```text
+          kinal=${KINAL_VERSION}
+          kinalvm=${KINAL_VM_VERSION}
+          ```
+          EOF
+
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
         with:
@@ -298,6 +330,7 @@ jobs:
           name: ${{ needs.metadata.outputs.release_name }}
           draft: ${{ needs.metadata.outputs.draft == 'true' }}
           prerelease: ${{ needs.metadata.outputs.prerelease == 'true' }}
+          body_path: release-body.md
           generate_release_notes: ${{ needs.metadata.outputs.generate_release_notes == 'true' }}
           files: |
             release-assets/*
