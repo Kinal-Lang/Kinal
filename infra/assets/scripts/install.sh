@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+
+
 REPO="Kinal-Lang/Kinal"
 USER_AGENT="kinal-install/1.1"
 GITHUB_API_ROOT="https://api.github.com"
@@ -23,6 +25,8 @@ DRY_RUN=0
 NO_WRAPPER=0
 LIST_VERSIONS=0
 LIST_INSTALLED=0
+STATUS=0
+STATUS_JSON=0
 PRINT_BIN_DIR=0
 PRINT_ROOT_DIR=0
 PRINT_CURRENT=0
@@ -72,6 +76,8 @@ Inspection:
   --print-bin-dir          Print the launcher directory and exit.
   --print-root-dir         Print the toolchain root directory and exit.
   --current                Print the current selected version and exit.
+  --status                 Print installed/latest version status and exit.
+  --json                   With --status, print machine-readable JSON output.
 
 Extensions:
   --with-extension <name>  Install an optional extension for the selected version.
@@ -98,6 +104,7 @@ Examples:
   curl -fsSL https://kinal.org/install.sh | bash -s -- --update
   curl -fsSL https://kinal.org/install.sh | bash -s -- --version v0.6.1
   curl -fsSL https://kinal.org/install.sh | bash -s -- --list-versions
+  curl -fsSL https://kinal.org/install.sh | bash -s -- --status
   curl -fsSL https://kinal.org/install.sh | bash -s -- --set-default v0.6.1
   curl -fsSL https://kinal.org/install.sh | bash -s -- --remove-version v0.6.0
   curl -fsSL https://kinal.org/install.sh | bash -s -- --with-zig
@@ -266,7 +273,107 @@ prompt_yes_no_default_yes() {
   done
 }
 
+prompt_yes_no_default_no() {
+  local prompt="$1"
+  local reply=""
+  while true; do
+    printf '%s [y/N] ' "$prompt" > /dev/tty
+    if ! IFS= read -r reply < /dev/tty; then
+      return 1
+    fi
+    case "$reply" in
+      y|Y|yes|YES|Yes)
+        return 0
+        ;;
+      ''|n|N|no|NO|No)
+        return 1
+        ;;
+      *)
+        printf 'Please answer y or n.\n' > /dev/tty
+        ;;
+    esac
+  done
+}
+
+zig_version_from_binary() {
+  local zig_bin="$1"
+  [ -x "$zig_bin" ] || return 1
+  "$zig_bin" version 2>/dev/null | sed -n 's/^\([0-9][0-9.]*\).*/\1/p' | head -n 1
+}
+
+zig_major_minor() {
+  printf '%s\n' "$1" | awk -F. '{print $1 "." $2}'
+}
+
+zig_version_is_similar() {
+  local actual="$1"
+  local expected="$2"
+
+  [ -n "$actual" ] || return 1
+  [ -n "$expected" ] || return 1
+  [ "$(zig_major_minor "$actual")" = "$(zig_major_minor "$expected")" ]
+}
+
+find_path_zig_binary() {
+  local zig_bin=""
+  zig_bin="$(command -v zig 2>/dev/null || true)"
+  [ -n "$zig_bin" ] || return 1
+  [ -x "$zig_bin" ] || return 1
+  printf '%s\n' "$zig_bin"
+}
+
+decide_zig_from_existing_binary() {
+  local zig_bin="$1"
+  local source_name="$2"
+  local actual_version=""
+
+  [ -x "$zig_bin" ] || return 1
+  actual_version="$(zig_version_from_binary "$zig_bin" || true)"
+
+  if [ -z "$actual_version" ]; then
+    warn "found Zig at ${zig_bin}, but could not detect its version"
+    return 1
+  fi
+
+  if [ "$actual_version" = "$ZIG_EXTENSION_VERSION" ]; then
+    INSTALL_ZIG_EXTENSION=0
+    note "Zig ${actual_version} is already available from ${source_name}; skipping the Zig extension download."
+    return 0
+  fi
+
+  if zig_version_is_similar "$actual_version" "$ZIG_EXTENSION_VERSION"; then
+    note "Zig ${actual_version} is already available from ${source_name}; recommended version is ${ZIG_EXTENSION_VERSION}."
+    if can_prompt_tty; then
+      if prompt_yes_no_default_no "Install the recommended Zig ${ZIG_EXTENSION_VERSION} extension anyway?"; then
+        INSTALL_ZIG_EXTENSION=1
+      else
+        INSTALL_ZIG_EXTENSION=0
+      fi
+    else
+      INSTALL_ZIG_EXTENSION=0
+      note "non-interactive install detected; keeping the existing similar Zig version"
+    fi
+    return 0
+  fi
+
+  warn "found Zig ${actual_version} from ${source_name}, but Kinal recommends Zig ${ZIG_EXTENSION_VERSION}."
+  if can_prompt_tty; then
+    if prompt_yes_no_default_yes "Install the recommended Zig ${ZIG_EXTENSION_VERSION} extension now?"; then
+      INSTALL_ZIG_EXTENSION=1
+    else
+      INSTALL_ZIG_EXTENSION=0
+    fi
+  else
+    INSTALL_ZIG_EXTENSION=0
+    warn "non-interactive install detected; keeping the existing Zig ${actual_version}. Re-run with --with-zig to install the recommended version."
+  fi
+
+  return 0
+}
+
 decide_optional_extensions() {
+  local path_zig=""
+
   if ! host_supports_zig_extension "$HOST_TAG"; then
     if [ "$INSTALL_ZIG_EXTENSION" -eq 1 ]; then
       warn "the Zig extension is only supported by this installer on macOS and Linux"
@@ -282,14 +389,18 @@ decide_optional_extensions() {
   fi
 
   if zig_extension_installed_for_dir "$INSTALL_DIR"; then
-    INSTALL_ZIG_EXTENSION=1
-    note "keeping the existing Zig extension for ${TAG}"
+    decide_zig_from_existing_binary "$(zig_extension_binary_for_dir "$INSTALL_DIR")" "${TAG}"
+    return 0
+  fi
+
+  path_zig="$(find_path_zig_binary 2>/dev/null || true)"
+  if [ -n "$path_zig" ]; then
+    decide_zig_from_existing_binary "$path_zig" "PATH"
     return 0
   fi
 
   if [ -n "${CURRENT_VERSION:-}" ] && zig_extension_installed_for_dir "${ROOT_DIR}/versions/${CURRENT_VERSION}"; then
-    INSTALL_ZIG_EXTENSION=1
-    note "preserving the Zig extension from the current installation"
+    decide_zig_from_existing_binary "$(zig_extension_binary_for_dir "${ROOT_DIR}/versions/${CURRENT_VERSION}")" "current installation ${CURRENT_VERSION}"
     return 0
   fi
 
@@ -843,6 +954,186 @@ install_zig_extension() {
   note "installed Zig extension into ${zig_extension_dir}"
 }
 
+
+json_escape() {
+  printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
+}
+
+json_field() {
+  local name="$1"
+  local value="$2"
+  local comma="${3-,}"
+  printf '  "%s": "%s"%s\n' "$(json_escape "$name")" "$(json_escape "$value")" "$comma"
+}
+
+find_status_zig_binary() {
+  local bundled_zig="${ROOT_DIR}/current/extensions/zig/zig"
+  local path_zig=""
+
+  if [ -x "$bundled_zig" ]; then
+    printf 'bundled|%s\n' "$bundled_zig"
+    return 0
+  fi
+
+  path_zig="$(find_path_zig_binary 2>/dev/null || true)"
+  if [ -n "$path_zig" ]; then
+    printf 'PATH|%s\n' "$path_zig"
+    return 0
+  fi
+
+  return 1
+}
+
+print_status() {
+  local current_version=""
+  local current_display=""
+  local latest_payload=""
+  local latest_version=""
+  local latest_display=""
+  local update_available="unknown"
+  local host_tag="unknown"
+  local current_path="${ROOT_DIR}/current"
+  local current_path_status="missing"
+  local launcher_status="missing"
+  local kinalvm_launcher_status="missing"
+  local path_status="missing"
+  local zig_info=""
+  local zig_source="none"
+  local zig_bin=""
+  local zig_version=""
+  local zig_status="not installed"
+
+  current_version="$(current_tag 2>/dev/null || true)"
+  if [ -n "$current_version" ]; then
+    current_display="$current_version"
+  else
+    current_display="not installed"
+  fi
+
+  latest_payload="$(download_text "${GITHUB_API_ROOT}/repos/${REPO}/releases/latest" 2>/dev/null || true)"
+  latest_version="$(printf '%s' "$latest_payload" | tr -d '\r\n' | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
+  if [ -n "$latest_version" ]; then
+    latest_display="$latest_version"
+  else
+    latest_display="unknown"
+  fi
+
+  if [ -z "$current_version" ]; then
+    if [ -n "$latest_version" ]; then
+      update_available="install available"
+    else
+      update_available="unknown"
+    fi
+  elif [ -z "$latest_version" ]; then
+    update_available="unknown"
+  elif [ "$current_version" = "$latest_version" ]; then
+    update_available="no"
+  else
+    update_available="yes"
+  fi
+
+  host_tag="$(detect_host_tag 2>/dev/null || printf 'unknown')"
+
+  if [ -L "$current_path" ]; then
+    if [ -e "$current_path" ]; then
+      current_path_status="ok"
+    else
+      current_path_status="broken symlink"
+    fi
+  elif [ -d "$current_path" ]; then
+    current_path_status="directory"
+  fi
+
+  if [ -x "${BIN_DIR}/kinal" ]; then
+    launcher_status="ok"
+  elif [ -e "${BIN_DIR}/kinal" ] || [ -L "${BIN_DIR}/kinal" ]; then
+    launcher_status="not executable"
+  fi
+
+  if [ -x "${BIN_DIR}/kinalvm" ]; then
+    kinalvm_launcher_status="ok"
+  elif [ -e "${BIN_DIR}/kinalvm" ] || [ -L "${BIN_DIR}/kinalvm" ]; then
+    kinalvm_launcher_status="not executable"
+  fi
+
+  case ":${PATH}:" in
+    *":${BIN_DIR}:"*)
+      path_status="ok"
+      ;;
+    *)
+      path_status="missing"
+      ;;
+  esac
+
+  zig_info="$(find_status_zig_binary 2>/dev/null || true)"
+  if [ -n "$zig_info" ]; then
+    zig_source="${zig_info%%|*}"
+    zig_bin="${zig_info#*|}"
+    zig_version="$(zig_version_from_binary "$zig_bin" || true)"
+    if [ -z "$zig_version" ]; then
+      zig_status="installed, version unknown"
+      zig_version="unknown"
+    elif [ "$zig_version" = "$ZIG_EXTENSION_VERSION" ]; then
+      zig_status="ok"
+    elif zig_version_is_similar "$zig_version" "$ZIG_EXTENSION_VERSION"; then
+      zig_status="compatible, recommended version available"
+    else
+      zig_status="version differs from recommendation"
+    fi
+  else
+    zig_version="not installed"
+  fi
+
+  if [ "$STATUS_JSON" -eq 1 ]; then
+    printf '{\n'
+    json_field "current_version" "$current_display"
+    json_field "latest_version" "$latest_display"
+    json_field "update_available" "$update_available"
+    json_field "host" "$host_tag"
+    json_field "root_dir" "$ROOT_DIR"
+    json_field "bin_dir" "$BIN_DIR"
+    json_field "current_path" "$current_path"
+    json_field "current_path_status" "$current_path_status"
+    json_field "kinal_launcher" "$launcher_status"
+    json_field "kinalvm_launcher" "$kinalvm_launcher_status"
+    json_field "path_status" "$path_status"
+    json_field "zig_source" "$zig_source"
+    json_field "zig_version" "$zig_version"
+    json_field "recommended_zig" "$ZIG_EXTENSION_VERSION"
+    json_field "zig_status" "$zig_status" ""
+    printf '}\n'
+    return 0
+  fi
+
+  printf 'Kinal status\n\n'
+  printf 'Current version:   %s\n' "$current_display"
+  printf 'Latest version:    %s\n' "$latest_display"
+  printf 'Update available:  %s\n' "$update_available"
+  printf 'Host platform:     %s\n' "$host_tag"
+  printf '\n'
+  printf 'Install root:      %s\n' "$ROOT_DIR"
+  printf 'Launcher dir:      %s\n' "$BIN_DIR"
+  printf 'Current path:      %s\n' "$current_path"
+  printf 'Current status:    %s\n' "$current_path_status"
+  printf 'PATH status:       %s\n' "$path_status"
+  printf '\n'
+  printf 'kinal launcher:    %s\n' "$launcher_status"
+  printf 'kinalvm launcher:  %s\n' "$kinalvm_launcher_status"
+  printf '\n'
+  printf 'Zig source:        %s\n' "$zig_source"
+  printf 'Zig version:       %s\n' "$zig_version"
+  printf 'Recommended Zig:   %s\n' "$ZIG_EXTENSION_VERSION"
+  printf 'Zig status:        %s\n' "$zig_status"
+
+  if [ "$update_available" = "yes" ]; then
+    printf '\nRun:\n'
+    printf '  curl -fsSL https://kinal.org/install.sh | bash -s -- --update\n'
+  elif [ "$update_available" = "install available" ]; then
+    printf '\nRun:\n'
+    printf '  curl -fsSL https://kinal.org/install.sh | bash\n'
+  fi
+}
+
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --version)
@@ -896,6 +1187,10 @@ while [ "$#" -gt 0 ]; do
       QUIET=1
       shift
       ;;
+    --json)
+      STATUS_JSON=1
+      shift
+      ;;
     --dry-run)
       DRY_RUN=1
       shift
@@ -910,6 +1205,10 @@ while [ "$#" -gt 0 ]; do
       ;;
     --list-installed)
       LIST_INSTALLED=1
+      shift
+      ;;
+    --status|--statu)
+      STATUS=1
       shift
       ;;
     --print-bin-dir)
@@ -989,6 +1288,10 @@ case "$TIMEOUT" in
     ;;
 esac
 
+if [ "$STATUS_JSON" -eq 1 ] && [ "$STATUS" -ne 1 ]; then
+  fail "--json can only be used with --status"
+fi
+
 BIN_DIR="$(expand_path "$BIN_DIR")"
 ROOT_DIR="$(expand_path "$ROOT_DIR")"
 
@@ -1013,6 +1316,11 @@ if [ "$LIST_INSTALLED" -eq 1 ]; then
 fi
 
 apply_proxy_settings
+
+if [ "$STATUS" -eq 1 ]; then
+  print_status
+  exit 0
+fi
 
 if [ "$UNINSTALL" -eq 1 ]; then
   uninstall_installation
