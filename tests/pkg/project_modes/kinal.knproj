@@ -1,0 +1,93 @@
+Project PkgProjectModes
+{
+    DefaultProfile = "reachable";
+
+    Packages
+    {
+        Roots = ["../local"];
+    }
+
+    Workspace
+    {
+        Ignore = ["out/**"];
+    }
+
+    SourceSet "app"
+    {
+        Roots = ["src"];
+        Include = ["**/*.kn"];
+        Exclude = ["Ignored/**"];
+        RequireUnit = true;
+    }
+
+    Profile "reachable"
+    {
+        Source
+        {
+            Entry = "src/Main.kn";
+            Sets = ["app"];
+            Mode = ReachableUnits;
+        }
+
+        Build
+        {
+            Backend = Native;
+            Environment = Hosted;
+        }
+    }
+
+    Profile "entryunit"
+    {
+        Source
+        {
+            Entry = "src/EntryOnly.kn";
+            Sets = ["app"];
+            Mode = EntryUnit;
+        }
+
+        Build
+        {
+            Backend = Native;
+            Environment = Hosted;
+        }
+    }
+
+    Profile "fileonly"
+    {
+        Source
+        {
+            Entry = "src/FileOnly.kn";
+            Sets = ["app"];
+            Mode = FileOnly;
+        }
+
+        Build
+        {
+            Backend = Native;
+            Environment = Hosted;
+        }
+    }
+
+    Profile "all"
+    {
+        Source
+        {
+            Entry = "src/Main.kn";
+            Sets = ["app"];
+            Mode = AllSources;
+        }
+
+        Build
+        {
+            Backend = Native;
+            Environment = Hosted;
+        }
+    }
+
+    Lsp
+    {
+        Profile = "reachable";
+        ExtraSets = ["app"];
+        StrictProjectScope = true;
+    }
+}

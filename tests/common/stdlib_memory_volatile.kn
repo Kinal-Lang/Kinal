@@ -1,0 +1,36 @@
+Unit Tests.StdlibMemoryVolatile;
+
+Get Console By IO.Console;
+Get IO.Memory;
+Get IO.Volatile;
+
+Trusted Static Function int Main()
+{
+    byte source = 0x41;
+    byte target = 0;
+
+    IO.Memory.Copy(&target, &source, 1);
+    Console.PrintLine(target == 0x41);
+    Console.PrintLine(IO.Memory.Compare(&source, &target, 1) == 0);
+
+    IO.Memory.Set(&target, 0x5a, 1);
+    Console.PrintLine(target == 0x5a);
+    Console.PrintLine(IO.Memory.Compare(&source, &target, 1) != 0);
+
+    IO.Memory.Zero(&target, 1);
+    Console.PrintLine(target == 0);
+
+    u8 value8 = 0;
+    u16 value16 = 0;
+    u32 value32 = 0;
+    u64 value64 = 0;
+    IO.Volatile.Write8(&value8, [u8](0xa5));
+    IO.Volatile.Write16(&value16, [u16](0xa55a));
+    IO.Volatile.Write32(&value32, [u32](0x12345678));
+    IO.Volatile.Write64(&value64, [u64](0x12345678));
+    Console.PrintLine(IO.Volatile.Read8(&value8) == [u8](0xa5));
+    Console.PrintLine(IO.Volatile.Read16(&value16) == [u16](0xa55a));
+    Console.PrintLine(IO.Volatile.Read32(&value32) == [u32](0x12345678));
+    Console.PrintLine(IO.Volatile.Read64(&value64) == [u64](0x12345678));
+    Return 0;
+}

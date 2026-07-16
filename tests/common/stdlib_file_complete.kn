@@ -1,0 +1,26 @@
+Unit Tests.StdlibFileComplete;
+
+Get Console By IO.Console;
+Get IO.Directory;
+Get IO.File;
+Get IO.Text;
+
+Static Function int Main()
+{
+    string root = "out/test/stdlib_file_complete_data";
+    string file = root + "/value.txt";
+    string missing = root + "/missing.txt";
+
+    IO.File.DeleteIfExists(file);
+    IO.Directory.DeleteIfExists(root);
+    Console.PrintLine(IO.Directory.Ensure(root));
+    Console.PrintLine(IO.File.WriteAllText(file, "a"));
+    Console.PrintLine(IO.File.AppendAllText(file, "b"));
+    Console.PrintLine(IO.File.ReadAllText(file) == "ab");
+    Console.PrintLine(IO.File.ReadIfExists(file) == "ab");
+    Console.PrintLine(IO.File.ReadIfExists(missing) == null);
+    Console.PrintLine(IO.File.Delete(file));
+    Console.PrintLine(!IO.File.Exists(file));
+    Console.PrintLine(IO.Directory.Delete(root));
+    Return 0;
+}

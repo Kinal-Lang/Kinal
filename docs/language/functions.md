@@ -256,13 +256,59 @@ Function int Fibonacci(int n)
 
 ## Function Overloading
 
-Kinal **does not support** overloading functions with the same name (i.e., two functions with the same name cannot exist within one Unit). Use different names or generics to distinguish functionality.
+Kinal supports explicit function overloading inside the same `Unit`.
+
+Rules:
+
+- Every overload participant must declare `[Overload]`.
+- Every overload participant must also declare `[SymbolName("...")]`.
+- `SymbolName` is the real compiled symbol name; the source-level call name stays the declared function name.
+- Overloads must differ by parameter types.
+- If more than one overload matches a call, the compiler reports an ambiguity error.
+- Generic functions cannot use `[Overload]` yet.
+
+Example:
+
+```kinal
+[Overload]
+[SymbolName("DescribeInt")]
+Static Function string Describe(int value)
+{
+    Return "int";
+}
+
+[Overload]
+[SymbolName("DescribeText")]
+Static Function string Describe(string value)
+{
+    Return "string";
+}
+```
 
 ## Return Values
 
 - `Return expression;` — returns a value
 - `Return;` — early return from a `void` function
 - If a function reaches the end without a `Return`, the compiler will report a "Missing Return" error (for non-`void` functions)
+
+Functions can return an `Object.Package` when several values belong together but do not justify a named `struct`:
+
+```kinal
+Function <int, string> Status()
+{
+    Return <200, "OK">;
+}
+
+Static Function int Main()
+{
+    Object.Package status<code, message> = Status();
+    IO.Console.PrintLine(status.code);
+    IO.Console.PrintLine(status.message);
+    Return 0;
+}
+```
+
+See [Packages](types.md#packages) for package type syntax, aliases, indexing rules, and explicit array materialization.
 
 ## Local Functions (Defined Inside a Block)
 

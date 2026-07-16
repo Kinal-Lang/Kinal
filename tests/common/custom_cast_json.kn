@@ -1,0 +1,45 @@
+Unit Tests.CustomCastJson;
+
+Get Console By IO.Console;
+Get IO.Json;
+
+Class User
+{
+    Public string Name;
+    Public int Age;
+
+    Public Constructor()
+    {
+        Name = "";
+        Age = 0;
+    }
+
+    [Cast]
+    Public Static Function User FromDict(dict value)
+    {
+        User user = New User();
+        user.Name = [string](value.TryFetch("name", ""));
+        user.Age = [int](value.TryFetch("age", 0));
+        Return user;
+    }
+
+    [Cast]
+    Public Static Function User FromText(string value)
+    {
+        Return [User](IO.Json.Parse(value));
+    }
+}
+
+Static Function int Main()
+{
+    dict root = IO.Json.Parse("{\"name\":\"kinal\",\"age\":9}");
+    User user = [User](root);
+    User user_text = [User]("{\"name\":\"lang\",\"age\":7}");
+
+    Console.PrintLine(user.Name);
+    Console.PrintLine(user.Age);
+    Console.PrintLine(user_text.Name);
+    Console.PrintLine(user_text.Age);
+    Console.PrintLine(user Is User);
+    Return 0;
+}

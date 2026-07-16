@@ -1,0 +1,47 @@
+Unit Tests.FfiAbi;
+
+Get Console By IO.Console;
+Get IO.System;
+
+Extern Function int kn_native_negative() By C;
+Extern Function int kn_native_int_echo(int value) By C;
+Extern Function bool kn_native_truthy_two() By C;
+Extern Function bool kn_native_false() By C;
+Extern Function bool kn_native_bool_echo(bool value) By C;
+
+[SymbolName("kn_native_int_echo")]
+Delegate Function int dyn_int_echo(int value) By C;
+
+[SymbolName("kn_native_truthy_two")]
+Delegate Function bool dyn_truthy_two() By C;
+
+Unsafe Static Function int Main()
+{
+    Console.PrintLine(kn_native_negative());
+    Console.PrintLine(kn_native_int_echo(-123));
+    Console.PrintLine(kn_native_truthy_two());
+    Console.PrintLine(kn_native_false());
+    Console.PrintLine(kn_native_bool_echo(true));
+    Console.PrintLine(kn_native_bool_echo(false));
+
+    byte* library = IO.System.LoadLibrary("native_ffi.dll");
+    If (library == null)
+    {
+        Console.PrintLine(IO.System.LastError());
+        Return 2;
+    }
+    byte* intPointer = IO.System.GetSymbol(library, dyn_int_echo);
+    byte* truthPointer = IO.System.GetSymbol(library, dyn_truthy_two);
+    If (intPointer == null || truthPointer == null)
+    {
+        Console.PrintLine(IO.System.LastError());
+        IO.System.CloseLibrary(library);
+        Return 3;
+    }
+    dyn_int_echo = intPointer;
+    dyn_truthy_two = truthPointer;
+    Console.PrintLine(dyn_int_echo(-99));
+    Console.PrintLine(dyn_truthy_two());
+    IO.System.CloseLibrary(library);
+    Return 0;
+}

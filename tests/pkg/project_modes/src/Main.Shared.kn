@@ -1,0 +1,6 @@
+Unit Tests.ProjectModes.Main;
+
+Function string SharedSuffix()
+{
+    Return "shared";
+}

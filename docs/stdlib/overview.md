@@ -16,6 +16,7 @@ Kinal's standard library is organized under the `IO.*` namespace. Core runtime m
 | `IO.Async` | Async tasks and process helpers | [→](async.md) |
 | `IO.System` | Process, command line, and dynamic library APIs | [→](system.md) |
 | `IO.Meta` | Runtime metadata access | [→](meta.md) |
+| `IO.Json` | JSON parsing and formatting with `dict` / `list` values | [→](json.md) |
 | `IO.Request` | Outbound HTTP client | [→](request.md) |
 | `IO.Char` | Character classification helpers | [→](core.md) |
 | `IO.Math` | Integer and floating-point math helpers | [→](core.md) |
@@ -98,6 +99,16 @@ Get IO.Request;
 IO.Request.Response response = IO.Request.Fetch("http://127.0.0.1:8000/");
 ```
 
+### IO.Json
+
+`IO.Json` parses JSON objects as `dict` and arrays as `list`, with optional property-style wrappers.
+
+```kinal
+Get IO.Json;
+
+dict root = IO.Json.Parse("{\"name\":\"kinal\"}");
+```
+
 ### IO.UI
 
 `IO.UI` provides a native window / control layer for desktop apps.
@@ -128,6 +139,7 @@ server.UseStatic("/static", "public").UseRoutes();
 - [IO.File / IO.Directory](filesystem.md)
 - [IO.Path](path.md)
 - [IO.Core](core.md)
+- [IO.Json](json.md)
 - [IO.Request](request.md)
 - [IO.UI](ui.md)
 - [IO.Web](web.md)

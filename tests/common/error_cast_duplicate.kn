@@ -1,0 +1,22 @@
+Unit Tests.ErrorCastDuplicate;
+
+Class User
+{
+    [Cast]
+    Public Static Function User FromAny(any value)
+    {
+        Return New User();
+    }
+
+    [Cast]
+    Public Static Function User FromText(string value)
+    {
+        Return New User();
+    }
+}
+
+Static Function int Main()
+{
+    User user = [User]("hello");
+    Return 0;
+}

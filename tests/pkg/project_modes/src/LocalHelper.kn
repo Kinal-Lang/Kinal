@@ -1,0 +1,6 @@
+Unit Tests.ProjectModes.LocalHelper;
+
+Function string Text()
+{
+    Return "local-helper";
+}

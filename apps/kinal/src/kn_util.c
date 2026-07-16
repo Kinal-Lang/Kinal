@@ -25,10 +25,27 @@ typedef struct
 
 #define KN_ALLOC_MAGIC 0x4B4E414Cu /* 'KNAL' */
 
-static int g_temp_arena_active;
-static KnArenaBlock *g_temp_arena_first;
-static KnArenaBlock *g_temp_arena_cur;
-static KnArenaBlock *g_temp_arena_tail;
+struct KnTempArena
+{
+    int active;
+    KnArenaBlock *first;
+    KnArenaBlock *cur;
+    KnArenaBlock *tail;
+};
+
+#if defined(_MSC_VER)
+#define KN_UTIL_THREAD_LOCAL __declspec(thread)
+#else
+#define KN_UTIL_THREAD_LOCAL _Thread_local
+#endif
+
+static KN_UTIL_THREAD_LOCAL KnTempArena g_default_temp_arena;
+static KN_UTIL_THREAD_LOCAL KnTempArena *g_current_temp_arena;
+
+static KnTempArena *temp_arena_context(void)
+{
+    return g_current_temp_arena ? g_current_temp_arena : &g_default_temp_arena;
+}
 
 static size_t kn_align8(size_t n) { return (n + 7u) & ~(size_t)7u; }
 
@@ -42,6 +59,7 @@ static KnAllocHeader *kn_hdr(void *p)
 
 static void *temp_arena_alloc(size_t n)
 {
+    KnTempArena *arena = temp_arena_context();
     if (!g_heap) g_heap = GetProcessHeap();
     if (!g_heap) return 0;
 
@@ -51,7 +69,7 @@ static void *temp_arena_alloc(size_t n)
     size_t total = sizeof(KnAllocHeader) + n;
     total = kn_align8(total);
 
-    KnArenaBlock *b = g_temp_arena_cur ? g_temp_arena_cur : g_temp_arena_first;
+    KnArenaBlock *b = arena->cur ? arena->cur : arena->first;
     while (b && b->off + total > b->cap)
         b = b->next;
 
@@ -64,19 +82,19 @@ static void *temp_arena_alloc(size_t n)
         b->next = 0;
         b->cap = cap;
         b->off = 0;
-        if (!g_temp_arena_first)
+        if (!arena->first)
         {
-            g_temp_arena_first = b;
-            g_temp_arena_tail = b;
+            arena->first = b;
+            arena->tail = b;
         }
         else
         {
-            g_temp_arena_tail->next = b;
-            g_temp_arena_tail = b;
+            arena->tail->next = b;
+            arena->tail = b;
         }
     }
 
-    g_temp_arena_cur = b;
+    arena->cur = b;
     uint8_t *base = (uint8_t *)(b + 1);
     KnAllocHeader *h = (KnAllocHeader *)(base + b->off);
     h->magic = KN_ALLOC_MAGIC;
@@ -147,7 +165,7 @@ void *memset(void *dst, int c, size_t n)
 
 void *kn_malloc(size_t n)
 {
-    if (g_temp_arena_active)
+    if (temp_arena_context()->active)
         return temp_arena_alloc(n);
     if (!g_heap) g_heap = GetProcessHeap();
     if (!g_heap) return 0;
@@ -204,18 +222,65 @@ void *kn_realloc(void *p, size_t n)
     return np;
 }
 
+KnTempArena *kn_temp_arena_create(void)
+{
+    KnTempArena *current = temp_arena_context();
+    int was_active = current->active;
+    current->active = 0;
+    KnTempArena *arena = (KnTempArena *)kn_malloc(sizeof(KnTempArena));
+    current->active = was_active;
+    if (arena)
+        kn_memset(arena, 0, sizeof(*arena));
+    return arena;
+}
+
+void kn_temp_arena_destroy(KnTempArena *arena)
+{
+    if (!arena || arena == &g_default_temp_arena)
+        return;
+    if (temp_arena_context() == arena)
+        g_current_temp_arena = &g_default_temp_arena;
+    KnArenaBlock *block = arena->first;
+    while (block)
+    {
+        KnArenaBlock *next = block->next;
+        if (!g_heap) g_heap = GetProcessHeap();
+        if (g_heap) HeapFree(g_heap, 0, block);
+        block = next;
+    }
+    arena->active = 0;
+    arena->first = 0;
+    arena->cur = 0;
+    arena->tail = 0;
+    kn_free(arena);
+}
+
+KnTempArena *kn_temp_arena_current(void)
+{
+    return temp_arena_context();
+}
+
+KnTempArena *kn_temp_arena_set_current(KnTempArena *arena)
+{
+    KnTempArena *previous = temp_arena_context();
+    g_current_temp_arena = arena ? arena : &g_default_temp_arena;
+    return previous;
+}
+
 void kn_temp_arena_begin(void)
 {
-    g_temp_arena_active = 1;
-    for (KnArenaBlock *b = g_temp_arena_first; b; b = b->next)
+    KnTempArena *arena = temp_arena_context();
+    arena->active = 1;
+    for (KnArenaBlock *b = arena->first; b; b = b->next)
         b->off = 0;
-    g_temp_arena_cur = g_temp_arena_first;
+    arena->cur = arena->first;
 }
 
 void kn_temp_arena_end(void)
 {
-    g_temp_arena_active = 0;
-    g_temp_arena_cur = g_temp_arena_first;
+    KnTempArena *arena = temp_arena_context();
+    arena->active = 0;
+    arena->cur = arena->first;
 }
 
 static void kn_write_handle(KN_HANDLE h, const char *s)

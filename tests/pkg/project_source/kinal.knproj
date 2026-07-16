@@ -7,12 +7,20 @@ Project PkgProjectSource
         Roots = ["../local"];
     }
 
+    SourceSet "app"
+    {
+        Roots = ["src"];
+        Include = ["**/*.kn"];
+        RequireUnit = true;
+    }
+
     Profile "native"
     {
         Source
         {
             Entry = "src/Main.kn";
-            AutoDiscovery = true;
+            Sets = ["app"];
+            Mode = ReachableUnits;
         }
 
         Build

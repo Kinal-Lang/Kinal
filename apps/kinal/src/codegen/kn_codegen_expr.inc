@@ -2,9 +2,11 @@
 
 static CGValue gen_expr(Codegen *g, Expr *e);
 static LLVMValueRef build_array_value(Codegen *g, Type arr_type, Expr *init);
+static LLVMValueRef build_array_from_package_value(Codegen *g, CGValue pkg, Type arr_type);
 static LLVMValueRef build_dict_value(Codegen *g, Expr *init);
 static LLVMValueRef build_heap_array_value(Codegen *g, Type arr_type);
 static LLVMValueRef build_array_append_value(Codegen *g, CGValue arr, CGValue item);
+static LLVMValueRef ensure_c_abi_adapter(Codegen *g, FuncSymbol *target, FuncSymbol *signature);
 static void init_class_array_fields(Codegen *g, ClassSymbol *cs, LLVMValueRef obj);
 static CGValue gen_builtin_call(Codegen *g, KnBuiltinKind kind, ExprList *args, Expr *recv);
 static LLVMValueRef gen_lvalue(Codegen *g, Expr *e, Type *out_type);
@@ -37,102 +39,88 @@ static LLVMValueRef build_pseudo_block_object(Codegen *g, LLVMValueRef invoke_pt
 static void call_block_entry(Codegen *g, CGValue blkobj, LLVMValueRef mode, LLVMValueRef a, LLVMValueRef b);
 static LLVMValueRef call_callable_wrapper(Codegen *g, CGValue fnobj, LLVMValueRef args_ptr, LLVMValueRef argc);
 static LLVMValueRef load_callable_invoke_ptr(Codegen *g, CGValue fnobj);
-static LLVMValueRef gen_delegate_bridge(Codegen *g, FuncSymbol *dfs);
 static void gen_stmt(Codegen *g, Stmt *s);
 static void declare_global_vars(Codegen *g, StmtList *globals);
 static void codegen_global_init(Codegen *g, StmtList *globals);
 static void maybe_call_global_init(Codegen *g);
 
+static CGValue gen_binary_short_circuit(Codegen *g, Expr *e)
+{
+    const KnResolvedBinary *plan = &e->resolved_binary;
+    TokenType op = (TokenType)e->v.binary.op;
+    CGValue out;
+    if (op != TOK_ANDAND && op != TOK_OROR)
+        kn_die("invalid logical binary lowering plan");
+
+    CGValue lhs = gen_expr(g, e->v.binary.left);
+    LLVMValueRef lhs_cond = cast_value(g, lhs, plan->lhs_coercion);
+    LLVMValueRef fn = LLVMGetBasicBlockParent(LLVMGetInsertBlock(g->builder));
+    LLVMBasicBlockRef lhs_bb = LLVMGetInsertBlock(g->builder);
+    LLVMBasicBlockRef rhs_bb = LLVMAppendBasicBlockInContext(
+        g->ctx, fn, op == TOK_ANDAND ? "land.rhs" : "lor.rhs");
+    LLVMBasicBlockRef merge_bb = LLVMAppendBasicBlockInContext(
+        g->ctx, fn, op == TOK_ANDAND ? "land.merge" : "lor.merge");
+
+    if (op == TOK_ANDAND)
+        LLVMBuildCondBr(g->builder, lhs_cond, rhs_bb, merge_bb);
+    else
+        LLVMBuildCondBr(g->builder, lhs_cond, merge_bb, rhs_bb);
+
+    LLVMPositionBuilderAtEnd(g->builder, rhs_bb);
+    CGValue rhs = gen_expr(g, e->v.binary.right);
+    LLVMValueRef rhs_cond = cast_value(g, rhs, plan->rhs_coercion);
+    LLVMBasicBlockRef rhs_end_bb = LLVMGetInsertBlock(g->builder);
+    LLVMBuildBr(g->builder, merge_bb);
+
+    LLVMPositionBuilderAtEnd(g->builder, merge_bb);
+    LLVMValueRef phi = LLVMBuildPhi(g->builder, g->i1,
+                                    op == TOK_ANDAND ? "land" : "lor");
+    LLVMValueRef incoming_vals[2] = {
+        LLVMConstInt(g->i1, op == TOK_ANDAND ? 0 : 1, 0),
+        rhs_cond
+    };
+    LLVMBasicBlockRef incoming_bbs[2] = { lhs_bb, rhs_end_bb };
+    LLVMAddIncoming(phi, incoming_vals, incoming_bbs, 2);
+    out.value = phi;
+    out.type = type_make(TY_BOOL);
+    return out;
+}
+
 static CGValue gen_binary(Codegen *g, Expr *e)
 {
+    const KnResolvedBinary *plan = &e->resolved_binary;
     TokenType op = (TokenType)e->v.binary.op;
     CGValue out;
     out.value = 0;
-    if (op == TOK_ANDAND || op == TOK_OROR)
+    out.type = type_make(TY_UNKNOWN);
+
+    // The resolved plan is the semantic dispatch boundary. In particular, a
+    // char* + integer expression reaches pointer arithmetic here and can no
+    // longer be reclassified as string concatenation by backend heuristics.
+    switch (plan->kind)
     {
-        CGValue l = gen_expr(g, e->v.binary.left);
-        LLVMValueRef lcond = cast_value(g, l, type_make(TY_BOOL));
-        LLVMValueRef fn = LLVMGetBasicBlockParent(LLVMGetInsertBlock(g->builder));
-        LLVMBasicBlockRef lhs_bb = LLVMGetInsertBlock(g->builder);
-        LLVMBasicBlockRef rhs_bb = LLVMAppendBasicBlockInContext(g->ctx, fn, op == TOK_ANDAND ? "land.rhs" : "lor.rhs");
-        LLVMBasicBlockRef merge_bb = LLVMAppendBasicBlockInContext(g->ctx, fn, op == TOK_ANDAND ? "land.merge" : "lor.merge");
-
-        if (op == TOK_ANDAND)
-            LLVMBuildCondBr(g->builder, lcond, rhs_bb, merge_bb);
-        else
-            LLVMBuildCondBr(g->builder, lcond, merge_bb, rhs_bb);
-
-        LLVMPositionBuilderAtEnd(g->builder, rhs_bb);
-        CGValue r = gen_expr(g, e->v.binary.right);
-        LLVMValueRef rcond = cast_value(g, r, type_make(TY_BOOL));
-        LLVMBasicBlockRef rhs_end_bb = LLVMGetInsertBlock(g->builder);
-        LLVMBuildBr(g->builder, merge_bb);
-
-        LLVMPositionBuilderAtEnd(g->builder, merge_bb);
-        LLVMValueRef phi = LLVMBuildPhi(g->builder, g->i1, op == TOK_ANDAND ? "land" : "lor");
-        LLVMValueRef incoming_vals[2];
-        LLVMBasicBlockRef incoming_bbs[2];
-        incoming_vals[0] = LLVMConstInt(g->i1, op == TOK_ANDAND ? 0 : 1, 0);
-        incoming_bbs[0] = lhs_bb;
-        incoming_vals[1] = rcond;
-        incoming_bbs[1] = rhs_end_bb;
-        LLVMAddIncoming(phi, incoming_vals, incoming_bbs, 2);
-        out.value = phi;
-        out.type = type_make(TY_BOOL);
-        return out;
+    case KN_BINARY_LOWER_LOGICAL_SHORT_CIRCUIT:
+        return gen_binary_short_circuit(g, e);
+    case KN_BINARY_LOWER_UNRESOLVED:
+        kn_die("unresolved binary lowering plan");
+        break;
+    default:
+        break;
     }
 
-    CGValue l = gen_expr(g, e->v.binary.left);
-    CGValue r = gen_expr(g, e->v.binary.right);
-    bool lhs_cstr = (l.type.kind == TY_PTR && l.type.elem == TY_CHAR && l.type.ptr_depth == 1);
-    bool rhs_cstr = (r.type.kind == TY_PTR && r.type.elem == TY_CHAR && r.type.ptr_depth == 1);
-    bool lhs_concat_text = (l.type.kind == TY_STRING) || lhs_cstr;
-    bool rhs_concat_text = (r.type.kind == TY_STRING) || rhs_cstr;
-    bool lhs_stringify = l.type.kind != TY_UNKNOWN && l.type.kind != TY_VOID;
-    bool rhs_stringify = r.type.kind != TY_UNKNOWN && r.type.kind != TY_VOID;
-    if (op == TOK_PLUS &&
-        ((lhs_concat_text && rhs_stringify) || (rhs_concat_text && lhs_stringify)) &&
-        !(lhs_cstr && rhs_cstr))
-    {
-        LLVMValueRef lv = cast_value(g, l, type_make(TY_STRING));
-        LLVMValueRef rv = cast_value(g, r, type_make(TY_STRING));
-        LLVMValueRef argv[2] = { lv, rv };
-        out.value = LLVMBuildCall2(g->builder, g->fn_str_concat_ty, g->fn_str_concat, argv, 2, "strcat");
-        out.type = type_make(TY_STRING);
-        return out;
-    }
+    CGValue lhs = gen_expr(g, e->v.binary.left);
+    CGValue rhs = gen_expr(g, e->v.binary.right);
 
-    if ((op == TOK_PLUS || op == TOK_MINUS) && (l.type.kind == TY_PTR || r.type.kind == TY_PTR))
+    switch (plan->kind)
     {
-        CGValue ptrv = l;
-        CGValue idxv = r;
-        if (l.type.kind != TY_PTR)
-        {
-            ptrv = r;
-            idxv = l;
-        }
-        Type elem = type_from_elem(ptrv.type);
-        LLVMTypeRef elem_ty = llvm_type(g, elem);
-        LLVMValueRef idx = cast_value(g, idxv, type_make(TY_I64));
-        if (op == TOK_MINUS && ptrv.value == l.value)
-            idx = LLVMBuildNeg(g->builder, idx, "pneg");
-        out.value = LLVMBuildInBoundsGEP2(g->builder, elem_ty, ptrv.value, &idx, 1, "ptradd");
-        out.type = ptrv.type;
-        return out;
-    }
-
-    switch (op)
+    case KN_BINARY_LOWER_NUMERIC_ARITHMETIC:
     {
-    case TOK_PLUS:
-    case TOK_MINUS:
-    case TOK_STAR:
-    case TOK_SLASH:
-    case TOK_PERCENT:
-    {
-        Type res = e->type;
-        LLVMValueRef lv = cast_value(g, l, res);
-        LLVMValueRef rv = cast_value(g, r, res);
-        if (is_float_kind(res.kind))
+        LLVMValueRef lv = cast_value(g, lhs, plan->lhs_coercion);
+        LLVMValueRef rv = cast_value(g, rhs, plan->rhs_coercion);
+        bool is_float = is_float_kind(plan->lhs_coercion.kind);
+        if (is_float != is_float_kind(plan->rhs_coercion.kind))
+            kn_die("incompatible numeric binary coercions");
+        if (is_float)
         {
             switch (op)
             {
@@ -141,150 +129,207 @@ static CGValue gen_binary(Codegen *g, Expr *e)
             case TOK_STAR: out.value = LLVMBuildFMul(g->builder, lv, rv, "fmul"); break;
             case TOK_SLASH: out.value = LLVMBuildFDiv(g->builder, lv, rv, "fdiv"); break;
             case TOK_PERCENT: out.value = LLVMBuildFRem(g->builder, lv, rv, "frem"); break;
-            default: break;
+            default: kn_die("invalid numeric arithmetic operator"); break;
             }
         }
         else
         {
-            bool u = is_unsigned_kind(res.kind);
             switch (op)
             {
             case TOK_PLUS: out.value = LLVMBuildAdd(g->builder, lv, rv, "add"); break;
             case TOK_MINUS: out.value = LLVMBuildSub(g->builder, lv, rv, "sub"); break;
             case TOK_STAR: out.value = LLVMBuildMul(g->builder, lv, rv, "mul"); break;
-            case TOK_SLASH: out.value = u ? LLVMBuildUDiv(g->builder, lv, rv, "udiv") : LLVMBuildSDiv(g->builder, lv, rv, "sdiv"); break;
-            case TOK_PERCENT: out.value = u ? LLVMBuildURem(g->builder, lv, rv, "urem") : LLVMBuildSRem(g->builder, lv, rv, "srem"); break;
-            default: break;
+            case TOK_SLASH:
+                out.value = plan->is_unsigned
+                    ? LLVMBuildUDiv(g->builder, lv, rv, "udiv")
+                    : LLVMBuildSDiv(g->builder, lv, rv, "sdiv");
+                break;
+            case TOK_PERCENT:
+                out.value = plan->is_unsigned
+                    ? LLVMBuildURem(g->builder, lv, rv, "urem")
+                    : LLVMBuildSRem(g->builder, lv, rv, "srem");
+                break;
+            default: kn_die("invalid numeric arithmetic operator"); break;
             }
         }
-        out.type = res;
+        out.type = plan->lhs_coercion;
         return out;
     }
-    case TOK_EQ:
-    case TOK_NE:
-    case TOK_LT:
-    case TOK_LE:
-    case TOK_GT:
-    case TOK_GE:
+    case KN_BINARY_LOWER_STRING_CONCAT:
     {
-        if (l.type.kind == TY_STRING && r.type.kind == TY_STRING && (op == TOK_EQ || op == TOK_NE))
+        if (op != TOK_PLUS)
+            kn_die("invalid string concatenation operator");
+        LLVMValueRef argv[2] = {
+            cast_value(g, lhs, plan->lhs_coercion),
+            cast_value(g, rhs, plan->rhs_coercion)
+        };
+        out.value = LLVMBuildCall2(g->builder, g->fn_str_concat_ty,
+                                   g->fn_str_concat, argv, 2, "strcat");
+        out.type = plan->lhs_coercion;
+        return out;
+    }
+    case KN_BINARY_LOWER_POINTER_ARITHMETIC:
+    {
+        CGValue pointer_value;
+        CGValue index_value;
+        Type pointer_type;
+        Type index_type;
+        if (plan->pointer_side == KN_BINARY_POINTER_LHS)
         {
-            LLVMValueRef argv[2] = { l.value, r.value };
-            LLVMValueRef eq = LLVMBuildCall2(g->builder, g->fn_str_eq_ty, g->fn_str_eq, argv, 2, "streq");
-            if (op == TOK_NE)
-                eq = LLVMBuildNot(g->builder, eq, "streq.not");
-            out.value = eq;
-            out.type = type_make(TY_BOOL);
-            return out;
+            pointer_value = lhs;
+            index_value = rhs;
+            pointer_type = plan->lhs_coercion;
+            index_type = plan->rhs_coercion;
         }
-        if ((op == TOK_EQ || op == TOK_NE) &&
-            (l.type.kind == TY_PTR || l.type.kind == TY_CLASS || l.type.kind == TY_STRING || l.type.kind == TY_NULL) &&
-            (r.type.kind == TY_PTR || r.type.kind == TY_CLASS || r.type.kind == TY_STRING || r.type.kind == TY_NULL))
+        else if (plan->pointer_side == KN_BINARY_POINTER_RHS)
         {
-            LLVMValueRef lv = cast_value(g, l, type_ptr(TY_BYTE));
-            LLVMValueRef rv = cast_value(g, r, type_ptr(TY_BYTE));
-            LLVMIntPredicate pred = (op == TOK_NE) ? LLVMIntNE : LLVMIntEQ;
-            out.value = LLVMBuildICmp(g->builder, pred, lv, rv, "pcmp");
-            out.type = type_make(TY_BOOL);
-            return out;
-        }
-        if (l.type.kind == TY_PTR && r.type.kind == TY_PTR)
-        {
-            LLVMIntPredicate pred = LLVMIntEQ;
-            if (op == TOK_EQ) pred = LLVMIntEQ;
-            else if (op == TOK_NE) pred = LLVMIntNE;
-            else if (op == TOK_LT) pred = LLVMIntULT;
-            else if (op == TOK_LE) pred = LLVMIntULE;
-            else if (op == TOK_GT) pred = LLVMIntUGT;
-            else if (op == TOK_GE) pred = LLVMIntUGE;
-            out.value = LLVMBuildICmp(g->builder, pred, l.value, r.value, "pcmp");
-            out.type = type_make(TY_BOOL);
-            return out;
-        }
-
-        Type ct;
-        if (is_float_kind(l.type.kind) || is_float_kind(r.type.kind))
-        {
-            if (is_float_kind(l.type.kind) && is_float_kind(r.type.kind))
-            {
-                int lb = float_bits(l.type.kind);
-                int rb = float_bits(r.type.kind);
-                ct = lb >= rb ? l.type : r.type;
-            }
-            else if (is_float_kind(l.type.kind))
-                ct = l.type;
-            else
-                ct = r.type;
-            LLVMValueRef lv = cast_value(g, l, ct);
-            LLVMValueRef rv = cast_value(g, r, ct);
-            LLVMRealPredicate pred = LLVMRealOEQ;
-            if (op == TOK_EQ) pred = LLVMRealOEQ;
-            else if (op == TOK_NE) pred = LLVMRealONE;
-            else if (op == TOK_LT) pred = LLVMRealOLT;
-            else if (op == TOK_LE) pred = LLVMRealOLE;
-            else if (op == TOK_GT) pred = LLVMRealOGT;
-            else if (op == TOK_GE) pred = LLVMRealOGE;
-            out.value = LLVMBuildFCmp(g->builder, pred, lv, rv, "fcmp");
-            out.type = type_make(TY_BOOL);
-            return out;
+            if (op != TOK_PLUS)
+                kn_die("right-side pointer only supports addition");
+            pointer_value = rhs;
+            index_value = lhs;
+            pointer_type = plan->rhs_coercion;
+            index_type = plan->lhs_coercion;
         }
         else
         {
-            int lb = int_bits(l.type.kind);
-            int rb = int_bits(r.type.kind);
-            int bits = lb > rb ? lb : rb;
-            bool u = is_unsigned_kind(l.type.kind) || is_unsigned_kind(r.type.kind);
-            if (bits <= 8) ct = type_make(u ? TY_U8 : TY_I8);
-            else if (bits <= 16) ct = type_make(u ? TY_U16 : TY_I16);
-            else if (bits <= 32) ct = type_make(u ? TY_U32 : TY_I32);
-            else ct = type_make(u ? TY_U64 : TY_I64);
-            LLVMValueRef lv = cast_value(g, l, ct);
-            LLVMValueRef rv = cast_value(g, r, ct);
-            LLVMIntPredicate pred = LLVMIntEQ;
-            if (op == TOK_EQ) pred = LLVMIntEQ;
-            else if (op == TOK_NE) pred = LLVMIntNE;
-            else if (op == TOK_LT) pred = u ? LLVMIntULT : LLVMIntSLT;
-            else if (op == TOK_LE) pred = u ? LLVMIntULE : LLVMIntSLE;
-            else if (op == TOK_GT) pred = u ? LLVMIntUGT : LLVMIntSGT;
-            else if (op == TOK_GE) pred = u ? LLVMIntUGE : LLVMIntSGE;
-            out.value = LLVMBuildICmp(g->builder, pred, lv, rv, "icmp");
-            out.type = type_make(TY_BOOL);
-            return out;
+            kn_die("pointer arithmetic plan has no pointer side");
+            pointer_value = lhs;
+            index_value = rhs;
+            pointer_type = plan->lhs_coercion;
+            index_type = plan->rhs_coercion;
         }
-    }
-    case TOK_AMP:
-    case TOK_BITOR:
-    case TOK_XOR:
-    case TOK_SHL:
-    case TOK_SHR:
-    {
-        int lb = int_bits(l.type.kind);
-        int rb = int_bits(r.type.kind);
-        int bits = lb > rb ? lb : rb;
-        bool u = is_unsigned_kind(l.type.kind) || is_unsigned_kind(r.type.kind);
-        Type ct;
-        if (bits <= 8) ct = type_make(u ? TY_U8 : TY_I8);
-        else if (bits <= 16) ct = type_make(u ? TY_U16 : TY_I16);
-        else if (bits <= 32) ct = type_make(u ? TY_U32 : TY_I32);
-        else ct = type_make(u ? TY_U64 : TY_INT);
+        if (pointer_type.kind != TY_PTR || (op != TOK_PLUS && op != TOK_MINUS))
+            kn_die("invalid pointer arithmetic lowering plan");
 
-        LLVMValueRef lv = cast_value(g, l, ct);
-        LLVMValueRef rv = cast_value(g, r, ct);
-        if (op == TOK_AMP)
-            out.value = LLVMBuildAnd(g->builder, lv, rv, "band");
-        else if (op == TOK_BITOR)
-            out.value = LLVMBuildOr(g->builder, lv, rv, "bor");
-        else if (op == TOK_XOR)
-            out.value = LLVMBuildXor(g->builder, lv, rv, "bxor");
-        else if (op == TOK_SHL)
-            out.value = LLVMBuildShl(g->builder, lv, rv, "bshl");
-        else if (op == TOK_SHR)
-            out.value = u ? LLVMBuildLShr(g->builder, lv, rv, "bshr") : LLVMBuildAShr(g->builder, lv, rv, "bshr");
-        out.type = ct;
+        LLVMValueRef pointer = cast_value(g, pointer_value, pointer_type);
+        LLVMValueRef index = cast_value(g, index_value, index_type);
+        if (op == TOK_MINUS)
+            index = LLVMBuildNeg(g->builder, index, "pneg");
+        Type elem = type_from_elem(pointer_type);
+        LLVMTypeRef elem_type = llvm_type(g, elem);
+        out.value = LLVMBuildInBoundsGEP2(g->builder, elem_type, pointer,
+                                          &index, 1, "ptradd");
+        out.type = pointer_type;
         return out;
     }
-    default: break;
+    case KN_BINARY_LOWER_BITWISE:
+    {
+        LLVMValueRef lv = cast_value(g, lhs, plan->lhs_coercion);
+        LLVMValueRef rv = cast_value(g, rhs, plan->rhs_coercion);
+        switch (op)
+        {
+        case TOK_AMP: out.value = LLVMBuildAnd(g->builder, lv, rv, "band"); break;
+        case TOK_BITOR: out.value = LLVMBuildOr(g->builder, lv, rv, "bor"); break;
+        case TOK_XOR: out.value = LLVMBuildXor(g->builder, lv, rv, "bxor"); break;
+        case TOK_SHL: out.value = LLVMBuildShl(g->builder, lv, rv, "bshl"); break;
+        case TOK_SHR:
+            out.value = plan->is_unsigned
+                ? LLVMBuildLShr(g->builder, lv, rv, "bshr")
+                : LLVMBuildAShr(g->builder, lv, rv, "bshr");
+            break;
+        default: kn_die("invalid bitwise operator"); break;
+        }
+        out.type = plan->lhs_coercion;
+        return out;
     }
+    case KN_BINARY_LOWER_STRING_EQUALITY:
+    {
+        if (op != TOK_EQ && op != TOK_NE)
+            kn_die("invalid string equality operator");
+        LLVMValueRef argv[2] = {
+            cast_value(g, lhs, plan->lhs_coercion),
+            cast_value(g, rhs, plan->rhs_coercion)
+        };
+        LLVMValueRef equal = LLVMBuildCall2(g->builder, g->fn_str_eq_ty,
+                                            g->fn_str_eq, argv, 2, "streq");
+        out.value = op == TOK_NE ? LLVMBuildNot(g->builder, equal, "streq.not") : equal;
+        out.type = type_make(TY_BOOL);
+        return out;
+    }
+    case KN_BINARY_LOWER_REFERENCE_EQUALITY:
+    {
+        if (op != TOK_EQ && op != TOK_NE)
+            kn_die("invalid reference equality operator");
+        LLVMValueRef lv = cast_value(g, lhs, plan->lhs_coercion);
+        LLVMValueRef rv = cast_value(g, rhs, plan->rhs_coercion);
+        out.value = LLVMBuildICmp(g->builder,
+                                  op == TOK_NE ? LLVMIntNE : LLVMIntEQ,
+                                  lv, rv, "pcmp");
+        out.type = type_make(TY_BOOL);
+        return out;
+    }
+    case KN_BINARY_LOWER_SCALAR_EQUALITY:
+    {
+        if (op != TOK_EQ && op != TOK_NE)
+            kn_die("invalid scalar equality operator");
+        bool bool_pair = plan->lhs_coercion.kind == TY_BOOL &&
+                         plan->rhs_coercion.kind == TY_BOOL;
+        bool enum_pair = plan->lhs_coercion.kind == TY_ENUM &&
+                         plan->rhs_coercion.kind == TY_ENUM &&
+                         type_equal(plan->lhs_coercion, plan->rhs_coercion);
+        if (!bool_pair && !enum_pair)
+            kn_die("scalar equality requires bool or matching enum operands");
+
+        LLVMValueRef lv = cast_value(g, lhs, plan->lhs_coercion);
+        LLVMValueRef rv = cast_value(g, rhs, plan->rhs_coercion);
+        LLVMTypeRef lv_type = LLVMTypeOf(lv);
+        LLVMTypeRef rv_type = LLVMTypeOf(rv);
+        if (LLVMGetTypeKind(lv_type) != LLVMIntegerTypeKind ||
+            LLVMGetTypeKind(rv_type) != LLVMIntegerTypeKind ||
+            LLVMGetIntTypeWidth(lv_type) != LLVMGetIntTypeWidth(rv_type))
+            kn_die("scalar equality requires same-width integer LLVM values");
+        out.value = LLVMBuildICmp(g->builder,
+                                  op == TOK_NE ? LLVMIntNE : LLVMIntEQ,
+                                  lv, rv, "scmp");
+        out.type = type_make(TY_BOOL);
+        return out;
+    }
+    case KN_BINARY_LOWER_NUMERIC_COMPARISON:
+    {
+        LLVMValueRef lv = cast_value(g, lhs, plan->lhs_coercion);
+        LLVMValueRef rv = cast_value(g, rhs, plan->rhs_coercion);
+        bool is_float = is_float_kind(plan->lhs_coercion.kind);
+        if (is_float != is_float_kind(plan->rhs_coercion.kind))
+            kn_die("incompatible numeric comparison coercions");
+        if (is_float)
+        {
+            LLVMRealPredicate predicate;
+            switch (op)
+            {
+            case TOK_EQ: predicate = LLVMRealOEQ; break;
+            case TOK_NE: predicate = LLVMRealONE; break;
+            case TOK_LT: predicate = LLVMRealOLT; break;
+            case TOK_LE: predicate = LLVMRealOLE; break;
+            case TOK_GT: predicate = LLVMRealOGT; break;
+            case TOK_GE: predicate = LLVMRealOGE; break;
+            default: kn_die("invalid numeric comparison operator"); predicate = LLVMRealOEQ; break;
+            }
+            out.value = LLVMBuildFCmp(g->builder, predicate, lv, rv, "fcmp");
+        }
+        else
+        {
+            LLVMIntPredicate predicate;
+            switch (op)
+            {
+            case TOK_EQ: predicate = LLVMIntEQ; break;
+            case TOK_NE: predicate = LLVMIntNE; break;
+            case TOK_LT: predicate = plan->is_unsigned ? LLVMIntULT : LLVMIntSLT; break;
+            case TOK_LE: predicate = plan->is_unsigned ? LLVMIntULE : LLVMIntSLE; break;
+            case TOK_GT: predicate = plan->is_unsigned ? LLVMIntUGT : LLVMIntSGT; break;
+            case TOK_GE: predicate = plan->is_unsigned ? LLVMIntUGE : LLVMIntSGE; break;
+            default: kn_die("invalid numeric comparison operator"); predicate = LLVMIntEQ; break;
+            }
+            out.value = LLVMBuildICmp(g->builder, predicate, lv, rv, "icmp");
+        }
+        out.type = type_make(TY_BOOL);
+        return out;
+    }
+    case KN_BINARY_LOWER_LOGICAL_SHORT_CIRCUIT:
+    case KN_BINARY_LOWER_UNRESOLVED:
+        break;
+    }
+
+    kn_die("unsupported binary lowering plan");
     return out;
 }
 
@@ -630,14 +675,38 @@ static LLVMValueRef gen_lvalue(Codegen *g, Expr *e, Type *out_type)
 
 static LLVMValueRef gen_index_ptr(Codegen *g, Expr *e, Type *out_type)
 {
+    if (e->v.index.recv && e->v.index.recv->type.kind == TY_PACKAGE)
+    {
+        Expr *recv_expr = e->v.index.recv;
+        Type package_type = recv_expr->type;
+        int idx = e->v.index.package_index;
+        LLVMTypeRef package_llvm = llvm_type(g, package_type);
+        LLVMValueRef base_ptr = 0;
+        if (idx < 0 || idx >= package_type.package_count)
+            kn_die("invalid package index");
+        if (is_lvalue_expr_codegen(recv_expr))
+        {
+            Type tmp = type_make(TY_UNKNOWN);
+            base_ptr = gen_lvalue(g, recv_expr, &tmp);
+        }
+        else
+        {
+            CGValue rv = gen_expr(g, recv_expr);
+            LLVMValueRef fn = LLVMGetBasicBlockParent(LLVMGetInsertBlock(g->builder));
+            LLVMValueRef tmp = build_entry_alloca(g, fn, package_llvm, "pkg.tmp");
+            LLVMBuildStore(g->builder, rv.value, tmp);
+            base_ptr = tmp;
+        }
+        if (out_type) *out_type = package_type.package_elems[idx];
+        return LLVMBuildStructGEP2(g->builder, package_llvm, base_ptr, (unsigned)idx, "pkg.elem");
+    }
     CGValue recv = gen_expr(g, e->v.index.recv);
     CGValue idx = gen_expr(g, e->v.index.index);
     Type elem = type_make(TY_UNKNOWN);
     LLVMValueRef base_ptr = 0;
     if (recv.type.kind == TY_ARRAY)
     {
-        elem = type_make(recv.type.elem);
-        elem.name = recv.type.name;
+        elem = type_immediate_elem(recv.type);
         base_ptr = LLVMBuildExtractValue(g->builder, recv.value, 0, "arr.data");
     }
     else if (recv.type.kind == TY_STRING)
@@ -1089,6 +1158,244 @@ static LLVMValueRef build_datetime_now(Codegen *g)
     return obj;
 }
 
+static bool cg_builtin_conversion_type(KnBuiltinKind kind, Type *out)
+{
+    Type dst = type_make(TY_UNKNOWN);
+    switch (kind)
+    {
+    case KN_BUILTIN_IO_TYPE_BOOL: dst = type_make(TY_BOOL); break;
+    case KN_BUILTIN_IO_TYPE_BYTE: dst = type_make(TY_BYTE); break;
+    case KN_BUILTIN_IO_TYPE_CHAR: dst = type_make(TY_CHAR); break;
+    case KN_BUILTIN_IO_TYPE_INT: dst = type_make(TY_INT); break;
+    case KN_BUILTIN_IO_TYPE_FLOAT: dst = type_make(TY_FLOAT); break;
+    case KN_BUILTIN_IO_TYPE_F16: dst = type_make(TY_F16); break;
+    case KN_BUILTIN_IO_TYPE_F32: dst = type_make(TY_F32); break;
+    case KN_BUILTIN_IO_TYPE_F64: dst = type_make(TY_F64); break;
+    case KN_BUILTIN_IO_TYPE_F128: dst = type_make(TY_F128); break;
+    case KN_BUILTIN_IO_TYPE_I8: dst = type_make(TY_I8); break;
+    case KN_BUILTIN_IO_TYPE_I16: dst = type_make(TY_I16); break;
+    case KN_BUILTIN_IO_TYPE_I32: dst = type_make(TY_I32); break;
+    case KN_BUILTIN_IO_TYPE_I64: dst = type_make(TY_I64); break;
+    case KN_BUILTIN_IO_TYPE_U8: dst = type_make(TY_U8); break;
+    case KN_BUILTIN_IO_TYPE_U16: dst = type_make(TY_U16); break;
+    case KN_BUILTIN_IO_TYPE_U32: dst = type_make(TY_U32); break;
+    case KN_BUILTIN_IO_TYPE_U64: dst = type_make(TY_U64); break;
+    case KN_BUILTIN_IO_TYPE_ISIZE: dst = type_make(TY_ISIZE); break;
+    case KN_BUILTIN_IO_TYPE_USIZE: dst = type_make(TY_USIZE); break;
+    case KN_BUILTIN_IO_TYPE_STRING: dst = type_make(TY_STRING); break;
+    case KN_BUILTIN_IO_TYPE_ANY: dst = type_make(TY_ANY); break;
+    case KN_BUILTIN_IO_TYPE_DICT: dst = type_class("IO.Collection.dict"); break;
+    case KN_BUILTIN_IO_TYPE_LIST: dst = type_class("IO.Collection.list"); break;
+    default: return false;
+    }
+    if (out) *out = dst;
+    return true;
+}
+
+static CGValue gen_resolved_builtin_call(Codegen *g, Expr *site, ExprList *args, Expr *recv)
+{
+    CGValue out;
+    KnBuiltinKind kind = (KnBuiltinKind)site->resolved_call.builtin_id;
+    Type conversion_type;
+    if (args && args->count == 1 && cg_builtin_conversion_type(kind, &conversion_type))
+    {
+        CGValue source = gen_expr(g, args->items[0]);
+        out.value = cast_value(g, source, conversion_type);
+        out.type = conversion_type;
+        return out;
+    }
+    if (kind == KN_BUILTIN_ARRAY_LENGTH && recv)
+    {
+        CGValue array = gen_expr(g, recv);
+        out.value = LLVMBuildExtractValue(g->builder, array.value, 1, "len");
+        out.type = type_make(TY_INT);
+        return out;
+    }
+    if (kind == KN_BUILTIN_ARRAY_INDEX && recv && args && args->count == 1)
+    {
+        CGValue array = gen_expr(g, recv);
+        CGValue index = gen_expr(g, args->items[0]);
+        LLVMValueRef index_value = cast_value(g, index, type_make(TY_I64));
+        Type elem = type_immediate_elem(array.type);
+        LLVMTypeRef elem_type = llvm_type(g, elem);
+        LLVMValueRef data = LLVMBuildExtractValue(g->builder, array.value, 0, "arr.data");
+        LLVMValueRef ptr = LLVMBuildInBoundsGEP2(g->builder, elem_type, data, &index_value, 1, "arr.idx");
+        out.value = LLVMBuildLoad2(g->builder, elem_type, ptr, "arr.val");
+        out.type = elem;
+        return out;
+    }
+    return gen_builtin_call(g, kind, args, site->resolved_call.has_receiver ? recv : 0);
+}
+
+static CGValue gen_resolved_function_call(Codegen *g, Expr *site, ExprList *call_args, const char *name)
+{
+    CGValue out;
+    FuncSymbol *fs = functable_find(&g->funcs, site->resolved_call.symbol);
+    if (!fs) kn_die("unknown resolved function");
+    Type public_ret = cg_func_public_ret_type(fs->func);
+    int argc = call_args ? call_args->count : 0;
+    LLVMValueRef *args = (LLVMValueRef *)kn_malloc(sizeof(LLVMValueRef) * (size_t)argc);
+    LLVMValueRef temp_frame = gc_push_temp_frame(g, "gc.call.frame");
+    for (int i = 0; i < argc; i++)
+    {
+        Type param_type = fs->func->params.items[i].type;
+        args[i] = gen_rooted_call_arg(g, temp_frame, call_args->items[i], param_type);
+    }
+    const char *call_name = public_ret.kind == TY_VOID ? "" : name;
+    if (fs->func->is_delegate && fs->delegate_global)
+    {
+        if (fs->func->delegate_abi == KN_DELEGATE_ABI_C)
+        {
+            LLVMValueRef raw = LLVMBuildLoad2(g->builder, g->i8ptr, fs->delegate_global, "dlg.raw");
+            LLVMValueRef fn_ptr = LLVMBuildBitCast(g->builder, raw, LLVMPointerType(fs->fn_ty, 0), "dlg.fn");
+            out.value = cg_build_func_call(g, fs, fn_ptr, args, argc, call_name);
+        }
+        else
+        {
+            LLVMValueRef obj_ptr = LLVMBuildLoad2(g->builder, g->i8ptr, fs->delegate_global, "dlg.obj");
+            LLVMValueRef arr_ptr = argc > 0
+                ? LLVMBuildAlloca(g->builder, LLVMArrayType(g->any_ty, (unsigned)argc), "dlg.args.arr")
+                : 0;
+            LLVMValueRef any_args_ptr = argc > 0
+                ? LLVMBuildInBoundsGEP2(g->builder, LLVMArrayType(g->any_ty, (unsigned)argc), arr_ptr,
+                                        (LLVMValueRef[]){ LLVMConstInt(g->i32, 0, 0), LLVMConstInt(g->i32, 0, 0) },
+                                        2, "dlg.args")
+                : LLVMConstNull(LLVMPointerType(g->any_ty, 0));
+            for (int i = 0; i < argc; i++)
+            {
+                CGValue arg;
+                arg.value = args[i];
+                arg.type = fs->func->params.items[i].type;
+                LLVMValueRef any_value = box_any_value(g, arg);
+                LLVMValueRef ptr = LLVMBuildInBoundsGEP2(g->builder, g->any_ty, any_args_ptr,
+                                                         (LLVMValueRef[]){ LLVMConstInt(g->i64, (uint64_t)i, 0) },
+                                                         1, "dlg.arg.ptr");
+                LLVMBuildStore(g->builder, any_value, ptr);
+            }
+            CGValue fnobj;
+            fnobj.value = obj_ptr;
+            fnobj.type = type_class("IO.Type.Object.Function");
+            LLVMValueRef any_value = call_callable_wrapper(g, fnobj, any_args_ptr,
+                                                           LLVMConstInt(g->i64, (uint64_t)argc, 0));
+            if (fs->func->ret_type.kind != TY_VOID && fs->func->ret_type.kind != TY_ANY)
+            {
+                CGValue value;
+                value.value = any_value;
+                value.type = type_make(TY_ANY);
+                out.value = cast_value(g, value, fs->func->ret_type);
+            }
+            else if (fs->func->ret_type.kind == TY_VOID)
+            {
+                out.value = LLVMGetUndef(LLVMVoidTypeInContext(g->ctx));
+            }
+            else
+            {
+                out.value = any_value;
+            }
+        }
+    }
+    else
+    {
+        out.value = cg_build_func_call(g, fs, fs->fn, args, argc, call_name);
+    }
+    gc_pop_temp_frame(g, temp_frame);
+    out.type = public_ret;
+    maybe_propagate_exception(g);
+    return out;
+}
+
+static CGValue gen_resolved_method_call(Codegen *g, Expr *site)
+{
+    CGValue out;
+    ClassSymbol *owner = classtable_find(&g->classes, site->resolved_call.owner);
+    if (owner)
+    {
+        int method_index = site->resolved_call.method_index;
+        Method *method = &owner->decl->methods.items[method_index];
+        LLVMValueRef fn = owner->methods[method_index];
+        LLVMTypeRef fn_type = owner->method_tys[method_index];
+        int argc = site->v.member_call.args.count + (method->is_static ? 0 : 1);
+        LLVMValueRef *args = (LLVMValueRef *)kn_malloc(sizeof(LLVMValueRef) * (size_t)argc);
+        int arg_index = 0;
+        LLVMValueRef temp_frame = gc_push_temp_frame(g, "gc.mcall.frame");
+        if (!method->is_static)
+        {
+            CGValue recv = gen_expr(g, site->v.member_call.recv);
+            recv = gc_root_temp_value(g, temp_frame, recv, "gc.mcall.recv");
+            args[arg_index++] = LLVMBuildBitCast(g->builder, recv.value, g->i8ptr, "this");
+            if (site->resolved_call.kind == KN_CALL_TARGET_VIRTUAL_METHOD && owner->method_vslots)
+            {
+                int slot = owner->method_vslots[method_index];
+                if (slot >= 0)
+                {
+                    ClassSymbol *recv_symbol = classtable_find(&g->classes, recv.type.name);
+                    LLVMValueRef vtable = recv_symbol
+                        ? load_vtable_ptr(g, recv.value, recv_symbol)
+                        : load_vtable_ptr_any(g, recv.value);
+                    LLVMValueRef slot_index = LLVMConstInt(g->i32, (uint64_t)slot, 0);
+                    LLVMValueRef slot_ptr = LLVMBuildInBoundsGEP2(g->builder, g->i8ptr, vtable,
+                                                                 &slot_index, 1, "vslot");
+                    LLVMValueRef raw_fn = LLVMBuildLoad2(g->builder, g->i8ptr, slot_ptr, "vfn");
+                    LLVMValueRef fn_ptr = LLVMBuildBitCast(g->builder, raw_fn,
+                                                           LLVMPointerType(fn_type, 0), "vfnc");
+                    for (int i = 0; i < site->v.member_call.args.count; i++)
+                        args[arg_index++] = gen_rooted_call_arg(g, temp_frame,
+                                                               site->v.member_call.args.items[i],
+                                                               method->params.items[i].type);
+                    const char *call_name = method->ret_type.kind == TY_VOID ? "" : "vcall";
+                    out.value = LLVMBuildCall2(g->builder, fn_type, fn_ptr, args, (unsigned)argc, call_name);
+                    gc_pop_temp_frame(g, temp_frame);
+                    out.type = method->ret_type;
+                    maybe_propagate_exception(g);
+                    return out;
+                }
+            }
+        }
+        for (int i = 0; i < site->v.member_call.args.count; i++)
+            args[arg_index++] = gen_rooted_call_arg(g, temp_frame,
+                                                   site->v.member_call.args.items[i],
+                                                   method->params.items[i].type);
+        const char *call_name = method->ret_type.kind == TY_VOID ? "" : "call";
+        out.value = LLVMBuildCall2(g->builder, fn_type, fn, args, (unsigned)argc, call_name);
+        gc_pop_temp_frame(g, temp_frame);
+        out.type = method->ret_type;
+        maybe_propagate_exception(g);
+        return out;
+    }
+
+    if (site->resolved_call.kind != KN_CALL_TARGET_INTERFACE_METHOD)
+        kn_die("unresolved typed member call target");
+    InterfaceDecl *interface_decl = interface_find(g, site->resolved_call.owner);
+    if (!interface_decl) kn_die("unknown method owner");
+    Method *method = &interface_decl->methods.items[site->resolved_call.method_index];
+    LLVMTypeRef fn_type = method_fn_type(g, method, 0);
+    int argc = site->v.member_call.args.count + 1;
+    LLVMValueRef *args = (LLVMValueRef *)kn_malloc(sizeof(LLVMValueRef) * (size_t)argc);
+    LLVMValueRef temp_frame = gc_push_temp_frame(g, "gc.icall.frame");
+    CGValue recv = gen_expr(g, site->v.member_call.recv);
+    recv = gc_root_temp_value(g, temp_frame, recv, "gc.icall.recv");
+    args[0] = LLVMBuildBitCast(g->builder, recv.value, g->i8ptr, "this");
+    for (int i = 0; i < site->v.member_call.args.count; i++)
+        args[i + 1] = gen_rooted_call_arg(g, temp_frame, site->v.member_call.args.items[i],
+                                         method->params.items[i].type);
+    int slot = vslot_find_method(&g->vslots, method);
+    if (slot < 0) kn_die("missing interface slot");
+    ClassSymbol *recv_symbol = classtable_find(&g->classes, recv.type.name);
+    LLVMValueRef vtable = recv_symbol
+        ? load_vtable_ptr(g, recv.value, recv_symbol)
+        : load_vtable_ptr_any(g, recv.value);
+    LLVMValueRef slot_index = LLVMConstInt(g->i32, (uint64_t)slot, 0);
+    LLVMValueRef slot_ptr = LLVMBuildInBoundsGEP2(g->builder, g->i8ptr, vtable, &slot_index, 1, "ifslot");
+    LLVMValueRef raw_fn = LLVMBuildLoad2(g->builder, g->i8ptr, slot_ptr, "iffn");
+    LLVMValueRef fn_ptr = LLVMBuildBitCast(g->builder, raw_fn, LLVMPointerType(fn_type, 0), "iffnc");
+    const char *call_name = method->ret_type.kind == TY_VOID ? "" : "icall";
+    out.value = LLVMBuildCall2(g->builder, fn_type, fn_ptr, args, (unsigned)argc, call_name);
+    gc_pop_temp_frame(g, temp_frame);
+    out.type = method->ret_type;
+    maybe_propagate_exception(g);
+    return out;
+}
+
 static CGValue gen_expr(Codegen *g, Expr *e)
 {
     CGValue out;
@@ -1129,6 +1436,19 @@ static CGValue gen_expr(Codegen *g, Expr *e)
         out.value = build_array_value(g, e->type, e);
         out.type = e->type;
         return out;
+    case EXPR_PACKAGE:
+    {
+        LLVMValueRef pkg = LLVMGetUndef(llvm_type(g, e->type));
+        for (int i = 0; i < e->v.package.items.count && i < e->type.package_count; i++)
+        {
+            CGValue item = gen_expr(g, e->v.package.items.items[i]);
+            LLVMValueRef cv = cast_value(g, item, e->type.package_elems[i]);
+            pkg = LLVMBuildInsertValue(g->builder, pkg, cv, (unsigned)i, "pkg.ins");
+        }
+        out.value = pkg;
+        out.type = e->type;
+        return out;
+    }
     case EXPR_DICT:
         out.value = build_dict_value(g, e);
         out.type = e->type;
@@ -1234,8 +1554,24 @@ static CGValue gen_expr(Codegen *g, Expr *e)
     }
     case EXPR_CAST:
     {
-        CGValue val = gen_expr(g, e->v.cast.expr);
         out.type = e->v.cast.type;
+        if (e->v.cast.custom_method_owner && e->v.cast.custom_method_index >= 0)
+        {
+            ClassSymbol *owner = classtable_find(&g->classes, e->v.cast.custom_method_owner);
+            if (!owner || e->v.cast.custom_method_index >= owner->decl->methods.count)
+                kn_die("missing custom cast method");
+            Method *m = &owner->decl->methods.items[e->v.cast.custom_method_index];
+            LLVMValueRef fn = owner->methods[e->v.cast.custom_method_index];
+            LLVMTypeRef fn_ty = owner->method_tys[e->v.cast.custom_method_index];
+            LLVMValueRef temp_frame = gc_push_temp_frame(g, "gc.cast.frame");
+            LLVMValueRef argv[1];
+            argv[0] = gen_rooted_call_arg(g, temp_frame, e->v.cast.expr, m->params.items[0].type);
+            out.value = LLVMBuildCall2(g->builder, fn_ty, fn, argv, 1, out.type.kind == TY_VOID ? "" : "cast");
+            gc_pop_temp_frame(g, temp_frame);
+            return out;
+        }
+
+        CGValue val = gen_expr(g, e->v.cast.expr);
         // Special case: [Object.Function](ptr) — wrap raw pointer as callable object.
         if (e->v.cast.type.kind == TY_CLASS && e->v.cast.type.name &&
             kn_strcmp(e->v.cast.type.name, "IO.Type.Object.Function") == 0 &&
@@ -1248,6 +1584,11 @@ static CGValue gen_expr(Codegen *g, Expr *e)
         if (e->v.cast.type.kind == TY_CLASS && (val.type.kind == TY_CLASS || val.type.kind == TY_NULL))
         {
             out.value = gen_checked_object_cast(g, val, e->v.cast.type);
+            return out;
+        }
+        if (e->v.cast.type.kind == TY_ARRAY && val.type.kind == TY_PACKAGE)
+        {
+            out.value = build_array_from_package_value(g, val, e->v.cast.type);
             return out;
         }
         out.value = cast_value(g, val, e->v.cast.type);
@@ -1273,7 +1614,12 @@ static CGValue gen_expr(Codegen *g, Expr *e)
                     {
                         FuncSymbol *rfs = functable_find(&g->funcs, rhs->v.func_ref.qname);
                         if (rfs && rfs->fn)
-                            store_val = LLVMBuildBitCast(g->builder, rfs->fn, g->i8ptr, "dlg.c.fn");
+                        {
+                            LLVMValueRef entry = cg_func_uses_c_abi(rfs->func)
+                                ? rfs->fn
+                                : ensure_c_abi_adapter(g, rfs, dfs);
+                            store_val = LLVMBuildBitCast(g->builder, entry, g->i8ptr, "dlg.c.fn");
+                        }
                     }
                     if (!store_val)
                     {
@@ -1284,39 +1630,15 @@ static CGValue gen_expr(Codegen *g, Expr *e)
                             store_val = LLVMBuildBitCast(g->builder, val.value, g->i8ptr, "dlg.c.raw");
                         }
                         else
-                        {
-                            // Object.Function — extract the Invoke pointer
-                            CGValue fnobj = val;
-                            if (fnobj.type.kind != TY_CLASS)
-                                fnobj.type = type_class("IO.Type.Object.Function");
-                            store_val = load_callable_invoke_ptr(g, fnobj);
-                        }
+                            kn_die("By C delegate requires a raw pointer or top-level function");
                     }
                 }
                 else
                 {
-                    // By Kinal: wrap into Object.Function with bridge thunk
+                    // By Kinal stores the callable object itself. Its Invoke/Env pair
+                    // already uses the canonical any(byte*, any*, i64) wrapper ABI.
                     CGValue val = gen_expr(g, e->v.assign.value);
-                    LLVMValueRef raw_ptr = 0;
-                    if (val.type.kind == TY_CLASS)
-                    {
-                        // Object.Function — extract the raw Invoke ptr
-                        CGValue fnobj = val;
-                        if (!fnobj.type.name || kn_strcmp(fnobj.type.name, "IO.Type.Object.Function") != 0)
-                            fnobj.type = type_class("IO.Type.Object.Function");
-                        raw_ptr = load_callable_invoke_ptr(g, fnobj);
-                    }
-                    else
-                    {
-                        raw_ptr = LLVMBuildBitCast(g->builder, val.value, g->i8ptr, "dlg.kn.raw");
-                    }
-                    // Generate bridge thunk: any(byte* env, any* args, i64 argc)
-                    // where env = raw C function pointer
-                    LLVMValueRef bridge = gen_delegate_bridge(g, dfs);
-                    // Build Object.Function with Invoke=bridge, Env=raw_ptr
-                    store_val = LLVMBuildBitCast(g->builder,
-                        build_callable_object(g, "IO.Type.Object.Function", bridge, raw_ptr),
-                        g->i8ptr, "dlg.kn.obj");
+                    store_val = LLVMBuildBitCast(g->builder, val.value, g->i8ptr, "dlg.kn.obj");
                 }
                 LLVMBuildStore(g->builder, store_val, dfs->delegate_global);
                 out.type = type_class("IO.Type.Object.Function");
@@ -1398,348 +1720,22 @@ static CGValue gen_expr(Codegen *g, Expr *e)
         return out;
     }
     case EXPR_CALL:
-    {
-        if (e->v.call.builtin_id != KN_BUILTIN_NONE)
-        {
-            KnBuiltinKind bk = (KnBuiltinKind)e->v.call.builtin_id;
-            if (bk >= KN_BUILTIN_IO_TYPE_BOOL && bk <= KN_BUILTIN_IO_TYPE_LIST && e->v.call.args.count == 1)
-            {
-                Type dst = type_make(TY_UNKNOWN);
-                switch (bk)
-                {
-                case KN_BUILTIN_IO_TYPE_BOOL: dst = type_make(TY_BOOL); break;
-                case KN_BUILTIN_IO_TYPE_BYTE: dst = type_make(TY_BYTE); break;
-                case KN_BUILTIN_IO_TYPE_CHAR: dst = type_make(TY_CHAR); break;
-                case KN_BUILTIN_IO_TYPE_INT: dst = type_make(TY_INT); break;
-                case KN_BUILTIN_IO_TYPE_FLOAT: dst = type_make(TY_FLOAT); break;
-                case KN_BUILTIN_IO_TYPE_F16: dst = type_make(TY_F16); break;
-                case KN_BUILTIN_IO_TYPE_F32: dst = type_make(TY_F32); break;
-                case KN_BUILTIN_IO_TYPE_F64: dst = type_make(TY_F64); break;
-                case KN_BUILTIN_IO_TYPE_F128: dst = type_make(TY_F128); break;
-                case KN_BUILTIN_IO_TYPE_I8: dst = type_make(TY_I8); break;
-                case KN_BUILTIN_IO_TYPE_I16: dst = type_make(TY_I16); break;
-                case KN_BUILTIN_IO_TYPE_I32: dst = type_make(TY_I32); break;
-                case KN_BUILTIN_IO_TYPE_I64: dst = type_make(TY_I64); break;
-                case KN_BUILTIN_IO_TYPE_U8: dst = type_make(TY_U8); break;
-                case KN_BUILTIN_IO_TYPE_U16: dst = type_make(TY_U16); break;
-                case KN_BUILTIN_IO_TYPE_U32: dst = type_make(TY_U32); break;
-                case KN_BUILTIN_IO_TYPE_U64: dst = type_make(TY_U64); break;
-                case KN_BUILTIN_IO_TYPE_ISIZE: dst = type_make(TY_ISIZE); break;
-                case KN_BUILTIN_IO_TYPE_USIZE: dst = type_make(TY_USIZE); break;
-                case KN_BUILTIN_IO_TYPE_STRING: dst = type_make(TY_STRING); break;
-                case KN_BUILTIN_IO_TYPE_ANY: dst = type_make(TY_ANY); break;
-                case KN_BUILTIN_IO_TYPE_DICT: dst = type_class("IO.Collection.dict"); break;
-                case KN_BUILTIN_IO_TYPE_LIST: dst = type_class("IO.Collection.list"); break;
-                default: dst = type_make(TY_UNKNOWN); break;
-                }
-                CGValue srcv = gen_expr(g, e->v.call.args.items[0]);
-                out.value = cast_value(g, srcv, dst);
-                out.type = dst;
-                return out;
-            }
-            ExprList builtin_args = e->v.call.args;
-            return gen_builtin_call(g, bk, &builtin_args, 0);
-        }
-        FuncSymbol *fs = functable_find(&g->funcs, e->v.call.name);
-        if (!fs) kn_die("unknown function");
-        Type public_ret = cg_func_public_ret_type(fs->func);
-        int argc = e->v.call.args.count;
-        LLVMValueRef *args = (LLVMValueRef *)kn_malloc(sizeof(LLVMValueRef) * (size_t)argc);
-        LLVMValueRef temp_frame = gc_push_temp_frame(g, "gc.call.frame");
-        for (int i = 0; i < argc; i++)
-        {
-            Type pt = fs->func->params.items[i].type;
-            args[i] = gen_rooted_call_arg(g, temp_frame, e->v.call.args.items[i], pt);
-        }
-        const char *cname = public_ret.kind == TY_VOID ? "" : "call";
-        if (fs->func->is_delegate && fs->delegate_global)
-        {
-            // Delegate call: load function pointer from global, bitcast, and call
-            if (fs->func->delegate_abi == KN_DELEGATE_ABI_C)
-            {
-                // By C: direct native call through raw function pointer
-                LLVMValueRef raw = LLVMBuildLoad2(g->builder, g->i8ptr, fs->delegate_global, "dlg.raw");
-                LLVMValueRef fn_ptr = LLVMBuildBitCast(g->builder, raw, LLVMPointerType(fs->fn_ty, 0), "dlg.fn");
-                out.value = LLVMBuildCall2(g->builder, fs->fn_ty, fn_ptr, args, (unsigned)argc, cname);
-            }
-            else
-            {
-                // By Kinal: load Object.Function pointer, call through callable wrapper
-                LLVMValueRef obj_ptr = LLVMBuildLoad2(g->builder, g->i8ptr, fs->delegate_global, "dlg.obj");
-                // Build any[] args array for callable wrapper
-                LLVMValueRef arr_ptr = argc > 0 ? LLVMBuildAlloca(g->builder, LLVMArrayType(g->any_ty, (unsigned)argc), "dlg.args.arr") : 0;
-                LLVMValueRef any_args_ptr = argc > 0
-                    ? LLVMBuildInBoundsGEP2(g->builder, LLVMArrayType(g->any_ty, (unsigned)argc), arr_ptr,
-                                            (LLVMValueRef[]){ LLVMConstInt(g->i32, 0, 0), LLVMConstInt(g->i32, 0, 0) }, 2, "dlg.args")
-                    : LLVMConstNull(LLVMPointerType(g->any_ty, 0));
-                for (int i = 0; i < argc; i++)
-                {
-                    CGValue av;
-                    av.value = args[i];
-                    av.type = fs->func->params.items[i].type;
-                    LLVMValueRef anyv = box_any_value(g, av);
-                    LLVMValueRef ptr = LLVMBuildInBoundsGEP2(g->builder, g->any_ty, any_args_ptr,
-                                                             (LLVMValueRef[]){ LLVMConstInt(g->i64, (uint64_t)i, 0) }, 1, "dlg.arg.ptr");
-                    LLVMBuildStore(g->builder, anyv, ptr);
-                }
-                CGValue fnobj;
-                fnobj.value = obj_ptr;
-                fnobj.type = type_class("IO.Type.Object.Function");
-                LLVMValueRef anyv = call_callable_wrapper(g, fnobj, any_args_ptr, LLVMConstInt(g->i64, (uint64_t)argc, 0));
-                if (fs->func->ret_type.kind != TY_VOID && fs->func->ret_type.kind != TY_ANY)
-                {
-                    CGValue tmp;
-                    tmp.value = anyv;
-                    tmp.type = type_make(TY_ANY);
-                    out.value = cast_value(g, tmp, fs->func->ret_type);
-                }
-                else if (fs->func->ret_type.kind == TY_VOID)
-                {
-                    out.value = LLVMGetUndef(LLVMVoidTypeInContext(g->ctx));
-                }
-                else
-                {
-                    out.value = anyv;
-                }
-            }
-        }
-        else
-        {
-            out.value = LLVMBuildCall2(g->builder, fs->fn_ty, fs->fn, args, (unsigned)argc, cname);
-        }
-        gc_pop_temp_frame(g, temp_frame);
-        if (fs->func->is_extern && fs->func->extern_abi == KN_EXTERN_ABI_SYSTEM && g->target_is_windows && g->target_is_x86)
-            LLVMSetInstructionCallConv(out.value, LLVMX86StdcallCallConv);
-        out.type = public_ret;
-        maybe_propagate_exception(g);
-        return out;
-    }
+        if (e->resolved_call.kind == KN_CALL_TARGET_BUILTIN)
+            return gen_resolved_builtin_call(g, e, &e->v.call.args, 0);
+        if (e->resolved_call.kind == KN_CALL_TARGET_FUNCTION ||
+            e->resolved_call.kind == KN_CALL_TARGET_DELEGATE_KINAL ||
+            e->resolved_call.kind == KN_CALL_TARGET_DELEGATE_C)
+            return gen_resolved_function_call(g, e, &e->v.call.args, "call");
+        kn_die("unresolved typed call target");
+        break;
     case EXPR_MEMBER_CALL:
-    {
-        if (e->v.member_call.builtin_id != KN_BUILTIN_NONE)
-        {
-            KnBuiltinKind bk = (KnBuiltinKind)e->v.member_call.builtin_id;
-            if (bk >= KN_BUILTIN_IO_TYPE_BOOL && bk <= KN_BUILTIN_IO_TYPE_LIST && e->v.member_call.args.count == 1)
-            {
-                Type dst = type_make(TY_UNKNOWN);
-                switch (bk)
-                {
-                case KN_BUILTIN_IO_TYPE_BOOL: dst = type_make(TY_BOOL); break;
-                case KN_BUILTIN_IO_TYPE_BYTE: dst = type_make(TY_BYTE); break;
-                case KN_BUILTIN_IO_TYPE_CHAR: dst = type_make(TY_CHAR); break;
-                case KN_BUILTIN_IO_TYPE_INT: dst = type_make(TY_INT); break;
-                case KN_BUILTIN_IO_TYPE_FLOAT: dst = type_make(TY_FLOAT); break;
-                case KN_BUILTIN_IO_TYPE_F16: dst = type_make(TY_F16); break;
-                case KN_BUILTIN_IO_TYPE_F32: dst = type_make(TY_F32); break;
-                case KN_BUILTIN_IO_TYPE_F64: dst = type_make(TY_F64); break;
-                case KN_BUILTIN_IO_TYPE_F128: dst = type_make(TY_F128); break;
-                case KN_BUILTIN_IO_TYPE_I8: dst = type_make(TY_I8); break;
-                case KN_BUILTIN_IO_TYPE_I16: dst = type_make(TY_I16); break;
-                case KN_BUILTIN_IO_TYPE_I32: dst = type_make(TY_I32); break;
-                case KN_BUILTIN_IO_TYPE_I64: dst = type_make(TY_I64); break;
-                case KN_BUILTIN_IO_TYPE_U8: dst = type_make(TY_U8); break;
-                case KN_BUILTIN_IO_TYPE_U16: dst = type_make(TY_U16); break;
-                case KN_BUILTIN_IO_TYPE_U32: dst = type_make(TY_U32); break;
-                case KN_BUILTIN_IO_TYPE_U64: dst = type_make(TY_U64); break;
-                case KN_BUILTIN_IO_TYPE_ISIZE: dst = type_make(TY_ISIZE); break;
-                case KN_BUILTIN_IO_TYPE_USIZE: dst = type_make(TY_USIZE); break;
-                case KN_BUILTIN_IO_TYPE_STRING: dst = type_make(TY_STRING); break;
-                case KN_BUILTIN_IO_TYPE_ANY: dst = type_make(TY_ANY); break;
-                case KN_BUILTIN_IO_TYPE_DICT: dst = type_class("IO.Collection.dict"); break;
-                case KN_BUILTIN_IO_TYPE_LIST: dst = type_class("IO.Collection.list"); break;
-                default: dst = type_make(TY_UNKNOWN); break;
-                }
-                CGValue srcv = gen_expr(g, e->v.member_call.args.items[0]);
-                out.value = cast_value(g, srcv, dst);
-                out.type = dst;
-                return out;
-            }
-            if (bk == KN_BUILTIN_ARRAY_LENGTH)
-            {
-                CGValue arr = gen_expr(g, e->v.member_call.recv);
-                out.value = LLVMBuildExtractValue(g->builder, arr.value, 1, "len");
-                out.type = type_make(TY_INT);
-                return out;
-            }
-            if (bk == KN_BUILTIN_ARRAY_INDEX && e->v.member_call.args.count == 1)
-            {
-                CGValue arr = gen_expr(g, e->v.member_call.recv);
-                CGValue idx = gen_expr(g, e->v.member_call.args.items[0]);
-                LLVMValueRef idxv = cast_value(g, idx, type_make(TY_I64));
-                Type elem = type_make(arr.type.elem);
-                elem.name = arr.type.name;
-                LLVMTypeRef elem_ty = llvm_type(g, elem);
-                LLVMValueRef data = LLVMBuildExtractValue(g->builder, arr.value, 0, "arr.data");
-                LLVMValueRef ptr = LLVMBuildInBoundsGEP2(g->builder, elem_ty, data, &idxv, 1, "arr.idx");
-                out.value = LLVMBuildLoad2(g->builder, elem_ty, ptr, "arr.val");
-                out.type = elem;
-                return out;
-            }
-            ExprList builtin_args = e->v.member_call.args;
-            Expr *builtin_recv = e->v.member_call.is_static ? 0 : e->v.member_call.recv;
-            return gen_builtin_call(g, bk, &builtin_args, builtin_recv);
-        }
-        if (e->v.member_call.is_qual_call && e->v.member_call.qual_name)
-        {
-            FuncSymbol *fs = functable_find(&g->funcs, e->v.member_call.qual_name);
-            if (!fs) kn_die("unknown qualified function");
-            Type public_ret = cg_func_public_ret_type(fs->func);
-            int argc = e->v.member_call.args.count;
-            LLVMValueRef *argv = (LLVMValueRef *)kn_malloc(sizeof(LLVMValueRef) * (size_t)argc);
-            LLVMValueRef temp_frame = gc_push_temp_frame(g, "gc.qcall.frame");
-            for (int i = 0; i < argc; i++)
-            {
-                Type pt = fs->func->params.items[i].type;
-                argv[i] = gen_rooted_call_arg(g, temp_frame, e->v.member_call.args.items[i], pt);
-            }
-            const char *cname = public_ret.kind == TY_VOID ? "" : "qcall";
-            if (fs->func->is_delegate && fs->delegate_global)
-            {
-                if (fs->func->delegate_abi == KN_DELEGATE_ABI_C)
-                {
-                    LLVMValueRef raw = LLVMBuildLoad2(g->builder, g->i8ptr, fs->delegate_global, "qdlg.raw");
-                    LLVMValueRef fn_ptr = LLVMBuildBitCast(g->builder, raw, LLVMPointerType(fs->fn_ty, 0), "qdlg.fn");
-                    out.value = LLVMBuildCall2(g->builder, fs->fn_ty, fn_ptr, argv, (unsigned)argc, cname);
-                }
-                else
-                {
-                    LLVMValueRef obj_ptr = LLVMBuildLoad2(g->builder, g->i8ptr, fs->delegate_global, "qdlg.obj");
-                    LLVMValueRef arr_ptr = argc > 0 ? LLVMBuildAlloca(g->builder, LLVMArrayType(g->any_ty, (unsigned)argc), "qdlg.args.arr") : 0;
-                    LLVMValueRef any_args_ptr = argc > 0
-                        ? LLVMBuildInBoundsGEP2(g->builder, LLVMArrayType(g->any_ty, (unsigned)argc), arr_ptr,
-                                                (LLVMValueRef[]){ LLVMConstInt(g->i32, 0, 0), LLVMConstInt(g->i32, 0, 0) }, 2, "qdlg.args")
-                        : LLVMConstNull(LLVMPointerType(g->any_ty, 0));
-                    for (int i = 0; i < argc; i++)
-                    {
-                        CGValue av;
-                        av.value = argv[i];
-                        av.type = fs->func->params.items[i].type;
-                        LLVMValueRef anyv = box_any_value(g, av);
-                        LLVMValueRef ptr = LLVMBuildInBoundsGEP2(g->builder, g->any_ty, any_args_ptr,
-                                                                 (LLVMValueRef[]){ LLVMConstInt(g->i64, (uint64_t)i, 0) }, 1, "qdlg.arg.ptr");
-                        LLVMBuildStore(g->builder, anyv, ptr);
-                    }
-                    CGValue fnobj;
-                    fnobj.value = obj_ptr;
-                    fnobj.type = type_class("IO.Type.Object.Function");
-                    LLVMValueRef anyv = call_callable_wrapper(g, fnobj, any_args_ptr, LLVMConstInt(g->i64, (uint64_t)argc, 0));
-                    if (fs->func->ret_type.kind != TY_VOID && fs->func->ret_type.kind != TY_ANY)
-                    {
-                        CGValue tmp;
-                        tmp.value = anyv;
-                        tmp.type = type_make(TY_ANY);
-                        out.value = cast_value(g, tmp, fs->func->ret_type);
-                    }
-                    else if (fs->func->ret_type.kind == TY_VOID)
-                    {
-                        out.value = LLVMGetUndef(LLVMVoidTypeInContext(g->ctx));
-                    }
-                    else
-                    {
-                        out.value = anyv;
-                    }
-                }
-            }
-            else
-            {
-                out.value = LLVMBuildCall2(g->builder, fs->fn_ty, fs->fn, argv, (unsigned)argc, cname);
-            }
-            gc_pop_temp_frame(g, temp_frame);
-            if (fs->func->is_extern && fs->func->extern_abi == KN_EXTERN_ABI_SYSTEM && g->target_is_windows && g->target_is_x86)
-                LLVMSetInstructionCallConv(out.value, LLVMX86StdcallCallConv);
-            out.type = public_ret;
-            maybe_propagate_exception(g);
-            return out;
-        }
-        ClassSymbol *owner = classtable_find(&g->classes, e->v.member_call.method_owner);
-        if (owner)
-        {
-            Method *m = &owner->decl->methods.items[e->v.member_call.method_index];
-            LLVMValueRef fn = owner->methods[e->v.member_call.method_index];
-            LLVMTypeRef fn_ty = owner->method_tys[e->v.member_call.method_index];
-
-            int argc = e->v.member_call.args.count + (m->is_static ? 0 : 1);
-            LLVMValueRef *argv = (LLVMValueRef *)kn_malloc(sizeof(LLVMValueRef) * (size_t)argc);
-            int argi = 0;
-            LLVMValueRef temp_frame = gc_push_temp_frame(g, "gc.mcall.frame");
-            if (!m->is_static)
-            {
-                CGValue recv = gen_expr(g, e->v.member_call.recv);
-                recv = gc_root_temp_value(g, temp_frame, recv, "gc.mcall.recv");
-                LLVMValueRef this_arg = LLVMBuildBitCast(g->builder, recv.value, g->i8ptr, "this");
-                argv[argi++] = this_arg;
-
-                bool use_vtable = method_is_virtual(m) && e->v.member_call.recv && e->v.member_call.recv->kind != EXPR_BASE;
-                if (use_vtable && owner->method_vslots)
-                {
-                    int slot = owner->method_vslots[e->v.member_call.method_index];
-                    if (slot >= 0)
-                    {
-                        ClassSymbol *recv_sym = classtable_find(&g->classes, recv.type.name);
-                        LLVMValueRef vtbl = recv_sym ? load_vtable_ptr(g, recv.value, recv_sym) : load_vtable_ptr_any(g, recv.value);
-                        LLVMValueRef idxv = LLVMConstInt(g->i32, (uint64_t)slot, 0);
-                        LLVMValueRef slot_ptr = LLVMBuildInBoundsGEP2(g->builder, g->i8ptr, vtbl, &idxv, 1, "vslot");
-                        LLVMValueRef fn_i8 = LLVMBuildLoad2(g->builder, g->i8ptr, slot_ptr, "vfn");
-                        LLVMValueRef fn_ptr = LLVMBuildBitCast(g->builder, fn_i8, LLVMPointerType(fn_ty, 0), "vfnc");
-                        for (int i = 0; i < e->v.member_call.args.count; i++)
-                        {
-                            Type pt = m->params.items[i].type;
-                            argv[argi++] = gen_rooted_call_arg(g, temp_frame, e->v.member_call.args.items[i], pt);
-                        }
-                        const char *vcname = m->ret_type.kind == TY_VOID ? "" : "vcall";
-                        out.value = LLVMBuildCall2(g->builder, fn_ty, fn_ptr, argv, (unsigned)argc, vcname);
-                        gc_pop_temp_frame(g, temp_frame);
-                        out.type = m->ret_type;
-                        maybe_propagate_exception(g);
-                        return out;
-                    }
-                }
-            }
-
-            for (int i = 0; i < e->v.member_call.args.count; i++)
-            {
-                Type pt = m->params.items[i].type;
-                argv[argi++] = gen_rooted_call_arg(g, temp_frame, e->v.member_call.args.items[i], pt);
-            }
-            const char *mcname = m->ret_type.kind == TY_VOID ? "" : "call";
-            out.value = LLVMBuildCall2(g->builder, fn_ty, fn, argv, (unsigned)argc, mcname);
-            gc_pop_temp_frame(g, temp_frame);
-            out.type = m->ret_type;
-            maybe_propagate_exception(g);
-            return out;
-        }
-
-        InterfaceDecl *iface = interface_find(g, e->v.member_call.method_owner);
-        if (!iface) kn_die("unknown method owner");
-        Method *im = &iface->methods.items[e->v.member_call.method_index];
-        LLVMTypeRef fn_ty = method_fn_type(g, im, 0);
-        int argc = e->v.member_call.args.count + 1;
-        LLVMValueRef *argv = (LLVMValueRef *)kn_malloc(sizeof(LLVMValueRef) * (size_t)argc);
-        LLVMValueRef temp_frame = gc_push_temp_frame(g, "gc.icall.frame");
-        CGValue recv = gen_expr(g, e->v.member_call.recv);
-        recv = gc_root_temp_value(g, temp_frame, recv, "gc.icall.recv");
-        LLVMValueRef this_arg = LLVMBuildBitCast(g->builder, recv.value, g->i8ptr, "this");
-        argv[0] = this_arg;
-        for (int i = 0; i < e->v.member_call.args.count; i++)
-        {
-            Type pt = im->params.items[i].type;
-            argv[i + 1] = gen_rooted_call_arg(g, temp_frame, e->v.member_call.args.items[i], pt);
-        }
-        int slot = vslot_find_method(&g->vslots, im);
-        if (slot < 0) kn_die("missing interface slot");
-        ClassSymbol *recv_sym = classtable_find(&g->classes, recv.type.name);
-        LLVMValueRef vtbl = recv_sym ? load_vtable_ptr(g, recv.value, recv_sym) : load_vtable_ptr_any(g, recv.value);
-        LLVMValueRef idxv = LLVMConstInt(g->i32, (uint64_t)slot, 0);
-        LLVMValueRef slot_ptr = LLVMBuildInBoundsGEP2(g->builder, g->i8ptr, vtbl, &idxv, 1, "ifslot");
-        LLVMValueRef fn_i8 = LLVMBuildLoad2(g->builder, g->i8ptr, slot_ptr, "iffn");
-        LLVMValueRef fn_ptr = LLVMBuildBitCast(g->builder, fn_i8, LLVMPointerType(fn_ty, 0), "iffnc");
-        const char *icname = im->ret_type.kind == TY_VOID ? "" : "icall";
-        out.value = LLVMBuildCall2(g->builder, fn_ty, fn_ptr, argv, (unsigned)argc, icname);
-        gc_pop_temp_frame(g, temp_frame);
-        out.type = im->ret_type;
-        maybe_propagate_exception(g);
-        return out;
-    }
+        if (e->resolved_call.kind == KN_CALL_TARGET_BUILTIN)
+            return gen_resolved_builtin_call(g, e, &e->v.member_call.args, e->v.member_call.recv);
+        if (e->resolved_call.kind == KN_CALL_TARGET_FUNCTION ||
+            e->resolved_call.kind == KN_CALL_TARGET_DELEGATE_KINAL ||
+            e->resolved_call.kind == KN_CALL_TARGET_DELEGATE_C)
+            return gen_resolved_function_call(g, e, &e->v.member_call.args, "qcall");
+        return gen_resolved_method_call(g, e);
     case EXPR_BINARY:
         return gen_binary(g, e);
     case EXPR_IF:
@@ -2034,8 +2030,7 @@ static LLVMValueRef build_array_value(Codegen *g, Type arr_type, Expr *init)
     int64_t alloc_len = arr_type.array_len >= 0 ? arr_type.array_len : init_count;
     if (alloc_len < 0) alloc_len = 0;
 
-    Type elem_type = type_make(arr_type.elem);
-    elem_type.name = arr_type.name;
+    Type elem_type = type_immediate_elem(arr_type);
     LLVMTypeRef elem_ty = llvm_type(g, elem_type);
     LLVMTypeRef arr_struct = llvm_array_type(g, elem_type);
     LLVMValueRef data_ptr = LLVMConstNull(LLVMPointerType(elem_ty, 0));
@@ -2113,6 +2108,29 @@ static LLVMValueRef build_array_value(Codegen *g, Type arr_type, Expr *init)
     return out;
 }
 
+static LLVMValueRef build_array_from_package_value(Codegen *g, CGValue pkg, Type arr_type)
+{
+    if (pkg.type.kind != TY_PACKAGE || arr_type.kind != TY_ARRAY)
+        return LLVMConstNull(llvm_type(g, arr_type));
+    Type elem_type = type_immediate_elem(arr_type);
+    Type materialized = arr_type;
+    materialized.array_len = pkg.type.package_count;
+    LLVMValueRef arr = build_array_value(g, materialized, 0);
+    LLVMValueRef data_ptr = LLVMBuildExtractValue(g->builder, arr, 0, "pkg.arr.data");
+    LLVMTypeRef elem_ty = llvm_type(g, elem_type);
+    for (int i = 0; i < pkg.type.package_count; i++)
+    {
+        CGValue item;
+        item.type = pkg.type.package_elems[i];
+        item.value = LLVMBuildExtractValue(g->builder, pkg.value, (unsigned)i, "pkg.item");
+        LLVMValueRef cv = cast_value(g, item, elem_type);
+        LLVMValueRef idxv = LLVMConstInt(g->i64, (uint64_t)i, 0);
+        LLVMValueRef ptr = LLVMBuildInBoundsGEP2(g->builder, elem_ty, data_ptr, &idxv, 1, "pkg.arr.elem");
+        LLVMBuildStore(g->builder, cv, ptr);
+    }
+    return arr;
+}
+
 static LLVMValueRef build_dict_value(Codegen *g, Expr *init)
 {
     LLVMValueRef temp_frame = gc_push_temp_frame(g, "gc.dict.frame");
@@ -2149,8 +2167,7 @@ static LLVMValueRef build_heap_array_value(Codegen *g, Type arr_type)
 {
     int64_t alloc_len = arr_type.array_len > 0 ? arr_type.array_len : 0;
 
-    Type elem_type = type_make(arr_type.elem);
-    elem_type.name = arr_type.name;
+    Type elem_type = type_immediate_elem(arr_type);
     LLVMTypeRef elem_ty = llvm_type(g, elem_type);
     LLVMValueRef data_ptr = LLVMConstNull(LLVMPointerType(elem_ty, 0));
 
@@ -2178,8 +2195,7 @@ static LLVMValueRef build_heap_array_value(Codegen *g, Type arr_type)
 
 static LLVMValueRef build_array_append_value(Codegen *g, CGValue arr, CGValue item)
 {
-    Type elem = type_make(arr.type.elem);
-    elem.name = arr.type.name;
+    Type elem = type_immediate_elem(arr.type);
     LLVMTypeRef elem_ty = llvm_type(g, elem);
     LLVMTypeRef arr_struct = llvm_array_type(g, elem);
 
@@ -2276,8 +2292,29 @@ static LLVMValueRef set_as_i8ptr(Codegen *g, CGValue v)
     return LLVMBuildBitCast(g->builder, sv, g->i8ptr, "set.ptr");
 }
 
-static CGValue gen_builtin_call(Codegen *g, KnBuiltinKind kind, ExprList *args, Expr *recv)
+static CGValue gen_platform_console(Codegen *g, KnBuiltinKind kind, ExprList *args, Expr *recv);
+static CGValue gen_platform_time(Codegen *g, KnBuiltinKind kind, ExprList *args, Expr *recv);
+static CGValue gen_platform_memory(Codegen *g, KnBuiltinKind kind, ExprList *args, Expr *recv);
+
+static CGValue gen_builtin_platform(Codegen *g, KnBuiltinKind kind, ExprList *args, Expr *recv)
 {
+    if (kind >= KN_BUILTIN_IO_CONSOLE_PRINTLINE && kind <= KN_BUILTIN_IO_CONSOLE_WRITECHAR)
+        return gen_platform_console(g, kind, args, recv);
+    if (kind >= KN_BUILTIN_IO_TIME_NOW && kind <= KN_BUILTIN_IO_TIME_FORMAT)
+        return gen_platform_time(g, kind, args, recv);
+    if (kind >= KN_BUILTIN_IO_MEMORY_COPY && kind <= KN_BUILTIN_IO_PANIC_HALT)
+        return gen_platform_memory(g, kind, args, recv);
+
+    kn_die("builtin platform lowering not registered");
+    CGValue out;
+    out.value = 0;
+    out.type = type_make(TY_VOID);
+    return out;
+}
+
+static CGValue gen_platform_console(Codegen *g, KnBuiltinKind kind, ExprList *args, Expr *recv)
+{
+    (void)recv;
     CGValue out;
     out.value = 0;
     out.type = type_make(TY_VOID);
@@ -2432,6 +2469,22 @@ static CGValue gen_builtin_call(Codegen *g, KnBuiltinKind kind, ExprList *args, 
         out.type = type_make(TY_STRING);
         return out;
     }
+    default:
+        break;
+    }
+    kn_die("builtin platform lowering mismatch");
+    return out;
+}
+
+static CGValue gen_platform_time(Codegen *g, KnBuiltinKind kind, ExprList *args, Expr *recv)
+{
+    (void)recv;
+    CGValue out;
+    out.value = 0;
+    out.type = type_make(TY_VOID);
+
+    switch (kind)
+    {
     case KN_BUILTIN_IO_TIME_NOW:
     {
         out.value = build_datetime_now(g);
@@ -2479,6 +2532,22 @@ static CGValue gen_builtin_call(Codegen *g, KnBuiltinKind kind, ExprList *args, 
         out.type = type_make(TY_INT);
         return out;
     }
+    default:
+        break;
+    }
+    kn_die("builtin platform lowering mismatch");
+    return out;
+}
+
+static CGValue gen_platform_memory(Codegen *g, KnBuiltinKind kind, ExprList *args, Expr *recv)
+{
+    (void)recv;
+    CGValue out;
+    out.value = 0;
+    out.type = type_make(TY_VOID);
+
+    switch (kind)
+    {
     case KN_BUILTIN_IO_MEMORY_COPY:
     {
         CGValue dst = gen_expr(g, args->items[0]);
@@ -2587,6 +2656,51 @@ static CGValue gen_builtin_call(Codegen *g, KnBuiltinKind kind, ExprList *args, 
         out.type = type_make(TY_VOID);
         return out;
     }
+    default:
+        break;
+    }
+    kn_die("builtin platform lowering mismatch");
+    return out;
+}
+
+static CGValue gen_collection_string(Codegen *g, KnBuiltinKind kind, ExprList *args, Expr *recv);
+static CGValue gen_collection_dict(Codegen *g, KnBuiltinKind kind, ExprList *args, Expr *recv);
+static CGValue gen_collection_list(Codegen *g, KnBuiltinKind kind, ExprList *args, Expr *recv);
+static CGValue gen_collection_set(Codegen *g, KnBuiltinKind kind, ExprList *args, Expr *recv);
+static CGValue gen_collection_math(Codegen *g, KnBuiltinKind kind, ExprList *args, Expr *recv);
+static CGValue gen_collection_conversion(Codegen *g, KnBuiltinKind kind, ExprList *args, Expr *recv);
+
+static CGValue gen_builtin_collections(Codegen *g, KnBuiltinKind kind, ExprList *args, Expr *recv)
+{
+    if ((kind >= KN_BUILTIN_IO_STRING_LENGTH && kind <= KN_BUILTIN_IO_STRING_TOCHARS) ||
+        kind == KN_BUILTIN_STRING_INDEX)
+        return gen_collection_string(g, kind, args, recv);
+    if (kind >= KN_BUILTIN_IO_DICT_NEW && kind <= KN_BUILTIN_IO_DICT_VALUES)
+        return gen_collection_dict(g, kind, args, recv);
+    if (kind >= KN_BUILTIN_IO_LIST_NEW && kind <= KN_BUILTIN_IO_LIST_IS_EMPTY)
+        return gen_collection_list(g, kind, args, recv);
+    if (kind >= KN_BUILTIN_IO_SET_NEW && kind <= KN_BUILTIN_IO_SET_VALUES)
+        return gen_collection_set(g, kind, args, recv);
+    if (kind >= KN_BUILTIN_IO_MATH_ABS && kind <= KN_BUILTIN_IO_MATH_CLAMP)
+        return gen_collection_math(g, kind, args, recv);
+    if (kind >= KN_BUILTIN_IO_TYPE_BOOL && kind <= KN_BUILTIN_IO_TYPE_LIST)
+        return gen_collection_conversion(g, kind, args, recv);
+
+    kn_die("builtin collection lowering not registered");
+    CGValue out;
+    out.value = 0;
+    out.type = type_make(TY_VOID);
+    return out;
+}
+
+static CGValue gen_collection_string(Codegen *g, KnBuiltinKind kind, ExprList *args, Expr *recv)
+{
+    CGValue out;
+    out.value = 0;
+    out.type = type_make(TY_VOID);
+
+    switch (kind)
+    {
     case KN_BUILTIN_IO_STRING_LENGTH:
     {
         CGValue arg;
@@ -2654,6 +2768,21 @@ static CGValue gen_builtin_call(Codegen *g, KnBuiltinKind kind, ExprList *args, 
         out.type = type_array(TY_CHAR, -1);
         return out;
     }
+    default:
+        break;
+    }
+    kn_die("builtin collection lowering mismatch");
+    return out;
+}
+
+static CGValue gen_collection_dict(Codegen *g, KnBuiltinKind kind, ExprList *args, Expr *recv)
+{
+    CGValue out;
+    out.value = 0;
+    out.type = type_make(TY_VOID);
+
+    switch (kind)
+    {
     case KN_BUILTIN_IO_DICT_NEW:
     {
         LLVMValueRef raw = LLVMBuildCall2(g->builder, g->fn_dict_new_ty, g->fn_dict_new, 0, 0, "dict.new");
@@ -2718,7 +2847,10 @@ static CGValue gen_builtin_call(Codegen *g, KnBuiltinKind kind, ExprList *args, 
 
         LLVMValueRef dp = dict_as_i8ptr(g, dv);
         LLVMValueRef key = cast_value(g, keyv, type_make(TY_STRING));
-        LLVMValueRef has = LLVMBuildCall2(g->builder, g->fn_dict_contains_ty, g->fn_dict_contains, (LLVMValueRef[]){ dp, key }, 2, "dict.try.has");
+        LLVMValueRef has = cg_from_runtime_bool(
+            g,
+            LLVMBuildCall2(g->builder, g->fn_dict_contains_ty, g->fn_dict_contains, (LLVMValueRef[]){ dp, key }, 2, "dict.try.has.c"),
+            "dict.try.has");
 
         LLVMValueRef tag_ptr = LLVMBuildAlloca(g->builder, g->i64, "dict.try.tag.ptr");
         LLVMValueRef payload_ptr = LLVMBuildAlloca(g->builder, g->i64, "dict.try.payload.ptr");
@@ -2751,7 +2883,10 @@ static CGValue gen_builtin_call(Codegen *g, KnBuiltinKind kind, ExprList *args, 
         LLVMValueRef dp = dict_as_i8ptr(g, dv);
         LLVMValueRef key = cast_value(g, keyv, type_make(TY_STRING));
         LLVMValueRef argv[2] = { dp, key };
-        out.value = LLVMBuildCall2(g->builder, g->fn_dict_contains_ty, g->fn_dict_contains, argv, 2, "dict.contains");
+        out.value = cg_from_runtime_bool(
+            g,
+            LLVMBuildCall2(g->builder, g->fn_dict_contains_ty, g->fn_dict_contains, argv, 2, "dict.contains.c"),
+            "dict.contains");
         out.type = type_make(TY_BOOL);
         return out;
     }
@@ -2773,7 +2908,10 @@ static CGValue gen_builtin_call(Codegen *g, KnBuiltinKind kind, ExprList *args, 
         LLVMValueRef dp = dict_as_i8ptr(g, dv);
         LLVMValueRef key = cast_value(g, keyv, type_make(TY_STRING));
         LLVMValueRef argv[2] = { dp, key };
-        out.value = LLVMBuildCall2(g->builder, g->fn_dict_remove_ty, g->fn_dict_remove, argv, 2, "dict.remove");
+        out.value = cg_from_runtime_bool(
+            g,
+            LLVMBuildCall2(g->builder, g->fn_dict_remove_ty, g->fn_dict_remove, argv, 2, "dict.remove.c"),
+            "dict.remove");
         out.type = type_make(TY_BOOL);
         return out;
     }
@@ -2782,7 +2920,10 @@ static CGValue gen_builtin_call(Codegen *g, KnBuiltinKind kind, ExprList *args, 
         int inst = (recv && args->count == 0) ? 1 : 0;
         CGValue dv = inst ? gen_expr(g, recv) : gen_expr(g, args->items[0]);
         LLVMValueRef dp = dict_as_i8ptr(g, dv);
-        out.value = LLVMBuildCall2(g->builder, g->fn_dict_is_empty_ty, g->fn_dict_is_empty, &dp, 1, "dict.empty");
+        out.value = cg_from_runtime_bool(
+            g,
+            LLVMBuildCall2(g->builder, g->fn_dict_is_empty_ty, g->fn_dict_is_empty, &dp, 1, "dict.empty.c"),
+            "dict.empty");
         out.type = type_make(TY_BOOL);
         return out;
     }
@@ -2806,6 +2947,21 @@ static CGValue gen_builtin_call(Codegen *g, KnBuiltinKind kind, ExprList *args, 
         out.value = LLVMBuildBitCast(g->builder, raw, llvm_type(g, out.type), "dict.values.obj");
         return out;
     }
+    default:
+        break;
+    }
+    kn_die("builtin collection lowering mismatch");
+    return out;
+}
+
+static CGValue gen_collection_list(Codegen *g, KnBuiltinKind kind, ExprList *args, Expr *recv)
+{
+    CGValue out;
+    out.value = 0;
+    out.type = type_make(TY_VOID);
+
+    switch (kind)
+    {
     case KN_BUILTIN_IO_LIST_NEW:
     {
         LLVMValueRef raw = LLVMBuildCall2(g->builder, g->fn_list_new_ty, g->fn_list_new, 0, 0, "list.new");
@@ -2971,7 +3127,10 @@ static CGValue gen_builtin_call(Codegen *g, KnBuiltinKind kind, ExprList *args, 
         LLVMValueRef tag = LLVMBuildExtractValue(g->builder, anyv, 0, "list.contains.tag");
         LLVMValueRef payload = LLVMBuildExtractValue(g->builder, anyv, 1, "list.contains.payload");
         LLVMValueRef argv[3] = { lp, tag, payload };
-        out.value = LLVMBuildCall2(g->builder, g->fn_list_contains_ty, g->fn_list_contains, argv, 3, "list.contains");
+        out.value = cg_from_runtime_bool(
+            g,
+            LLVMBuildCall2(g->builder, g->fn_list_contains_ty, g->fn_list_contains, argv, 3, "list.contains.c"),
+            "list.contains");
         out.type = type_make(TY_BOOL);
         return out;
     }
@@ -3036,10 +3195,28 @@ static CGValue gen_builtin_call(Codegen *g, KnBuiltinKind kind, ExprList *args, 
         int inst = (recv && args->count == 0) ? 1 : 0;
         CGValue lv = inst ? gen_expr(g, recv) : gen_expr(g, args->items[0]);
         LLVMValueRef lp = list_as_i8ptr(g, lv);
-        out.value = LLVMBuildCall2(g->builder, g->fn_list_is_empty_ty, g->fn_list_is_empty, &lp, 1, "list.empty");
+        out.value = cg_from_runtime_bool(
+            g,
+            LLVMBuildCall2(g->builder, g->fn_list_is_empty_ty, g->fn_list_is_empty, &lp, 1, "list.empty.c"),
+            "list.empty");
         out.type = type_make(TY_BOOL);
         return out;
     }
+    default:
+        break;
+    }
+    kn_die("builtin collection lowering mismatch");
+    return out;
+}
+
+static CGValue gen_collection_set(Codegen *g, KnBuiltinKind kind, ExprList *args, Expr *recv)
+{
+    CGValue out;
+    out.value = 0;
+    out.type = type_make(TY_VOID);
+
+    switch (kind)
+    {
     case KN_BUILTIN_IO_SET_NEW:
     {
         LLVMValueRef raw = LLVMBuildCall2(g->builder, g->fn_set_new_ty, g->fn_set_new, 0, 0, "set.new");
@@ -3070,7 +3247,10 @@ static CGValue gen_builtin_call(Codegen *g, KnBuiltinKind kind, ExprList *args, 
         LLVMValueRef sp = set_as_i8ptr(g, sv);
         LLVMValueRef key = cast_value(g, kv, type_make(TY_STRING));
         LLVMValueRef argv[2] = { sp, key };
-        out.value = LLVMBuildCall2(g->builder, g->fn_set_contains_ty, g->fn_set_contains, argv, 2, "set.contains");
+        out.value = cg_from_runtime_bool(
+            g,
+            LLVMBuildCall2(g->builder, g->fn_set_contains_ty, g->fn_set_contains, argv, 2, "set.contains.c"),
+            "set.contains");
         out.type = type_make(TY_BOOL);
         return out;
     }
@@ -3092,7 +3272,10 @@ static CGValue gen_builtin_call(Codegen *g, KnBuiltinKind kind, ExprList *args, 
         LLVMValueRef sp = set_as_i8ptr(g, sv);
         LLVMValueRef key = cast_value(g, kv, type_make(TY_STRING));
         LLVMValueRef argv[2] = { sp, key };
-        out.value = LLVMBuildCall2(g->builder, g->fn_set_remove_ty, g->fn_set_remove, argv, 2, "set.remove");
+        out.value = cg_from_runtime_bool(
+            g,
+            LLVMBuildCall2(g->builder, g->fn_set_remove_ty, g->fn_set_remove, argv, 2, "set.remove.c"),
+            "set.remove");
         out.type = type_make(TY_BOOL);
         return out;
     }
@@ -3110,7 +3293,10 @@ static CGValue gen_builtin_call(Codegen *g, KnBuiltinKind kind, ExprList *args, 
         int inst = (recv && args->count == 0) ? 1 : 0;
         CGValue sv = inst ? gen_expr(g, recv) : gen_expr(g, args->items[0]);
         LLVMValueRef sp = set_as_i8ptr(g, sv);
-        out.value = LLVMBuildCall2(g->builder, g->fn_set_is_empty_ty, g->fn_set_is_empty, &sp, 1, "set.empty");
+        out.value = cg_from_runtime_bool(
+            g,
+            LLVMBuildCall2(g->builder, g->fn_set_is_empty_ty, g->fn_set_is_empty, &sp, 1, "set.empty.c"),
+            "set.empty");
         out.type = type_make(TY_BOOL);
         return out;
     }
@@ -3124,6 +3310,22 @@ static CGValue gen_builtin_call(Codegen *g, KnBuiltinKind kind, ExprList *args, 
         out.value = LLVMBuildBitCast(g->builder, raw, llvm_type(g, out.type), "set.values.obj");
         return out;
     }
+    default:
+        break;
+    }
+    kn_die("builtin collection lowering mismatch");
+    return out;
+}
+
+static CGValue gen_collection_math(Codegen *g, KnBuiltinKind kind, ExprList *args, Expr *recv)
+{
+    (void)recv;
+    CGValue out;
+    out.value = 0;
+    out.type = type_make(TY_VOID);
+
+    switch (kind)
+    {
     case KN_BUILTIN_IO_MATH_ABS:
     {
         CGValue a = gen_expr(g, args->items[0]);
@@ -3172,6 +3374,22 @@ static CGValue gen_builtin_call(Codegen *g, KnBuiltinKind kind, ExprList *args, 
         out.type = type_make(TY_INT);
         return out;
     }
+    default:
+        break;
+    }
+    kn_die("builtin collection lowering mismatch");
+    return out;
+}
+
+static CGValue gen_collection_conversion(Codegen *g, KnBuiltinKind kind, ExprList *args, Expr *recv)
+{
+    (void)recv;
+    CGValue out;
+    out.value = 0;
+    out.type = type_make(TY_VOID);
+
+    switch (kind)
+    {
     case KN_BUILTIN_IO_TYPE_BOOL:
     case KN_BUILTIN_IO_TYPE_BYTE:
     case KN_BUILTIN_IO_TYPE_CHAR:
@@ -3229,10 +3447,27 @@ static CGValue gen_builtin_call(Codegen *g, KnBuiltinKind kind, ExprList *args, 
         out.type = dst;
         return out;
     }
+    default:
+        break;
+    }
+    kn_die("builtin collection lowering mismatch");
+    return out;
+}
+
+static CGValue gen_builtin_system(Codegen *g, KnBuiltinKind kind, ExprList *args, Expr *recv)
+{
+    (void)recv;
+    CGValue out;
+    out.value = 0;
+    out.type = type_make(TY_VOID);
+
+    switch (kind)
+    {
     case KN_BUILTIN_IO_SYSTEM_EXIT:
     {
         CGValue arg = gen_expr(g, args->items[0]);
         LLVMValueRef v = cast_value(g, arg, type_make(TY_INT));
+        v = cg_to_ffi_value(g, v, type_make(TY_INT));
         LLVMBuildCall2(g->builder, g->fn_sys_exit_ty, g->fn_sys_exit, &v, 1, "");
         out.type = type_make(TY_VOID);
         return out;
@@ -3247,7 +3482,10 @@ static CGValue gen_builtin_call(Codegen *g, KnBuiltinKind kind, ExprList *args, 
     {
         CGValue arg = gen_expr(g, args->items[0]);
         LLVMValueRef path = cast_value(g, arg, type_make(TY_STRING));
-        out.value = LLVMBuildCall2(g->builder, g->fn_sys_file_exists_ty, g->fn_sys_file_exists, &path, 1, "fexists");
+        out.value = cg_from_runtime_bool(
+            g,
+            LLVMBuildCall2(g->builder, g->fn_sys_file_exists_ty, g->fn_sys_file_exists, &path, 1, "fexists.c"),
+            "fexists");
         out.type = type_make(TY_BOOL);
         return out;
     }
@@ -3255,7 +3493,10 @@ static CGValue gen_builtin_call(Codegen *g, KnBuiltinKind kind, ExprList *args, 
     {
         CGValue arg = gen_expr(g, args->items[0]);
         LLVMValueRef cmd = cast_value(g, arg, type_make(TY_STRING));
-        out.value = LLVMBuildCall2(g->builder, g->fn_sys_exec_ty, g->fn_sys_exec, &cmd, 1, "sys.exec");
+        out.value = cg_from_runtime_int(
+            g,
+            LLVMBuildCall2(g->builder, g->fn_sys_exec_ty, g->fn_sys_exec, &cmd, 1, "sys.exec.c"),
+            "sys.exec");
         out.type = type_make(TY_INT);
         return out;
     }
@@ -3282,7 +3523,10 @@ static CGValue gen_builtin_call(Codegen *g, KnBuiltinKind kind, ExprList *args, 
     {
         CGValue libv = gen_expr(g, args->items[0]);
         LLVMValueRef lib = cast_value(g, libv, type_ptr(TY_BYTE));
-        out.value = LLVMBuildCall2(g->builder, g->fn_sys_close_library_ty, g->fn_sys_close_library, &lib, 1, "sys.closelib");
+        out.value = cg_from_runtime_bool(
+            g,
+            LLVMBuildCall2(g->builder, g->fn_sys_close_library_ty, g->fn_sys_close_library, &lib, 1, "sys.closelib.c"),
+            "sys.closelib");
         out.type = type_make(TY_BOOL);
         return out;
     }
@@ -3304,7 +3548,10 @@ static CGValue gen_builtin_call(Codegen *g, KnBuiltinKind kind, ExprList *args, 
     {
         CGValue handlev = gen_expr(g, args->items[0]);
         LLVMValueRef handle = cast_value(g, handlev, type_ptr(TY_BYTE));
-        out.value = LLVMBuildCall2(g->builder, g->fn_async_is_completed_ty, g->fn_async_is_completed, &handle, 1, "async.done");
+        out.value = cg_from_runtime_bool(
+            g,
+            LLVMBuildCall2(g->builder, g->fn_async_is_completed_ty, g->fn_async_is_completed, &handle, 1, "async.done.c"),
+            "async.done");
         out.type = type_make(TY_BOOL);
         return out;
     }
@@ -3315,7 +3562,10 @@ static CGValue gen_builtin_call(Codegen *g, KnBuiltinKind kind, ExprList *args, 
         LLVMValueRef handle = cast_value(g, handlev, type_ptr(TY_BYTE));
         LLVMValueRef timeout = cast_value(g, timeoutv, type_make(TY_INT));
         LLVMValueRef argv[2] = { handle, timeout };
-        out.value = LLVMBuildCall2(g->builder, g->fn_async_wait_ty, g->fn_async_wait, argv, 2, "async.wait");
+        out.value = cg_from_runtime_bool(
+            g,
+            LLVMBuildCall2(g->builder, g->fn_async_wait_ty, g->fn_async_wait, argv, 2, "async.wait.c"),
+            "async.wait");
         out.type = type_make(TY_BOOL);
         return out;
     }
@@ -3323,7 +3573,10 @@ static CGValue gen_builtin_call(Codegen *g, KnBuiltinKind kind, ExprList *args, 
     {
         CGValue handlev = gen_expr(g, args->items[0]);
         LLVMValueRef handle = cast_value(g, handlev, type_ptr(TY_BYTE));
-        out.value = LLVMBuildCall2(g->builder, g->fn_async_exit_code_ty, g->fn_async_exit_code, &handle, 1, "async.exit");
+        out.value = cg_from_runtime_int(
+            g,
+            LLVMBuildCall2(g->builder, g->fn_async_exit_code_ty, g->fn_async_exit_code, &handle, 1, "async.exit.c"),
+            "async.exit");
         out.type = type_make(TY_INT);
         return out;
     }
@@ -3331,7 +3584,10 @@ static CGValue gen_builtin_call(Codegen *g, KnBuiltinKind kind, ExprList *args, 
     {
         CGValue handlev = gen_expr(g, args->items[0]);
         LLVMValueRef handle = cast_value(g, handlev, type_ptr(TY_BYTE));
-        out.value = LLVMBuildCall2(g->builder, g->fn_async_close_ty, g->fn_async_close, &handle, 1, "async.close");
+        out.value = cg_from_runtime_bool(
+            g,
+            LLVMBuildCall2(g->builder, g->fn_async_close_ty, g->fn_async_close, &handle, 1, "async.close.c"),
+            "async.close");
         out.type = type_make(TY_BOOL);
         return out;
     }
@@ -3401,7 +3657,10 @@ static CGValue gen_builtin_call(Codegen *g, KnBuiltinKind kind, ExprList *args, 
         LLVMValueRef owner = cast_value(g, ownerv, type_make(TY_STRING));
         LLVMValueRef meta = cast_value(g, metav, type_make(TY_STRING));
         LLVMValueRef argv[2] = { owner, meta };
-        out.value = LLVMBuildCall2(g->builder, g->fn_meta_has_ty, g->fn_meta_has, argv, 2, "meta.has");
+        out.value = cg_from_runtime_bool(
+            g,
+            LLVMBuildCall2(g->builder, g->fn_meta_has_ty, g->fn_meta_has, argv, 2, "meta.has.c"),
+            "meta.has");
         out.type = type_make(TY_BOOL);
         return out;
     }
@@ -3417,6 +3676,23 @@ static CGValue gen_builtin_call(Codegen *g, KnBuiltinKind kind, ExprList *args, 
         out.type = type_class("IO.Collection.dict");
         return out;
     }
+    default:
+        break;
+    }
+    kn_die("builtin lowering group mismatch");
+    return out;
+}
+
+
+static CGValue gen_builtin_text(Codegen *g, KnBuiltinKind kind, ExprList *args, Expr *recv)
+{
+    (void)recv;
+    CGValue out;
+    out.value = 0;
+    out.type = type_make(TY_VOID);
+
+    switch (kind)
+    {
     case KN_BUILTIN_IO_PATH_COMBINE:
     {
         CGValue a = gen_expr(g, args->items[0]);
@@ -3521,7 +3797,10 @@ static CGValue gen_builtin_call(Codegen *g, KnBuiltinKind kind, ExprList *args, 
     {
         CGValue p = gen_expr(g, args->items[0]);
         LLVMValueRef pv = cast_value(g, p, type_make(TY_STRING));
-        out.value = LLVMBuildCall2(g->builder, g->fn_path_is_absolute_ty, g->fn_path_is_absolute, &pv, 1, "path.abs");
+        out.value = cg_from_runtime_bool(
+            g,
+            LLVMBuildCall2(g->builder, g->fn_path_is_absolute_ty, g->fn_path_is_absolute, &pv, 1, "path.abs.c"),
+            "path.abs");
         out.type = type_make(TY_BOOL);
         return out;
     }
@@ -3529,7 +3808,10 @@ static CGValue gen_builtin_call(Codegen *g, KnBuiltinKind kind, ExprList *args, 
     {
         CGValue p = gen_expr(g, args->items[0]);
         LLVMValueRef pv = cast_value(g, p, type_make(TY_STRING));
-        LLVMValueRef abs = LLVMBuildCall2(g->builder, g->fn_path_is_absolute_ty, g->fn_path_is_absolute, &pv, 1, "path.rel.abs");
+        LLVMValueRef abs = cg_from_runtime_bool(
+            g,
+            LLVMBuildCall2(g->builder, g->fn_path_is_absolute_ty, g->fn_path_is_absolute, &pv, 1, "path.rel.abs.c"),
+            "path.rel.abs");
         out.value = LLVMBuildNot(g->builder, abs, "path.rel");
         out.type = type_make(TY_BOOL);
         return out;
@@ -3585,7 +3867,10 @@ static CGValue gen_builtin_call(Codegen *g, KnBuiltinKind kind, ExprList *args, 
         LLVMValueRef sv = cast_value(g, s, type_make(TY_STRING));
         LLVMValueRef subv = cast_value(g, sub, type_make(TY_STRING));
         LLVMValueRef argv[2] = { sv, subv };
-        out.value = LLVMBuildCall2(g->builder, g->fn_text_contains_ty, g->fn_text_contains, argv, 2, "text.contains");
+        out.value = cg_from_runtime_bool(
+            g,
+            LLVMBuildCall2(g->builder, g->fn_text_contains_ty, g->fn_text_contains, argv, 2, "text.contains.c"),
+            "text.contains");
         out.type = type_make(TY_BOOL);
         return out;
     }
@@ -3596,7 +3881,10 @@ static CGValue gen_builtin_call(Codegen *g, KnBuiltinKind kind, ExprList *args, 
         LLVMValueRef sv = cast_value(g, s, type_make(TY_STRING));
         LLVMValueRef pv = cast_value(g, pre, type_make(TY_STRING));
         LLVMValueRef argv[2] = { sv, pv };
-        out.value = LLVMBuildCall2(g->builder, g->fn_text_starts_with_ty, g->fn_text_starts_with, argv, 2, "text.starts");
+        out.value = cg_from_runtime_bool(
+            g,
+            LLVMBuildCall2(g->builder, g->fn_text_starts_with_ty, g->fn_text_starts_with, argv, 2, "text.starts.c"),
+            "text.starts");
         out.type = type_make(TY_BOOL);
         return out;
     }
@@ -3607,7 +3895,10 @@ static CGValue gen_builtin_call(Codegen *g, KnBuiltinKind kind, ExprList *args, 
         LLVMValueRef sv = cast_value(g, s, type_make(TY_STRING));
         LLVMValueRef pv = cast_value(g, suf, type_make(TY_STRING));
         LLVMValueRef argv[2] = { sv, pv };
-        out.value = LLVMBuildCall2(g->builder, g->fn_text_ends_with_ty, g->fn_text_ends_with, argv, 2, "text.ends");
+        out.value = cg_from_runtime_bool(
+            g,
+            LLVMBuildCall2(g->builder, g->fn_text_ends_with_ty, g->fn_text_ends_with, argv, 2, "text.ends.c"),
+            "text.ends");
         out.type = type_make(TY_BOOL);
         return out;
     }
@@ -3715,11 +4006,28 @@ static CGValue gen_builtin_call(Codegen *g, KnBuiltinKind kind, ExprList *args, 
         out.value = LLVMBuildBitCast(g->builder, raw, llvm_type(g, out.type), "text.lines.obj");
         return out;
     }
+    default:
+        break;
+    }
+    kn_die("builtin lowering group mismatch");
+    return out;
+}
+
+
+static CGValue gen_builtin_filesystem(Codegen *g, KnBuiltinKind kind, ExprList *args, Expr *recv)
+{
+    (void)recv;
+    CGValue out;
+    out.value = 0;
+    out.type = type_make(TY_VOID);
+
+    switch (kind)
+    {
     case KN_BUILTIN_IO_FILE_CREATE:
     {
         CGValue p = gen_expr(g, args->items[0]);
         LLVMValueRef pv = cast_value(g, p, type_make(TY_STRING));
-        out.value = LLVMBuildCall2(g->builder, g->fn_file_create_ty, g->fn_file_create, &pv, 1, "file.create");
+        out.value = cg_from_runtime_bool(g, LLVMBuildCall2(g->builder, g->fn_file_create_ty, g->fn_file_create, &pv, 1, "file.create.c"), "file.create");
         out.type = type_make(TY_BOOL);
         return out;
     }
@@ -3727,7 +4035,7 @@ static CGValue gen_builtin_call(Codegen *g, KnBuiltinKind kind, ExprList *args, 
     {
         CGValue p = gen_expr(g, args->items[0]);
         LLVMValueRef pv = cast_value(g, p, type_make(TY_STRING));
-        out.value = LLVMBuildCall2(g->builder, g->fn_file_touch_ty, g->fn_file_touch, &pv, 1, "file.touch");
+        out.value = cg_from_runtime_bool(g, LLVMBuildCall2(g->builder, g->fn_file_touch_ty, g->fn_file_touch, &pv, 1, "file.touch.c"), "file.touch");
         out.type = type_make(TY_BOOL);
         return out;
     }
@@ -3754,7 +4062,7 @@ static CGValue gen_builtin_call(Codegen *g, KnBuiltinKind kind, ExprList *args, 
         LLVMValueRef pv = cast_value(g, p, type_make(TY_STRING));
         LLVMValueRef tv = cast_value(g, t, type_make(TY_STRING));
         LLVMValueRef argv[2] = { pv, tv };
-        out.value = LLVMBuildCall2(g->builder, g->fn_file_write_all_text_ty, g->fn_file_write_all_text, argv, 2, "file.write");
+        out.value = cg_from_runtime_bool(g, LLVMBuildCall2(g->builder, g->fn_file_write_all_text_ty, g->fn_file_write_all_text, argv, 2, "file.write.c"), "file.write");
         out.type = type_make(TY_BOOL);
         return out;
     }
@@ -3765,7 +4073,7 @@ static CGValue gen_builtin_call(Codegen *g, KnBuiltinKind kind, ExprList *args, 
         LLVMValueRef pv = cast_value(g, p, type_make(TY_STRING));
         LLVMValueRef tv = cast_value(g, t, type_make(TY_STRING));
         LLVMValueRef argv[2] = { pv, tv };
-        out.value = LLVMBuildCall2(g->builder, g->fn_file_append_all_text_ty, g->fn_file_append_all_text, argv, 2, "file.append");
+        out.value = cg_from_runtime_bool(g, LLVMBuildCall2(g->builder, g->fn_file_append_all_text_ty, g->fn_file_append_all_text, argv, 2, "file.append.c"), "file.append");
         out.type = type_make(TY_BOOL);
         return out;
     }
@@ -3776,7 +4084,7 @@ static CGValue gen_builtin_call(Codegen *g, KnBuiltinKind kind, ExprList *args, 
         LLVMValueRef pv = cast_value(g, p, type_make(TY_STRING));
         LLVMValueRef tv = cast_value(g, t, type_make(TY_STRING));
         LLVMValueRef argv[2] = { pv, tv };
-        out.value = LLVMBuildCall2(g->builder, g->fn_file_append_line_ty, g->fn_file_append_line, argv, 2, "file.appendline");
+        out.value = cg_from_runtime_bool(g, LLVMBuildCall2(g->builder, g->fn_file_append_line_ty, g->fn_file_append_line, argv, 2, "file.appendline.c"), "file.appendline");
         out.type = type_make(TY_BOOL);
         return out;
     }
@@ -3784,7 +4092,7 @@ static CGValue gen_builtin_call(Codegen *g, KnBuiltinKind kind, ExprList *args, 
     {
         CGValue p = gen_expr(g, args->items[0]);
         LLVMValueRef pv = cast_value(g, p, type_make(TY_STRING));
-        out.value = LLVMBuildCall2(g->builder, g->fn_file_delete_ty, g->fn_file_delete, &pv, 1, "file.delete");
+        out.value = cg_from_runtime_bool(g, LLVMBuildCall2(g->builder, g->fn_file_delete_ty, g->fn_file_delete, &pv, 1, "file.delete.c"), "file.delete");
         out.type = type_make(TY_BOOL);
         return out;
     }
@@ -3792,7 +4100,7 @@ static CGValue gen_builtin_call(Codegen *g, KnBuiltinKind kind, ExprList *args, 
     {
         CGValue p = gen_expr(g, args->items[0]);
         LLVMValueRef pv = cast_value(g, p, type_make(TY_STRING));
-        out.value = LLVMBuildCall2(g->builder, g->fn_file_delete_if_exists_ty, g->fn_file_delete_if_exists, &pv, 1, "file.deleteif");
+        out.value = cg_from_runtime_bool(g, LLVMBuildCall2(g->builder, g->fn_file_delete_if_exists_ty, g->fn_file_delete_if_exists, &pv, 1, "file.deleteif.c"), "file.deleteif");
         out.type = type_make(TY_BOOL);
         return out;
     }
@@ -3808,7 +4116,7 @@ static CGValue gen_builtin_call(Codegen *g, KnBuiltinKind kind, ExprList *args, 
     {
         CGValue p = gen_expr(g, args->items[0]);
         LLVMValueRef pv = cast_value(g, p, type_make(TY_STRING));
-        out.value = LLVMBuildCall2(g->builder, g->fn_file_is_empty_ty, g->fn_file_is_empty, &pv, 1, "file.empty");
+        out.value = cg_from_runtime_bool(g, LLVMBuildCall2(g->builder, g->fn_file_is_empty_ty, g->fn_file_is_empty, &pv, 1, "file.empty.c"), "file.empty");
         out.type = type_make(TY_BOOL);
         return out;
     }
@@ -3819,7 +4127,7 @@ static CGValue gen_builtin_call(Codegen *g, KnBuiltinKind kind, ExprList *args, 
         LLVMValueRef av = cast_value(g, a, type_make(TY_STRING));
         LLVMValueRef bv = cast_value(g, b, type_make(TY_STRING));
         LLVMValueRef argv[2] = { av, bv };
-        out.value = LLVMBuildCall2(g->builder, g->fn_file_copy_ty, g->fn_file_copy, argv, 2, "file.copy");
+        out.value = cg_from_runtime_bool(g, LLVMBuildCall2(g->builder, g->fn_file_copy_ty, g->fn_file_copy, argv, 2, "file.copy.c"), "file.copy");
         out.type = type_make(TY_BOOL);
         return out;
     }
@@ -3830,7 +4138,7 @@ static CGValue gen_builtin_call(Codegen *g, KnBuiltinKind kind, ExprList *args, 
         LLVMValueRef av = cast_value(g, a, type_make(TY_STRING));
         LLVMValueRef bv = cast_value(g, b, type_make(TY_STRING));
         LLVMValueRef argv[2] = { av, bv };
-        out.value = LLVMBuildCall2(g->builder, g->fn_file_move_ty, g->fn_file_move, argv, 2, "file.move");
+        out.value = cg_from_runtime_bool(g, LLVMBuildCall2(g->builder, g->fn_file_move_ty, g->fn_file_move, argv, 2, "file.move.c"), "file.move");
         out.type = type_make(TY_BOOL);
         return out;
     }
@@ -3841,7 +4149,7 @@ static CGValue gen_builtin_call(Codegen *g, KnBuiltinKind kind, ExprList *args, 
         CGValue d = gen_expr(g, args->items[1]);
         LLVMValueRef pv = cast_value(g, p, type_make(TY_STRING));
         LLVMValueRef dv = cast_value(g, d, type_make(TY_STRING));
-        LLVMValueRef exists = LLVMBuildCall2(g->builder, g->fn_sys_file_exists_ty, g->fn_sys_file_exists, &pv, 1, "file.readdef.exists");
+        LLVMValueRef exists = cg_from_runtime_bool(g, LLVMBuildCall2(g->builder, g->fn_sys_file_exists_ty, g->fn_sys_file_exists, &pv, 1, "file.readdef.exists.c"), "file.readdef.exists");
         LLVMValueRef readv = LLVMBuildCall2(g->builder, g->fn_file_read_all_text_ty, g->fn_file_read_all_text, &pv, 1, "file.readdef.read");
         out.value = LLVMBuildSelect(g->builder, exists, readv, dv, "file.readdef");
         out.type = type_make(TY_STRING);
@@ -3851,7 +4159,7 @@ static CGValue gen_builtin_call(Codegen *g, KnBuiltinKind kind, ExprList *args, 
     {
         CGValue p = gen_expr(g, args->items[0]);
         LLVMValueRef pv = cast_value(g, p, type_make(TY_STRING));
-        LLVMValueRef exists = LLVMBuildCall2(g->builder, g->fn_sys_file_exists_ty, g->fn_sys_file_exists, &pv, 1, "file.readif.exists");
+        LLVMValueRef exists = cg_from_runtime_bool(g, LLVMBuildCall2(g->builder, g->fn_sys_file_exists_ty, g->fn_sys_file_exists, &pv, 1, "file.readif.exists.c"), "file.readif.exists");
         LLVMValueRef readv = LLVMBuildCall2(g->builder, g->fn_file_read_all_text_ty, g->fn_file_read_all_text, &pv, 1, "file.readif.read");
         out.value = LLVMBuildSelect(g->builder, exists, readv, LLVMConstNull(g->i8ptr), "file.readif");
         out.type = type_make(TY_STRING);
@@ -3873,7 +4181,7 @@ static CGValue gen_builtin_call(Codegen *g, KnBuiltinKind kind, ExprList *args, 
         LLVMValueRef pv = cast_value(g, p, type_make(TY_STRING));
         LLVMValueRef lv = list_as_i8ptr(g, l);
         LLVMValueRef argv[2] = { pv, lv };
-        out.value = LLVMBuildCall2(g->builder, g->fn_file_write_lines_ty, g->fn_file_write_lines, argv, 2, "file.writelines");
+        out.value = cg_from_runtime_bool(g, LLVMBuildCall2(g->builder, g->fn_file_write_lines_ty, g->fn_file_write_lines, argv, 2, "file.writelines.c"), "file.writelines");
         out.type = type_make(TY_BOOL);
         return out;
     }
@@ -3886,7 +4194,7 @@ static CGValue gen_builtin_call(Codegen *g, KnBuiltinKind kind, ExprList *args, 
         LLVMValueRef fv = cast_value(g, from, type_make(TY_STRING));
         LLVMValueRef tv = cast_value(g, to, type_make(TY_STRING));
         LLVMValueRef argv[3] = { pv, fv, tv };
-        out.value = LLVMBuildCall2(g->builder, g->fn_file_replace_text_ty, g->fn_file_replace_text, argv, 3, "file.replace");
+        out.value = cg_from_runtime_bool(g, LLVMBuildCall2(g->builder, g->fn_file_replace_text_ty, g->fn_file_replace_text, argv, 3, "file.replace.c"), "file.replace");
         out.type = type_make(TY_BOOL);
         return out;
     }
@@ -3894,7 +4202,7 @@ static CGValue gen_builtin_call(Codegen *g, KnBuiltinKind kind, ExprList *args, 
     {
         CGValue p = gen_expr(g, args->items[0]);
         LLVMValueRef pv = cast_value(g, p, type_make(TY_STRING));
-        out.value = LLVMBuildCall2(g->builder, g->fn_dir_exists_ty, g->fn_dir_exists, &pv, 1, "dir.exists");
+        out.value = cg_from_runtime_bool(g, LLVMBuildCall2(g->builder, g->fn_dir_exists_ty, g->fn_dir_exists, &pv, 1, "dir.exists.c"), "dir.exists");
         out.type = type_make(TY_BOOL);
         return out;
     }
@@ -3902,7 +4210,7 @@ static CGValue gen_builtin_call(Codegen *g, KnBuiltinKind kind, ExprList *args, 
     {
         CGValue p = gen_expr(g, args->items[0]);
         LLVMValueRef pv = cast_value(g, p, type_make(TY_STRING));
-        out.value = LLVMBuildCall2(g->builder, g->fn_dir_create_ty, g->fn_dir_create, &pv, 1, "dir.create");
+        out.value = cg_from_runtime_bool(g, LLVMBuildCall2(g->builder, g->fn_dir_create_ty, g->fn_dir_create, &pv, 1, "dir.create.c"), "dir.create");
         out.type = type_make(TY_BOOL);
         return out;
     }
@@ -3910,7 +4218,7 @@ static CGValue gen_builtin_call(Codegen *g, KnBuiltinKind kind, ExprList *args, 
     {
         CGValue p = gen_expr(g, args->items[0]);
         LLVMValueRef pv = cast_value(g, p, type_make(TY_STRING));
-        out.value = LLVMBuildCall2(g->builder, g->fn_dir_ensure_ty, g->fn_dir_ensure, &pv, 1, "dir.ensure");
+        out.value = cg_from_runtime_bool(g, LLVMBuildCall2(g->builder, g->fn_dir_ensure_ty, g->fn_dir_ensure, &pv, 1, "dir.ensure.c"), "dir.ensure");
         out.type = type_make(TY_BOOL);
         return out;
     }
@@ -3918,7 +4226,7 @@ static CGValue gen_builtin_call(Codegen *g, KnBuiltinKind kind, ExprList *args, 
     {
         CGValue p = gen_expr(g, args->items[0]);
         LLVMValueRef pv = cast_value(g, p, type_make(TY_STRING));
-        out.value = LLVMBuildCall2(g->builder, g->fn_dir_delete_ty, g->fn_dir_delete, &pv, 1, "dir.delete");
+        out.value = cg_from_runtime_bool(g, LLVMBuildCall2(g->builder, g->fn_dir_delete_ty, g->fn_dir_delete, &pv, 1, "dir.delete.c"), "dir.delete");
         out.type = type_make(TY_BOOL);
         return out;
     }
@@ -3926,10 +4234,47 @@ static CGValue gen_builtin_call(Codegen *g, KnBuiltinKind kind, ExprList *args, 
     {
         CGValue p = gen_expr(g, args->items[0]);
         LLVMValueRef pv = cast_value(g, p, type_make(TY_STRING));
-        out.value = LLVMBuildCall2(g->builder, g->fn_dir_delete_if_exists_ty, g->fn_dir_delete_if_exists, &pv, 1, "dir.deleteif");
+        out.value = cg_from_runtime_bool(g, LLVMBuildCall2(g->builder, g->fn_dir_delete_if_exists_ty, g->fn_dir_delete_if_exists, &pv, 1, "dir.deleteif.c"), "dir.deleteif");
         out.type = type_make(TY_BOOL);
         return out;
     }
+    default:
+        break;
+    }
+    kn_die("builtin lowering group mismatch");
+    return out;
+}
+
+
+static CGValue gen_dynamic_any(Codegen *g, KnBuiltinKind kind, ExprList *args, Expr *recv);
+static CGValue gen_dynamic_error(Codegen *g, KnBuiltinKind kind, ExprList *args, Expr *recv);
+static CGValue gen_dynamic_intrinsic(Codegen *g, KnBuiltinKind kind, ExprList *args, Expr *recv);
+
+static CGValue gen_builtin_dynamic(Codegen *g, KnBuiltinKind kind, ExprList *args, Expr *recv)
+{
+    if (kind >= KN_BUILTIN_IO_ANY_ISNULL && kind <= KN_BUILTIN_IO_ANY_ISOBJECT)
+        return gen_dynamic_any(g, kind, args, recv);
+    if (kind >= KN_BUILTIN_IO_ERROR_LASTTRACE && kind <= KN_BUILTIN_IO_GC_COLLECT)
+        return gen_dynamic_error(g, kind, args, recv);
+    if ((kind >= KN_BUILTIN_ARRAY_LENGTH && kind <= KN_BUILTIN_ARRAY_ADD) ||
+        (kind >= KN_BUILTIN_TYPEOF && kind <= KN_BUILTIN_BLOCK_JUMP_AND_RUN_UNTIL))
+        return gen_dynamic_intrinsic(g, kind, args, recv);
+
+    kn_die("builtin dynamic lowering not registered");
+    CGValue out;
+    out.value = 0;
+    out.type = type_make(TY_VOID);
+    return out;
+}
+
+static CGValue gen_dynamic_any(Codegen *g, KnBuiltinKind kind, ExprList *args, Expr *recv)
+{
+    CGValue out;
+    out.value = 0;
+    out.type = type_make(TY_VOID);
+
+    switch (kind)
+    {
     case KN_BUILTIN_IO_ANY_ISNULL:
     {
         CGValue a = (recv && args->count == 0) ? gen_expr(g, recv) : gen_expr(g, args->items[0]);
@@ -4126,6 +4471,23 @@ static CGValue gen_builtin_call(Codegen *g, KnBuiltinKind kind, ExprList *args, 
         out.type = type_make(TY_BOOL);
         return out;
     }
+    default:
+        break;
+    }
+    kn_die("builtin dynamic lowering mismatch");
+    return out;
+}
+
+static CGValue gen_dynamic_error(Codegen *g, KnBuiltinKind kind, ExprList *args, Expr *recv)
+{
+    (void)args;
+    (void)recv;
+    CGValue out;
+    out.value = 0;
+    out.type = type_make(TY_VOID);
+
+    switch (kind)
+    {
     case KN_BUILTIN_IO_ERROR_LASTTRACE:
     {
         out.value = LLVMBuildCall2(g->builder, g->fn_exc_trace_ty, g->fn_exc_trace, 0, 0, "exc.trace");
@@ -4134,13 +4496,13 @@ static CGValue gen_builtin_call(Codegen *g, KnBuiltinKind kind, ExprList *args, 
     }
     case KN_BUILTIN_IO_ERROR_HAS:
     {
-        out.value = LLVMBuildCall2(g->builder, g->fn_exc_has_ty, g->fn_exc_has, 0, 0, "exc.has");
+        out.value = cg_from_runtime_bool(g, LLVMBuildCall2(g->builder, g->fn_exc_has_ty, g->fn_exc_has, 0, 0, "exc.has.c"), "exc.has");
         out.type = type_make(TY_BOOL);
         return out;
     }
     case KN_BUILTIN_IO_ERROR_CLEAR:
     {
-        LLVMBuildCall2(g->builder, g->fn_exc_clear_ty, g->fn_exc_clear, 0, 0, "exc.clear");
+        LLVMBuildCall2(g->builder, g->fn_exc_clear_ty, g->fn_exc_clear, 0, 0, "");
         out.type = type_make(TY_VOID);
         return out;
     }
@@ -4160,6 +4522,21 @@ static CGValue gen_builtin_call(Codegen *g, KnBuiltinKind kind, ExprList *args, 
         out.type = type_make(TY_VOID);
         return out;
     }
+    default:
+        break;
+    }
+    kn_die("builtin dynamic lowering mismatch");
+    return out;
+}
+
+static CGValue gen_dynamic_intrinsic(Codegen *g, KnBuiltinKind kind, ExprList *args, Expr *recv)
+{
+    CGValue out;
+    out.value = 0;
+    out.type = type_make(TY_VOID);
+
+    switch (kind)
+    {
     case KN_BUILTIN_ARRAY_LENGTH:
     {
         CGValue arr = gen_expr(g, recv);
@@ -4173,8 +4550,7 @@ static CGValue gen_builtin_call(Codegen *g, KnBuiltinKind kind, ExprList *args, 
         CGValue arr = gen_expr(g, recv);
         CGValue idx = gen_expr(g, args->items[0]);
         LLVMValueRef idxv = cast_value(g, idx, type_make(TY_I64));
-        Type elem = type_make(arr.type.elem);
-        elem.name = arr.type.name;
+        Type elem = type_immediate_elem(arr.type);
         LLVMTypeRef elem_ty = llvm_type(g, elem);
         LLVMValueRef data = LLVMBuildExtractValue(g->builder, arr.value, 0, "arr.data");
         LLVMValueRef ptr = LLVMBuildInBoundsGEP2(g->builder, elem_ty, data, &idxv, 1, "arr.idx");
@@ -4231,6 +4607,34 @@ static CGValue gen_builtin_call(Codegen *g, KnBuiltinKind kind, ExprList *args, 
     default:
         break;
     }
+    kn_die("builtin dynamic lowering mismatch");
+    return out;
+}
+
+static CGValue gen_builtin_call(Codegen *g, KnBuiltinKind kind, ExprList *args, Expr *recv)
+{
+    switch (kn_builtin_lowering_group(kind))
+    {
+    case KN_BUILTIN_LOWERING_PLATFORM:
+        return gen_builtin_platform(g, kind, args, recv);
+    case KN_BUILTIN_LOWERING_COLLECTIONS:
+        return gen_builtin_collections(g, kind, args, recv);
+    case KN_BUILTIN_LOWERING_SYSTEM:
+        return gen_builtin_system(g, kind, args, recv);
+    case KN_BUILTIN_LOWERING_TEXT:
+        return gen_builtin_text(g, kind, args, recv);
+    case KN_BUILTIN_LOWERING_FILESYSTEM:
+        return gen_builtin_filesystem(g, kind, args, recv);
+    case KN_BUILTIN_LOWERING_DYNAMIC:
+        return gen_builtin_dynamic(g, kind, args, recv);
+    case KN_BUILTIN_LOWERING_NONE:
+        break;
+    }
+
+    kn_die("builtin lowering group not registered");
+    CGValue out;
+    out.value = 0;
+    out.type = type_make(TY_VOID);
     return out;
 }
 
@@ -4395,8 +4799,10 @@ static LLVMValueRef finalize_entry_return_code(Codegen *g, LLVMTypeRef t_i32, LL
     LLVMBasicBlockRef exc_bb = LLVMAppendBasicBlockInContext(g->ctx, fn, "entry.exc");
     LLVMBasicBlockRef done_bb = LLVMAppendBasicBlockInContext(g->ctx, fn, "entry.exc.done");
 
-    LLVMValueRef has = LLVMBuildCall2(g->builder, g->fn_exc_has_ty, g->fn_exc_has, 0, 0, "entry.exc.has");
-    LLVMValueRef cond = LLVMBuildICmp(g->builder, LLVMIntNE, has, LLVMConstInt(g->i1, 0, 0), "entry.exc.cond");
+    LLVMValueRef cond = cg_from_runtime_bool(
+        g,
+        LLVMBuildCall2(g->builder, g->fn_exc_has_ty, g->fn_exc_has, 0, 0, "entry.exc.has.c"),
+        "entry.exc.has");
     LLVMBuildCondBr(g->builder, cond, exc_bb, noexc_bb);
 
     LLVMPositionBuilderAtEnd(g->builder, noexc_bb);
@@ -4430,8 +4836,10 @@ static void maybe_propagate_exception(Codegen *g)
     LLVMValueRef fn = LLVMGetBasicBlockParent(LLVMGetInsertBlock(g->builder));
     LLVMBasicBlockRef err_bb = LLVMAppendBasicBlockInContext(g->ctx, fn, "exc.err");
     LLVMBasicBlockRef ok_bb = LLVMAppendBasicBlockInContext(g->ctx, fn, "exc.ok");
-    LLVMValueRef has = LLVMBuildCall2(g->builder, g->fn_exc_has_ty, g->fn_exc_has, 0, 0, "exc.has");
-    LLVMValueRef cond = LLVMBuildICmp(g->builder, LLVMIntNE, has, LLVMConstInt(g->i1, 0, 0), "exc.cond");
+    LLVMValueRef cond = cg_from_runtime_bool(
+        g,
+        LLVMBuildCall2(g->builder, g->fn_exc_has_ty, g->fn_exc_has, 0, 0, "exc.has.c"),
+        "exc.has");
     LLVMBuildCondBr(g->builder, cond, err_bb, ok_bb);
 
     LLVMPositionBuilderAtEnd(g->builder, err_bb);
@@ -4481,76 +4889,42 @@ static const char *mangle_helper_name(const char *prefix, const char *name, int 
     return out;
 }
 
-// Generate a bridge thunk for a By Kinal delegate.
-// The bridge has signature: any(byte* env, any* args, i64 argc)
-// where env = raw C function pointer. It unboxes args, calls via env, boxes result.
-static LLVMValueRef gen_delegate_bridge(Codegen *g, FuncSymbol *dfs)
+static LLVMValueRef ensure_c_abi_adapter(Codegen *g, FuncSymbol *target, FuncSymbol *signature)
 {
-    if (dfs->delegate_bridge)
-        return dfs->delegate_bridge;
+    if (!g || !target || !target->fn || !target->func || !signature || !signature->func)
+        return 0;
+    if (target->c_abi_adapter)
+        return target->c_abi_adapter;
 
-    Func *f = dfs->func;
-    int argc = f->params.count;
-
-    // Save current builder state
+    const char *adapter_name = mangle_helper_name("__kn_cabi_adapter", target->qname, -1);
+    LLVMValueRef adapter = LLVMAddFunction(g->mod, adapter_name, signature->fn_ty);
+    LLVMSetLinkage(adapter, LLVMInternalLinkage);
     LLVMBasicBlockRef saved_bb = LLVMGetInsertBlock(g->builder);
-
-    // Create bridge function: any(byte* env, any* args, i64 argc)
-    char bridge_name[256];
-    size_t off = 0;
-    kn_append(bridge_name, sizeof(bridge_name), &off, "__dlg_bridge_");
-    if (dfs->qname)
-        kn_append(bridge_name, sizeof(bridge_name), &off, dfs->qname);
-    // Sanitize name
-    for (char *p = bridge_name; *p; p++)
-        if (*p == '.') *p = '_';
-
-    LLVMValueRef bridge_fn = LLVMAddFunction(g->mod, bridge_name, g->callable_wrapper_ty);
-    LLVMSetLinkage(bridge_fn, LLVMInternalLinkage);
-
-    LLVMBasicBlockRef entry = LLVMAppendBasicBlockInContext(g->ctx, bridge_fn, "entry");
+    LLVMBasicBlockRef entry = LLVMAppendBasicBlockInContext(g->ctx, adapter, "entry");
     LLVMPositionBuilderAtEnd(g->builder, entry);
 
-    LLVMValueRef env_param = LLVMGetParam(bridge_fn, 0);   // byte* env = raw C fn ptr
-    LLVMValueRef args_param = LLVMGetParam(bridge_fn, 1);   // any* args
-    (void)LLVMGetParam(bridge_fn, 2);                       // i64 argc (unused, we know the count)
-
-    // Bitcast env to the actual C function type
-    LLVMValueRef c_fn = LLVMBuildBitCast(g->builder, env_param, LLVMPointerType(dfs->fn_ty, 0), "bridge.fn");
-
-    // Unbox each arg from the any* array
-    LLVMValueRef *call_args = 0;
-    if (argc > 0)
-        call_args = (LLVMValueRef *)kn_malloc(sizeof(LLVMValueRef) * (size_t)argc);
+    int argc = signature->func->params.count;
+    LLVMValueRef *args = argc > 0
+        ? (LLVMValueRef *)kn_malloc(sizeof(LLVMValueRef) * (size_t)argc)
+        : 0;
     for (int i = 0; i < argc; i++)
-    {
-        LLVMValueRef idx = LLVMConstInt(g->i64, (uint64_t)i, 0);
-        LLVMValueRef arg_ptr = LLVMBuildInBoundsGEP2(g->builder, g->any_ty, args_param, &idx, 1, "bridge.arg.ptr");
-        LLVMValueRef anyv = LLVMBuildLoad2(g->builder, g->any_ty, arg_ptr, "bridge.arg.any");
-        call_args[i] = any_to_type(g, anyv, f->params.items[i].type);
-    }
+        args[i] = cg_from_ffi_value(g, LLVMGetParam(adapter, (unsigned)i), signature->func->params.items[i].type);
 
-    // Call the C function
-    if (f->ret_type.kind == TY_VOID)
-    {
-        LLVMBuildCall2(g->builder, dfs->fn_ty, c_fn, call_args, (unsigned)argc, "");
-        LLVMBuildRet(g->builder, any_null_value(g));
-    }
+    Type ret = signature->func->ret_type;
+    LLVMValueRef result = cg_build_func_call(g, target, target->fn, args, argc,
+                                             ret.kind == TY_VOID ? "" : "cabi.inner");
+    if (ret.kind == TY_VOID)
+        LLVMBuildRetVoid(g->builder);
     else
-    {
-        LLVMValueRef result = LLVMBuildCall2(g->builder, dfs->fn_ty, c_fn, call_args, (unsigned)argc, "bridge.call");
-        CGValue rv;
-        rv.value = result;
-        rv.type = f->ret_type;
-        LLVMBuildRet(g->builder, box_any_value(g, rv));
-    }
+        LLVMBuildRet(g->builder, cg_to_ffi_value(g, result, ret));
 
-    // Restore builder position
+    if (args)
+        kn_free(args);
     if (saved_bb)
         LLVMPositionBuilderAtEnd(g->builder, saved_bb);
-
-    dfs->delegate_bridge = bridge_fn;
-    return bridge_fn;
+    target->c_abi_adapter = adapter;
+    target->c_abi_adapter_ty = signature->fn_ty;
+    return adapter;
 }
 
 static LLVMValueRef load_callable_invoke_ptr(Codegen *g, CGValue fnobj)
@@ -4779,10 +5153,8 @@ static LLVMValueRef ensure_func_wrapper(Codegen *g, FuncSymbol *fs)
         argv[i] = any_to_type(g, anyv, fs->func->params.items[i].type);
     }
     Type public_ret = cg_func_public_ret_type(fs->func);
-    LLVMValueRef callv = LLVMBuildCall2(g->builder, fs->fn_ty, fs->fn, argv, (unsigned)argc_count,
-                                        public_ret.kind == TY_VOID ? "" : "fn.call");
-    if (fs->func->is_extern && fs->func->extern_abi == KN_EXTERN_ABI_SYSTEM && g->target_is_windows && g->target_is_x86)
-        LLVMSetInstructionCallConv(callv, LLVMX86StdcallCallConv);
+    LLVMValueRef callv = cg_build_func_call(g, fs, fs->fn, argv, argc_count,
+                                            public_ret.kind == TY_VOID ? "" : "fn.call");
     if (public_ret.kind == TY_VOID)
     {
         LLVMBuildRet(g->builder, any_null_value(g));

@@ -19,6 +19,30 @@ Extern Function void  free(void* ptr)   By C;
 | `By C` | C calling convention (`cdecl`) — default |
 | `By System` | System calling convention (`stdcall` on Windows) |
 
+### C ABI Scalar Mapping
+
+`By C`, `By System`, and `Delegate ... By C` use an explicit boundary ABI. Kinal's
+internal representation does not change; arguments and return values are marshalled
+at the call boundary.
+
+| Kinal type | C ABI representation |
+|------------|----------------------|
+| `bool` | 32-bit C truth value / Win32 `BOOL`; zero is false, non-zero is true |
+| `int` | 32-bit signed C `int` |
+| `i8`…`i64`, `u8`…`u64` | Matching fixed-width integer |
+| `isize`, `usize` | Target pointer-width signed/unsigned integer |
+| `f32`, `f64`, `float` | C `float`, C `double`, C `double` |
+| `string` | Null-terminated `const char*` |
+| `T*` | C pointer |
+
+Kinal `int` remains a 64-bit language value. Passing it to C truncates it to a
+32-bit C `int`; a C `int` result is sign-extended back to Kinal `int`. Prefer
+fixed-width types when the foreign declaration is not literally a C `int`.
+By-value arrays, classes, packages, and structs are not part of FFI v1; pass them
+through pointers. C `_Bool`, C `long`, variadic calls, and platform-specific
+aggregate ABIs require an explicit wrapper when their representation differs from
+the table above.
+
 ```kinal
 Extern Function int MessageBoxA(byte* hWnd, string text, string caption, int type) By System;
 ```
@@ -48,16 +72,16 @@ This is equivalent to passing `-l sqlite3` at compile time, but more intuitive a
 `Extern` function calls require a `Trusted` or `Unsafe` context:
 
 ```kinal
-Extern Function int __kn_time_tick() By C;
+Extern Function u64 __kn_time_tick() By C;
 
-Trusted Function int GetTick()
+Trusted Function u64 GetTick()
 {
     Return __kn_time_tick();   // calling Extern inside a Trusted function
 }
 
 Safe Function void Demo()
 {
-    int t = GetTick();  // Safe functions can call Trusted
+    u64 t = GetTick();  // Safe functions can call Trusted
 }
 ```
 
@@ -66,7 +90,7 @@ Calling directly from an `Unsafe` function:
 ```kinal
 Unsafe Function void DirectCall()
 {
-    int t = __kn_time_tick();  // direct call
+    u64 t = __kn_time_tick();  // direct call
 }
 ```
 
@@ -194,9 +218,9 @@ Unsafe Function void GetFuncPtr()
 Kinal's `string` is internally a null-terminated byte sequence and can be passed directly to C functions expecting `const char*`:
 
 ```kinal
-Extern Function int strlen(string s) By C;
+Extern Function usize strlen(string s) By C;
 
-Trusted Function int GetLen(string s)
+Trusted Function usize GetLen(string s)
 {
     Return strlen(s);
 }

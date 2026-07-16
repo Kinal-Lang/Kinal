@@ -2,10 +2,10 @@ Unit Tests.FFI;
 
 Get Console By IO.Console;
 
-Extern Function int __kn_time_tick() By C;
+Extern Function u64 __kn_time_tick() By C;
 Extern Function bool __kn_sys_file_exists(string path) By C;
 
-Trusted Function int TickTrusted()
+Trusted Function u64 TickTrusted()
 {
     Return __kn_time_tick();
 }
@@ -17,7 +17,7 @@ Trusted Function bool ExistsTrusted(string path)
 
 Static Function int Main()
 {
-    int tick= TickTrusted();
+    u64 tick= TickTrusted();
     Console.PrintLine(tick>= 0);
     Console.PrintLine(ExistsTrusted("tests/common/ffi.kn"));
     Return 0;

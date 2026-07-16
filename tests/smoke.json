@@ -33,7 +33,25 @@
   {
     "name": "stdlib_json",
     "file": "tests/common/stdlib_json.kn",
-    "expected": "kinal\n1\ntrue\n2\nvm\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\n3\n1\ntrue\ntrue\ntrue\n",
+    "expected": "kinal\n1\ntrue\n2\nvm\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\n3\n1\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\n",
+    "auto_link": true
+  },
+  {
+    "name": "custom_cast_json",
+    "file": "tests/common/custom_cast_json.kn",
+    "expected": "kinal\n9\nlang\n7\ntrue\n",
+    "auto_link": true
+  },
+  {
+    "name": "overload_functions",
+    "file": "tests/common/overload_functions.kn",
+    "expected": "int\nstring\n",
+    "auto_link": true
+  },
+  {
+    "name": "overload_methods",
+    "file": "tests/common/overload_methods.kn",
+    "expected": "int\nstring\n3\n4\n",
     "auto_link": true
   },
   {
@@ -60,9 +78,79 @@
     "auto_link": true
   },
   {
+    "name": "error_cast_duplicate",
+    "file": "tests/common/error_cast_duplicate.kn",
+    "expect_error": "[Sema] Ambiguous Cast"
+  },
+  {
     "name": "is_keyword",
     "file": "tests/common/is_keyword.kn",
     "expected": "true\ntrue\nfalse\ntrue\ntrue\ntrue\ntrue\nfalse\ntrue\nfalse\ntrue\n1\n2\n3\no\nk\n"
+  },
+  {
+    "name": "multidim_arrays",
+    "file": "tests/common/multidim_arrays.kn",
+    "expected": "2\n3\n3\n0\n6\nc\nd\ntrue\ntrue\ntrue\ntrue\n"
+  },
+  {
+    "name": "alias_symbol",
+    "file": "tests/common/alias_symbol.kn",
+    "expected": "alias\n",
+    "auto_link": true
+  },
+  {
+    "name": "alias_value_symbol",
+    "file": "tests/common/alias_value_symbol.kn",
+    "expected": "method\n7\n",
+    "auto_link": true
+  },
+  {
+    "name": "unsafe_alias_keyword",
+    "file": "tests/common/unsafe_alias_keyword.kn",
+    "expected": "unsafe\n",
+    "auto_link": true
+  },
+  {
+    "name": "unsafe_alias_get_keyword",
+    "file": "tests/common/unsafe_alias_get_keyword.kn",
+    "expected": "get\n",
+    "auto_link": true
+  },
+  {
+    "name": "unsafe_alias_unicode_keyword",
+    "file": "tests/common/unsafe_alias_unicode_keyword.kn",
+    "expected": "unicode\n",
+    "auto_link": true
+  },
+  {
+    "name": "unicode_identifiers",
+    "file": "tests/common/unicode_identifiers.kn",
+    "expected": "42\n",
+    "auto_link": true
+  },
+  {
+    "name": "localized_aliases",
+    "file": "tests/common/localized_aliases.kn",
+    "expected": "module\nsymbol\n",
+    "auto_link": true
+  },
+  {
+    "name": "unsafe_unsafe_unsafe_alias",
+    "file": "tests/common/unsafe_unsafe_unsafe_alias.kn",
+    "expected": "triple\n",
+    "auto_link": true
+  },
+  {
+    "name": "unsafe_unsafe_unsafe_alias_sequence",
+    "file": "tests/common/unsafe_unsafe_unsafe_alias_sequence.kn",
+    "expected": "bang\nlong\n",
+    "auto_link": true
+  },
+  {
+    "name": "unsafe_unsafe_unsafe_alias_semicolon_target",
+    "file": "tests/common/unsafe_unsafe_unsafe_alias_semicolon_target.kn",
+    "expected": "Hello World\n",
+    "auto_link": true
   },
   {
     "name": "stdlib_request_compile",
@@ -75,9 +163,30 @@
     ]
   },
   {
+    "name": "stdlib_web_gc_roots",
+    "file": "tests/common/stdlib_web_gc_roots.kn",
+    "expected": "true\ntrue\n",
+    "auto_link": true,
+    "runtime_fixture": "web_gc_roots",
+    "platforms": [
+      "windows",
+      "linux"
+    ]
+  },
+  {
     "name": "error_global_modifier",
     "file": "tests/common/error_global_modifier.kn",
     "expect_error": "[Parser] Invalid Global Modifier"
+  },
+  {
+    "name": "error_alias_target_not_visible",
+    "file": "tests/common/error_alias_target_not_visible.kn",
+    "expect_error": "[Sema] Invalid Alias Target"
+  },
+  {
+    "name": "error_unsafe_alias_position",
+    "file": "tests/common/error_unsafe_alias_position.kn",
+    "expect_error": "[Parser] Invalid Unsafe Alias Position"
   },
   {
     "name": "error_bare_function_expr",
@@ -88,6 +197,16 @@
     "name": "error_object_cast_unrelated",
     "file": "tests/common/error_object_cast_unrelated.kn",
     "expect_error": "[Sema] Invalid Cast"
+  },
+  {
+    "name": "error_aggregate_equality",
+    "file": "tests/common/error_aggregate_equality.kn",
+    "expect_error": "[Sema] Equality is not defined"
+  },
+  {
+    "name": "error_index_missing_arg",
+    "file": "tests/common/error_index_missing_arg.kn",
+    "expect_error": "[Sema] Argument Count"
   },
   {
     "name": "stdlib_ui",
@@ -138,6 +257,96 @@
     "name": "no_unit_local_class",
     "file": "tests/windows/no_unit_local_class.kn",
     "compile_only": true,
+    "auto_link": true,
+    "platforms": [
+      "windows"
+    ]
+  },
+  {
+    "name": "binary_hir_native_semantics",
+    "file": "tests/common/binary_hir_native_semantics.kn",
+    "expected": ""
+  },
+  {
+    "name": "stdlib_console_input",
+    "file": "tests/common/stdlib_console_input.kn",
+    "stdin": "kinal\n",
+    "expected": "kinal\n"
+  },
+  {
+    "name": "stdlib_string_index",
+    "file": "tests/common/stdlib_string_index.kn",
+    "expected": "k\nl\n"
+  },
+  {
+    "name": "stdlib_system_exit",
+    "file": "tests/common/stdlib_system_exit.kn",
+    "expected": "true\n",
+    "expected_exit_code": 7
+  },
+  {
+    "name": "dynlib_loader_compile",
+    "file": "tests/common/dynlib_loader.kn",
+    "compile_only": true
+  },
+  {
+    "name": "stdlib_memory_volatile",
+    "file": "tests/common/stdlib_memory_volatile.kn",
+    "expected": "true\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\n"
+  },
+  {
+    "name": "stdlib_type_complete",
+    "file": "tests/common/stdlib_type_complete.kn",
+    "expected": "true\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\n"
+  },
+  {
+    "name": "stdlib_type_extended_compile",
+    "file": "tests/common/stdlib_type_extended_compile.kn",
+    "compile_only": true,
+    "compiler_args": [
+      "--emit",
+      "obj"
+    ],
+    "output_ext": "obj"
+  },
+  {
+    "name": "stdlib_error_state",
+    "file": "tests/common/stdlib_error_state.kn",
+    "expected": "false\ntrue\ntrue\nfalse\nfalse\nfalse\n"
+  },
+  {
+    "name": "stdlib_file_complete",
+    "file": "tests/common/stdlib_file_complete.kn",
+    "expected": "true\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\n"
+  },
+  {
+    "name": "stdlib_cat",
+    "file": "tests/common/stdlib_cat.kn",
+    "expected": "Rommy listened to \"hello\" and replied: \"Meow~\"\nRommy: \"Purr~\"\nRommy: \"Meow~ MEOW!!!\"\nRommy: \"Meow~ Meow~ Meow~\"\n",
+    "auto_link": true
+  },
+  {
+    "name": "stdlib_math_complete",
+    "file": "tests/common/stdlib_math_complete.kn",
+    "expected": "true\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\n",
+    "auto_link": true
+  },
+  {
+    "name": "stdlib_char_complete",
+    "file": "tests/common/stdlib_char_complete.kn",
+    "expected": "true\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\n",
+    "auto_link": true
+  },
+  {
+    "name": "stdlib_json_complete",
+    "file": "tests/common/stdlib_json_complete.kn",
+    "expected": "true\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\n",
+    "auto_link": true
+  },
+  {
+    "name": "stdlib_request_model",
+    "file": "tests/common/stdlib_request_model.kn",
+    "expected": "true\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\n",
     "auto_link": true,
     "platforms": [
       "windows"

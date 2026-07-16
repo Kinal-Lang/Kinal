@@ -1,0 +1,13 @@
+Unit Tests.ProjectModes.Main;
+
+Get Console By IO.Console;
+Get Helper By Tests.ProjectModes.LocalHelper;
+Get Greeter By Acme.Greeter;
+
+Static Function int Main()
+{
+    Console.PrintLine("entry-" + SharedSuffix());
+    Console.PrintLine(Helper.Text());
+    Console.PrintLine(Greeter.Text());
+    Return 0;
+}

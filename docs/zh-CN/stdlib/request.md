@@ -1,6 +1,6 @@
 # IO.Request
 
-`IO.Request` 是 Kinal 的对外 HTTP 客户端包。它通过 Kinal FFI 包装内置的 CivetWeb client API，提供同步、面向文本响应的请求接口。
+`IO.Request` 是 Kinal 的对外 HTTP 客户端包。它通过 Kinal FFI 包装内置的 CivetWeb client API，提供同步、面向文本响应的请求接口，公开表面以属性和 `dict` 请求头为主。
 
 ## 导入
 
@@ -54,11 +54,14 @@ Static Function int Main()
 
 `IO.Request.Options` 是主要的配置对象。
 
-常用字段和方法：
+常用属性和方法：
 
 - `Url`
 - `Method`
 - `Body`
+- `BodyJson`
+- `BodyObject`
+- `BodyDict`
 - `ContentType`
 - `TimeoutMs`
 - `Headers`
@@ -74,12 +77,26 @@ IO.Request.Options options = New IO.Request.Options(
     IO.Request.Method.POST
 );
 
-options.SetHeader("X-App", "kinal");
-options.SetBody("{\"ok\":true}", "application/json");
-options.SetTimeout(3000);
+options.Headers.Set("X-App", "kinal");
+dict payload = dict.Create();
+payload.Set("ok", true);
+options.BodyDict = payload;
+options.TimeoutMs = 3000;
 
 IO.Request.Response response = IO.Request.Send(options);
 ```
+
+`Headers` 是一个 `dict`。请求头会按规范化后的名字存储，比如 `Content-Type`。
+
+如果请求体是 JSON，`Options` 现在额外提供属性式 JSON 入口：
+
+- `BodyJson` 对应 `IO.Json.Value`
+- `BodyObject` 对应 `IO.Json.Object`
+- `BodyDict` 对应原始 `dict`
+
+其中 `BodyDict` 是首选 JSON 路径；`BodyObject` 只是建立在同一份 `dict` 数据之上的便捷包装。
+
+给这些 JSON 属性赋值时，会同步更新 `Body`，并自动把 `ContentType` 切换成 `application/json; charset=utf-8`。
 
 ## 响应对象
 
@@ -88,6 +105,9 @@ IO.Request.Response response = IO.Request.Send(options);
 - `StatusCode`
 - `StatusText`
 - `BodyText`
+- `BodyJson`
+- `BodyObject`
+- `BodyDict`
 - `BodyLength`
 - `Headers`
 - `ContentType`
@@ -99,12 +119,16 @@ IO.Request.Response response = IO.Request.Send(options);
 If (response.IsSuccess())
 {
     Console.PrintLine(response.ContentType);
+    Console.PrintLine(response.Headers.TryFetch("Content-Type", ""));
+    Console.PrintLine(response.BodyDict.TryFetch("ok", false));
 }
 Else
 {
     response.EnsureSuccess();
 }
 ```
+
+`BodyText` 仍然保留给纯文本或非 JSON 响应使用；JSON 属性只是方便在响应内容确实是 JSON 时直接走属性和 `dict`。如果响应体本身是 JSON 对象，优先使用 `BodyDict`，`BodyObject` 只是同一份解析结果的属性式包装。
 
 ## 便捷函数
 
@@ -125,6 +149,7 @@ Else
 - 当前桥接层还没有暴露 CA 或对端证书校验选项。也就是说 `IO.Request` 现在的 HTTPS 已经加密传输，但还不会校验服务端证书。
 - 这个包是同步接口。
 - 发送前会校验请求头名称和值。
+- `Options.Headers` 和 `Response.Headers` 都使用 `dict`。
 
 ## 相关
 

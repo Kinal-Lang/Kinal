@@ -1,0 +1,10 @@
+Unit Tests.ProjectModes.FileOnly;
+
+Get Console By IO.Console;
+Get Greeter By Acme.Greeter;
+
+Static Function int Main()
+{
+    Console.PrintLine("file-only:" + Greeter.Text());
+    Return 0;
+}

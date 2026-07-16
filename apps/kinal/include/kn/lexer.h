@@ -14,6 +14,7 @@ typedef enum
     TOK_UNIT,
     TOK_GET,
     TOK_SET,
+    TOK_ALIAS,
     TOK_BY,
     TOK_PROPERTY,
     TOK_FUNCTION,

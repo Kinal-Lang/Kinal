@@ -26,7 +26,35 @@ typedef struct
     int saw_stmt_depth_limit;
     int next_anon_func_id;
     int next_block_id;
+    int package_literal_depth;
 } Parser;
+
+typedef struct
+{
+    TokenType type;
+    const char *text;
+    size_t length;
+} UnsafeAliasToken;
+
+typedef struct
+{
+    UnsafeAliasToken *items;
+    int count;
+    int cap;
+} UnsafeAliasTokenList;
+
+typedef struct
+{
+    UnsafeAliasTokenList source;
+    UnsafeAliasTokenList target;
+} UnsafeAliasEntry;
+
+typedef struct
+{
+    UnsafeAliasEntry *items;
+    int count;
+    int cap;
+} UnsafeAliasList;
 
 #define KN_PARSER_STMT_DEPTH_LIMIT 192
 
@@ -45,6 +73,49 @@ static void tok_push(Token **arr, int *count, int *cap, Token t)
         *cap = new_cap;
     }
     (*arr)[(*count)++] = t;
+}
+
+static const char *dup_token_text(const Token *t);
+
+static void unsafe_alias_push(UnsafeAliasList *list, UnsafeAliasEntry entry)
+{
+    if (!list) return;
+    if (list->count + 1 > list->cap)
+    {
+        int new_cap = list->cap ? list->cap * 2 : 8;
+        UnsafeAliasEntry *n = (UnsafeAliasEntry *)kn_malloc(sizeof(UnsafeAliasEntry) * (size_t)new_cap);
+        if (!n) kn_die("out of memory");
+        if (list->items)
+        {
+            kn_memcpy(n, list->items, sizeof(UnsafeAliasEntry) * (size_t)list->count);
+            kn_free(list->items);
+        }
+        list->items = n;
+        list->cap = new_cap;
+    }
+    list->items[list->count++] = entry;
+}
+
+static void unsafe_alias_token_push_dup(UnsafeAliasTokenList *list, const Token *tok)
+{
+    if (!list || !tok) return;
+    if (list->count + 1 > list->cap)
+    {
+        int new_cap = list->cap ? list->cap * 2 : 4;
+        UnsafeAliasToken *n = (UnsafeAliasToken *)kn_malloc(sizeof(UnsafeAliasToken) * (size_t)new_cap);
+        if (!n) kn_die("out of memory");
+        if (list->items)
+        {
+            kn_memcpy(n, list->items, sizeof(UnsafeAliasToken) * (size_t)list->count);
+            kn_free(list->items);
+        }
+        list->items = n;
+        list->cap = new_cap;
+    }
+    list->items[list->count].type = tok->type;
+    list->items[list->count].text = dup_token_text(tok);
+    list->items[list->count].length = tok->length;
+    list->count++;
 }
 
 static Token *peek(Parser *p, int off)
@@ -116,6 +187,294 @@ static bool token_text_eq(const Token *t, const char *text)
     if (!t || !text) return false;
     size_t n = kn_strlen(text);
     return t->length == n && kn_strncmp(t->start, text, n) == 0;
+}
+
+static bool token_is_literal_type(TokenType t)
+{
+    return t == TOK_NUMBER || t == TOK_STRING || t == TOK_CHAR_LIT || t == TOK_TRUE || t == TOK_FALSE ||
+           t == TOK_NULL;
+}
+
+static bool token_is_keyword_type(TokenType t)
+{
+    return t >= TOK_UNIT && t <= TOK_TYPE_ANY;
+}
+
+static bool token_is_operator_or_punct(TokenType t)
+{
+    return t >= TOK_LPAREN;
+}
+
+static bool token_can_start_unsafe_alias_lhs(TokenType t, int allow_tokens)
+{
+    if (t == TOK_ID || token_is_literal_type(t)) return true;
+    if (token_is_keyword_type(t)) return true;
+    if (allow_tokens && token_is_operator_or_punct(t)) return true;
+    return false;
+}
+
+static bool token_can_start_unsafe_alias_rhs(TokenType t, int allow_tokens)
+{
+    if (token_is_literal_type(t)) return true;
+    if (token_is_keyword_type(t)) return true;
+    if (allow_tokens && token_is_operator_or_punct(t)) return true;
+    return false;
+}
+
+static bool unsafe_alias_is_directive_terminator(Token *toks, int count, int pos)
+{
+    if (!toks || pos < 0 || pos >= count) return false;
+    if (toks[pos].type != TOK_SEMI) return false;
+    if (pos + 1 >= count) return true;
+    if (toks[pos + 1].type == TOK_EOF) return true;
+    return toks[pos + 1].line != toks[pos].line;
+}
+
+static const char *dup_token_text(const Token *t)
+{
+    char *s;
+    if (!t) return 0;
+    s = (char *)kn_malloc(t->length + 1);
+    if (!s) kn_die("out of memory");
+    kn_memcpy(s, t->start, t->length);
+    s[t->length] = 0;
+    return s;
+}
+
+static bool unsafe_alias_token_matches(const UnsafeAliasToken *spec, const Token *tok)
+{
+    return spec && tok &&
+           tok->type == spec->type &&
+           tok->length == spec->length &&
+           kn_strncmp(tok->start, spec->text, tok->length) == 0;
+}
+
+static bool unsafe_alias_sequence_matches(const UnsafeAliasTokenList *spec, Token *toks, int count, int pos)
+{
+    if (!spec || !spec->items || spec->count <= 0) return false;
+    if (!toks || pos < 0 || pos + spec->count > count) return false;
+    for (int i = 0; i < spec->count; i++)
+        if (!unsafe_alias_token_matches(&spec->items[i], &toks[pos + i]))
+            return false;
+    return true;
+}
+
+static void emit_unsafe_alias_target(Token **out_toks, int *out_count, int *out_cap,
+                                     const UnsafeAliasTokenList *target, const Token *site)
+{
+    if (!out_toks || !out_count || !out_cap || !target || !site) return;
+    for (int i = 0; i < target->count; i++)
+    {
+        Token t = *site;
+        t.type = target->items[i].type;
+        t.start = target->items[i].text;
+        t.length = target->items[i].length;
+        tok_push(out_toks, out_count, out_cap, t);
+    }
+}
+
+static void preprocess_unsafe_aliases(const KnSource *src, Token **toks_io, int *count_io, int *cap_io, int *has_unsafe_out)
+{
+    Token *toks = toks_io ? *toks_io : 0;
+    int count = count_io ? *count_io : 0;
+    int pos = 0;
+    int had_unsafe = 0;
+    UnsafeAliasList aliases;
+    kn_memset(&aliases, 0, sizeof(aliases));
+    if (!toks || count <= 0)
+    {
+        if (has_unsafe_out) *has_unsafe_out = 0;
+        return;
+    }
+
+    while (pos < count)
+    {
+        int unsafe_count = 0;
+        int allow_tokens = 0;
+        UnsafeAliasEntry entry;
+        kn_memset(&entry, 0, sizeof(entry));
+
+        while (pos + unsafe_count < count && toks[pos + unsafe_count].type == TOK_UNSAFE)
+            unsafe_count++;
+        if (unsafe_count == 0)
+            break;
+        if (!((unsafe_count == 1 || unsafe_count == 3) &&
+              pos + unsafe_count < count &&
+              toks[pos + unsafe_count].type == TOK_ALIAS))
+            break;
+
+        allow_tokens = unsafe_count == 3;
+        had_unsafe = 1;
+        pos += unsafe_count + 1;
+        if (allow_tokens)
+        {
+            Token *first_source = pos < count ? &toks[pos] : &toks[count - 1];
+            while (pos < count && toks[pos].type != TOK_BY)
+            {
+                Token *part = &toks[pos];
+                if (!token_can_start_unsafe_alias_lhs(part->type, 1))
+                {
+                    kn_diag_report(src, KN_STAGE_PARSER, part->line, part->col, (int)(part->length ? part->length : 1),
+                                   "Invalid Unsafe Alias",
+                                   "Unsafe Unsafe Unsafe Alias requires token/literal/keyword source pieces",
+                                   0);
+                    goto preprocess_done;
+                }
+                unsafe_alias_token_push_dup(&entry.source, part);
+                pos++;
+            }
+            if (entry.source.count <= 0)
+            {
+                kn_diag_report(src, KN_STAGE_PARSER, first_source->line, first_source->col,
+                               (int)(first_source->length ? first_source->length : 1),
+                               "Invalid Unsafe Alias",
+                               "Unsafe Unsafe Unsafe Alias requires a token/literal/keyword source",
+                               0);
+                goto preprocess_done;
+            }
+            if (pos >= count || toks[pos].type != TOK_BY)
+            {
+                Token *site = pos < count ? &toks[pos] : &toks[count - 1];
+                kn_diag_report(src, KN_STAGE_PARSER, site->line, site->col, (int)(site->length ? site->length : 1),
+                               "Expected By",
+                               "Unsafe Alias requires 'By'",
+                               0);
+                goto preprocess_done;
+            }
+            pos++;
+            while (pos < count && !unsafe_alias_is_directive_terminator(toks, count, pos))
+            {
+                Token *part = &toks[pos];
+                if (!token_can_start_unsafe_alias_rhs(part->type, 1))
+                {
+                    kn_diag_report(src, KN_STAGE_PARSER, part->line, part->col, (int)(part->length ? part->length : 1),
+                                   "Invalid Unsafe Alias",
+                                   "Unsafe Unsafe Unsafe Alias requires token/literal/keyword target pieces",
+                                   0);
+                    goto preprocess_done;
+                }
+                unsafe_alias_token_push_dup(&entry.target, part);
+                pos++;
+            }
+            if (entry.target.count <= 0)
+            {
+                Token *site = pos < count ? &toks[pos] : &toks[count - 1];
+                kn_diag_report(src, KN_STAGE_PARSER, site->line, site->col, (int)(site->length ? site->length : 1),
+                               "Invalid Unsafe Alias",
+                               "Unsafe Unsafe Unsafe Alias requires a token/literal/keyword target",
+                               0);
+                goto preprocess_done;
+            }
+        }
+        else
+        {
+            Token *lhs;
+            Token *rhs;
+            if (pos >= count)
+                goto preprocess_done;
+            lhs = &toks[pos++];
+            if (!token_can_start_unsafe_alias_lhs(lhs->type, 0))
+            {
+                kn_diag_report(src, KN_STAGE_PARSER, lhs->line, lhs->col, (int)(lhs->length ? lhs->length : 1),
+                               "Invalid Unsafe Alias",
+                               "Unsafe Alias only supports keyword or literal aliases",
+                               0);
+                goto preprocess_done;
+            }
+            unsafe_alias_token_push_dup(&entry.source, lhs);
+            if (pos >= count || toks[pos].type != TOK_BY)
+            {
+                Token *site = pos < count ? &toks[pos] : lhs;
+                kn_diag_report(src, KN_STAGE_PARSER, site->line, site->col, (int)(site->length ? site->length : 1),
+                               "Expected By",
+                               "Unsafe Alias requires 'By'",
+                               0);
+                goto preprocess_done;
+            }
+            pos++;
+            if (pos >= count)
+                goto preprocess_done;
+            rhs = &toks[pos++];
+            if (!token_can_start_unsafe_alias_rhs(rhs->type, 0))
+            {
+                kn_diag_report(src, KN_STAGE_PARSER, rhs->line, rhs->col, (int)(rhs->length ? rhs->length : 1),
+                               "Invalid Unsafe Alias",
+                               "Unsafe Alias only supports keyword or literal targets",
+                               0);
+                goto preprocess_done;
+            }
+            unsafe_alias_token_push_dup(&entry.target, rhs);
+        }
+        if (pos >= count || toks[pos].type != TOK_SEMI)
+        {
+            Token *site = pos < count ? &toks[pos] : &toks[count - 1];
+            kn_diag_report(src, KN_STAGE_PARSER, site->line, site->col, (int)(site->length ? site->length : 1),
+                           "Expected Semicolon",
+                           "Missing ';' after Unsafe Alias",
+                           0);
+            goto preprocess_done;
+        }
+        pos++;
+        unsafe_alias_push(&aliases, entry);
+    }
+
+preprocess_done:
+    {
+        Token *out_toks = 0;
+        int out_count = 0;
+        int out_cap = 0;
+        for (int i = pos; i < count;)
+        {
+            int matched = 0;
+            for (int j = aliases.count - 1; j >= 0; j--)
+            {
+                UnsafeAliasEntry *entry = &aliases.items[j];
+                if (!unsafe_alias_sequence_matches(&entry->source, toks, count, i))
+                    continue;
+                emit_unsafe_alias_target(&out_toks, &out_count, &out_cap, &entry->target, &toks[i]);
+                i += entry->source.count;
+                matched = 1;
+                break;
+            }
+            if (matched)
+                continue;
+            tok_push(&out_toks, &out_count, &out_cap, toks[i]);
+            i++;
+        }
+        if (out_count == 0 || out_toks[out_count - 1].type != TOK_EOF)
+            tok_push(&out_toks, &out_count, &out_cap, toks[count - 1]);
+        if (toks_io) *toks_io = out_toks;
+        if (count_io) *count_io = out_count;
+        if (cap_io) *cap_io = out_cap;
+        if (toks) kn_free(toks);
+    }
+    if (has_unsafe_out) *has_unsafe_out = had_unsafe;
+}
+
+static int unsafe_alias_prefix_length(Parser *p)
+{
+    int unsafe_count = 0;
+    if (!p) return 0;
+    while (peek(p, unsafe_count)->type == TOK_UNSAFE)
+        unsafe_count++;
+    if ((unsafe_count == 1 || unsafe_count == 3) &&
+        peek(p, unsafe_count)->type == TOK_ALIAS)
+        return unsafe_count + 1;
+    return 0;
+}
+
+static bool looks_like_unsafe_alias_directive(Parser *p)
+{
+    return unsafe_alias_prefix_length(p) > 0;
+}
+
+static void skip_top_level_directive(Parser *p)
+{
+    if (!p) return;
+    while (cur(p)->type != TOK_EOF && cur(p)->type != TOK_SEMI)
+        p->pos++;
+    if (cur(p)->type == TOK_SEMI)
+        p->pos++;
 }
 
 static TypeKind builtin_type_kind(const char *name)
@@ -215,7 +574,7 @@ static const char *type_token_name(TokenType t)
 static const char *parse_name_token(Parser *p, const char *title, const char *detail)
 {
     Token *t = cur(p);
-    if (t->type == TOK_ID)
+    if (t->type == TOK_ID || t->type == TOK_ALIAS)
     {
         p->pos++;
         return tok_text(t);
@@ -464,28 +823,32 @@ static void apply_array_type(Type *ty, int64_t len)
         *ty = type_array(TY_UNKNOWN, len);
         return;
     }
-    if (ty->kind == TY_VOID || ty->kind == TY_ARRAY)
+    if (ty->kind == TY_VOID)
         return;
     Type base = *ty;
-    *ty = type_array(base.kind, len);
-    ty->name = base.name;
+    *ty = type_array_of(base, len);
 }
 
 static int parse_legacy_array_suffix(Parser *p, Type *ty, const Token *name_tok)
 {
-    if (!p || !ty || ty->kind == TY_ARRAY || !match(p, TOK_LBRACKET))
+    if (!p || !ty || !match(p, TOK_LBRACKET))
         return 0;
-    Token *lb = peek(p, -1);
-    int64_t len = -1;
-    Expr *len_expr = parse_array_len_suffix(p, &len);
-    apply_array_type(ty, len);
-    ty->array_len_expr = len_expr;
-    if (name_tok)
+    int parsed = 0;
+    do
     {
-        kn_diag_warn(p->src, KN_STAGE_PARSER, 1, lb->line, lb->col, (int)(lb->length ? lb->length : 1),
-                     "Legacy Array Syntax", "Use 'Type[] name' instead of 'Type name[]'");
-    }
-    return 1;
+        Token *lb = peek(p, -1);
+        int64_t len = -1;
+        Expr *len_expr = parse_array_len_suffix(p, &len);
+        apply_array_type(ty, len);
+        ty->array_len_expr = len_expr;
+        if (name_tok)
+        {
+            kn_diag_warn(p->src, KN_STAGE_PARSER, 1, lb->line, lb->col, (int)(lb->length ? lb->length : 1),
+                         "Legacy Array Syntax", "Use 'Type[] name' instead of 'Type name[]'");
+        }
+        parsed = 1;
+    } while (match(p, TOK_LBRACKET));
+    return parsed;
 }
 
 static const char *qualify_decl_name(Parser *p, const char *name)
@@ -567,6 +930,8 @@ void parse_program(const KnSource *src, MetaList *metas, FuncList *funcs, Import
         tok_push(&toks, &count, &cap, t);
         if (t.type == TOK_EOF) break;
     }
+    int has_unsafe_alias = 0;
+    preprocess_unsafe_aliases(src, &toks, &count, &cap, &has_unsafe_alias);
     Parser p;
     p.toks = toks;
     p.count = count;
@@ -584,24 +949,54 @@ void parse_program(const KnSource *src, MetaList *metas, FuncList *funcs, Import
     p.saw_stmt_depth_limit = 0;
     p.next_anon_func_id = 0;
     p.next_block_id = 0;
+    p.package_literal_depth = 0;
 
-    if (cur(&p)->type == TOK_UNIT)
+    if (has_unsafe_alias && cur(&p)->type == TOK_UNIT)
+    {
+        Token *u = cur(&p);
+        kn_diag_report(src, KN_STAGE_PARSER, u->line, u->col, (int)(u->length ? u->length : 1),
+                       "Invalid Unit With Unsafe Alias",
+                       "Files that use Unsafe Alias cannot declare Unit",
+                       0);
+        skip_top_level_directive(&p);
+    }
+
+    if (!has_unsafe_alias && cur(&p)->type == TOK_UNIT)
     {
         p.pos++;
         p.unit_name = parse_qualified_name(&p);
         expect(&p, TOK_SEMI, "Expected Semicolon", "Missing ';' after Unit");
     }
 
-    while (cur(&p)->type == TOK_GET)
-        parse_get(&p, imports);
+    while (cur(&p)->type == TOK_GET || cur(&p)->type == TOK_ALIAS)
+    {
+        if (cur(&p)->type == TOK_GET)
+            parse_get(&p, imports);
+        else
+            parse_alias(&p, imports);
+    }
 
     while (cur(&p)->type != TOK_EOF)
     {
-        if (cur(&p)->type == TOK_GET)
+        if (looks_like_unsafe_alias_directive(&p))
+        {
+            Token *u = cur(&p);
+            kn_diag_report(src, KN_STAGE_PARSER, u->line, u->col, (int)(u->length ? u->length : 1),
+                           "Invalid Unsafe Alias Position",
+                           "Unsafe Alias must appear in the file prologue before Unit, Get, Alias, and declarations",
+                           0);
+            skip_top_level_directive(&p);
+            continue;
+        }
+        if (cur(&p)->type == TOK_GET || cur(&p)->type == TOK_ALIAS)
         {
             Token *g = cur(&p);
             kn_diag_report(src, KN_STAGE_PARSER, g->line, g->col, (int)g->length,
-                "Invalid Get Position", "Get must appear at top-level after Unit and before declarations", "Get");
+                cur(&p)->type == TOK_GET ? "Invalid Get Position" : "Invalid Alias Position",
+                cur(&p)->type == TOK_GET
+                    ? "Get must appear at top-level after Unit and before declarations"
+                    : "Alias must appear at top-level after Unit/Get and before declarations",
+                cur(&p)->type == TOK_GET ? "Get" : "Alias");
         }
         AttrList attrs = parse_attributes(&p);
         TokenType t0 = cur(&p)->type;
@@ -682,6 +1077,10 @@ void parse_program(const KnSource *src, MetaList *metas, FuncList *funcs, Import
             Token *name_tok = cur(&p);
             expect(&p, TOK_ID, "Expected Identifier", "Expected variable name");
             const char *name = tok_text(name_tok);
+            NameList package_fields;
+            kn_memset(&package_fields, 0, sizeof(package_fields));
+            if (cur(&p)->type == TOK_LT)
+                package_fields = parse_package_field_alias_list(&p);
             (void)parse_legacy_array_suffix(&p, &ty, name_tok);
             int skip_semi = 0;
             Expr *init = parse_optional_decl_initializer(&p, name_tok, &skip_semi);
@@ -694,6 +1093,7 @@ void parse_program(const KnSource *src, MetaList *metas, FuncList *funcs, Import
             gv->v.var.name = name;
             gv->v.var.name_line = name_tok->line;
             gv->v.var.name_col = name_tok->col;
+            gv->v.var.package_fields = package_fields;
             gv->v.var.init = init;
             gv->v.var.is_const = is_const;
             gv->v.var.src = src;

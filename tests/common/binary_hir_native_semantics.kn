@@ -1,0 +1,33 @@
+Unit Tests.BinaryHirNativeSemantics;
+
+Enum WideMarker By u16
+{
+    Low= 1, High= 257
+}
+
+int hits= 0;
+
+Function bool Touch(bool value)
+{
+    hits= hits+ 1;
+    Return value;
+}
+
+Trusted Static Function int Main()
+{
+    char*text= "az";
+    char*next= text+ 1;
+    char pointerValue= *next;
+    bool pointerOk= pointerValue== 'z';
+
+    bool enumOk= WideMarker.Low!= WideMarker.High&& WideMarker.Low== WideMarker.Low;
+    bool boolOk= true== true&& false!= true;
+
+    bool skipAnd= false&& Touch(true);
+    bool skipOr= true|| Touch(false);
+    bool runAnd= true&& Touch(true);
+    bool runOr= false|| Touch(true);
+    bool shortCircuitOk= skipAnd== false&& skipOr&& runAnd&& runOr&& hits== 2;
+
+    Return pointerOk&& enumOk&& boolOk&& shortCircuitOk ? 0 : 1;
+}

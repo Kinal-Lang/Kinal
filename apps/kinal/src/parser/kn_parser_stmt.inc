@@ -372,6 +372,18 @@ static bool looks_like_type_decl(Parser *p)
     if (!p) return false;
     if (cur(p)->type == TOK_VAR || cur(p)->type == TOK_CONST)
         return true;
+    if (cur(p)->type == TOK_LT)
+    {
+        int off = 0;
+        if (!scan_type_at(p, &off))
+            return false;
+        if (peek(p, off)->type == TOK_ID)
+        {
+            TokenType after_name = peek(p, off + 1)->type;
+            return decl_name_follow_tok(after_name) || after_name == TOK_LT;
+        }
+        return false;
+    }
     if (is_type_tok(cur(p)->type) || token_is_builtin_type_name(cur(p)))
     {
         if (peek(p, 1)->type == TOK_LPAREN || peek(p, 1)->type == TOK_DOT)
@@ -416,7 +428,7 @@ static bool looks_like_type_decl(Parser *p)
     if (peek(p, off)->type == TOK_ID)
     {
         TokenType after_name = peek(p, off + 1)->type;
-        return decl_name_follow_tok(after_name);
+        return decl_name_follow_tok(after_name) || after_name == TOK_LT;
     }
     return false;
 }
@@ -767,6 +779,10 @@ static Stmt *parse_stmt_impl(Parser *p)
         Token *name_tok = cur(p);
         expect(p, TOK_ID, "Expected Identifier", "Expected variable name");
         const char *name = tok_text(name_tok);
+        NameList package_fields;
+        kn_memset(&package_fields, 0, sizeof(package_fields));
+        if (cur(p)->type == TOK_LT)
+            package_fields = parse_package_field_alias_list(p);
         (void)parse_legacy_array_suffix(p, &ty, name_tok);
         int skip_semi = 0;
         Expr *init = parse_optional_decl_initializer(p, name_tok, &skip_semi);
@@ -779,6 +795,7 @@ static Stmt *parse_stmt_impl(Parser *p)
         s->v.var.name = name;
         s->v.var.name_line = name_tok->line;
         s->v.var.name_col = name_tok->col;
+        s->v.var.package_fields = package_fields;
         s->v.var.init = init;
         s->v.var.is_const = is_const;
         s->v.var.src = p->src;

@@ -1,0 +1,29 @@
+Unit Tests.StdlibErrorState;
+
+Get Console By IO.Console;
+Get IO.Error;
+Get IO.Text;
+
+Static Function void Fail()
+{
+    Throw New IO.Error("State", "failure");
+}
+
+Static Function int Main()
+{
+    Try
+    {
+        Fail();
+    }
+    Catch (IO.Error caught)
+    {
+        Console.PrintLine(IO.Error.HasException());
+        Console.PrintLine(IO.Error.Current().Title == caught.Title);
+        Console.PrintLine(IO.Text.Contains(IO.Error.LastTrace(), "Tests.StdlibErrorState.Fail"));
+        IO.Error.Clear();
+        Console.PrintLine(IO.Error.HasException());
+        Console.PrintLine(IO.Error.Current() == null);
+        Console.PrintLine(IO.Error.LastTrace() == "");
+    }
+    Return 0;
+}

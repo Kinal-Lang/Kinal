@@ -91,9 +91,12 @@ static void codegen_async_runner(Codegen *g, FuncSymbol *fs)
         retv = LLVMBuildCall2(g->builder, fs->async_body_fn_ty, fs->async_body_fn, argv, (unsigned)f->params.count, "async.body");
 
     LLVMValueRef has = g->fn_exc_has
-        ? LLVMBuildCall2(g->builder, g->fn_exc_has_ty, g->fn_exc_has, 0, 0, "async.exc.has")
+        ? cg_from_runtime_bool(
+            g,
+            LLVMBuildCall2(g->builder, g->fn_exc_has_ty, g->fn_exc_has, 0, 0, "async.exc.has.c"),
+            "async.exc.has")
         : LLVMConstInt(g->i1, 0, 0);
-    LLVMValueRef cond = LLVMBuildICmp(g->builder, LLVMIntNE, has, LLVMConstInt(g->i1, 0, 0), "async.exc.cond");
+    LLVMValueRef cond = has;
     LLVMBasicBlockRef fail_bb = LLVMAppendBasicBlockInContext(g->ctx, fn, "async.fail");
     LLVMBasicBlockRef ok_bb = LLVMAppendBasicBlockInContext(g->ctx, fn, "async.ok");
     LLVMBuildCondBr(g->builder, cond, fail_bb, ok_bb);
@@ -516,13 +519,18 @@ static void codegen_method(Codegen *g, ClassSymbol *cs, Method *m, int idx)
 
 static LLVMValueRef declare_func(Codegen *g, Func *f, LLVMTypeRef *out_ty)
 {
-    LLVMTypeRef ret = llvm_type(g, cg_func_public_ret_type(f));
+    bool c_abi = cg_func_uses_c_abi(f);
+    LLVMTypeRef ret = c_abi
+        ? llvm_ffi_type(g, cg_func_public_ret_type(f))
+        : llvm_type(g, cg_func_public_ret_type(f));
     LLVMTypeRef *args = 0;
     if (f->params.count > 0)
     {
         args = (LLVMTypeRef *)kn_malloc(sizeof(LLVMTypeRef) * (size_t)f->params.count);
         for (int i = 0; i < f->params.count; i++)
-            args[i] = llvm_type(g, f->params.items[i].type);
+            args[i] = c_abi
+                ? llvm_ffi_type(g, f->params.items[i].type)
+                : llvm_type(g, f->params.items[i].type);
     }
     LLVMTypeRef fn_ty = LLVMFunctionType(ret, args, (unsigned)f->params.count, 0);
     const char *sym = (f->is_extern && f->extern_symbol && f->extern_symbol[0])
@@ -781,6 +789,7 @@ int kn_codegen(const char *out_path, MetaList *metas, FuncList *funcs, ImportLis
     }
     g.target_is_windows = triple_is_windows(triple);
     g.target_is_x86 = triple_is_x86(triple);
+    g.target_pointer_bits = g.target_is_x86 ? 32 : 64;
     g.emit_entry = (!opts || opts->emit_entry != 0) ? 1 : 0;
     g.env_kind = (!opts) ? KN_ENV_HOSTED : opts->env_kind;
     g.runtime_mode = (!opts) ? KN_RUNTIME_GC : opts->runtime_mode;
@@ -832,13 +841,16 @@ int kn_codegen(const char *out_path, MetaList *metas, FuncList *funcs, ImportLis
         if (f->is_delegate)
         {
             // Build the LLVM function type from the delegate signature
-            LLVMTypeRef ret = llvm_type(&g, f->ret_type);
+            bool c_abi = cg_func_uses_c_abi(f);
+            LLVMTypeRef ret = c_abi ? llvm_ffi_type(&g, f->ret_type) : llvm_type(&g, f->ret_type);
             LLVMTypeRef *args = 0;
             if (f->params.count > 0)
             {
                 args = (LLVMTypeRef *)kn_malloc(sizeof(LLVMTypeRef) * (size_t)f->params.count);
                 for (int j = 0; j < f->params.count; j++)
-                    args[j] = llvm_type(&g, f->params.items[j].type);
+                    args[j] = c_abi
+                        ? llvm_ffi_type(&g, f->params.items[j].type)
+                        : llvm_type(&g, f->params.items[j].type);
             }
             fn_ty = LLVMFunctionType(ret, args, (unsigned)f->params.count, 0);
             s.fn = 0;

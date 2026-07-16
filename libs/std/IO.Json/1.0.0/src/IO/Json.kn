@@ -144,6 +144,203 @@ Trusted Function bool IsList(any value)
     Return !value.IsNull() && value.TypeName() == "IO.Collection.list";
 }
 
+Public Class Value
+{
+    Private any _Raw;
+
+    Public Constructor(any value = null)
+    {
+        _Raw = value;
+    }
+
+    Public Property any Raw
+    {
+        Get
+        {
+            Return _Raw;
+        }
+        Set
+        {
+            _Raw = value;
+        }
+    }
+
+    Public Trusted Property dict Dict
+    {
+        Get
+        {
+            Return AsDict(_Raw);
+        }
+        Set
+        {
+            _Raw = value;
+        }
+    }
+
+    Public Trusted Property list List
+    {
+        Get
+        {
+            Return AsList(_Raw);
+        }
+        Set
+        {
+            _Raw = value;
+        }
+    }
+
+    Public Property string Text
+    {
+        Get
+        {
+            Return [string](_Raw);
+        }
+        Set
+        {
+            _Raw = value;
+        }
+    }
+
+    Public Property int Int
+    {
+        Get
+        {
+            Return [int](_Raw);
+        }
+        Set
+        {
+            _Raw = value;
+        }
+    }
+
+    Public Property float Float
+    {
+        Get
+        {
+            Return [float](_Raw);
+        }
+        Set
+        {
+            _Raw = value;
+        }
+    }
+
+    Public Property bool Bool
+    {
+        Get
+        {
+            Return [bool](_Raw);
+        }
+        Set
+        {
+            _Raw = value;
+        }
+    }
+
+    Public Trusted Property bool IsNull
+    {
+        Get
+        {
+            Return _Raw.IsNull();
+        }
+    }
+
+    Public Trusted Property bool IsDict
+    {
+        Get
+        {
+            Return IO.Json.IsDict(_Raw);
+        }
+    }
+
+    Public Trusted Property bool IsList
+    {
+        Get
+        {
+            Return IO.Json.IsList(_Raw);
+        }
+    }
+}
+
+Public Class Object
+{
+    Private dict _Data;
+
+    Public Constructor(dict data = null)
+    {
+        If (data == null)
+        {
+            _Data = dict.Create();
+        }
+        Else
+        {
+            _Data = data;
+        }
+    }
+
+    Public Property dict Data
+    {
+        Get
+        {
+            Return _Data;
+        }
+        Set
+        {
+            If (value == null)
+            {
+                _Data = dict.Create();
+            }
+            Else
+            {
+                _Data = value;
+            }
+        }
+    }
+
+    Public Trusted Property int Count
+    {
+        Get
+        {
+            Return _Data.Count();
+        }
+    }
+
+    Public Trusted Property list Keys
+    {
+        Get
+        {
+            Return _Data.Keys();
+        }
+    }
+
+    Public Trusted Function IO.Json.Value Value(string key)
+    {
+        Return New IO.Json.Value(_Data.Fetch(key));
+    }
+
+    Public Trusted Function IO.Json.Value ValueOr(string key, any fallback)
+    {
+        Return New IO.Json.Value(_Data.TryFetch(key, fallback));
+    }
+
+    Public Trusted Function IO.Json.Object Put(string key, any value)
+    {
+        _Data.Set(key, value);
+        Return This;
+    }
+
+    Public Trusted Function IO.Json.Object Remove(string key)
+    {
+        dict.Remove(_Data, key);
+        Return This;
+    }
+
+    Public Trusted Function bool Has(string key)
+    {
+        Return dict.Contains(_Data, key);
+    }
+}
+
 Trusted Function dict AsDict(any value)
 {
     If (!IsDict(value))
@@ -351,6 +548,16 @@ Trusted Function any ParseValue(string text)
 Trusted Function dict Parse(string text)
 {
     Return AsDict(ParseValue(text));
+}
+
+Trusted Function IO.Json.Object ParseObject(string text)
+{
+    Return New IO.Json.Object(Parse(text));
+}
+
+Trusted Function IO.Json.Object Wrap(dict value)
+{
+    Return New IO.Json.Object(value);
 }
 
 Trusted Function string FormatText(string text, bool pretty = true)

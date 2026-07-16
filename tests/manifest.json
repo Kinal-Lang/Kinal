@@ -54,9 +54,19 @@
     "expected": "ok\n"
   },
   {
+    "name": "package_basic",
+    "file": "tests/common/package_basic.kn",
+    "expected": "200\n200\nOK\nOK\n3\n1\n200\n2\nb\n2\n3\n3\n"
+  },
+  {
     "name": "array_contextual",
     "file": "tests/common/array_contextual.kn",
     "expected": "2\n2\n7\n"
+  },
+  {
+    "name": "multidim_arrays",
+    "file": "tests/common/multidim_arrays.kn",
+    "expected": "2\n3\n3\n0\n6\nc\nd\ntrue\ntrue\ntrue\ntrue\n"
   },
   {
     "name": "array_const_len",
@@ -188,6 +198,24 @@
     "auto_link": true
   },
   {
+    "name": "custom_cast_json",
+    "file": "tests/common/custom_cast_json.kn",
+    "expected": "kinal\n9\nlang\n7\ntrue\n",
+    "auto_link": true
+  },
+  {
+    "name": "overload_functions",
+    "file": "tests/common/overload_functions.kn",
+    "expected": "int\nstring\n",
+    "auto_link": true
+  },
+  {
+    "name": "overload_methods",
+    "file": "tests/common/overload_methods.kn",
+    "expected": "int\nstring\n3\n4\n",
+    "auto_link": true
+  },
+  {
     "name": "time",
     "file": "tests/common/time.kn",
     "expected": "ok\n",
@@ -244,6 +272,17 @@
     ]
   },
   {
+    "name": "stdlib_web_gc_roots",
+    "file": "tests/common/stdlib_web_gc_roots.kn",
+    "expected": "true\ntrue\n",
+    "auto_link": true,
+    "runtime_fixture": "web_gc_roots",
+    "platforms": [
+      "windows",
+      "linux"
+    ]
+  },
+  {
     "name": "stdlib_request_compile",
     "file": "tests/common/stdlib_request_compile.kn",
     "expected": "",
@@ -257,7 +296,7 @@
   {
     "name": "stdlib_request_https",
     "file": "tests/common/stdlib_request_https.kn",
-    "expected": "200\nhello-secure\n200\necho:ping\n",
+    "expected": "200\nhello-secure\ntrue\n200\necho:ping\ntrue\n",
     "auto_link": true,
     "platforms": [
       "windows",
@@ -428,6 +467,11 @@
     "expected": "true\ntrue\n"
   },
   {
+    "name": "delegate_abi",
+    "file": "tests/common/ptr_to_function_cast.kn",
+    "expected": "3\n12\n11\n30\n"
+  },
+  {
     "name": "extern_system",
     "file": "tests/windows/extern_system.kn",
     "expected": "",
@@ -534,6 +578,21 @@
     ]
   },
   {
+    "name": "ffi_abi",
+    "file": "tests/windows/ffi_abi.kn",
+    "expected": "-7\n-123\ntrue\nfalse\ntrue\nfalse\n-99\ntrue\n",
+    "auto_link": true,
+    "compiler_args": [
+      "-L",
+      "out/test",
+      "-l",
+      "native_ffi_import"
+    ],
+    "runtime_files": [
+      "out/test/native_ffi.dll"
+    ]
+  },
+  {
     "name": "ffi_attr_lib",
     "file": "tests/windows/ffi_attr_lib.kn",
     "expected": "42\nffi-native\n",
@@ -598,6 +657,11 @@
     "expected": "ok\n"
   },
   {
+    "name": "binary_hir_native_semantics",
+    "file": "tests/common/binary_hir_native_semantics.kn",
+    "expected": ""
+  },
+  {
     "name": "pointers",
     "file": "tests/common/pointers.kn",
     "expected": "ok\n"
@@ -631,6 +695,66 @@
     "name": "is_keyword",
     "file": "tests/common/is_keyword.kn",
     "expected": "true\ntrue\nfalse\ntrue\ntrue\ntrue\ntrue\nfalse\ntrue\nfalse\ntrue\n1\n2\n3\no\nk\n"
+  },
+  {
+    "name": "alias_symbol",
+    "file": "tests/common/alias_symbol.kn",
+    "expected": "alias\n",
+    "auto_link": true
+  },
+  {
+    "name": "alias_value_symbol",
+    "file": "tests/common/alias_value_symbol.kn",
+    "expected": "method\n7\n",
+    "auto_link": true
+  },
+  {
+    "name": "unsafe_alias_keyword",
+    "file": "tests/common/unsafe_alias_keyword.kn",
+    "expected": "unsafe\n",
+    "auto_link": true
+  },
+  {
+    "name": "unsafe_alias_get_keyword",
+    "file": "tests/common/unsafe_alias_get_keyword.kn",
+    "expected": "get\n",
+    "auto_link": true
+  },
+  {
+    "name": "unsafe_alias_unicode_keyword",
+    "file": "tests/common/unsafe_alias_unicode_keyword.kn",
+    "expected": "unicode\n",
+    "auto_link": true
+  },
+  {
+    "name": "unicode_identifiers",
+    "file": "tests/common/unicode_identifiers.kn",
+    "expected": "42\n",
+    "auto_link": true
+  },
+  {
+    "name": "localized_aliases",
+    "file": "tests/common/localized_aliases.kn",
+    "expected": "module\nsymbol\n",
+    "auto_link": true
+  },
+  {
+    "name": "unsafe_unsafe_unsafe_alias",
+    "file": "tests/common/unsafe_unsafe_unsafe_alias.kn",
+    "expected": "triple\n",
+    "auto_link": true
+  },
+  {
+    "name": "unsafe_unsafe_unsafe_alias_sequence",
+    "file": "tests/common/unsafe_unsafe_unsafe_alias_sequence.kn",
+    "expected": "bang\nlong\n",
+    "auto_link": true
+  },
+  {
+    "name": "unsafe_unsafe_unsafe_alias_semicolon_target",
+    "file": "tests/common/unsafe_unsafe_unsafe_alias_semicolon_target.kn",
+    "expected": "Hello World\n",
+    "auto_link": true
   },
   {
     "name": "is_pattern_if",
@@ -822,6 +946,41 @@
     "expect_error": "[Sema] Invalid Cast"
   },
   {
+    "name": "error_cast_duplicate",
+    "file": "tests/common/error_cast_duplicate.kn",
+    "expect_error": "[Sema] Ambiguous Cast"
+  },
+  {
+    "name": "error_aggregate_equality",
+    "file": "tests/common/error_aggregate_equality.kn",
+    "expect_error": "[Sema] Equality is not defined"
+  },
+  {
+    "name": "error_package_index_runtime",
+    "file": "tests/common/error_package_index_runtime.kn",
+    "expect_error": "[Sema] Invalid Package Index"
+  },
+  {
+    "name": "error_package_field_count",
+    "file": "tests/common/error_package_field_count.kn",
+    "expect_error": "[Sema] Package Field Count"
+  },
+  {
+    "name": "error_package_array_cast",
+    "file": "tests/common/error_package_array_cast.kn",
+    "expect_error": "[Sema] Invalid Cast"
+  },
+  {
+    "name": "error_overload_ambiguous_call",
+    "file": "tests/common/error_overload_ambiguous_call.kn",
+    "expect_error": "[Sema] Ambiguous Call"
+  },
+  {
+    "name": "error_overload_missing_symbolname",
+    "file": "tests/common/error_overload_missing_symbolname.kn",
+    "expect_error": "[Sema] Invalid Overload"
+  },
+  {
     "name": "error_char_ptr_concat_both",
     "file": "tests/common/error_char_ptr_concat_both.kn",
     "expect_error": "[Sema] Type Mismatch"
@@ -837,6 +996,16 @@
     "expect_error": "[Sema] Unsafe Call"
   },
   {
+    "name": "error_ffi_unsupported_type",
+    "file": "tests/common/error_ffi_unsupported_type.kn",
+    "expect_error": "[Sema] Unsupported Type"
+  },
+  {
+    "name": "error_delegate_signature",
+    "file": "tests/common/error_delegate_signature.kn",
+    "expect_error": "[Sema] Type Mismatch"
+  },
+  {
     "name": "error_get_scope",
     "file": "tests/common/error_get_scope.kn",
     "expect_error": "[Sema] Scoped Symbol Required"
@@ -850,6 +1019,16 @@
     "name": "error_global_modifier",
     "file": "tests/common/error_global_modifier.kn",
     "expect_error": "[Parser] Invalid Global Modifier"
+  },
+  {
+    "name": "error_alias_target_not_visible",
+    "file": "tests/common/error_alias_target_not_visible.kn",
+    "expect_error": "[Sema] Invalid Alias Target"
+  },
+  {
+    "name": "error_unsafe_alias_position",
+    "file": "tests/common/error_unsafe_alias_position.kn",
+    "expect_error": "[Parser] Invalid Unsafe Alias Position"
   },
   {
     "name": "error_bare_function_expr",
@@ -894,6 +1073,11 @@
   {
     "name": "error_any_isint_args",
     "file": "tests/common/error_any_isint_args.kn",
+    "expect_error": "[Sema] Argument Count"
+  },
+  {
+    "name": "error_index_missing_arg",
+    "file": "tests/common/error_index_missing_arg.kn",
     "expect_error": "[Sema] Argument Count"
   },
   {
@@ -1062,5 +1246,90 @@
     "name": "error_attr_symbolname_kinal_delegate",
     "file": "tests/common/error_attr_symbolname_kinal_delegate.kn",
     "expect_error": "[Sema] Invalid Attribute"
+  },
+  {
+    "name": "stdlib_console_input",
+    "file": "tests/common/stdlib_console_input.kn",
+    "stdin": "kinal\n",
+    "expected": "kinal\n"
+  },
+  {
+    "name": "stdlib_string_index",
+    "file": "tests/common/stdlib_string_index.kn",
+    "expected": "k\nl\n"
+  },
+  {
+    "name": "stdlib_system_exit",
+    "file": "tests/common/stdlib_system_exit.kn",
+    "expected": "true\n",
+    "expected_exit_code": 7
+  },
+  {
+    "name": "dynlib_loader_compile",
+    "file": "tests/common/dynlib_loader.kn",
+    "compile_only": true
+  },
+  {
+    "name": "stdlib_memory_volatile",
+    "file": "tests/common/stdlib_memory_volatile.kn",
+    "expected": "true\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\n"
+  },
+  {
+    "name": "stdlib_type_complete",
+    "file": "tests/common/stdlib_type_complete.kn",
+    "expected": "true\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\n"
+  },
+  {
+    "name": "stdlib_type_extended_compile",
+    "file": "tests/common/stdlib_type_extended_compile.kn",
+    "compile_only": true,
+    "compiler_args": [
+      "--emit",
+      "obj"
+    ],
+    "output_ext": "obj"
+  },
+  {
+    "name": "stdlib_error_state",
+    "file": "tests/common/stdlib_error_state.kn",
+    "expected": "false\ntrue\ntrue\nfalse\nfalse\nfalse\n"
+  },
+  {
+    "name": "stdlib_file_complete",
+    "file": "tests/common/stdlib_file_complete.kn",
+    "expected": "true\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\n"
+  },
+  {
+    "name": "stdlib_cat",
+    "file": "tests/common/stdlib_cat.kn",
+    "expected": "Rommy listened to \"hello\" and replied: \"Meow~\"\nRommy: \"Purr~\"\nRommy: \"Meow~ MEOW!!!\"\nRommy: \"Meow~ Meow~ Meow~\"\n",
+    "auto_link": true
+  },
+  {
+    "name": "stdlib_math_complete",
+    "file": "tests/common/stdlib_math_complete.kn",
+    "expected": "true\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\n",
+    "auto_link": true
+  },
+  {
+    "name": "stdlib_char_complete",
+    "file": "tests/common/stdlib_char_complete.kn",
+    "expected": "true\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\n",
+    "auto_link": true
+  },
+  {
+    "name": "stdlib_json_complete",
+    "file": "tests/common/stdlib_json_complete.kn",
+    "expected": "true\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\n",
+    "auto_link": true
+  },
+  {
+    "name": "stdlib_request_model",
+    "file": "tests/common/stdlib_request_model.kn",
+    "expected": "true\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\n",
+    "auto_link": true,
+    "platforms": [
+      "windows"
+    ]
   }
 ]

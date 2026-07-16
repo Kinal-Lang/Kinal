@@ -1,9 +1,11 @@
 #include "kn/sema.h"
+#include "kn/hir.h"
 #include "kn/diag.h"
 #include "kn/source.h"
 #include "kn/std.h"
 #include "kn/lexer.h"
 #include "kn/util.h"
+#include "kn/ffi_abi.h"
 #include "kn/version.h"
 
 typedef struct VarSym VarSym;
@@ -19,6 +21,7 @@ struct VarSym
     int line;
     int col;
     const KnSource *src;
+    NameList package_fields;
     VarSym *next;
 };
 
@@ -116,6 +119,12 @@ enum
 
 static bool type_equal(Type a, Type b);
 static bool params_equal(const ParamList *a, const ParamList *b);
+static bool funcs_share_visible_name(const Func *a, const Func *b);
+static bool funcs_can_overload(const Func *a, const Func *b);
+static const char *func_symbol_identity(const Func *f);
+static const char *qualify_text_name(const char *unit, const char *name);
+static bool methods_share_visible_name(const Method *a, const Method *b);
+static bool methods_can_overload(const Method *a, const Method *b);
 static bool type_supported(Type t);
 static bool method_is_virtual(const Method *m);
 static bool type_assignable(Sema *s, Type dst, Type src);
@@ -135,6 +144,7 @@ static int block_record_ip(BlockRecordList *records, const char *name);
 static bool class_is_derived_from(Sema *s, ClassDecl *c, ClassDecl *base);
 static Type sema_expr(Sema *s, Expr *e);
 static Type sema_array_literal(Sema *s, Expr *e, Type expected_elem, bool has_expected);
+static Type sema_package_literal(Sema *s, Expr *e, Type expected, bool has_expected);
 static int bind_default_literal_type(Sema *s, Expr *e, Type expected, const char *detail);
 static Type sema_expr_with_expected(Sema *s, Expr *e, Type expected, const char *detail);
 static const char *type_mismatch_detail(Type expected, Type got);
@@ -144,6 +154,7 @@ static void check_int_to_ptr_safety(Sema *s, Type dst, Type src, Expr *expr);
 static void check_byte_literal_range(Sema *s, Type dst, Expr *src);
 static bool func_is_generic_template(const Func *f);
 static bool func_is_generic_instance(const Func *f);
+static const KnStdFunc *resolve_std_by_qualified_name(Sema *s, const char *qname);
 static void retype_prepared_args(Sema *s, ExprList *args, ParamList *typed_args,
                                  const Param *params, int param_count, const char *default_detail);
 static bool stmt_contains_unsafe_block(Stmt *st);
@@ -388,6 +399,22 @@ static const char *expand_builtin_core_alias(const char *name)
     return name;
 }
 
+static const char *expand_local_symbol_alias(Sema *s, const char *name)
+{
+    if (!s || !s->imports || !name || qname_has_dot(name)) return name;
+    for (int i = 0; i < s->imports->count; i++)
+    {
+        ImportMap *m = &s->imports->items[i];
+        if (m->unit && m->unit[0] && s->current_unit && s->current_unit[0] &&
+            kn_strcmp(m->unit, s->current_unit) != 0)
+            continue;
+        if (m->kind != IMPORT_LOCAL_ALIAS || !m->local || !m->remote) continue;
+        if (kn_strcmp(m->local, name) == 0)
+            return m->remote;
+    }
+    return name;
+}
+
 static bool builtin_type_qname_globally_visible(const char *qname)
 {
     if (!qname) return false;
@@ -438,6 +465,7 @@ static int named_decl_match_score(Sema *s, const char *raw, const char *decl_nam
                                   const char *decl_unit, const char *decl_qname)
 {
     if (!raw || !decl_name) return 0;
+    raw = expand_local_symbol_alias(s, raw);
     const char *name = expand_builtin_core_alias(raw);
     if (decl_qname && builtin_type_qname_globally_visible(name) && kn_strcmp(name, decl_qname) == 0)
         return qname_has_dot(raw) ? 100 : 85;
@@ -489,6 +517,7 @@ static int visible_decl_match_score(Sema *s, const char *raw, const char *decl_n
                                     const char *decl_unit, const char *decl_qname)
 {
     if (!raw || !decl_name) return 0;
+    raw = expand_local_symbol_alias(s, raw);
     const char *name = expand_builtin_core_alias(raw);
     if (builtin_type_qname_globally_visible(name) &&
         qname_matches_decl(name, decl_name, decl_unit, decl_qname))
@@ -935,6 +964,7 @@ static const char *base_type_name(TypeKind k)
     case TY_STRING: return "string";
     case TY_ANY: return "any";
     case TY_NULL: return "null";
+    case TY_PACKAGE: return "Package";
     default: return "unknown";
     }
 }
@@ -1026,7 +1056,17 @@ static void class_add_interface(ClassDecl *c, const char *iface)
 
 static void resolve_named_type(Sema *s, Type *t)
 {
-    if (!t || !t->name) return;
+    if (!t) return;
+    if (t->kind == TY_ARRAY)
+    {
+        Type elem = type_immediate_elem(*t);
+        if (elem.kind != TY_UNKNOWN)
+        {
+            resolve_named_type(s, &elem);
+            type_set_array_elem(t, elem);
+        }
+    }
+    if (!t->name) return;
     if (t->kind == TY_CLASS)
     {
         StructDecl *st = find_visible_struct(s, t->name);

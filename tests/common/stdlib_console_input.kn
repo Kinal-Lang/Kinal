@@ -1,0 +1,10 @@
+Unit Tests.StdlibConsoleInput;
+
+Get Console By IO.Console;
+
+Static Function int Main()
+{
+    string line = Console.ReadLine();
+    Console.PrintLine(line);
+    Return 0;
+}

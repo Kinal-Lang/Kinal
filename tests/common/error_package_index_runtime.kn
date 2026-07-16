@@ -1,0 +1,13 @@
+Unit Tests.ErrorPackageIndexRuntime;
+
+Function <int, string> Status()
+{
+    Return <200, "OK">;
+}
+
+Static Function int Main()
+{
+    Object.Package status = Status();
+    int idx = 1;
+    Return status[idx];
+}

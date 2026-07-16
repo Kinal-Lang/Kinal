@@ -14,6 +14,20 @@ Public Class VirtualMachine
         This.Registry = registry;
     }
 
+    Private Static Function u64 UIntAtWidth(int value, int bits)
+    {
+        Switch(bits)
+        {
+            Case(8)  { Return [u64]([u8](value)); }
+            Case(16) { Return [u64]([u16](value)); }
+            Case(32) { Return [u64]([u32](value)); }
+            Case(64) { Return [u64](value); }
+            Case(default) { Throw "Unsupported unsigned integer width: " + [string](bits); }
+        }
+
+        Throw "Unsupported unsigned integer width: " + [string](bits);
+    }
+
     Public Unsafe Function int Execute(Bytecode.Program program)
     {
         Context.ExecutionContext ctx = New Context.ExecutionContext(program);
@@ -2640,6 +2654,163 @@ Public Class VirtualMachine
                 Jump LoopStart;
             }
 
+            Record OpUDivInt
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                int[] kinds = frame.Kinds;
+                int[] intRegisters = frame.IntRegisters;
+                int dst = [int](code[frame.Pc + 1]);
+                int lhs = [int](code[frame.Pc + 2]);
+                int rhs = [int](code[frame.Pc + 3]);
+                int bits = [int](code[frame.Pc + 4]);
+                If (kinds[lhs] != [int](Bytecode.ValueKind.Int) || kinds[rhs] != [int](Bytecode.ValueKind.Int))
+                {
+                    Throw "Expected int registers";
+                }
+                u64 lhsValue = VirtualMachine.UIntAtWidth(intRegisters[lhs], bits);
+                u64 rhsValue = VirtualMachine.UIntAtWidth(intRegisters[rhs], bits);
+                kinds[dst] = [int](Bytecode.ValueKind.Int);
+                intRegisters[dst] = [int](lhsValue / rhsValue);
+                frame.Pc = frame.Pc + 5;
+                Jump LoopStart;
+            }
+
+            Record OpURemInt
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                int[] kinds = frame.Kinds;
+                int[] intRegisters = frame.IntRegisters;
+                int dst = [int](code[frame.Pc + 1]);
+                int lhs = [int](code[frame.Pc + 2]);
+                int rhs = [int](code[frame.Pc + 3]);
+                int bits = [int](code[frame.Pc + 4]);
+                If (kinds[lhs] != [int](Bytecode.ValueKind.Int) || kinds[rhs] != [int](Bytecode.ValueKind.Int))
+                {
+                    Throw "Expected int registers";
+                }
+                u64 lhsValue = VirtualMachine.UIntAtWidth(intRegisters[lhs], bits);
+                u64 rhsValue = VirtualMachine.UIntAtWidth(intRegisters[rhs], bits);
+                kinds[dst] = [int](Bytecode.ValueKind.Int);
+                intRegisters[dst] = [int](lhsValue % rhsValue);
+                frame.Pc = frame.Pc + 5;
+                Jump LoopStart;
+            }
+
+            Record OpULtInt
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                int[] kinds = frame.Kinds;
+                int[] intRegisters = frame.IntRegisters;
+                bool[] boolRegisters = frame.BoolRegisters;
+                int dst = [int](code[frame.Pc + 1]);
+                int lhs = [int](code[frame.Pc + 2]);
+                int rhs = [int](code[frame.Pc + 3]);
+                int bits = [int](code[frame.Pc + 4]);
+                If (kinds[lhs] != [int](Bytecode.ValueKind.Int) || kinds[rhs] != [int](Bytecode.ValueKind.Int))
+                {
+                    Throw "Expected int registers";
+                }
+                u64 lhsValue = VirtualMachine.UIntAtWidth(intRegisters[lhs], bits);
+                u64 rhsValue = VirtualMachine.UIntAtWidth(intRegisters[rhs], bits);
+                kinds[dst] = [int](Bytecode.ValueKind.Bool);
+                boolRegisters[dst] = lhsValue < rhsValue;
+                frame.Pc = frame.Pc + 5;
+                Jump LoopStart;
+            }
+
+            Record OpULeInt
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                int[] kinds = frame.Kinds;
+                int[] intRegisters = frame.IntRegisters;
+                bool[] boolRegisters = frame.BoolRegisters;
+                int dst = [int](code[frame.Pc + 1]);
+                int lhs = [int](code[frame.Pc + 2]);
+                int rhs = [int](code[frame.Pc + 3]);
+                int bits = [int](code[frame.Pc + 4]);
+                If (kinds[lhs] != [int](Bytecode.ValueKind.Int) || kinds[rhs] != [int](Bytecode.ValueKind.Int))
+                {
+                    Throw "Expected int registers";
+                }
+                u64 lhsValue = VirtualMachine.UIntAtWidth(intRegisters[lhs], bits);
+                u64 rhsValue = VirtualMachine.UIntAtWidth(intRegisters[rhs], bits);
+                kinds[dst] = [int](Bytecode.ValueKind.Bool);
+                boolRegisters[dst] = lhsValue <= rhsValue;
+                frame.Pc = frame.Pc + 5;
+                Jump LoopStart;
+            }
+
+            Record OpUGtInt
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                int[] kinds = frame.Kinds;
+                int[] intRegisters = frame.IntRegisters;
+                bool[] boolRegisters = frame.BoolRegisters;
+                int dst = [int](code[frame.Pc + 1]);
+                int lhs = [int](code[frame.Pc + 2]);
+                int rhs = [int](code[frame.Pc + 3]);
+                int bits = [int](code[frame.Pc + 4]);
+                If (kinds[lhs] != [int](Bytecode.ValueKind.Int) || kinds[rhs] != [int](Bytecode.ValueKind.Int))
+                {
+                    Throw "Expected int registers";
+                }
+                u64 lhsValue = VirtualMachine.UIntAtWidth(intRegisters[lhs], bits);
+                u64 rhsValue = VirtualMachine.UIntAtWidth(intRegisters[rhs], bits);
+                kinds[dst] = [int](Bytecode.ValueKind.Bool);
+                boolRegisters[dst] = lhsValue > rhsValue;
+                frame.Pc = frame.Pc + 5;
+                Jump LoopStart;
+            }
+
+            Record OpUGeInt
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                int[] kinds = frame.Kinds;
+                int[] intRegisters = frame.IntRegisters;
+                bool[] boolRegisters = frame.BoolRegisters;
+                int dst = [int](code[frame.Pc + 1]);
+                int lhs = [int](code[frame.Pc + 2]);
+                int rhs = [int](code[frame.Pc + 3]);
+                int bits = [int](code[frame.Pc + 4]);
+                If (kinds[lhs] != [int](Bytecode.ValueKind.Int) || kinds[rhs] != [int](Bytecode.ValueKind.Int))
+                {
+                    Throw "Expected int registers";
+                }
+                u64 lhsValue = VirtualMachine.UIntAtWidth(intRegisters[lhs], bits);
+                u64 rhsValue = VirtualMachine.UIntAtWidth(intRegisters[rhs], bits);
+                kinds[dst] = [int](Bytecode.ValueKind.Bool);
+                boolRegisters[dst] = lhsValue >= rhsValue;
+                frame.Pc = frame.Pc + 5;
+                Jump LoopStart;
+            }
+
+            Record OpLShrInt
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                int[] kinds = frame.Kinds;
+                int[] intRegisters = frame.IntRegisters;
+                int dst = [int](code[frame.Pc + 1]);
+                int lhs = [int](code[frame.Pc + 2]);
+                int rhs = [int](code[frame.Pc + 3]);
+                int bits = [int](code[frame.Pc + 4]);
+                If (kinds[lhs] != [int](Bytecode.ValueKind.Int) || kinds[rhs] != [int](Bytecode.ValueKind.Int))
+                {
+                    Throw "Expected int registers";
+                }
+                u64 lhsValue = VirtualMachine.UIntAtWidth(intRegisters[lhs], bits);
+                kinds[dst] = [int](Bytecode.ValueKind.Int);
+                intRegisters[dst] = [int](lhsValue >> intRegisters[rhs]);
+                frame.Pc = frame.Pc + 5;
+                Jump LoopStart;
+            }
+
             Record OpRet
             {
                 Context.FunctionFrame frame = ctx.CurrentFrame();
@@ -2787,7 +2958,14 @@ Public Class VirtualMachine
             Dispatch.OpBitOrIntImm,
             Dispatch.OpBitXorIntImm,
             Dispatch.OpShlIntImm,
-            Dispatch.OpShrIntImm
+            Dispatch.OpShrIntImm,
+            Dispatch.OpUDivInt,
+            Dispatch.OpURemInt,
+            Dispatch.OpULtInt,
+            Dispatch.OpULeInt,
+            Dispatch.OpUGtInt,
+            Dispatch.OpUGeInt,
+            Dispatch.OpLShrInt
         };
 
         Dispatch.Run();

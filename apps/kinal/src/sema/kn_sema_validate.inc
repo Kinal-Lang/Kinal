@@ -2,6 +2,7 @@
 
 static bool eval_const_expr_impl(Sema *s, Expr *e, int64_t *out);
 static bool eval_const_expr_scoped_impl(Sema *s, Expr *e, int64_t *out);
+static NameList clone_namelist(const NameList *src);
 
 static bool eval_const_expr_scoped(Sema *s, Expr *e, int64_t *out)
 {
@@ -106,6 +107,22 @@ static void validate_type_ref(Sema *s, Type *t, int line, int col, int allow_voi
     int hidden_ptr_enum_alias = (t && (t->kind == TY_PTR || t->kind == TY_ARRAY) && t->elem == TY_ENUM &&
                                  t->name && qname_uses_hidden_module_alias(s, t->name));
     resolve_array_len_expr(s, t, line, col);
+    if (t && t->kind == TY_ARRAY)
+    {
+        Type elem = type_immediate_elem(*t);
+        if (elem.kind != TY_UNKNOWN)
+        {
+            validate_type_ref(s, &elem, line, col, 0);
+            type_set_array_elem(t, elem);
+        }
+    }
+    if (t && t->kind == TY_PACKAGE)
+    {
+        if (t->package_count <= 0)
+            sema_error(s, line, col, 1, "Invalid Type", "Object.Package requires an initializer or explicit Package element types");
+        for (int i = 0; i < t->package_count; i++)
+            validate_type_ref(s, &t->package_elems[i], line, col, 0);
+    }
     resolve_named_type(s, t);
     if (t->kind == TY_UNKNOWN)
         sema_error(s, line, col, 1, "Invalid Type", "Type not specified");
@@ -113,8 +130,8 @@ static void validate_type_ref(Sema *s, Type *t, int line, int col, int allow_voi
         sema_error(s, line, col, 1, "Invalid Type", "Void not allowed here");
     if (t->kind == TY_ARRAY && t->elem == TY_UNKNOWN)
         sema_error(s, line, col, 1, "Invalid Type", "Array element type unknown");
-    if (t->kind == TY_ARRAY && t->elem == TY_ANY && t->array_len < 0)
-        sema_error(s, line, col, 1, "Invalid Type", "any[] requires explicit length");
+    if (t->kind == TY_PACKAGE && t->package_count <= 0)
+        sema_error(s, line, col, 1, "Invalid Type", "Package element types unknown");
     if (t->kind == TY_CLASS)
     {
         if (hidden_class_alias)
@@ -255,6 +272,40 @@ static void validate_param_defaults(Sema *s, ParamList *params, int line, int co
     }
 }
 
+static bool sema_ffi_type_supported(Sema *s, Type type)
+{
+    if (type.kind == TY_ENUM)
+    {
+        EnumDecl *en = find_enum(s, type.name);
+        if (!en)
+            return false;
+        type = en->underlying;
+    }
+    return kn_ffi_abi_type_supported(type, s && s->target_pointer_bits ? s->target_pointer_bits : 64);
+}
+
+static void validate_ffi_signature(Sema *s, Func *f)
+{
+    if (!s || !f)
+        return;
+    if (!f->is_extern && !(f->is_delegate && f->delegate_abi == KN_DELEGATE_ABI_C))
+        return;
+    if (!sema_ffi_type_supported(s, f->ret_type))
+        sema_error(s, f->line, f->col, 1, "Unsupported Type",
+                   "C ABI return type is not supported by FFI v1; pass aggregates through pointers");
+    for (int i = 0; i < f->params.count; i++)
+    {
+        Param *param = &f->params.items[i];
+        if (!sema_ffi_type_supported(s, param->type))
+            sema_error(s,
+                       param->line > 0 ? param->line : f->line,
+                       param->col > 0 ? param->col : f->col,
+                       1,
+                       "Unsupported Type",
+                       "C ABI parameter type is not supported by FFI v1; pass aggregates through pointers");
+    }
+}
+
 typedef struct
 {
     const char *name;
@@ -271,7 +322,9 @@ enum
     KN_BUILTIN_META_LINK_FILE = 3,
     KN_BUILTIN_META_SYMBOL_NAME = 4,
     KN_BUILTIN_META_LINK_LIB_TARGET = 5,
-    KN_BUILTIN_META_LINK_FILE_TARGET = 6
+    KN_BUILTIN_META_LINK_FILE_TARGET = 6,
+    KN_BUILTIN_META_CAST = 7,
+    KN_BUILTIN_META_OVERLOAD = 8
 };
 
 typedef struct
@@ -293,7 +346,9 @@ static const BuiltinMetaSpec g_builtin_metas[] = {
     { "LinkFile",   KN_META_TARGET_EXTERN_FUNCTION,   KN_META_KEEP_COMPILE, 1, KN_BUILTIN_META_LINK_FILE },
     { "LinkLibTarget",  KN_META_TARGET_EXTERN_FUNCTION, KN_META_KEEP_COMPILE, 1, KN_BUILTIN_META_LINK_LIB_TARGET },
     { "LinkFileTarget", KN_META_TARGET_EXTERN_FUNCTION, KN_META_KEEP_COMPILE, 1, KN_BUILTIN_META_LINK_FILE_TARGET },
-    { "SymbolName", KN_META_TARGET_DELEGATE_FUNCTION, KN_META_KEEP_COMPILE, 0, KN_BUILTIN_META_SYMBOL_NAME }
+    { "SymbolName", KN_META_TARGET_FUNCTION | KN_META_TARGET_DELEGATE_FUNCTION | KN_META_TARGET_METHOD, KN_META_KEEP_COMPILE, 0, KN_BUILTIN_META_SYMBOL_NAME },
+    { "Overload",   KN_META_TARGET_FUNCTION | KN_META_TARGET_METHOD, KN_META_KEEP_COMPILE, 0, KN_BUILTIN_META_OVERLOAD },
+    { "Cast",       KN_META_TARGET_METHOD,            KN_META_KEEP_COMPILE, 0, KN_BUILTIN_META_CAST }
 };
 
 static const char *meta_short_name(const char *name)
@@ -304,6 +359,79 @@ static const char *meta_short_name(const char *name)
         if (*p == '.')
             last = p + 1;
     return last;
+}
+
+static bool attr_is_named(const Attribute *a, const char *name)
+{
+    if (!a || !name)
+        return false;
+    const char *resolved = a->resolved_name ? meta_short_name(a->resolved_name) : 0;
+    const char *raw = a->name ? meta_short_name(a->name) : 0;
+    return (resolved && kn_strcmp(resolved, name) == 0) ||
+           (raw && kn_strcmp(raw, name) == 0);
+}
+
+static bool method_has_attr(const Method *m, const char *name)
+{
+    if (!m || !name)
+        return false;
+    for (int i = 0; i < m->attrs.count; i++)
+        if (attr_is_named(&m->attrs.items[i], name))
+            return true;
+    return false;
+}
+
+static const char *attr_string_literal_value(const Attribute *a)
+{
+    if (!a || a->args.count != 1 || !a->args.items[0])
+        return 0;
+    Expr *arg = a->args.items[0];
+    if (arg->kind != EXPR_STRING || !arg->v.str_val.ptr)
+        return 0;
+    return arg->v.str_val.ptr;
+}
+
+static const char *attr_list_string_value(const AttrList *attrs, const char *name)
+{
+    if (!attrs || !name)
+        return 0;
+    for (int i = 0; i < attrs->count; i++)
+    {
+        if (!attr_is_named(&attrs->items[i], name))
+            continue;
+        return attr_string_literal_value(&attrs->items[i]);
+    }
+    return 0;
+}
+
+static bool attr_list_has_named(const AttrList *attrs, const char *name)
+{
+    if (!attrs || !name)
+        return false;
+    for (int i = 0; i < attrs->count; i++)
+        if (attr_is_named(&attrs->items[i], name))
+            return true;
+    return false;
+}
+
+static const char *func_symbol_identity(const Func *f)
+{
+    if (!f)
+        return 0;
+    if (f->symbol_name && f->symbol_name[0])
+        return f->symbol_name;
+    if (f->delegate_symbol_name && f->delegate_symbol_name[0])
+        return f->delegate_symbol_name;
+    if (f->extern_symbol && f->extern_symbol[0])
+        return f->extern_symbol;
+    return 0;
+}
+
+static const char *method_symbol_identity(const Method *m)
+{
+    if (!m || !m->symbol_name || !m->symbol_name[0])
+        return 0;
+    return m->symbol_name;
 }
 
 static void attr_error_at(Sema *s, const KnSource *src, int owner_line, int owner_col, const Attribute *a,
@@ -534,14 +662,6 @@ static void validate_attr_list(Sema *s, AttrList *attrs, uint32_t owner_mask,
             continue;
         }
 
-        if (func_owner && spec.builtin && spec.builtin->builtin_kind == KN_BUILTIN_META_SYMBOL_NAME &&
-            func_owner->delegate_abi != KN_DELEGATE_ABI_C)
-        {
-            attr_error_at(s, owner_src, owner_line, owner_col, a, "Invalid Attribute",
-                          "SymbolName requires Delegate Function ... By C");
-            continue;
-        }
-
         if (!spec.repeatable)
         {
             for (int j = 0; j < i; j++)
@@ -587,6 +707,22 @@ static void validate_attr_list(Sema *s, AttrList *attrs, uint32_t owner_mask,
                 continue;
             }
 
+            if (spec.builtin->builtin_kind == KN_BUILTIN_META_CAST)
+            {
+                if (a->args.count != 0)
+                    attr_error_at(s, owner_src, owner_line, owner_col, a, "Invalid Attribute",
+                                  "Cast requires no arguments");
+                continue;
+            }
+
+            if (spec.builtin->builtin_kind == KN_BUILTIN_META_OVERLOAD)
+            {
+                if (a->args.count != 0)
+                    attr_error_at(s, owner_src, owner_line, owner_col, a, "Invalid Attribute",
+                                  "Overload requires no arguments");
+                continue;
+            }
+
             if (a->args.count != 1)
             {
                 attr_error_at(s, owner_src, owner_line, owner_col, a, "Invalid Attribute",
@@ -600,7 +736,12 @@ static void validate_attr_list(Sema *s, AttrList *attrs, uint32_t owner_mask,
                 if (spec.builtin->builtin_kind == KN_BUILTIN_META_LINK_NAME)
                     func_owner->extern_symbol = value;
                 else if (spec.builtin->builtin_kind == KN_BUILTIN_META_SYMBOL_NAME)
-                    func_owner->delegate_symbol_name = value;
+                {
+                    if (func_owner->is_delegate && func_owner->delegate_abi == KN_DELEGATE_ABI_C)
+                        func_owner->delegate_symbol_name = value;
+                    else
+                        func_owner->symbol_name = value;
+                }
             }
             continue;
         }
@@ -627,12 +768,26 @@ static void validate_func_attrs(Sema *s, Func *f)
 {
     if (!s || !f)
         return;
+    int has_symbol_name = attr_list_has_named(&f->attrs, "SymbolName") ? 1 : 0;
     f->extern_symbol = 0;
     f->delegate_symbol_name = 0;
+    f->symbol_name = 0;
+    f->is_overload = 0;
     validate_attr_list(s, &f->attrs,
                        f->is_extern ? KN_META_TARGET_EXTERN_FUNCTION :
                        (f->is_delegate ? KN_META_TARGET_DELEGATE_FUNCTION : KN_META_TARGET_FUNCTION),
                        f->src, f->line, f->col, f);
+    f->is_overload = attr_list_has_named(&f->attrs, "Overload") ? 1 : 0;
+    if (!f->symbol_name)
+        f->symbol_name = attr_list_string_value(&f->attrs, "SymbolName");
+    if (has_symbol_name && !f->is_overload && !(f->is_delegate && f->delegate_abi == KN_DELEGATE_ABI_C))
+        sema_error(s, f->line, f->col, 1, "Invalid Attribute", "SymbolName is only valid on overloads or Delegate ... By C");
+    if (f->is_overload && (!f->symbol_name || !f->symbol_name[0]))
+        sema_error(s, f->line, f->col, 1, "Invalid Overload", "Overloaded function requires SymbolName");
+    if (f->is_delegate && f->is_overload)
+        sema_error(s, f->line, f->col, 1, "Invalid Overload", "Delegate function cannot use Overload");
+    if (f->is_overload && f->type_param_count > 0)
+        sema_error(s, f->line, f->col, 1, "Invalid Overload", "Generic function cannot use Overload yet");
 }
 
 static void validate_interface_decl(Sema *s, InterfaceDecl *i)
@@ -649,17 +804,37 @@ static void validate_interface_decl(Sema *s, InterfaceDecl *i)
     for (int a = 0; a < i->methods.count; a++)
     {
         Method *m = &i->methods.items[a];
+        int has_symbol_name = attr_list_has_named(&m->attrs, "SymbolName") ? 1 : 0;
         validate_attr_list(s, &m->attrs, KN_META_TARGET_METHOD,
                            m->src ? m->src : i->src, m->line, m->col, 0);
+        m->is_overload = attr_list_has_named(&m->attrs, "Overload") ? 1 : 0;
+        m->symbol_name = attr_list_string_value(&m->attrs, "SymbolName");
         validate_type_ref(s, &m->ret_type, m->line, m->col, 1);
         validate_param_defaults(s, &m->params, m->line, m->col);
         if (!m->is_abstract)
             sema_error(s, m->line, m->col, 1, "Invalid Interface", "Interface methods must be abstract");
+        if (has_symbol_name && !m->is_overload)
+            sema_error(s, m->line, m->col, 1, "Invalid Attribute", "SymbolName is only valid on overloads");
+        if (m->is_overload && (!m->symbol_name || !m->symbol_name[0]))
+            sema_error(s, m->line, m->col, 1, "Invalid Overload", "Overloaded method requires SymbolName");
         for (int b = 0; b < a; b++)
         {
             Method *prev = &i->methods.items[b];
-            if (kn_strcmp(prev->name, m->name) == 0)
+            if (!methods_share_visible_name(prev, m))
+                continue;
+            if (!methods_can_overload(prev, m))
                 sema_error(s, m->line, m->col, 1, "Duplicate Method", "Interface method already defined");
+            else
+            {
+                if (params_equal(&prev->params, &m->params))
+                    sema_error(s, m->line, m->col, 1, "Duplicate Method", "Overload with the same parameter types already defined");
+                {
+                    const char *prev_symbol = method_symbol_identity(prev);
+                    const char *cur_symbol = method_symbol_identity(m);
+                    if (prev_symbol && cur_symbol && kn_strcmp(prev_symbol, cur_symbol) == 0)
+                        sema_error(s, m->line, m->col, 1, "Duplicate Method", "Overloaded methods must use unique SymbolName values");
+                }
+            }
         }
     }
     s->current_class = prev_class;
@@ -826,10 +1001,41 @@ static void validate_class_decl(Sema *s, ClassDecl *c)
     for (int i = 0; i < c->methods.count; i++)
     {
         Method *m = &c->methods.items[i];
+        int has_symbol_name = attr_list_has_named(&m->attrs, "SymbolName") ? 1 : 0;
         validate_attr_list(s, &m->attrs, KN_META_TARGET_METHOD,
                            m->src ? m->src : c->src, m->line, m->col, 0);
+        m->is_overload = attr_list_has_named(&m->attrs, "Overload") ? 1 : 0;
+        m->symbol_name = attr_list_string_value(&m->attrs, "SymbolName");
         validate_type_ref(s, &m->ret_type, m->line, m->col, 1);
         validate_param_defaults(s, &m->params, m->line, m->col);
+        int is_cast_method = method_has_attr(m, "Cast");
+
+        if (is_cast_method)
+        {
+            Type owner_type = type_class(class_qname(c));
+
+            if (m->is_constructor)
+                sema_error(s, m->line, m->col, 1, "Invalid Cast Method", "Cast method cannot be a constructor");
+            if (!m->is_static)
+                sema_error(s, m->line, m->col, 1, "Invalid Cast Method", "Cast method must be static");
+            if (m->access != ACC_PUBLIC)
+                sema_error(s, m->line, m->col, 1, "Invalid Cast Method", "Cast method must be public");
+            if (m->is_async)
+                sema_error(s, m->line, m->col, 1, "Invalid Cast Method", "Cast method cannot be async");
+            if (m->is_virtual || m->is_override || m->is_abstract || m->is_sealed)
+                sema_error(s, m->line, m->col, 1, "Invalid Cast Method", "Cast method cannot be virtual/override/abstract/sealed");
+            if (m->params.count != 1)
+                sema_error(s, m->line, m->col, 1, "Invalid Cast Method", "Cast method must declare exactly one parameter");
+            if (!type_equal(m->ret_type, owner_type))
+                sema_error(s, m->line, m->col, 1, "Invalid Cast Method", "Cast method must return its owning class");
+        }
+
+        if (has_symbol_name && !m->is_overload)
+            sema_error(s, m->line, m->col, 1, "Invalid Attribute", "SymbolName is only valid on overloads");
+        if (m->is_overload && (!m->symbol_name || !m->symbol_name[0]))
+            sema_error(s, m->line, m->col, 1, "Invalid Overload", "Overloaded method requires SymbolName");
+        if (m->is_constructor && m->is_overload)
+            sema_error(s, m->line, m->col, 1, "Invalid Overload", "Constructor cannot use Overload");
 
         if (m->is_constructor)
         {
@@ -855,12 +1061,29 @@ static void validate_class_decl(Sema *s, ClassDecl *c)
                 sema_error(s, m->line, m->col, 1, "Invalid Static Class", "Static class methods cannot be virtual/override/abstract/sealed");
         }
 
-        // duplicate method name in same class (no overloads for now)
+        // duplicate method name in same class unless every participant is explicit overload
         for (int j = 0; j < i; j++)
         {
             Method *prev = &c->methods.items[j];
-            if (!prev->is_constructor && prev->is_static == m->is_static && kn_strcmp(prev->name, m->name) == 0)
+            if (prev->is_constructor)
+                continue;
+            if (!methods_share_visible_name(prev, m))
+                continue;
+            if (!methods_can_overload(prev, m))
                 sema_error(s, m->line, m->col, 1, "Duplicate Method", "Method already defined");
+            else
+            {
+                if (params_equal(&prev->params, &m->params))
+                    sema_error(s, m->line, m->col, 1, "Duplicate Method", "Overload with the same parameter types already defined");
+                {
+                    const char *prev_symbol = method_symbol_identity(prev);
+                    const char *cur_symbol = method_symbol_identity(m);
+                    if (prev_symbol && cur_symbol && kn_strcmp(prev_symbol, cur_symbol) == 0)
+                        sema_error(s, m->line, m->col, 1, "Duplicate Method", "Overloaded methods must use unique SymbolName values");
+                }
+                if (is_cast_method && method_has_attr(prev, "Cast") && params_equal(&prev->params, &m->params))
+                    sema_error(s, m->line, m->col, 1, "Duplicate Cast Method", "Cast method with the same parameter types already defined");
+            }
         }
 
         if (m->is_static && (m->is_virtual || m->is_override || m->is_abstract))
@@ -931,6 +1154,43 @@ static void validate_class_decl(Sema *s, ClassDecl *c)
     s->current_is_static = prev_static;
 }
 
+static Method *find_custom_cast_method_for_source(Sema *s, Type target, Type source,
+                                                  const char **owner_out, int *index_out,
+                                                  int *ambiguous_out)
+{
+    if (owner_out) *owner_out = 0;
+    if (index_out) *index_out = -1;
+    if (ambiguous_out) *ambiguous_out = 0;
+    if (!s || target.kind != TY_CLASS || !target.name)
+        return 0;
+
+    ClassDecl *c = find_class(s, target.name);
+    if (!c)
+        return 0;
+
+    Method *best = 0;
+    for (int i = 0; i < c->methods.count; i++)
+    {
+        Method *m = &c->methods.items[i];
+        if (!method_has_attr(m, "Cast"))
+            continue;
+        if (m->params.count != 1)
+            continue;
+        if (!type_assignable(s, m->params.items[0].type, source))
+            continue;
+        if (best)
+        {
+            if (ambiguous_out) *ambiguous_out = 1;
+            return 0;
+        }
+        best = m;
+        if (owner_out) *owner_out = class_qname(c);
+        if (index_out) *index_out = i;
+    }
+
+    return best;
+}
+
 static void append_i64(char *buf, size_t cap, size_t *off, int64_t v)
 {
     char tmp[32];
@@ -981,14 +1241,24 @@ static const char *type_name(Type t)
     }
     else if (t.kind == TY_ARRAY)
     {
-        if ((t.elem == TY_CLASS || t.elem == TY_STRUCT || t.elem == TY_ENUM) && t.name)
-            kn_append(buf, sizeof(buf), &off, t.name);
-        else
-            kn_append(buf, sizeof(buf), &off, base_type_name(t.elem));
+        Type elem = type_immediate_elem(t);
+        const char *elem_name = type_name(elem);
+        kn_append(buf, sizeof(buf), &off, elem_name);
         kn_append(buf, sizeof(buf), &off, "[");
         if (t.array_len >= 0)
             append_i64(buf, sizeof(buf), &off, t.array_len);
         kn_append(buf, sizeof(buf), &off, "]");
+    }
+    else if (t.kind == TY_PACKAGE)
+    {
+        kn_append(buf, sizeof(buf), &off, "<");
+        for (int i = 0; i < t.package_count; i++)
+        {
+            if (i > 0)
+                kn_append(buf, sizeof(buf), &off, ",");
+            kn_append(buf, sizeof(buf), &off, type_name(t.package_elems[i]));
+        }
+        kn_append(buf, sizeof(buf), &off, ">");
     }
     else
     {
@@ -1022,10 +1292,16 @@ static bool type_equal(Type a, Type b)
     if (a.kind != b.kind) return false;
     if (a.kind == TY_ARRAY)
     {
-        if (a.elem != b.elem || a.array_len != b.array_len) return false;
-        if ((a.elem == TY_CLASS || a.elem == TY_STRUCT || a.elem == TY_ENUM) && a.name && b.name)
-            return kn_strcmp(a.name, b.name) == 0;
-        return a.elem == b.elem;
+        if (a.array_len != b.array_len) return false;
+        return type_equal(type_immediate_elem(a), type_immediate_elem(b));
+    }
+    if (a.kind == TY_PACKAGE)
+    {
+        if (a.package_count != b.package_count) return false;
+        for (int i = 0; i < a.package_count; i++)
+            if (!type_equal(a.package_elems[i], b.package_elems[i]))
+                return false;
+        return true;
     }
     if (a.kind == TY_PTR)
     {
@@ -1072,7 +1348,21 @@ static bool type_supported(Type t)
     case TY_PTR:
         return true;
     case TY_ARRAY:
-        return t.elem != TY_VOID && t.elem != TY_UNKNOWN;
+    {
+        Type elem = type_immediate_elem(t);
+        return elem.kind != TY_VOID && elem.kind != TY_UNKNOWN && type_supported(elem);
+    }
+    case TY_PACKAGE:
+        if (t.package_count <= 0)
+            return false;
+        for (int i = 0; i < t.package_count; i++)
+        {
+            if (t.package_elems[i].kind == TY_VOID || t.package_elems[i].kind == TY_UNKNOWN)
+                return false;
+            if (!type_supported(t.package_elems[i]))
+                return false;
+        }
+        return true;
     default:
         break;
     }
@@ -1419,6 +1709,39 @@ static bool method_sig_equal(const Method *a, const Method *b)
     return params_equal(&a->params, &b->params);
 }
 
+static bool funcs_share_visible_name(const Func *a, const Func *b)
+{
+    if (!a || !b) return false;
+    if (a->unit || b->unit)
+    {
+        if (!a->unit || !b->unit)
+            return false;
+        if (kn_strcmp(a->unit, b->unit) != 0)
+            return false;
+    }
+    return kn_strcmp(a->name, b->name) == 0;
+}
+
+static bool methods_share_visible_name(const Method *a, const Method *b)
+{
+    if (!a || !b) return false;
+    return a->is_static == b->is_static && kn_strcmp(a->name, b->name) == 0;
+}
+
+static bool funcs_can_overload(const Func *a, const Func *b)
+{
+    if (!funcs_share_visible_name(a, b))
+        return false;
+    return a->is_overload && b->is_overload;
+}
+
+static bool methods_can_overload(const Method *a, const Method *b)
+{
+    if (!methods_share_visible_name(a, b))
+        return false;
+    return a->is_overload && b->is_overload;
+}
+
 static VarSym *scope_find(Scope *s, const char *name)
 {
     for (Scope *c = s; c; c = c->parent)
@@ -1434,7 +1757,7 @@ static VarSym *scope_find(Scope *s, const char *name)
 }
 
 static void scope_add_ex(Sema *s, Scope *sc, const char *name, Type type, int is_const,
-                         int line, int col, Expr *origin, int is_param)
+                         int line, int col, Expr *origin, int is_param, const NameList *package_fields)
 {
     if (sc)
     {
@@ -1459,18 +1782,28 @@ static void scope_add_ex(Sema *s, Scope *sc, const char *name, Type type, int is
     v->line = line;
     v->col = col;
     v->src = s ? s->src : 0;
+    if (package_fields)
+        v->package_fields = clone_namelist(package_fields);
+    else
+        kn_memset(&v->package_fields, 0, sizeof(v->package_fields));
     v->next = sc->vars;
     sc->vars = v;
 }
 
 static void scope_add(Sema *s, Scope *sc, const char *name, Type type, int is_const, int line, int col, Expr *origin)
 {
-    scope_add_ex(s, sc, name, type, is_const, line, col, origin, 0);
+    scope_add_ex(s, sc, name, type, is_const, line, col, origin, 0, 0);
+}
+
+static void scope_add_package(Sema *s, Scope *sc, const char *name, Type type, int is_const,
+                              int line, int col, Expr *origin, const NameList *package_fields)
+{
+    scope_add_ex(s, sc, name, type, is_const, line, col, origin, 0, package_fields);
 }
 
 static void scope_add_param(Sema *s, Scope *sc, const char *name, Type type, int line, int col)
 {
-    scope_add_ex(s, sc, name, type, 0, line, col, 0, 1);
+    scope_add_ex(s, sc, name, type, 0, line, col, 0, 1, 0);
 }
 
 static void warn_unused_scope(Sema *s, Scope *sc)
@@ -1721,11 +2054,19 @@ static void append_type_mangle(char *buf, size_t cap, size_t *off, Type t)
         kn_append(buf, cap, off, "arr");
         append_i64_dec(buf, cap, off, t.array_len);
         append_char(buf, cap, off, '_');
-        Type base = type_make(t.elem);
-        base.name = t.name;
+        Type base = type_immediate_elem(t);
         append_type_mangle(buf, cap, off, base);
         return;
     }
+    case TY_PACKAGE:
+        kn_append(buf, cap, off, "pkg");
+        append_i64_dec(buf, cap, off, t.package_count);
+        for (int i = 0; i < t.package_count; i++)
+        {
+            append_char(buf, cap, off, '_');
+            append_type_mangle(buf, cap, off, t.package_elems[i]);
+        }
+        return;
     default:
         kn_append(buf, cap, off, "unknown");
         return;
@@ -1809,16 +2150,26 @@ static Type subst_type(const TypeSubst *subst, Type t)
     }
     if (t.kind == TY_ARRAY && t.elem == TY_CLASS && t.name)
     {
-        int idx = type_param_index(subst->tmpl, t.name);
-        if (idx >= 0 && idx < subst->count)
-        {
-            Type at = subst->types[idx];
-            Type out = type_array(at.kind, t.array_len);
-            out.array_len_expr = t.array_len_expr;
-            if (at.kind == TY_CLASS || at.kind == TY_STRUCT || at.kind == TY_ENUM)
-                out.name = at.name;
-            return out;
-        }
+        Type elem = subst_type(subst, type_immediate_elem(t));
+        Type out = type_array_of(elem, t.array_len);
+        out.array_len_expr = t.array_len_expr;
+        return out;
+    }
+    if (t.kind == TY_ARRAY)
+    {
+        Type elem = subst_type(subst, type_immediate_elem(t));
+        Type out = type_array_of(elem, t.array_len);
+        out.array_len_expr = t.array_len_expr;
+        return out;
+    }
+    if (t.kind == TY_PACKAGE && t.package_count > 0)
+    {
+        Type *items = (Type *)kn_malloc(sizeof(Type) * (size_t)t.package_count);
+        if (!items)
+            return t;
+        for (int i = 0; i < t.package_count; i++)
+            items[i] = subst_type(subst, t.package_elems[i]);
+        return type_package_of(items, t.package_count);
     }
     return t;
 }
@@ -1916,6 +2267,11 @@ static Expr *clone_expr_subst(const Expr *e, const TypeSubst *subst)
     if (!e) return 0;
     Expr *n = new_expr(e->kind, e->line, e->col);
     n->type = subst_type(subst, e->type);
+    n->async_result_type = subst_type(subst, e->async_result_type);
+    n->resolved_call = e->resolved_call;
+    n->resolved_binary = e->resolved_binary; // includes target-width integer_bits
+    n->resolved_binary.lhs_coercion = subst_type(subst, e->resolved_binary.lhs_coercion);
+    n->resolved_binary.rhs_coercion = subst_type(subst, e->resolved_binary.rhs_coercion);
     switch (e->kind)
     {
     case EXPR_INT:
@@ -1979,6 +2335,9 @@ static Expr *clone_expr_subst(const Expr *e, const TypeSubst *subst)
     case EXPR_ARRAY:
         n->v.array.items = clone_exprlist_subst(&e->v.array.items, subst);
         break;
+    case EXPR_PACKAGE:
+        n->v.package.items = clone_exprlist_subst(&e->v.package.items, subst);
+        break;
     case EXPR_DICT:
         n->v.dict.keys = clone_exprlist_subst(&e->v.dict.keys, subst);
         n->v.dict.values = clone_exprlist_subst(&e->v.dict.values, subst);
@@ -2014,6 +2373,7 @@ static Expr *clone_expr_subst(const Expr *e, const TypeSubst *subst)
     case EXPR_INDEX:
         n->v.index.recv = clone_expr_subst(e->v.index.recv, subst);
         n->v.index.index = clone_expr_subst(e->v.index.index, subst);
+        n->v.index.package_index = e->v.index.package_index;
         break;
     case EXPR_THIS:
     case EXPR_BASE:
@@ -2031,6 +2391,8 @@ static Expr *clone_expr_subst(const Expr *e, const TypeSubst *subst)
     case EXPR_CAST:
         n->v.cast.type = subst_type(subst, e->v.cast.type);
         n->v.cast.expr = clone_expr_subst(e->v.cast.expr, subst);
+        n->v.cast.custom_method_index = e->v.cast.custom_method_index;
+        n->v.cast.custom_method_owner = e->v.cast.custom_method_owner;
         break;
     case EXPR_FUNC_REF:
         n->v.func_ref.qname = e->v.func_ref.qname;
@@ -2095,6 +2457,7 @@ static Stmt *clone_stmt_subst(const Stmt *st, const TypeSubst *subst)
         n->v.var.name = st->v.var.name;
         n->v.var.name_line = st->v.var.name_line;
         n->v.var.name_col = st->v.var.name_col;
+        n->v.var.package_fields = clone_namelist(&st->v.var.package_fields);
         n->v.var.init = clone_expr_subst(st->v.var.init, subst);
         n->v.var.is_const = st->v.var.is_const;
         n->v.var.src = st->v.var.src;
@@ -2207,17 +2570,46 @@ static int array_literal_matches_expected(Sema *s, Expr *e, Type expected)
     if (!e || e->kind != EXPR_ARRAY || expected.kind != TY_ARRAY)
         return 0;
 
-    Type elem = type_make(expected.elem);
-    elem.name = expected.name;
+    Type elem = type_immediate_elem(expected);
     for (int i = 0; i < e->v.array.items.count; i++)
     {
         Expr *item = e->v.array.items.items[i];
         if (!item || item->kind == EXPR_DEFAULT)
             continue;
-        if (!type_assignable(s, elem, sema_expr(s, item)))
+        Type it;
+        if (item->kind == EXPR_ARRAY && elem.kind == TY_ARRAY)
+            it = sema_array_literal(s, item, type_immediate_elem(elem), true);
+        else
+            it = sema_expr_with_expected(s, item, elem, "Default literal requires array element type");
+        if (!type_assignable(s, elem, it))
             return 0;
     }
     return 1;
+}
+
+static Type type_unsized_array_shape(Type t)
+{
+    if (t.kind != TY_ARRAY)
+        return t;
+    Type elem = type_unsized_array_shape(type_immediate_elem(t));
+    Type out = type_array_of(elem, -1);
+    return out;
+}
+
+static const char *qualify_text_name(const char *unit, const char *name)
+{
+    if (!name) return 0;
+    if (!unit || !unit[0])
+        return name;
+    size_t ulen = kn_strlen(unit);
+    size_t nlen = kn_strlen(name);
+    char *out = (char *)kn_malloc(ulen + 1 + nlen + 1);
+    if (!out) kn_die("out of memory");
+    kn_memcpy(out, unit, ulen);
+    out[ulen] = '.';
+    kn_memcpy(out + ulen + 1, name, nlen);
+    out[ulen + 1 + nlen] = 0;
+    return out;
 }
 
 static int call_arg_matches_param(Sema *s, Expr *arg, Type arg_type, Type param_type)
@@ -2504,11 +2896,11 @@ static int prepare_call_args(Sema *s, int call_line, int call_col, ExprList *arg
             }
             else
             {
-                ok = 0;
                 if (params)
                     new_items[i]->type = params[i].type;
                 if (emit_errors)
                 {
+                    ok = 0;
                     char detail[256];
                     size_t off = 0;
                     detail[0] = 0;
@@ -2592,6 +2984,124 @@ static int call_args_match_params(Sema *s, int call_line, int call_col, const Ex
     return ok;
 }
 
+static int call_args_shape_match_params(Sema *s, int call_line, int call_col, const ExprList *raw_args,
+                                        const NameList *raw_names, const ParamList *raw_types,
+                                        const ParamList *params)
+{
+    if (!params)
+        return 0;
+
+    ExprList args = clone_exprlist_shallow(raw_args);
+    NameList names = clone_namelist(raw_names);
+    ParamList types = clone_paramlist_shallow(raw_types);
+    const char **param_names = alloc_param_names_from_paramlist(params);
+    int ok = prepare_call_args(s, call_line, call_col, &args, &names, &types,
+                               params->items, params->count, param_names, 0, 0, 0);
+    if (param_names) kn_free((void *)param_names);
+    if (args.items) kn_free(args.items);
+    if (names.items) kn_free((void *)names.items);
+    if (types.items) kn_free(types.items);
+    return ok;
+}
+
+static FuncSym *functable_find_call_match(FuncTable *t, Sema *s, const char *name,
+                                          const ExprList *raw_args, const NameList *raw_names,
+                                          const ParamList *arg_types, const char *unit,
+                                          int require_no_unit, int *ambiguous_out)
+{
+    FuncSym *best = 0;
+    if (ambiguous_out) *ambiguous_out = 0;
+    if (!t || !name) return 0;
+    for (int i = 0; i < t->count; i++)
+    {
+        FuncSym *cand = &t->items[i];
+        Func *f = cand->func;
+        if (!f) continue;
+        if (require_no_unit)
+        {
+            if (f->unit && f->unit[0])
+                continue;
+        }
+        else if (unit)
+        {
+            if (!f->unit || kn_strcmp(f->unit, unit) != 0)
+                continue;
+        }
+        if (kn_strcmp(f->name, name) != 0)
+            continue;
+        if (func_is_generic_template(f))
+        {
+            if (!call_args_shape_match_params(s, 0, 0, raw_args, raw_names, arg_types, &f->params))
+                continue;
+        }
+        else if (!call_args_match_params(s, 0, 0, raw_args, raw_names, arg_types, &f->params))
+            continue;
+        if (best)
+        {
+            if (ambiguous_out) *ambiguous_out = 1;
+            return 0;
+        }
+        best = cand;
+    }
+    return best;
+}
+
+static FuncSym *functable_find_call_by_name_in_unit(FuncTable *t, Sema *s, const char *name,
+                                                    const ExprList *raw_args, const NameList *raw_names,
+                                                    const ParamList *arg_types, const char *unit,
+                                                    int *ambiguous_out)
+{
+    return functable_find_call_match(t, s, name, raw_args, raw_names, arg_types, unit, 0, ambiguous_out);
+}
+
+static FuncSym *functable_find_call_by_name_without_unit(FuncTable *t, Sema *s, const char *name,
+                                                         const ExprList *raw_args, const NameList *raw_names,
+                                                         const ParamList *arg_types, int *ambiguous_out)
+{
+    return functable_find_call_match(t, s, name, raw_args, raw_names, arg_types, 0, 1, ambiguous_out);
+}
+
+static FuncSym *functable_find_visible_qualified_call(FuncTable *t, Sema *s, const char *name,
+                                                      const ExprList *raw_args, const NameList *raw_names,
+                                                      const ParamList *arg_types, int *ambiguous_out)
+{
+    if (ambiguous_out) *ambiguous_out = 0;
+    if (!t || !s || !name || !qname_has_dot(name)) return 0;
+
+    {
+        const char *expanded = expand_alias_qualified_name(s, name);
+        if (expanded != name)
+            return functable_find_visible_qualified_call(t, s, expanded, raw_args, raw_names, arg_types, ambiguous_out);
+    }
+
+    FuncSym *best = 0;
+    for (int i = 0; i < t->count; i++)
+    {
+        FuncSym *cand = &t->items[i];
+        Func *f = cand->func;
+        if (!f || !f->unit)
+            continue;
+        if (!module_accessible_by_namespace(s, f->unit))
+            continue;
+        if (!cand->qname || kn_strcmp(cand->qname, name) != 0)
+            continue;
+        if (func_is_generic_template(f))
+        {
+            if (!call_args_shape_match_params(s, 0, 0, raw_args, raw_names, arg_types, &f->params))
+                continue;
+        }
+        else if (!call_args_match_params(s, 0, 0, raw_args, raw_names, arg_types, &f->params))
+            continue;
+        if (best)
+        {
+            if (ambiguous_out) *ambiguous_out = 1;
+            return 0;
+        }
+        best = cand;
+    }
+    return best;
+}
+
 static Func *instantiate_generic_func(Sema *s, Func *tmpl, Type *type_args, int type_arg_count, int line, int col)
 {
     if (!s || !tmpl)
@@ -2633,7 +3143,11 @@ static Func *instantiate_generic_func(Sema *s, Func *tmpl, Type *type_args, int 
     inst.is_delegate = tmpl->is_delegate;
     inst.delegate_abi = tmpl->delegate_abi;
     inst.delegate_symbol_name = tmpl->delegate_symbol_name;
+    inst.symbol_name = tmpl->symbol_name;
+    inst.is_overload = tmpl->is_overload;
     inst.is_static = tmpl->is_static;
+    inst.is_async = tmpl->is_async;
+    inst.async_result_type = subst_type(&subst, tmpl->async_result_type);
     inst.is_generic_instance = 1;
     inst.generic_template_qname = tmpl->qname ? tmpl->qname : tmpl->name;
     inst.generic_arg_count = type_arg_count;
@@ -2938,9 +3452,13 @@ static Method *find_method_hierarchy(Sema *s, ClassDecl *c, const char *name, co
 
 static Method *find_method_hierarchy_call(Sema *s, ClassDecl *c, const char *name, const ExprList *raw_args,
                                           const NameList *raw_names, const ParamList *arg_types, int is_static,
-                                          ClassDecl **owner_out, int *index_out)
+                                          ClassDecl **owner_out, int *index_out, int *ambiguous_out)
 {
+    if (ambiguous_out) *ambiguous_out = 0;
     ClassDecl *cur = c;
+    Method *best = 0;
+    ClassDecl *best_owner = 0;
+    int best_index = -1;
     while (cur)
     {
         for (int i = 0; i < cur->methods.count; i++)
@@ -2951,14 +3469,29 @@ static Method *find_method_hierarchy_call(Sema *s, ClassDecl *c, const char *nam
             if (kn_strcmp(m->name, name) != 0) continue;
             if (!call_args_match_params(s, 0, 0, raw_args, raw_names, arg_types, &m->params))
                 continue;
-            if (owner_out) *owner_out = cur;
-            if (index_out) *index_out = i;
-            return m;
+            if (best)
+            {
+                bool same_visible = methods_share_visible_name(best, m);
+                bool overload_pair = methods_can_overload(best, m);
+                bool same_owner = best_owner == cur;
+                bool same_sig = method_sig_equal(best, m);
+                if (same_visible && same_owner && (!overload_pair || !same_sig))
+                {
+                    if (ambiguous_out) *ambiguous_out = 1;
+                    return 0;
+                }
+                continue;
+            }
+            best = m;
+            best_owner = cur;
+            best_index = i;
         }
         if (!cur->base) break;
         cur = find_class(s, cur->base);
     }
-    return 0;
+    if (owner_out) *owner_out = best_owner;
+    if (index_out) *index_out = best_index;
+    return best;
 }
 
 static Method *find_method_named_arity_hierarchy(Sema *s, ClassDecl *c, const char *name,
@@ -3134,6 +3667,44 @@ static bool is_block_object_type(Type t)
     return t.kind == TY_CLASS && t.name && kn_strcmp(t.name, "IO.Type.Object.Block") == 0;
 }
 
+static int package_field_alias_index(const NameList *fields, const char *name)
+{
+    if (!fields || !name) return -1;
+    for (int i = 0; i < fields->count; i++)
+        if (fields->items[i] && kn_strcmp(fields->items[i], name) == 0)
+            return i;
+    return -1;
+}
+
+static void validate_package_field_aliases(Sema *s, const NameList *fields, Type package_type, int line, int col)
+{
+    if (!fields || fields->count <= 0)
+        return;
+    if (package_type.kind != TY_PACKAGE)
+    {
+        sema_error(s, line, col, 1, "Invalid Package Fields", "Package field names require a Package value");
+        return;
+    }
+    if (fields->count != package_type.package_count)
+        sema_error(s, line, col, 1, "Package Field Count", "Package field count mismatch");
+    for (int i = 0; i < fields->count; i++)
+    {
+        for (int j = i + 1; j < fields->count; j++)
+        {
+            if (fields->items[i] && fields->items[j] && kn_strcmp(fields->items[i], fields->items[j]) == 0)
+                sema_error(s, line, col, 1, "Duplicate Package Field", "Package field names cannot repeat");
+        }
+    }
+}
+
+static Expr *make_int_literal_expr(int line, int col, int64_t value)
+{
+    Expr *idx = new_expr(EXPR_INT, line, col);
+    idx->v.int_val = value;
+    idx->type = type_make(TY_INT);
+    return idx;
+}
+
 static int block_record_ip(BlockRecordList *records, const char *name)
 {
     if (!records || !name) return -1;
@@ -3198,6 +3769,73 @@ static const char *build_qualified_call_name(Sema *s, Expr *recv, const char *me
     return out;
 }
 
+static Expr *build_qualified_symbol_expr(const char *qname, int line, int col)
+{
+    Expr *expr = 0;
+    const char *part = qname;
+    if (!qname || !qname[0]) return 0;
+
+    while (*part)
+    {
+        const char *end = part;
+        size_t len;
+        char *name;
+        while (*end && *end != '.')
+            end++;
+        len = (size_t)(end - part);
+        name = (char *)kn_malloc(len + 1);
+        if (!name) kn_die("out of memory");
+        kn_memcpy(name, part, len);
+        name[len] = 0;
+
+        if (!expr)
+        {
+            expr = new_expr(EXPR_VAR, line, col);
+            expr->v.var.name = name;
+        }
+        else
+        {
+            Expr *mem = new_expr(EXPR_MEMBER, line, col);
+            mem->v.member.recv = expr;
+            mem->v.member.name = name;
+            mem->v.member.is_static = 0;
+            mem->v.member.static_type = 0;
+            mem->v.member.field_index = -1;
+            mem->v.member.field_owner = 0;
+            mem->v.member.is_enum_const = 0;
+            mem->v.member.enum_value = 0;
+            mem->v.member.enum_type = 0;
+            expr = mem;
+        }
+
+        if (!*end)
+            break;
+        part = end + 1;
+    }
+
+    return expr;
+}
+
+static const char *split_qualified_owner_member(const char *qname, const char **member_out)
+{
+    const char *last = 0;
+    size_t len;
+    char *owner;
+    if (member_out) *member_out = 0;
+    if (!qname) return 0;
+    for (const char *p = qname; *p; p++)
+        if (*p == '.') last = p;
+    if (!last || last == qname || !last[1])
+        return 0;
+    len = (size_t)(last - qname);
+    owner = (char *)kn_malloc(len + 1);
+    if (!owner) kn_die("out of memory");
+    kn_memcpy(owner, qname, len);
+    owner[len] = 0;
+    if (member_out) *member_out = last + 1;
+    return owner;
+}
+
 static EnumDecl *resolve_enum_qual_expr(Sema *s, Expr *e)
 {
     if (!s || !e) return 0;
@@ -3218,17 +3856,29 @@ static bool type_assignable(Sema *s, Type dst, Type src)
     if (type_equal(dst, src)) return true;
     if (dst.kind == TY_ARRAY && src.kind == TY_ARRAY)
     {
-        if (dst.elem != src.elem)
-            return false;
-        if ((dst.elem == TY_CLASS || dst.elem == TY_STRUCT || dst.elem == TY_ENUM) &&
-            (dst.name || src.name) &&
-            (!dst.name || !src.name || kn_strcmp(dst.name, src.name) != 0))
+        Type dst_elem = type_immediate_elem(dst);
+        Type src_elem = type_immediate_elem(src);
+        if (dst_elem.kind == TY_ARRAY || src_elem.kind == TY_ARRAY)
+        {
+            if (!type_assignable(s, dst_elem, src_elem))
+                return false;
+        }
+        else if (!type_equal(dst_elem, src_elem))
             return false;
         if (dst.array_len < 0)
             return true;
         if (src.array_len < 0)
             return false;
         return src.array_len <= dst.array_len;
+    }
+    if (dst.kind == TY_PACKAGE && src.kind == TY_PACKAGE)
+    {
+        if (dst.package_count != src.package_count)
+            return false;
+        for (int i = 0; i < dst.package_count; i++)
+            if (!type_assignable(s, dst.package_elems[i], src.package_elems[i]))
+                return false;
+        return true;
     }
     if (src.kind == TY_NULL)
     {
@@ -3299,6 +3949,24 @@ static const char *builtin_std_module_alias(const char *alias);
 
 static const KnStdFunc *resolve_std_by_local(Sema *s, const char *local)
 {
+    if (s && s->imports && local)
+    {
+        for (int i = 0; i < s->imports->count; i++)
+        {
+            ImportMap *m = &s->imports->items[i];
+            if (m->unit && m->unit[0] && s->current_unit && s->current_unit[0] &&
+                kn_strcmp(m->unit, s->current_unit) != 0)
+                continue;
+            if (m->kind != IMPORT_LOCAL_ALIAS || !m->local || !m->remote) continue;
+            if (kn_strcmp(m->local, local) == 0)
+                return resolve_std_by_qualified_name(s, m->remote);
+        }
+    }
+    if (local && qname_has_dot(local))
+        return resolve_std_by_qualified_name(s, local);
+    const char *expanded = expand_local_symbol_alias(s, local);
+    if (expanded && expanded != local && qname_has_dot(expanded))
+        return resolve_std_by_qualified_name(s, expanded);
     for (int i = 0; i < s->imports->count; i++)
     {
         ImportMap *m = &s->imports->items[i];
@@ -3431,6 +4099,79 @@ static const KnStdFunc *resolve_std_by_qualified_name(Sema *s, const char *qname
 
     kn_free(module);
     return std;
+}
+
+static bool top_level_access_allows_alias(Access access)
+{
+    return access == ACC_PUBLIC || access == ACC_INTERNAL;
+}
+
+static bool alias_target_is_visible(Sema *s, const char *target)
+{
+    const char *member = 0;
+    const char *owner_name = 0;
+    bool visible = false;
+    if (!s || !target || !target[0]) return false;
+
+    if (resolve_std_by_qualified_name(s, target))
+        return true;
+    if (!name_has_dot(target) && resolve_std_by_local(s, target))
+        return true;
+
+    if (name_has_dot(target))
+    {
+        if (functable_find_visible_qualified(&s->funcs, s, target))
+            return true;
+    }
+    else
+    {
+        if (s->current_unit && s->current_unit[0])
+        {
+            if (functable_find_by_name_in_unit(&s->funcs, target, s->current_unit))
+                return true;
+        }
+        else if (functable_find_by_name_without_unit(&s->funcs, target))
+            return true;
+    }
+
+    if (find_visible_class(s, target) || find_visible_interface(s, target) ||
+        find_visible_struct(s, target) || find_visible_enum(s, target))
+        return true;
+
+    owner_name = split_qualified_owner_member(target, &member);
+    if (!owner_name || !member || !member[0])
+        return false;
+
+    {
+        EnumDecl *en = find_visible_enum(s, owner_name);
+        if (en && find_enum_item(en, member))
+            visible = true;
+    }
+
+    if (!visible)
+    {
+        ClassDecl *c = find_visible_class(s, owner_name);
+        if (c)
+        {
+            ClassDecl *field_owner = 0;
+            int field_index = -1;
+            int method_index = -1;
+            Field *f = find_field_hierarchy(s, c, member, &field_owner, &field_index);
+            Method *sm = find_static_method_by_name(c, member, &method_index);
+            ClassDecl *prop_owner = 0;
+            int prop_index = -1;
+            Method *getter = find_property_getter_hierarchy(s, c, member, 1, &prop_owner, &prop_index);
+            if (f && f->is_static && top_level_access_allows_alias(f->access))
+                visible = true;
+            if (sm && top_level_access_allows_alias(sm->access))
+                visible = true;
+            if (getter && top_level_access_allows_alias(getter->access))
+                visible = true;
+        }
+    }
+
+    kn_free((void *)owner_name);
+    return visible;
 }
 
 static const char *func_runtime_symbol_name(const Func *f)
@@ -3943,9 +4684,17 @@ static int sema_try_current_class_method_call(Sema *s, Expr *e, Type *out_type)
 
     ClassDecl *owner = 0;
     int midx = -1;
+    int ambiguous = 0;
     Method *m = find_method_hierarchy_call(s, s->current_class, e->v.call.name,
                                            &e->v.call.args, &e->v.call.arg_names,
-                                           &args, s->current_is_static, &owner, &midx);
+                                           &args, s->current_is_static, &owner, &midx, &ambiguous);
+    if (ambiguous)
+    {
+        sema_error(s, e->line, e->col, 1, "Ambiguous Method", "Multiple overloaded methods match this call");
+        e->type = type_make(TY_UNKNOWN);
+        if (out_type) *out_type = e->type;
+        return 1;
+    }
     if (!m)
     {
         if (!current_class_has_method_named(s, e->v.call.name, s->current_is_static))
@@ -4024,7 +4773,13 @@ static Type sema_array_literal(Sema *s, Expr *e, Type expected_elem, bool has_ex
         }
         else
         {
-            it = sema_expr(s, item);
+            Type contextual = has_expected ? expected_elem : elem;
+            if (item && item->kind == EXPR_ARRAY && contextual.kind == TY_ARRAY)
+                it = sema_array_literal(s, item, type_immediate_elem(contextual), true);
+            else if (contextual.kind != TY_UNKNOWN)
+                it = sema_expr_with_expected(s, item, contextual, "Default literal requires array element type");
+            else
+                it = sema_expr(s, item);
         }
         if (item && item->kind == EXPR_DEFAULT && !has_expected && elem.kind == TY_UNKNOWN)
         {
@@ -4037,7 +4792,11 @@ static Type sema_array_literal(Sema *s, Expr *e, Type expected_elem, bool has_ex
             it = item->type;
         }
         if (elem.kind == TY_UNKNOWN)
+        {
             elem = it;
+            if (!has_expected && elem.kind == TY_ARRAY)
+                elem = type_unsized_array_shape(elem);
+        }
         else if (!type_assignable(s, elem, it))
         {
             sema_error(s, item->line, item->col, 1, "Type Mismatch", type_mismatch_detail(elem, it));
@@ -4058,8 +4817,57 @@ static Type sema_array_literal(Sema *s, Expr *e, Type expected_elem, bool has_ex
     {
         sema_error(s, e->line, e->col, 1, "Default Literal", "Default literal requires array element type");
     }
-    Type out = type_array(elem.kind, (int64_t)count);
-    out.name = elem.name;
+    Type out = type_array_of(elem, (int64_t)count);
+    e->type = out;
+    return out;
+}
+
+static Type sema_package_literal(Sema *s, Expr *e, Type expected, bool has_expected)
+{
+    int count = e->v.package.items.count;
+    Type *items = 0;
+    Type out = type_make(TY_UNKNOWN);
+    if (count <= 0)
+    {
+        sema_error(s, e->line, e->col, 1, "Invalid Package Literal", "Empty Package literal is not supported");
+        e->type = out;
+        return out;
+    }
+    if (has_expected && expected.kind != TY_PACKAGE)
+        has_expected = false;
+    if (has_expected && expected.package_count != count)
+        sema_error(s, e->line, e->col, 1, "Package Element Count", "Package literal element count does not match target type");
+
+    items = (Type *)kn_malloc(sizeof(Type) * (size_t)count);
+    if (!items)
+        kn_die("out of memory");
+    for (int i = 0; i < count; i++)
+    {
+        Expr *item = e->v.package.items.items[i];
+        Type target = (has_expected && i < expected.package_count) ? expected.package_elems[i] : type_make(TY_UNKNOWN);
+        Type it;
+        if (has_expected && i < expected.package_count)
+        {
+            if (item && item->kind == EXPR_DEFAULT)
+                bind_default_literal_type(s, item, target, "Default literal requires Package element type");
+            it = sema_expr_with_expected(s, item, target, "Default literal requires Package element type");
+            if (!type_assignable(s, target, it))
+                sema_error(s, item ? item->line : e->line, item ? item->col : e->col, 1,
+                           "Type Mismatch", type_mismatch_detail(target, it));
+            check_byte_literal_range(s, target, item);
+            items[i] = target;
+        }
+        else
+        {
+            it = sema_expr(s, item);
+            if (it.kind == TY_VOID || it.kind == TY_UNKNOWN)
+                sema_error(s, item ? item->line : e->line, item ? item->col : e->col, 1,
+                           "Invalid Package Element", "Package element type is not valid");
+            items[i] = it;
+        }
+    }
+
+    out = has_expected ? type_clone(expected) : type_package_of(items, count);
     e->type = out;
     return out;
 }
@@ -4096,10 +4904,11 @@ static Type sema_expr_with_expected(Sema *s, Expr *e, Type expected, const char 
     }
     if (e->kind == EXPR_ARRAY && expected.kind == TY_ARRAY)
     {
-        Type elem = type_make(expected.elem);
-        elem.name = expected.name;
+        Type elem = type_immediate_elem(expected);
         return sema_array_literal(s, e, elem, true);
     }
+    if (e->kind == EXPR_PACKAGE && expected.kind == TY_PACKAGE)
+        return sema_package_literal(s, e, expected, true);
     if (e->kind == EXPR_ARRAY && e->v.array.items.count == 0 && type_is_collection_dict(expected))
     {
         e->kind = EXPR_DICT;

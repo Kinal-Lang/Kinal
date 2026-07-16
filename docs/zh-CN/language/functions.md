@@ -256,13 +256,59 @@ Function int Fibonacci(int n)
 
 ## 函数重载
 
-Kinal **不支持**同名函数重载（即同一 Unit 内不能有两个同名函数）。可以通过不同命名或泛型区分功能。
+Kinal 现在支持同一 `Unit` 内的显式函数重载。
+
+规则：
+
+- 参与重载的每个函数都必须写 `[Overload]`。
+- 参与重载的每个函数也必须写 `[SymbolName("...")]`。
+- `SymbolName` 是最终编译出的真实符号名，源码里的调用名仍然是声明时的函数名。
+- 重载之间必须靠参数类型区分。
+- 如果一次调用同时匹配多个重载，编译器会报歧义错误。
+- 目前泛型函数还不能配合 `[Overload]` 使用。
+
+示例：
+
+```kinal
+[Overload]
+[SymbolName("DescribeInt")]
+Static Function string Describe(int value)
+{
+    Return "int";
+}
+
+[Overload]
+[SymbolName("DescribeText")]
+Static Function string Describe(string value)
+{
+    Return "string";
+}
+```
 
 ## 返回值
 
 - `Return 表达式;` — 返回值
 - `Return;` — 在 `void` 函数中提前返回
 - 若函数执行到末尾未 `Return`，编译器会报 "Missing Return" 错误（对非 `void` 函数）
+
+当多个值天然属于一次返回结果，但又不值得声明命名 `struct` 时，函数可以返回 `Object.Package`：
+
+```kinal
+Function <int, string> Status()
+{
+    Return <200, "OK">;
+}
+
+Static Function int Main()
+{
+    Object.Package status<code, message> = Status();
+    IO.Console.PrintLine(status.code);
+    IO.Console.PrintLine(status.message);
+    Return 0;
+}
+```
+
+Package 类型语法、字段别名、索引规则与显式数组物化见 [Package](types.md#package)。
 
 ## 局部函数（Block 内定义）
 

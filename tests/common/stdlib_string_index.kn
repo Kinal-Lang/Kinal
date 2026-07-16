@@ -1,0 +1,11 @@
+Unit Tests.StdlibStringIndex;
+
+Get Console By IO.Console;
+
+Static Function int Main()
+{
+    string text = "kinal";
+    Console.PrintLine(text.Index(0));
+    Console.PrintLine(text.Index(4));
+    Return 0;
+}

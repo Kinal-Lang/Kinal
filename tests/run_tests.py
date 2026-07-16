@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import http.client
 import http.server
 import json
 import os
@@ -15,12 +16,14 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_OUT = ROOT / "out" / "test"
 DEFAULT_MANIFEST = ROOT / "tests" / "manifest.json"
 REQUEST_HTTPS_PORT = 18443
+WEB_GC_ROOTS_PORT = 18084
 REQUEST_HTTPS_CERT_PEM = """-----BEGIN CERTIFICATE-----
 MIIDGjCCAgKgAwIBAgIUWzerGOS0nvJv+eW5KGWmzk6fs2MwDQYJKoZIhvcNAQEL
 BQAwNzELMAkGA1UEBhMCVVMxFDASBgNVBAoMC0tpbmFsIFRlc3RzMRIwEAYDVQQD
@@ -143,6 +146,69 @@ def request_https_fixture() -> object:
             server.shutdown()
             server.server_close()
             thread.join(timeout=2)
+
+
+def run_web_gc_roots_fixture(executable: Path) -> tuple[subprocess.CompletedProcess, list[tuple[int, str]]]:
+    proc = subprocess.Popen(
+        [str(executable)],
+        cwd=str(ROOT),
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        encoding="utf-8",
+        errors="replace",
+    )
+    responses: list[tuple[int, str]] = []
+    fixture_error = ""
+
+    try:
+        deadline = time.monotonic() + 5.0
+        while time.monotonic() < deadline:
+            if proc.poll() is not None:
+                fixture_error = "server exited before opening its listening socket"
+                break
+            try:
+                with socket.create_connection(("127.0.0.1", WEB_GC_ROOTS_PORT), timeout=0.2):
+                    break
+            except OSError:
+                time.sleep(0.02)
+        else:
+            fixture_error = "server did not open its listening socket within 5 seconds"
+
+        if not fixture_error:
+            for _ in range(2):
+                connection = http.client.HTTPConnection("127.0.0.1", WEB_GC_ROOTS_PORT, timeout=5)
+                try:
+                    connection.request("GET", "/ping")
+                    response = connection.getresponse()
+                    body = response.read().decode("utf-8", errors="replace")
+                    responses.append((response.status, body))
+                finally:
+                    connection.close()
+
+        try:
+            stdout, stderr = proc.communicate(timeout=5)
+        except subprocess.TimeoutExpired:
+            fixture_error = fixture_error or "server did not exit within 5 seconds"
+            proc.kill()
+            stdout, stderr = proc.communicate()
+    except Exception as exc:
+        fixture_error = f"fixture request failed: {exc}"
+        if proc.poll() is None:
+            proc.kill()
+        stdout, stderr = proc.communicate()
+
+    if fixture_error:
+        stderr = f"{stderr or ''}\n[web_gc_roots fixture] {fixture_error}\n"
+    return (
+        subprocess.CompletedProcess(
+            proc.args,
+            proc.returncode if not fixture_error else (proc.returncode or 1),
+            stdout,
+            stderr,
+        ),
+        responses,
+    )
 
 
 def find_windows_openssl_runtime() -> list[Path]:
@@ -606,6 +672,21 @@ def run_driver_integration_tests(compiler: Path, out_dir: Path) -> int:
         return 1
     print("[OK] knc_vm_bitwise")
 
+    if run_knc_case("knc_vm_unsigned_ops", "knc_unsigned_ops.kn", "ok\n") != 0:
+        return 1
+    knc_unsigned_src = ROOT / "tests" / "common" / "knc_unsigned_ops.kn"
+    knc_unsigned_nofuse = out_dir / "knc_unsigned_ops_nofuse.knc"
+    run(
+        [str(compiler), "vm", "build", "--no-module-discovery", "--no-superloop", str(knc_unsigned_src), "-o", str(knc_unsigned_nofuse)],
+        cwd=ROOT,
+    )
+    knc_unsigned_nofuse_out = run([str(vm_exe), str(knc_unsigned_nofuse)], cwd=ROOT, capture=True)
+    assert isinstance(knc_unsigned_nofuse_out, subprocess.CompletedProcess)
+    if knc_unsigned_nofuse_out.returncode != 0 or (knc_unsigned_nofuse_out.stdout or "").replace("\r\n", "\n") != "ok\n":
+        print("[FAIL] knc_vm_unsigned_ops_nofuse")
+        return 1
+    print("[OK] knc_vm_unsigned_ops_nofuse")
+
     knc_any_cast_fx = ROOT / "tests" / "common" / "any_cast.kn"
     knc_any_cast = out_dir / "any_cast.knc"
     run([str(compiler), "vm", "build", "--no-module-discovery", str(knc_any_cast_fx), "-o", str(knc_any_cast)], cwd=ROOT)
@@ -852,7 +933,7 @@ def run_driver_integration_tests(compiler: Path, out_dir: Path) -> int:
         or "VM / package quick reference:" not in help_text
         or "Project:" not in help_text
         or "Link:" not in help_text
-        or "--emit <bin|obj|asm|ir>" not in help_text
+        or "--emit <bin|obj|asm|ir|check>" not in help_text
         or "kinal vm run <file.kn|file.knc> [-- program-args...]" not in help_text
         or "kinal pkg build --manifest <file|dir> -o <file.klib>" not in help_text
         or "--project <file|dir>" not in help_text
@@ -1229,6 +1310,107 @@ def run_package_integration_tests(compiler: Path, out_dir: Path) -> int:
         print("[FAIL] package_project_source_runtime")
         return 1
     print("[OK] package_project_source")
+
+    project_modes_reachable_exe = exe_path(out_dir / "driver_project_modes_reachable")
+    project_modes_reachable_proc = run(
+        [
+            str(compiler),
+            "build",
+            "--project",
+            str(ROOT / "tests" / "pkg" / "project_modes"),
+            "-o",
+            str(project_modes_reachable_exe),
+        ],
+        cwd=ROOT,
+        capture=True,
+    )
+    assert isinstance(project_modes_reachable_proc, subprocess.CompletedProcess)
+    if project_modes_reachable_proc.returncode != 0:
+        print("[FAIL] project_modes_reachable_build")
+        print((project_modes_reachable_proc.stdout or "") + (project_modes_reachable_proc.stderr or ""))
+        return 1
+    project_modes_reachable_run = run([str(project_modes_reachable_exe)], cwd=ROOT, capture=True)
+    assert isinstance(project_modes_reachable_run, subprocess.CompletedProcess)
+    if (project_modes_reachable_run.stdout or "").replace("\r\n", "\n") != "entry-shared\nlocal-helper\ngreeter-020\n":
+        print("[FAIL] project_modes_reachable_runtime")
+        return 1
+    print("[OK] project_modes_reachable")
+
+    project_modes_entryunit_exe = exe_path(out_dir / "driver_project_modes_entryunit")
+    project_modes_entryunit_proc = run(
+        [
+            str(compiler),
+            "build",
+            "--project",
+            str(ROOT / "tests" / "pkg" / "project_modes"),
+            "--profile",
+            "entryunit",
+            "-o",
+            str(project_modes_entryunit_exe),
+        ],
+        cwd=ROOT,
+        capture=True,
+    )
+    assert isinstance(project_modes_entryunit_proc, subprocess.CompletedProcess)
+    if project_modes_entryunit_proc.returncode != 0:
+        print("[FAIL] project_modes_entryunit_build")
+        print((project_modes_entryunit_proc.stdout or "") + (project_modes_entryunit_proc.stderr or ""))
+        return 1
+    project_modes_entryunit_run = run([str(project_modes_entryunit_exe)], cwd=ROOT, capture=True)
+    assert isinstance(project_modes_entryunit_run, subprocess.CompletedProcess)
+    if (project_modes_entryunit_run.stdout or "").replace("\r\n", "\n") != "entry-unit\n":
+        print("[FAIL] project_modes_entryunit_runtime")
+        return 1
+    print("[OK] project_modes_entryunit")
+
+    project_modes_fileonly_exe = exe_path(out_dir / "driver_project_modes_fileonly")
+    project_modes_fileonly_proc = run(
+        [
+            str(compiler),
+            "build",
+            "--project",
+            str(ROOT / "tests" / "pkg" / "project_modes"),
+            "--profile",
+            "fileonly",
+            "-o",
+            str(project_modes_fileonly_exe),
+        ],
+        cwd=ROOT,
+        capture=True,
+    )
+    assert isinstance(project_modes_fileonly_proc, subprocess.CompletedProcess)
+    if project_modes_fileonly_proc.returncode != 0:
+        print("[FAIL] project_modes_fileonly_build")
+        print((project_modes_fileonly_proc.stdout or "") + (project_modes_fileonly_proc.stderr or ""))
+        return 1
+    project_modes_fileonly_run = run([str(project_modes_fileonly_exe)], cwd=ROOT, capture=True)
+    assert isinstance(project_modes_fileonly_run, subprocess.CompletedProcess)
+    if (project_modes_fileonly_run.stdout or "").replace("\r\n", "\n") != "file-only:greeter-020\n":
+        print("[FAIL] project_modes_fileonly_runtime")
+        return 1
+    print("[OK] project_modes_fileonly")
+
+    project_modes_all_proc = run(
+        [
+            str(compiler),
+            "build",
+            "--project",
+            str(ROOT / "tests" / "pkg" / "project_modes"),
+            "--profile",
+            "all",
+            "-o",
+            str(exe_path(out_dir / "driver_project_modes_all")),
+        ],
+        cwd=ROOT,
+        capture=True,
+    )
+    assert isinstance(project_modes_all_proc, subprocess.CompletedProcess)
+    project_modes_all_text = ((project_modes_all_proc.stdout or "") + (project_modes_all_proc.stderr or "")).replace("\r\n", "\n")
+    if project_modes_all_proc.returncode == 0 or "AllBroken.kn" not in project_modes_all_text:
+        print("[FAIL] project_modes_all_sources")
+        print(project_modes_all_text)
+        return 1
+    print("[OK] project_modes_all_sources")
 
     klib_path = out_dir / "Acme.Greeter.klib"
     klib_pack_proc = run(
@@ -1747,12 +1929,28 @@ def main() -> int:
         if case.get("needs_openssl_runtime", False):
             copy_windows_openssl_runtime(out_dir)
 
-        runtime_context = contextlib.nullcontext()
-        if case.get("https_fixture") == "request_echo":
-            runtime_context = request_https_fixture()
+        fixture_responses: list[tuple[int, str]] | None = None
+        if case.get("runtime_fixture") == "web_gc_roots":
+            output, fixture_responses = run_web_gc_roots_fixture(out_exe)
+        else:
+            runtime_context = contextlib.nullcontext()
+            if case.get("https_fixture") == "request_echo":
+                runtime_context = request_https_fixture()
 
-        with runtime_context:
-            output = run([str(out_exe)], cwd=ROOT, capture=True)
+            with runtime_context:
+                stdin_text = case.get("stdin")
+                if stdin_text is None:
+                    output = run([str(out_exe)], cwd=ROOT, capture=True)
+                else:
+                    output = subprocess.run(
+                        [str(out_exe)],
+                        cwd=str(ROOT),
+                        text=True,
+                        input=str(stdin_text),
+                        capture_output=True,
+                        encoding="utf-8",
+                        errors="replace",
+                    )
         assert isinstance(output, subprocess.CompletedProcess)
         out_text = (output.stdout or "").replace("\r\n", "\n")
 
@@ -1762,6 +1960,14 @@ def main() -> int:
             print(repr(expected_rc))
             print("Got:")
             print(repr(output.returncode))
+            if output.stderr:
+                print(output.stderr)
+            return 1
+
+        if fixture_responses is not None and fixture_responses != [(200, "ok"), (200, "ok")]:
+            print(f"[FAIL] {name}")
+            print("Expected two HTTP 200 'ok' responses, got:")
+            print(repr(fixture_responses))
             return 1
 
         if not matches_expected_runtime_output(out_text, expected):

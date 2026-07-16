@@ -23,6 +23,12 @@ void kn_append(char *buf, size_t cap, size_t *off, const char *s);
 // When enabled, kn_malloc allocates from a bump arena, and kn_free becomes a no-op.
 // Use begin/end to scope allocations and avoid unbounded growth in long-running processes.
 // ----------------------
+typedef struct KnTempArena KnTempArena;
+
+KnTempArena *kn_temp_arena_create(void);
+void kn_temp_arena_destroy(KnTempArena *arena);
+KnTempArena *kn_temp_arena_current(void);
+KnTempArena *kn_temp_arena_set_current(KnTempArena *arena);
 void kn_temp_arena_begin(void);
 void kn_temp_arena_end(void);
 

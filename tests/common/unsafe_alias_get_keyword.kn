@@ -1,0 +1,10 @@
+Unsafe Alias Take By Get;
+
+Take Console By IO.Console;
+Take Println By IO.Console.PrintLine;
+
+Static Function int Main()
+{
+    Println("get");
+    Return 0;
+}

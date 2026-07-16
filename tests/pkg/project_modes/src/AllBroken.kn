@@ -1,0 +1,6 @@
+Unit Tests.ProjectModes.AllBroken;
+
+Static Function int Nope(
+{
+    Return 0;
+}

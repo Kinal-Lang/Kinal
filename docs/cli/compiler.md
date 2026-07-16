@@ -107,6 +107,13 @@ kinal build [options] <file.kn> [file2.kn ...]
 | `obj` | Generate an object file (`.o` / `.obj`) |
 | `asm` | Generate assembly code |
 | `ir` | Generate LLVM IR (`.ll`) |
+| `check` | Stop after semantic analysis and write a deterministic `.kcheck` summary; no backend or linker is invoked |
+
+`check` is intended for fast editor/CI validation and for stage0/stage1
+differential tests. The summary format starts with `format=kinal-sema-v1` and
+records target properties plus top-level declaration counts. Successful checks
+also include `hir_format=kinal-call-hir-v1`, typed-expression counts, and the
+resolved call-target counts shared by the Native and KNC backends.
 
 ### Target Platform
 

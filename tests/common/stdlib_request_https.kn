@@ -9,6 +9,7 @@ Static Function int Main()
     getResponse.EnsureSuccess();
     Console.PrintLine(getResponse.StatusCode);
     Console.PrintLine(getResponse.BodyText);
+    Console.PrintLine(getResponse.ContentType != "");
 
     IO.Request.Response postResponse = IO.Request.Post(
         "https://127.0.0.1:18443/echo",
@@ -19,5 +20,6 @@ Static Function int Main()
     postResponse.EnsureSuccess();
     Console.PrintLine(postResponse.StatusCode);
     Console.PrintLine(postResponse.BodyText);
+    Console.PrintLine(postResponse.Headers.Count() >= 1);
     Return 0;
 }

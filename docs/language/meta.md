@@ -109,7 +109,8 @@ Kinal provides a set of standard library built-in Meta attributes (use directly 
 | `[Example(code)]` | `string code` | Example usage code |
 | `[Experimental(message)]` | `string message` | Marks as experimental |
 | `[LinkName(name)]` | `string name` | Symbol name at link time (used with `Extern` functions) |
-| `[SymbolName(name)]` | `string name` | Symbol name (used with `Delegate` functions) |
+| `[SymbolName(name)]` | `string name` | Symbol name (used with `Delegate ... By C` or explicit overloads) |
+| `[Overload]` | none | Marks a function or method as part of an explicit overload set |
 | `[LinkLib(lib)]` | `string lib` | Automatically link the specified library |
 
 ### Example: Built-in Attributes

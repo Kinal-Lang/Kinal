@@ -109,7 +109,8 @@ Kinal 提供了一組标准库内置的 Meta 属性（无需定义，直接使�
 | `[Example(code)]` | `string code` | 使用示例代码 |
 | `[Experimental(message)]` | `string message` | 标记为实验性 |
 | `[LinkName(name)]` | `string name` | 链接时的符号名（用于 `Extern` 函数） |
-| `[SymbolName(name)]` | `string name` | 符号名（用于 `Delegate` 函数） |
+| `[SymbolName(name)]` | `string name` | 符号名（用于 `Delegate ... By C` 或显式重载） |
+| `[Overload]` | 无 | 标记函数或方法属于一个显式重载组 |
 | `[LinkLib(lib)]` | `string lib` | 自动链接指定库 |
 
 ### 示例：内置属性

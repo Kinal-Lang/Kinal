@@ -44,6 +44,9 @@ void __kn_gc_collect(void);
 
 static KnGcBlock *g_gc_blocks = 0;
 static KN_TLS KnGcFrame *g_gc_frame = 0;
+static KnGcRoot *g_gc_global_roots = 0;
+static int g_gc_global_root_count = 0;
+static int g_gc_global_root_cap = 0;
 static uint64_t g_gc_bytes = 0;
 static uint64_t g_gc_threshold = 8ULL * 1024ULL * 1024ULL;
 static int g_gc_collecting = 0;
@@ -3345,6 +3348,33 @@ void __kn_gc_add_root(KnGcFrame *f, void *addr, uint64_t size)
     f->count++;
 }
 
+void __kn_gc_add_global_root(void *addr, uint64_t size)
+{
+    if (!addr || size == 0) return;
+    rt_spin_lock(&g_gc_lock);
+    if (g_gc_global_root_count + 1 > g_gc_global_root_cap)
+    {
+        int new_cap = g_gc_global_root_cap ? g_gc_global_root_cap * 2 : 16;
+        KnGcRoot *next = (KnGcRoot *)rt_alloc(sizeof(KnGcRoot) * (size_t)new_cap);
+        if (!next)
+        {
+            rt_spin_unlock(&g_gc_lock);
+            return;
+        }
+        if (g_gc_global_roots && g_gc_global_root_count > 0)
+        {
+            rt_memcpy(next, g_gc_global_roots, sizeof(KnGcRoot) * (size_t)g_gc_global_root_count);
+            rt_free(g_gc_global_roots);
+        }
+        g_gc_global_roots = next;
+        g_gc_global_root_cap = new_cap;
+    }
+    g_gc_global_roots[g_gc_global_root_count].addr = addr;
+    g_gc_global_roots[g_gc_global_root_count].size = size;
+    g_gc_global_root_count++;
+    rt_spin_unlock(&g_gc_lock);
+}
+
 void __kn_gc_pop_frame(KnGcFrame *f)
 {
     if (!f) return;
@@ -3456,6 +3486,9 @@ void __kn_gc_collect(void)
         for (int i = 0; i < f->count; i++)
             gc_scan_region(f->roots[i].addr, f->roots[i].size, stack, &sp, block_count);
     }
+
+    for (int i = 0; i < g_gc_global_root_count; i++)
+        gc_scan_region(g_gc_global_roots[i].addr, g_gc_global_roots[i].size, stack, &sp, block_count);
 
     // Pending/last exception objects live in runtime globals, not stack frames.
     // Keep them alive so uncaught exceptions do not become dangling pointers

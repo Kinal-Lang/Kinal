@@ -19,6 +19,27 @@ Extern Function void  free(void* ptr)   By C;
 | `By C` | C 调用约定（`cdecl`）— 默认 |
 | `By System` | 系统调用约定（Windows 上为 `stdcall`） |
 
+### C ABI 标量映射
+
+`By C`、`By System` 和 `Delegate ... By C` 使用独立的边界 ABI。Kinal 内部
+表示保持不变，参数和返回值在调用边界完成封送。
+
+| Kinal 类型 | C ABI 表示 |
+|------------|------------|
+| `bool` | 32 位 C 真假值 / Win32 `BOOL`；零为假，非零为真 |
+| `int` | 32 位有符号 C `int` |
+| `i8`…`i64`、`u8`…`u64` | 对应的固定宽度整数 |
+| `isize`、`usize` | 目标指针宽度的有符号/无符号整数 |
+| `f32`、`f64`、`float` | C `float`、C `double`、C `double` |
+| `string` | 以零结尾的 `const char*` |
+| `T*` | C 指针 |
+
+Kinal `int` 在语言内部仍是 64 位值。传给 C 时截断为 32 位 C `int`，C
+`int` 返回值再符号扩展为 Kinal `int`。外部声明并非真正的 C `int` 时，
+应优先使用固定宽度类型。FFI v1 不支持数组、类、Package 和结构体按值
+传递，应改用指针。C `_Bool`、C `long`、可变参数以及平台相关聚合 ABI
+若与上表不同，应通过显式 C 包装层接入。
+
 ```kinal
 Extern Function int MessageBoxA(byte* hWnd, string text, string caption, int type) By System;
 ```
@@ -48,16 +69,16 @@ Extern Function int sqlite3_open(string filename, byte** db) By C;
 `Extern` 函数调用需要在 `Trusted` 或 `Unsafe` 上下文中：
 
 ```kinal
-Extern Function int __kn_time_tick() By C;
+Extern Function u64 __kn_time_tick() By C;
 
-Trusted Function int GetTick()
+Trusted Function u64 GetTick()
 {
     Return __kn_time_tick();   // 在 Trusted 函数中调用 Extern
 }
 
 Safe Function void Demo()
 {
-    int t = GetTick();  // Safe 函数可以调用 Trusted
+    u64 t = GetTick();  // Safe 函数可以调用 Trusted
 }
 ```
 
@@ -66,7 +87,7 @@ Safe Function void Demo()
 ```kinal
 Unsafe Function void DirectCall()
 {
-    int t = __kn_time_tick();  // 直接调用
+    u64 t = __kn_time_tick();  // 直接调用
 }
 ```
 
@@ -194,9 +215,9 @@ Unsafe Function void GetFuncPtr()
 Kinal 的 `string` 内部是以 null 结尾的字节序列，可以直接传给期望 `const char*` 的 C 函数：
 
 ```kinal
-Extern Function int strlen(string s) By C;
+Extern Function usize strlen(string s) By C;
 
-Trusted Function int GetLen(string s)
+Trusted Function usize GetLen(string s)
 {
     Return strlen(s);
 }

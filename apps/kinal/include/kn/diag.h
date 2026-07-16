@@ -30,6 +30,15 @@ typedef struct
 
 typedef void (*KnDiagSink)(const KnDiagEvent *ev, void *user_data);
 
+// Diagnostic state belongs to a compile session.  The legacy kn_diag_* entry
+// points below operate on the context active on the current thread.
+typedef struct KnDiagContext KnDiagContext;
+
+KnDiagContext *kn_diag_context_create(void);
+void kn_diag_context_destroy(KnDiagContext *context);
+KnDiagContext *kn_diag_context_current(void);
+KnDiagContext *kn_diag_context_set_current(KnDiagContext *context);
+
 typedef enum
 {
     KN_COLOR_AUTO = 0,

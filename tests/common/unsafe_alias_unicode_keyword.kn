@@ -1,0 +1,11 @@
+Unsafe Alias 真 By true;
+Unsafe Alias 返回 By Return;
+
+Get IO.Console;
+
+Static Function int Main()
+{
+    If (真)
+        IO.Console.PrintLine("unicode");
+    返回 0;
+}

@@ -1,0 +1,41 @@
+Unit Tests.StdlibTypeComplete;
+
+Get Console By IO.Console;
+Get IO.Type;
+
+Trusted Static Function int Main()
+{
+    any number = 65;
+    any truth = true;
+    any text = "42";
+
+    Console.PrintLine(IO.Type.bool(truth));
+    Console.PrintLine(IO.Type.byte(number) == [byte](65));
+    Console.PrintLine(IO.Type.char(number) == 'A');
+    Console.PrintLine(IO.Type.int(number) == 65);
+    Console.PrintLine(IO.Type.float(number) == [float](65));
+    Console.PrintLine(IO.Type.f32(number) == [f32](65));
+    Console.PrintLine(IO.Type.f64(number) == [f64](65));
+    Console.PrintLine(IO.Type.i8(number) == [i8](65));
+    Console.PrintLine(IO.Type.i16(number) == [i16](65));
+    Console.PrintLine(IO.Type.i32(number) == [i32](65));
+    Console.PrintLine(IO.Type.i64(number) == [i64](65));
+    Console.PrintLine(IO.Type.u8(number) == [u8](65));
+    Console.PrintLine(IO.Type.u16(number) == [u16](65));
+    Console.PrintLine(IO.Type.u32(number) == [u32](65));
+    Console.PrintLine(IO.Type.u64(number) == [u64](65));
+    Console.PrintLine(IO.Type.isize(number) == [isize](65));
+    Console.PrintLine(IO.Type.usize(number) == [usize](65));
+    Console.PrintLine(IO.Type.string(text) == "42");
+
+    any boxed = IO.Type.any(number);
+    Console.PrintLine(boxed.IsInt());
+
+    dict values = dict.Create();
+    values.Set("answer", 42);
+    list items = list.Create();
+    items.Add("kinal");
+    Console.PrintLine(IO.Type.dict(values).Count() == 1);
+    Console.PrintLine(IO.Type.list(items).Count() == 1);
+    Return 0;
+}

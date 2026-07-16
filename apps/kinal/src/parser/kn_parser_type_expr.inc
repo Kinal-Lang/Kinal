@@ -3,7 +3,47 @@
 static Type parse_type(Parser *p)
 {
     Type t = type_make(TY_UNKNOWN);
-    if (is_type_tok(cur(p)->type))
+    if (match(p, TOK_LT))
+    {
+        TypeList elems;
+        kn_memset(&elems, 0, sizeof(elems));
+        if (match(p, TOK_GT))
+        {
+            kn_diag_report(p->src, KN_STAGE_PARSER, cur(p)->line, cur(p)->col, 1,
+                           "Invalid Package Type", "Empty Package type is not supported", "<>");
+            return t;
+        }
+        for (;;)
+        {
+            Type item = parse_type(p);
+            int repeat = 1;
+            if (item.kind == TY_UNKNOWN)
+                kn_diag_report(p->src, KN_STAGE_PARSER, cur(p)->line, cur(p)->col, 1,
+                               "Invalid Package Type", "Expected a Package element type", tok_got(p));
+            if (match(p, TOK_LPAREN))
+            {
+                Token *num = cur(p);
+                expect(p, TOK_NUMBER, "Expected Number", "Package type repeat requires a positive integer");
+                repeat = (int)parse_int_lit(num);
+                if (repeat <= 0)
+                {
+                    kn_diag_report(p->src, KN_STAGE_PARSER, num->line, num->col, (int)(num->length ? num->length : 1),
+                                   "Invalid Package Repeat", "Package type repeat must be greater than zero", tok_text(num));
+                    repeat = 1;
+                }
+                expect(p, TOK_RPAREN, "Expected ')'", "Missing ')' after Package type repeat");
+            }
+            for (int i = 0; i < repeat; i++)
+                typelist_push(&elems, item);
+            if (match(p, TOK_COMMA))
+                continue;
+            expect(p, TOK_GT, "Expected '>'", "Missing '>' after Package type");
+            break;
+        }
+        if (elems.count > 0)
+            t = type_package_of(elems.items, elems.count);
+    }
+    else if (is_type_tok(cur(p)->type))
     {
         TokenType tt = cur(p)->type;
         p->pos++;
@@ -38,11 +78,18 @@ static Type parse_type(Parser *p)
     {
         const char *raw_name = parse_qualified_type_name(p);
         const char *qname = normalize_type_alias(raw_name);
-        TypeKind k = qualified_builtin_kind(qname);
-        if (k != TY_UNKNOWN)
-            t = type_make(k);
+        if (qname && kn_strcmp(qname, "IO.Type.Object.Package") == 0)
+        {
+            t = type_make(TY_PACKAGE);
+        }
         else
+        {
+            TypeKind k = qualified_builtin_kind(qname);
+            if (k != TY_UNKNOWN)
+            t = type_make(k);
+            else
             t = type_class(qname);
+        }
     }
 
     // pointer declarator (multi-level)
@@ -61,7 +108,7 @@ static Type parse_type(Parser *p)
         }
     }
 
-    if (t.kind != TY_UNKNOWN && match(p, TOK_LBRACKET))
+    while (t.kind != TY_UNKNOWN && match(p, TOK_LBRACKET))
     {
         int64_t len = -1;
         Expr *len_expr = parse_array_len_suffix(p, &len);
@@ -93,6 +140,135 @@ static bool type_name_segment_tok(TokenType t)
            t == TOK_RECORD || t == TOK_JUMP;
 }
 
+static bool scan_type_at(Parser *p, int *off_io);
+
+static bool scan_array_suffixes(Parser *p, int *off_io)
+{
+    int off;
+    if (!p || !off_io) return false;
+    off = *off_io;
+    while (peek(p, off)->type == TOK_LBRACKET)
+    {
+        int depth = 0;
+        off++;
+        while (peek(p, off)->type != TOK_EOF)
+        {
+            TokenType tt = peek(p, off)->type;
+            if (tt == TOK_LBRACKET || tt == TOK_LPAREN)
+            {
+                depth++;
+                off++;
+                continue;
+            }
+            if (tt == TOK_RPAREN)
+            {
+                if (depth <= 0)
+                    return false;
+                depth--;
+                off++;
+                continue;
+            }
+            if (tt == TOK_RBRACKET)
+            {
+                if (depth <= 0)
+                {
+                    off++;
+                    break;
+                }
+                depth--;
+                off++;
+                continue;
+            }
+            off++;
+        }
+        if (peek(p, off - 1)->type != TOK_RBRACKET)
+            return false;
+    }
+    *off_io = off;
+    return true;
+}
+
+static bool scan_ordinary_type_at(Parser *p, int *off_io)
+{
+    int off;
+    TokenType tt;
+    if (!p || !off_io) return false;
+    off = *off_io;
+    tt = peek(p, off)->type;
+    if (!(type_name_segment_tok(tt)))
+        return false;
+    off++;
+    while (peek(p, off)->type == TOK_DOT)
+    {
+        off++;
+        if (!type_name_segment_tok(peek(p, off)->type))
+            return false;
+        off++;
+    }
+    while (peek(p, off)->type == TOK_STAR)
+        off++;
+    if (!scan_array_suffixes(p, &off))
+        return false;
+    *off_io = off;
+    return true;
+}
+
+static bool scan_package_type_at(Parser *p, int *off_io)
+{
+    int off;
+    int count = 0;
+    if (!p || !off_io) return false;
+    off = *off_io;
+    if (peek(p, off)->type != TOK_LT)
+        return false;
+    off++;
+    if (peek(p, off)->type == TOK_GT)
+        return false;
+    for (;;)
+    {
+        if (!scan_type_at(p, &off))
+            return false;
+        if (peek(p, off)->type == TOK_LPAREN)
+        {
+            off++;
+            if (peek(p, off)->type != TOK_NUMBER)
+                return false;
+            off++;
+            if (peek(p, off)->type != TOK_RPAREN)
+                return false;
+            off++;
+        }
+        count++;
+        if (peek(p, off)->type == TOK_COMMA)
+        {
+            off++;
+            continue;
+        }
+        if (peek(p, off)->type == TOK_GT)
+        {
+            off++;
+            break;
+        }
+        return false;
+    }
+    if (count <= 0)
+        return false;
+    while (peek(p, off)->type == TOK_STAR)
+        off++;
+    if (!scan_array_suffixes(p, &off))
+        return false;
+    *off_io = off;
+    return true;
+}
+
+static bool scan_type_at(Parser *p, int *off_io)
+{
+    if (!p || !off_io) return false;
+    if (peek(p, *off_io)->type == TOK_LT)
+        return scan_package_type_at(p, off_io);
+    return scan_ordinary_type_at(p, off_io);
+}
+
 static bool looks_like_type_arg_list(Parser *p, int off, int require_call_lparen, int *end_off)
 {
     if (peek(p, off)->type != TOK_LT)
@@ -118,7 +294,7 @@ static bool looks_like_type_arg_list(Parser *p, int off, int require_call_lparen
         while (peek(p, off)->type == TOK_STAR)
             off++;
 
-        if (peek(p, off)->type == TOK_LBRACKET)
+        while (peek(p, off)->type == TOK_LBRACKET)
         {
             off++;
             if (peek(p, off)->type == TOK_NUMBER)
@@ -412,58 +588,35 @@ static Expr *parse_anon_function_expr(Parser *p, Safety safety)
     return e;
 }
 
+static NameList parse_package_field_alias_list(Parser *p)
+{
+    NameList list;
+    kn_memset(&list, 0, sizeof(list));
+    expect(p, TOK_LT, "Expected '<'", "Missing '<' before Package field names");
+    for (;;)
+    {
+        Token *name_tok = cur(p);
+        expect(p, TOK_ID, "Expected Identifier", "Expected Package field name");
+        namelist_push(&list, tok_text(name_tok));
+        if (match(p, TOK_COMMA))
+            continue;
+        expect(p, TOK_GT, "Expected '>'", "Missing '>' after Package field names");
+        break;
+    }
+    return list;
+}
+
 // Check if current position looks like a type cast: [type](...) 
 static bool looks_like_cast(Parser *p)
 {
     if (cur(p)->type != TOK_LBRACKET) return false;
-    
-    // Peek ahead to check for type pattern: [type]*...]
     int off = 1;
-    Token *peek_t = peek(p, off);
-    
-    // Check for type token
-    if (is_type_tok(peek_t->type))
-    {
-        off++;
-        // Check for pointer depth (*)
-        while (peek(p, off)->type == TOK_STAR)
-            off++;
-        // Should be followed by ]
-        if (peek(p, off)->type == TOK_RBRACKET)
-        {
-            off++;
-            // Should be followed by (
-            if (peek(p, off)->type == TOK_LPAREN)
-                return true;
-        }
-    }
-    // Check for qualified type name
-    else if (type_name_segment_tok(peek_t->type))
-    {
-        off++;
-        // Handle qualified names (Module.Type)
-        while (peek(p, off)->type == TOK_DOT)
-        {
-            off++;
-            if (type_name_segment_tok(peek(p, off)->type))
-                off++;
-            else
-                return false;
-        }
-        // Check for pointer depth
-        while (peek(p, off)->type == TOK_STAR)
-            off++;
-        // Should be followed by ]
-        if (peek(p, off)->type == TOK_RBRACKET)
-        {
-            off++;
-            // Should be followed by (
-            if (peek(p, off)->type == TOK_LPAREN)
-                return true;
-        }
-    }
-    
-    return false;
+    if (!scan_type_at(p, &off))
+        return false;
+    if (peek(p, off)->type != TOK_RBRACKET)
+        return false;
+    off++;
+    return peek(p, off)->type == TOK_LPAREN;
 }
 
 static Expr *parse_cast_expr(Parser *p)
@@ -694,6 +847,7 @@ static Expr *parse_expr_from_slice(Parser *p, const char *text, int len, int lin
     sub.in_block_literal = p->in_block_literal;
     sub.next_anon_func_id = p->next_anon_func_id;
     sub.next_block_id = p->next_block_id;
+    sub.package_literal_depth = p->package_literal_depth;
 
     Expr *expr = parse_expr(&sub);
     if (cur(&sub)->type != TOK_EOF)
@@ -998,6 +1152,29 @@ static Expr *parse_primary(Parser *p)
             }
         }
     }
+    else if (match(p, TOK_LT))
+    {
+        Expr *e = new_expr(EXPR_PACKAGE, t->line, t->col);
+        if (match(p, TOK_GT))
+        {
+            kn_diag_report(p->src, KN_STAGE_PARSER, t->line, t->col, 1,
+                           "Invalid Package Literal", "Empty Package literal is not supported", "<>");
+        }
+        else
+        {
+            p->package_literal_depth++;
+            Expr *first = parse_expr(p);
+            exprlist_push(&e->v.package.items, first);
+            while (match(p, TOK_COMMA))
+            {
+                Expr *item = parse_expr(p);
+                exprlist_push(&e->v.package.items, item);
+            }
+            p->package_literal_depth--;
+            expect(p, TOK_GT, "Expected '>'", "Missing '>' in Package literal");
+        }
+        expr = e;
+    }
     else if (match(p, TOK_NUMBER))
     {
         bool is_float = false;
@@ -1284,6 +1461,8 @@ static Expr *parse_bin_rhs(Parser *p, int prec, Expr *lhs)
 {
     for (;;)
     {
+        if (p->package_literal_depth > 0 && cur(p)->type == TOK_GT)
+            return lhs;
         int tok_prec = precedence(cur(p)->type);
         if (tok_prec < prec) return lhs;
         Token *op = cur(p);

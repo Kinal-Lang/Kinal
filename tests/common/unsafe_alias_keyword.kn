@@ -1,0 +1,11 @@
+Unsafe Alias fn By Function;
+Unsafe Alias yes By true;
+
+Get IO.Console;
+
+Static fn int Main()
+{
+    If (yes)
+        IO.Console.PrintLine("unsafe");
+    Return 0;
+}

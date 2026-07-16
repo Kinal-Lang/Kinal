@@ -1,0 +1,89 @@
+Unit Tests.StdlibJsonComplete;
+
+Get Console By IO.Console;
+Get IO.Error;
+Get IO.Json;
+Get IO.Text;
+
+Class Unsupported
+{
+}
+
+Trusted Static Function int Main()
+{
+    dict data = dict.Create();
+    list items = list.Create();
+    data.Set("name", "kinal");
+    data.Set("count", 7);
+    items.Add(true);
+    items.Add(3.5f);
+
+    Console.PrintLine(IO.Json.IsDict(data));
+    Console.PrintLine(IO.Json.IsList(items));
+    Console.PrintLine(IO.Json.AsDict(data).Count() == 2);
+    Console.PrintLine(IO.Json.AsList(items).Count() == 2);
+
+    IO.Json.Value empty = New IO.Json.Value();
+    IO.Json.Value dictValue = New IO.Json.Value(data);
+    IO.Json.Value listValue = New IO.Json.Value(items);
+    IO.Json.Value textValue = New IO.Json.Value("hello");
+    IO.Json.Value intValue = New IO.Json.Value(42);
+    IO.Json.Value floatValue = New IO.Json.Value(2.5f);
+    IO.Json.Value boolValue = New IO.Json.Value(true);
+    Console.PrintLine(empty.IsNull);
+    Console.PrintLine(dictValue.IsDict && dictValue.Dict.Count() == 2);
+    Console.PrintLine(listValue.IsList && listValue.List.Count() == 2);
+    Console.PrintLine(textValue.Text == "hello");
+    Console.PrintLine(intValue.Int == 42);
+    Console.PrintLine(floatValue.Float > 2.0f);
+    Console.PrintLine(boolValue.Bool);
+    textValue.Raw = "changed";
+    Console.PrintLine(textValue.Text == "changed");
+
+    IO.Json.Object view = New IO.Json.Object();
+    Console.PrintLine(view.Count == 0);
+    view.Data = data;
+    Console.PrintLine(view.Count == 2);
+    Console.PrintLine(view.Keys.Count() == 2);
+    Console.PrintLine(view.Value("name").Text == "kinal");
+    Console.PrintLine(view.ValueOr("missing", "fallback").Text == "fallback");
+    Console.PrintLine(view.Put("stable", true) == view);
+    Console.PrintLine(view.Has("stable"));
+    Console.PrintLine(view.Remove("stable") == view);
+    Console.PrintLine(!view.Has("stable"));
+
+    IO.Json.Object parsedObject = IO.Json.ParseObject("{\"value\":9}");
+    dict parsed = IO.Json.Parse("{\"value\":9}");
+    list parsedList = IO.Json.AsList(IO.Json.ParseValue("[1,2]"));
+    Console.PrintLine(parsedObject.Value("value").Int == 9);
+    Console.PrintLine([int](parsed.Fetch("value")) == 9);
+    Console.PrintLine(parsedList.Count() == 2);
+    Console.PrintLine(IO.Json.Wrap(parsed).Count == 1);
+
+    string pretty = IO.Json.FormatText("{\"a\":1}");
+    string minified = IO.Json.Minify("{ \"a\" : 1 }");
+    string fromValue = IO.Json.FormatValue(data, false);
+    string fromAlias = IO.Json.Format(items, false);
+    Console.PrintLine(IO.Text.Contains(pretty, "\n"));
+    Console.PrintLine(minified == "{\"a\":1}");
+    Console.PrintLine(IO.Text.Contains(fromValue, "\"name\":\"kinal\""));
+    Console.PrintLine(fromAlias == "[true,3.5]");
+
+    bool invalidParse = false;
+    bool invalidDict = false;
+    bool invalidList = false;
+    bool invalidValue = false;
+    Try { IO.Json.ParseValue("{"); }
+    Catch (IO.Error e) { invalidParse = true; }
+    Try { IO.Json.AsDict(items); }
+    Catch (IO.Error e) { invalidDict = true; }
+    Try { IO.Json.AsList(data); }
+    Catch (IO.Error e) { invalidList = true; }
+    Try { IO.Json.FormatValue(New Unsupported(), false); }
+    Catch (IO.Error e) { invalidValue = true; }
+    Console.PrintLine(invalidParse);
+    Console.PrintLine(invalidDict);
+    Console.PrintLine(invalidList);
+    Console.PrintLine(invalidValue);
+    Return 0;
+}

@@ -240,6 +240,30 @@ static void parse_get(Parser *p, ImportList *imports)
     expect(p, TOK_SEMI, "Expected Semicolon", "Missing ';' after Get");
 }
 
+static void parse_alias(Parser *p, ImportList *imports)
+{
+    Token *alias_tok = cur(p);
+    ImportMap m;
+    expect(p, TOK_ALIAS, "Expected Alias", "Expected 'Alias' keyword");
+    if (cur(p)->type != TOK_ID)
+    {
+        expect(p, TOK_ID, "Expected Identifier", "Alias name must be an identifier");
+        return;
+    }
+    m.local = tok_text(cur(p));
+    p->pos++;
+    expect(p, TOK_BY, "Expected By", "Alias requires 'By'");
+    m.remote = parse_qualified_name(p);
+    m.kind = IMPORT_LOCAL_ALIAS;
+    m.module = 0;
+    m.unit = p->unit_name;
+    m.global = 0;
+    m.line = alias_tok->line;
+    m.col = alias_tok->col;
+    importlist_push(imports, m);
+    expect(p, TOK_SEMI, "Expected Semicolon", "Missing ';' after Alias");
+}
+
 static Access parse_access(Parser *p, Access def)
 {
     if (match(p, TOK_PUBLIC)) return ACC_PUBLIC;
@@ -1402,6 +1426,8 @@ static Func parse_func(Parser *p)
     f.is_delegate = is_delegate;
     f.delegate_abi = delegate_abi;
     f.delegate_symbol_name = 0;
+    f.symbol_name = 0;
+    f.is_overload = 0;
     f.is_static = is_static;
     f.is_async = is_async;
     f.async_result_type = ret;
@@ -1463,6 +1489,7 @@ static bool is_top_level_decl_start(TokenType t)
     return t == TOK_ENUM || t == TOK_STRUCT || t == TOK_INTERFACE || t == TOK_CLASS ||
            t == TOK_PUBLIC || t == TOK_PRIVATE || t == TOK_PROTECTED || t == TOK_INTERNAL ||
            t == TOK_STATIC || t == TOK_ABSTRACT || t == TOK_SEALED || t == TOK_CONST || t == TOK_VAR ||
+           t == TOK_LT ||
            is_top_level_func_start(t);
 }
 

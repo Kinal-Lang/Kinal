@@ -1,6 +1,6 @@
 Unit Tests.ErrorFfiSafe;
 
-Extern Function int __kn_time_tick() By C;
+Extern Function u64 __kn_time_tick() By C;
 
 Static Function int Main()
 {

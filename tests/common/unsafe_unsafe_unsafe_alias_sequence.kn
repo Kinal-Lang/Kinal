@@ -1,0 +1,13 @@
+Unsafe Unsafe Unsafe Alias !! By 1;
+Unsafe Unsafe Unsafe Alias ========= By ==;
+
+Get IO.Console;
+
+Static Function int Main()
+{
+    If (!!)
+        IO.Console.PrintLine("bang");
+    If (1 ========= 1)
+        IO.Console.PrintLine("long");
+    Return 0;
+}

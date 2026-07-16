@@ -1,0 +1,90 @@
+Unit Tests.StdlibRequestModel;
+
+Get Console By IO.Console;
+Get IO.Error;
+Get IO.Json;
+Get IO.Request;
+Get IO.Text;
+
+Trusted Static Function int Main()
+{
+    IO.Request.Options options = New IO.Request.Options("http://localhost/test");
+    Console.PrintLine(options.Url == "http://localhost/test");
+    Console.PrintLine(options.Method == IO.Request.Method.GET);
+    Console.PrintLine(options.Body == null);
+    Console.PrintLine(options.ContentType == "text/plain; charset=utf-8");
+    Console.PrintLine(options.TimeoutMs == 10000);
+    Console.PrintLine(options.Headers.Count() == 0);
+
+    Console.PrintLine(options.SetMethod(IO.Request.Method.POST) == options);
+    Console.PrintLine(options.SetBody("hello", "text/custom") == options);
+    Console.PrintLine(options.SetTimeout(250) == options);
+    Console.PrintLine(options.SetHeader("X-Test", "kinal") == options);
+    Console.PrintLine(options.Method == IO.Request.Method.POST);
+    Console.PrintLine(options.Body == "hello");
+    Console.PrintLine(options.ContentType == "text/custom");
+    Console.PrintLine(options.TimeoutMs == 250);
+    Console.PrintLine([string](options.Headers.Fetch("X-Test")) == "kinal");
+    Console.PrintLine(IO.Text.Contains(options.HeaderBlock(), "X-Test: kinal\r\n"));
+    Console.PrintLine(IO.Text.Contains(options.HeaderBlock(), "User-Agent: Kinal.IO.Request/1.0\r\n"));
+    Console.PrintLine(IO.Text.Contains(options.HeaderBlock(), "Content-Type: text/custom\r\n"));
+    Console.PrintLine(options.RemoveHeader("X-Test") == options);
+    Console.PrintLine(!options.Headers.Contains("X-Test"));
+
+    dict body = dict.Create();
+    body.Set("answer", 42);
+    options.BodyDict = body;
+    Console.PrintLine(options.BodyDict.Fetch("answer").Equals(42));
+    Console.PrintLine(options.BodyObject.Value("answer").Int == 42);
+    Console.PrintLine(options.BodyJson.Dict.Fetch("answer").Equals(42));
+    Console.PrintLine(IO.Text.StartsWith(options.ContentType, "application/json"));
+
+    options.BodyObject = New IO.Json.Object(body);
+    Console.PrintLine(options.BodyDict.Count() == 1);
+    options.BodyJson = New IO.Json.Value(body);
+    Console.PrintLine(options.BodyObject.Count == 1);
+    options.Validate();
+
+    dict headers = dict.Create();
+    headers.Set("Content-Type", "application/json");
+    IO.Request.Response response = New IO.Request.Response(201, "Created", "{\"ok\":true}", 11, headers);
+    Console.PrintLine(response.StatusCode == 201);
+    Console.PrintLine(response.StatusText == "Created");
+    Console.PrintLine(response.BodyText == "{\"ok\":true}");
+    Console.PrintLine(response.BodyLength == 11);
+    Console.PrintLine(response.Headers.Count() == 1);
+    Console.PrintLine(response.IsSuccess());
+    Console.PrintLine(response.Header("Content-Type") == "application/json");
+    Console.PrintLine(response.ContentType == "application/json");
+    IO.Json.Value responseJson = response.BodyJson;
+    Console.PrintLine([bool](responseJson.Dict.Fetch("ok")));
+    Console.PrintLine(response.BodyObject.Value("ok").Bool);
+    Console.PrintLine([bool](response.BodyDict.Fetch("ok")));
+    response.EnsureSuccess();
+
+    response.StatusCode = 500;
+    response.StatusText = "Failure";
+    response.BodyText = "{}";
+    response.BodyLength = 2;
+    response.Headers = dict.Create();
+    Console.PrintLine(!response.IsSuccess());
+
+    bool badTimeout = false;
+    bool badHeader = false;
+    bool badUrl = false;
+    bool badStatus = false;
+    Try { options.SetTimeout(0); }
+    Catch (IO.Error e) { badTimeout = true; }
+    Try { options.SetHeader("Bad\nName", "value"); }
+    Catch (IO.Error e) { badHeader = true; }
+    options.Url = "";
+    Try { options.Validate(); }
+    Catch (IO.Error e) { badUrl = true; }
+    Try { response.EnsureSuccess(); }
+    Catch (IO.Error e) { badStatus = true; }
+    Console.PrintLine(badTimeout);
+    Console.PrintLine(badHeader);
+    Console.PrintLine(badUrl);
+    Console.PrintLine(badStatus);
+    Return 0;
+}

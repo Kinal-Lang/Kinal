@@ -31,13 +31,16 @@ typedef enum
     TY_NULL,
     TY_PTR,
     TY_ARRAY,
+    TY_PACKAGE,
     TY_CLASS,
     TY_STRUCT,
     TY_ENUM,
     TY_UNKNOWN
 } TypeKind;
 
-typedef struct
+typedef struct Type Type;
+
+struct Type
 {
     TypeKind kind;
     TypeKind elem;
@@ -45,7 +48,16 @@ typedef struct
     int ptr_depth; // pointer depth for TY_PTR (0 for non-pointers)
     const char *name; // for class/struct/enum types
     struct Expr *array_len_expr; // unresolved constant-length expression from parser
-} Type;
+    Type *sub; // full immediate element type for recursive array types
+    Type *package_elems; // element types for TY_PACKAGE
+    int package_count;
+    int package_cap;
+};
+
+static inline bool type_kind_has_name(TypeKind k)
+{
+    return k == TY_CLASS || k == TY_STRUCT || k == TY_ENUM;
+}
 
 static inline Type type_make(TypeKind k)
 {
@@ -56,6 +68,10 @@ static inline Type type_make(TypeKind k)
     t.array_len_expr = 0;
     t.ptr_depth = 0;
     t.name = 0;
+    t.sub = 0;
+    t.package_elems = 0;
+    t.package_count = 0;
+    t.package_cap = 0;
     return t;
 }
 
@@ -68,6 +84,10 @@ static inline Type type_ptr(TypeKind elem)
     t.array_len_expr = 0;
     t.ptr_depth = 1;
     t.name = 0;
+    t.sub = 0;
+    t.package_elems = 0;
+    t.package_count = 0;
+    t.package_cap = 0;
     return t;
 }
 
@@ -80,7 +100,100 @@ static inline Type type_array(TypeKind elem, int64_t len)
     t.array_len_expr = 0;
     t.ptr_depth = 0;
     t.name = 0;
+    t.sub = 0;
+    t.package_elems = 0;
+    t.package_count = 0;
+    t.package_cap = 0;
     return t;
+}
+
+static inline Type type_clone(Type src)
+{
+    Type out = src;
+    out.sub = 0;
+    if (src.sub)
+    {
+        Type *sub = (Type *)kn_malloc(sizeof(Type));
+        if (sub)
+        {
+            *sub = type_clone(*src.sub);
+            out.sub = sub;
+        }
+    }
+    out.package_elems = 0;
+    out.package_count = 0;
+    out.package_cap = 0;
+    if (src.package_elems && src.package_count > 0)
+    {
+        Type *items = (Type *)kn_malloc(sizeof(Type) * (size_t)src.package_count);
+        if (items)
+        {
+            for (int i = 0; i < src.package_count; i++)
+                items[i] = type_clone(src.package_elems[i]);
+            out.package_elems = items;
+            out.package_count = src.package_count;
+            out.package_cap = src.package_count;
+        }
+    }
+    return out;
+}
+
+static inline Type type_package_of(const Type *items, int count)
+{
+    Type t = type_make(TY_PACKAGE);
+    if (!items || count <= 0)
+        return t;
+    t.package_elems = (Type *)kn_malloc(sizeof(Type) * (size_t)count);
+    if (!t.package_elems)
+        return t;
+    for (int i = 0; i < count; i++)
+        t.package_elems[i] = type_clone(items[i]);
+    t.package_count = count;
+    t.package_cap = count;
+    return t;
+}
+
+static inline bool type_is_package_placeholder(Type t)
+{
+    return t.kind == TY_PACKAGE && t.package_count <= 0;
+}
+
+static inline void type_set_array_elem(Type *ty, Type elem)
+{
+    if (!ty || ty->kind != TY_ARRAY)
+        return;
+    ty->elem = elem.kind;
+    ty->name = elem.name;
+    ty->sub = 0;
+    Type *sub = (Type *)kn_malloc(sizeof(Type));
+    if (!sub)
+        return;
+    *sub = type_clone(elem);
+    ty->sub = sub;
+}
+
+static inline Type type_array_of(Type elem, int64_t len)
+{
+    Type t = type_array(elem.kind, len);
+    t.name = elem.name;
+    type_set_array_elem(&t, elem);
+    return t;
+}
+
+static inline Type type_immediate_elem(Type t)
+{
+    if (t.kind == TY_PTR && t.ptr_depth > 1)
+    {
+        Type e = type_ptr(t.elem);
+        e.ptr_depth = t.ptr_depth - 1;
+        e.name = t.name;
+        return e;
+    }
+    if (t.kind == TY_ARRAY && t.sub)
+        return type_clone(*t.sub);
+    Type e = type_make(t.elem);
+    e.name = t.name;
+    return e;
 }
 
 static inline bool type_is_array(Type t)
@@ -97,6 +210,10 @@ static inline Type type_class(const char *name)
     t.array_len_expr = 0;
     t.ptr_depth = 0;
     t.name = name;
+    t.sub = 0;
+    t.package_elems = 0;
+    t.package_count = 0;
+    t.package_cap = 0;
     return t;
 }
 
@@ -109,6 +226,10 @@ static inline Type type_struct(const char *name)
     t.array_len_expr = 0;
     t.ptr_depth = 0;
     t.name = name;
+    t.sub = 0;
+    t.package_elems = 0;
+    t.package_count = 0;
+    t.package_cap = 0;
     return t;
 }
 
@@ -121,6 +242,10 @@ static inline Type type_enum(const char *name)
     t.array_len_expr = 0;
     t.ptr_depth = 0;
     t.name = name;
+    t.sub = 0;
+    t.package_elems = 0;
+    t.package_count = 0;
+    t.package_cap = 0;
     return t;
 }
 
@@ -154,6 +279,7 @@ typedef enum
     EXPR_BINARY,
     EXPR_UNARY,
     EXPR_ARRAY,
+    EXPR_PACKAGE,
     EXPR_DICT,
     EXPR_ASSIGN,
     EXPR_MEMBER,
@@ -243,6 +369,65 @@ typedef struct
     int cap;
 } AttrList;
 
+// Backend-independent call resolution produced after semantic analysis. This
+// is the first Typed HIR slice: backends consume this record instead of
+// re-interpreting the parser-facing call fields to decide what is being called.
+typedef enum
+{
+    KN_CALL_TARGET_UNRESOLVED = 0,
+    KN_CALL_TARGET_BUILTIN,
+    KN_CALL_TARGET_FUNCTION,
+    KN_CALL_TARGET_DELEGATE_KINAL,
+    KN_CALL_TARGET_DELEGATE_C,
+    KN_CALL_TARGET_STATIC_METHOD,
+    KN_CALL_TARGET_DIRECT_METHOD,
+    KN_CALL_TARGET_VIRTUAL_METHOD,
+    KN_CALL_TARGET_INTERFACE_METHOD
+} KnCallTargetKind;
+
+typedef struct
+{
+    KnCallTargetKind kind;
+    int builtin_id;
+    const char *symbol;
+    const char *owner;
+    int method_index;
+    int has_receiver;
+} KnResolvedCall;
+
+// Backend-independent binary lowering plan produced by semantic analysis.
+// Native and KNC consume this record as their semantic dispatch boundary.
+typedef enum
+{
+    KN_BINARY_LOWER_UNRESOLVED = 0,
+    KN_BINARY_LOWER_NUMERIC_ARITHMETIC,
+    KN_BINARY_LOWER_STRING_CONCAT,
+    KN_BINARY_LOWER_POINTER_ARITHMETIC,
+    KN_BINARY_LOWER_BITWISE,
+    KN_BINARY_LOWER_STRING_EQUALITY,
+    KN_BINARY_LOWER_REFERENCE_EQUALITY,
+    KN_BINARY_LOWER_SCALAR_EQUALITY,
+    KN_BINARY_LOWER_NUMERIC_COMPARISON,
+    KN_BINARY_LOWER_LOGICAL_SHORT_CIRCUIT
+} KnBinaryLoweringKind;
+
+typedef enum
+{
+    KN_BINARY_POINTER_NONE = 0,
+    KN_BINARY_POINTER_LHS,
+    KN_BINARY_POINTER_RHS
+} KnBinaryPointerSide;
+
+typedef struct
+{
+    KnBinaryLoweringKind kind;
+    Type lhs_coercion;
+    Type rhs_coercion;
+    KnBinaryPointerSide pointer_side;
+    int is_unsigned;
+    int integer_bits;
+} KnResolvedBinary;
+
 struct Expr
 {
     ExprKind kind;
@@ -250,6 +435,8 @@ struct Expr
     int col;
     Type type; // resolved by sema
     Type async_result_type; // hidden awaited result type for Task-like expressions
+    KnResolvedCall resolved_call; // meaningful for EXPR_CALL and EXPR_MEMBER_CALL after sema
+    KnResolvedBinary resolved_binary; // meaningful for EXPR_BINARY after sema
     union
     {
         int64_t int_val;
@@ -262,15 +449,16 @@ struct Expr
         struct { int op; Expr *left; Expr *right; } binary;
         struct { int op; Expr *expr; int is_postfix; } unary;
         struct { ExprList items; } array;
+        struct { ExprList items; } package;
         struct { ExprList keys; ExprList values; } dict;
         struct { Expr *target; Expr *value; } assign;
         struct { Expr *cond; Expr *then_expr; Expr *else_expr; } if_expr;
         struct { Expr *value; ExprSwitchCaseList cases; } switch_expr;
         struct { Expr *expr; Type target; } is_expr;
         struct { Expr *recv; const char *name; int is_static; const char *static_type; int field_index; const char *field_owner; int is_enum_const; int64_t enum_value; const char *enum_type; } member;
-        struct { Expr *recv; Expr *index; } index;
+        struct { Expr *recv; Expr *index; int package_index; } index;
         struct { const char *class_name; ExprList args; NameList arg_names; int ctor_index; } new_expr;
-        struct { Type type; Expr *expr; } cast;
+        struct { Type type; Expr *expr; int custom_method_index; const char *custom_method_owner; } cast;
         struct { Expr *expr; } await_expr;
         struct { const char *qname; int builtin_id; TypeList type_args; } func_ref;
         struct { Type ret_type; Param *params; int param_count; int param_cap; Stmt *body; Safety safety; const char *debug_name; const char *qname; int id; } anon_func;
@@ -329,7 +517,7 @@ typedef struct
 	    {
 	        struct { StmtList stmts; } block;
 	        // `name_line/name_col` points at the identifier token for better diagnostics (e.g. unused variable).
-	        struct { Type type; const char *name; int name_line; int name_col; Expr *init; int is_const; const KnSource *src; const char *unit; } var;
+	        struct { Type type; const char *name; int name_line; int name_col; NameList package_fields; Expr *init; int is_const; const KnSource *src; const char *unit; } var;
 	        struct { const char *name; Expr *value; } assign;
 	        struct { Expr *expr; } expr;
         struct { Expr *cond; Stmt *then_s; Stmt *else_s; const char *pattern_name; int pattern_line; int pattern_col; int is_const; int const_value; } ifs;
@@ -380,6 +568,8 @@ typedef struct
     int is_delegate;
     int delegate_abi;
     const char *delegate_symbol_name;
+    const char *symbol_name;
+    int is_overload;
     int is_static;
     int is_async;
     Type async_result_type;
@@ -416,7 +606,8 @@ typedef enum
 {
     IMPORT_OPEN,
     IMPORT_ALIAS,
-    IMPORT_SYMBOL
+    IMPORT_SYMBOL,
+    IMPORT_LOCAL_ALIAS
 } ImportKind;
 
 typedef struct
@@ -473,6 +664,8 @@ typedef struct
     int is_sealed;
     int is_constructor;
     int is_async;
+    const char *symbol_name;
+    int is_overload;
     Type async_result_type;
     AttrList attrs;
     const KnSource *src;

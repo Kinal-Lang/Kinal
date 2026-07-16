@@ -131,7 +131,14 @@ Enum OpCode By u8
     BitOrIntImm,
     BitXorIntImm,
     ShlIntImm,
-    ShrIntImm
+    ShrIntImm,
+    UDivInt = 130,
+    URemInt = 131,
+    ULtInt = 132,
+    ULeInt = 133,
+    UGtInt = 134,
+    UGeInt = 135,
+    LShrInt = 136
 }
 
 Enum ValueKind By u8
@@ -425,6 +432,13 @@ Public Class Program
             Case([int](OpCode.BitXorIntImm)) { Return 5; }
             Case([int](OpCode.ShlIntImm)) { Return 5; }
             Case([int](OpCode.ShrIntImm)) { Return 5; }
+            Case([int](OpCode.UDivInt)) { Return 5; }
+            Case([int](OpCode.URemInt)) { Return 5; }
+            Case([int](OpCode.ULtInt)) { Return 5; }
+            Case([int](OpCode.ULeInt)) { Return 5; }
+            Case([int](OpCode.UGtInt)) { Return 5; }
+            Case([int](OpCode.UGeInt)) { Return 5; }
+            Case([int](OpCode.LShrInt)) { Return 5; }
             Case(default)                    { Throw "Unknown KNC opcode: " + [string](op); }
         }
 

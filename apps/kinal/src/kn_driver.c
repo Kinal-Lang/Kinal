@@ -9,6 +9,8 @@
 #endif
 #include "kn/parser.h"
 #include "kn/sema.h"
+#include "kn/hir.h"
+#include "kn/session.h"
 #include "kn/codegen.h"
 #include "kn/link.h"
 #include "kn/diag.h"
@@ -22,6 +24,12 @@
 
 #ifndef KN_LLVM_BIN
 #define KN_LLVM_BIN ""
+#endif
+
+#if defined(_MSC_VER)
+#define KN_DRIVER_THREAD_LOCAL __declspec(thread)
+#else
+#define KN_DRIVER_THREAD_LOCAL _Thread_local
 #endif
 
 typedef struct
@@ -58,19 +66,23 @@ typedef enum
     KN_EMIT_ASSEMBLY = 2,
     KN_EMIT_LLVM_IR = 3,
     KN_EMIT_KNC = 4,
-    KN_EMIT_KNC_EXE = 5
+    KN_EMIT_KNC_EXE = 5,
+    KN_EMIT_CHECK = 6
 } KnEmitMode;
 
 typedef struct
 {
     const char *out_path;
     int auto_link;
+    int project_source_mode;
     int trace;
     int profile;
     const char **package_roots;
     int package_root_count;
     const char **official_package_roots;
     int official_package_root_count;
+    const char **project_local_sources;
+    int project_local_source_count;
     const KnLinkItem *link_items;
     int link_item_count;
     const char *target_triple;
@@ -91,6 +103,7 @@ typedef struct
     int show_link;
     int show_link_search;
     int knc_superloop;
+    int project_mode;
 } KnCompileConfig;
 
 typedef enum

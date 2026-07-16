@@ -1,0 +1,15 @@
+Unit Tests.StdlibTypeExtendedCompile;
+
+Get IO.Type;
+
+Trusted Static Function int Main()
+{
+    any value = 1;
+    f16 half = IO.Type.f16(value);
+    f128 quad = IO.Type.f128(value);
+    If (half == [f16](0) && quad == [f128](0))
+    {
+        Return 1;
+    }
+    Return 0;
+}

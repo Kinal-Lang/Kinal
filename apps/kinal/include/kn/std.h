@@ -202,8 +202,23 @@ typedef enum
     KN_BUILTIN_IO_VOLATILE_WRITE32,
     KN_BUILTIN_IO_VOLATILE_WRITE64,
     KN_BUILTIN_IO_PANIC_ABORT,
-    KN_BUILTIN_IO_PANIC_HALT
+    KN_BUILTIN_IO_PANIC_HALT,
+    KN_BUILTIN_COUNT
 } KnBuiltinKind;
+
+// Stable, backend-neutral builtin responsibility groups. The specification is
+// centralized in kn_std.c so lowering dispatchers do not each maintain another
+// monolithic list of builtin ids.
+typedef enum
+{
+    KN_BUILTIN_LOWERING_NONE = 0,
+    KN_BUILTIN_LOWERING_PLATFORM,
+    KN_BUILTIN_LOWERING_COLLECTIONS,
+    KN_BUILTIN_LOWERING_SYSTEM,
+    KN_BUILTIN_LOWERING_TEXT,
+    KN_BUILTIN_LOWERING_FILESYSTEM,
+    KN_BUILTIN_LOWERING_DYNAMIC
+} KnBuiltinLoweringGroup;
 
 typedef enum
 {
@@ -239,3 +254,5 @@ const KnStdModule *kn_std_module_at(int index);
 void kn_std_set_profile(int profile);
 int kn_std_get_profile(void);
 bool kn_std_builtin_allowed(KnBuiltinKind kind);
+KnBuiltinLoweringGroup kn_builtin_lowering_group(KnBuiltinKind kind);
+int kn_builtin_vm_id(KnBuiltinKind kind);

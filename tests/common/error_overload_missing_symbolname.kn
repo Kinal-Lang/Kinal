@@ -1,0 +1,12 @@
+Unit Tests.ErrorOverloadMissingSymbolName;
+
+[Overload]
+Static Function string Describe(int value)
+{
+    Return "int";
+}
+
+Static Function int Main()
+{
+    Return 0;
+}

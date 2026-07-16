@@ -31,29 +31,71 @@ typedef struct
     char title[64];
 } EmittedDiag;
 
-static int g_error_count = 0;
-static int g_warning_count = 0;
-static int g_warn_as_error = 0;
-static int g_warn_level = 1;
-static int g_color_mode = KN_COLOR_AUTO;
-static const char *g_lang = "en";
-static const char *g_locale_path = 0;
-static char *g_locale_text = 0;
-static int g_max_errors = 128;
-static int g_quiet = 0;
-static KnDiagSink g_sink = 0;
-static void *g_sink_user_data = 0;
+struct KnDiagContext
+{
+    int error_count;
+    int warning_count;
+    int warn_as_error;
+    int warn_level;
+    int color_mode;
+    const char *lang;
+    const char *locale_path;
+    char *locale_text;
+    int max_errors;
+    int quiet;
+    KnDiagSink sink;
+    void *sink_user_data;
 
-static DiagTemplate g_templates[512];
-static int g_template_count = 0;
+    DiagTemplate templates[512];
+    int template_count;
+    char locale_buf[8][2048];
+    int locale_buf_index;
+    int color_probe_done;
+    int color_auto_enabled;
+    EmittedDiag emitted[2048];
+    int emitted_count;
+};
 
-static char g_locale_buf[8][2048];
-static int g_locale_buf_index = 0;
+static KnDiagContext g_default_context = {
+    .warn_level = 1,
+    .color_mode = KN_COLOR_AUTO,
+    .lang = "en",
+    .max_errors = 128,
+};
 
-static int g_color_probe_done = 0;
-static int g_color_auto_enabled = 0;
-static EmittedDiag g_emitted[2048];
-static int g_emitted_count = 0;
+#if defined(_MSC_VER)
+#define KN_DIAG_THREAD_LOCAL __declspec(thread)
+#else
+#define KN_DIAG_THREAD_LOCAL _Thread_local
+#endif
+
+static KN_DIAG_THREAD_LOCAL KnDiagContext *g_current_context = 0;
+
+static KnDiagContext *diag_context(void)
+{
+    return g_current_context ? g_current_context : &g_default_context;
+}
+
+#define g_error_count (diag_context()->error_count)
+#define g_warning_count (diag_context()->warning_count)
+#define g_warn_as_error (diag_context()->warn_as_error)
+#define g_warn_level (diag_context()->warn_level)
+#define g_color_mode (diag_context()->color_mode)
+#define g_lang (diag_context()->lang)
+#define g_locale_path (diag_context()->locale_path)
+#define g_locale_text (diag_context()->locale_text)
+#define g_max_errors (diag_context()->max_errors)
+#define g_quiet (diag_context()->quiet)
+#define g_sink (diag_context()->sink)
+#define g_sink_user_data (diag_context()->sink_user_data)
+#define g_templates (diag_context()->templates)
+#define g_template_count (diag_context()->template_count)
+#define g_locale_buf (diag_context()->locale_buf)
+#define g_locale_buf_index (diag_context()->locale_buf_index)
+#define g_color_probe_done (diag_context()->color_probe_done)
+#define g_color_auto_enabled (diag_context()->color_auto_enabled)
+#define g_emitted (diag_context()->emitted)
+#define g_emitted_count (diag_context()->emitted_count)
 
 // Registered in kn_diag_registry.c
 void kn_diag_register_builtin_templates(void);
@@ -75,7 +117,7 @@ static const char g_help_full_en[] =
     "Build quick reference:\n"
     "Output:\n"
     "  -o, --output <file>  Output file path\n"
-    "  --emit <bin|obj|asm|ir>  Output kind (default: bin)\n"
+    "  --emit <bin|obj|asm|ir|check>  Output kind (default: bin)\n"
     "  --kind <exe|static|shared>  Output artifact kind (link mode only)\n"
     "\n"
     "Target:\n"
@@ -1673,6 +1715,42 @@ void kn_diag_reset(void)
     seed_builtin_templates();
 }
 
+KnDiagContext *kn_diag_context_create(void)
+{
+    KnDiagContext *context = (KnDiagContext *)kn_malloc(sizeof(KnDiagContext));
+    if (!context)
+        return 0;
+    kn_memset(context, 0, sizeof(*context));
+
+    KnDiagContext *previous = kn_diag_context_set_current(context);
+    kn_diag_reset();
+    kn_diag_context_set_current(previous);
+    return context;
+}
+
+void kn_diag_context_destroy(KnDiagContext *context)
+{
+    if (!context || context == &g_default_context)
+        return;
+    if (diag_context() == context)
+        g_current_context = &g_default_context;
+    if (context->locale_text)
+        kn_free(context->locale_text);
+    kn_free(context);
+}
+
+KnDiagContext *kn_diag_context_current(void)
+{
+    return diag_context();
+}
+
+KnDiagContext *kn_diag_context_set_current(KnDiagContext *context)
+{
+    KnDiagContext *previous = diag_context();
+    g_current_context = context ? context : &g_default_context;
+    return previous;
+}
+
 void kn_diag_set_color_mode(int mode)
 {
     g_color_mode = mode;
@@ -1846,4 +1924,3 @@ void kn_diag_warn(const KnSource *src, KnDiagStage stage, int warn_level, int li
         return;
     g_warning_count++;
 }
-

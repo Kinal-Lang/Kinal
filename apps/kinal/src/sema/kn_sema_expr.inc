@@ -212,6 +212,1628 @@ static Type sema_expr(Sema *s, Expr *e)
     return result;
 }
 
+static int sema_binary_integer_bits(const Sema *s, Type type)
+{
+    if (type.kind == TY_ISIZE || type.kind == TY_USIZE)
+        return s && s->target_pointer_bits == 32 ? 32 : 64;
+    return int_bits(type.kind);
+}
+
+static Type sema_binary_normalize_integer_coercion(const Sema *s, Type type)
+{
+    if (type.kind == TY_ISIZE)
+        return type_make(sema_binary_integer_bits(s, type) == 32 ? TY_I32 : TY_I64);
+    if (type.kind == TY_USIZE)
+        return type_make(sema_binary_integer_bits(s, type) == 32 ? TY_U32 : TY_U64);
+    return type;
+}
+
+static Type sema_binary_set_plan(Expr *e, KnBinaryLoweringKind kind, Type result,
+                                 Type lhs_coercion, Type rhs_coercion,
+                                 KnBinaryPointerSide pointer_side, bool is_unsigned,
+                                 int integer_bits)
+{
+    e->resolved_binary.kind = kind;
+    e->resolved_binary.lhs_coercion = lhs_coercion;
+    e->resolved_binary.rhs_coercion = rhs_coercion;
+    e->resolved_binary.pointer_side = pointer_side;
+    e->resolved_binary.is_unsigned = is_unsigned ? 1 : 0;
+    e->resolved_binary.integer_bits = integer_bits;
+    e->type = result;
+    return e->type;
+}
+
+static Type sema_binary_numeric_coercion(Sema *s, Type lhs, Type rhs)
+{
+    if (is_float_kind(lhs.kind) || is_float_kind(rhs.kind))
+    {
+        if (is_float_kind(lhs.kind) && is_float_kind(rhs.kind))
+            return float_bits(lhs.kind) >= float_bits(rhs.kind) ? lhs : rhs;
+        return is_float_kind(lhs.kind) ? lhs : rhs;
+    }
+
+    int lhs_bits = sema_binary_integer_bits(s, lhs);
+    int rhs_bits = sema_binary_integer_bits(s, rhs);
+    int bits = lhs_bits > rhs_bits ? lhs_bits : rhs_bits;
+    bool is_unsigned = is_unsigned_kind(lhs.kind) || is_unsigned_kind(rhs.kind);
+    if (bits <= 8) return type_make(is_unsigned ? TY_U8 : TY_I8);
+    if (bits <= 16) return type_make(is_unsigned ? TY_U16 : TY_I16);
+    if (bits <= 32) return type_make(is_unsigned ? TY_U32 : TY_I32);
+    return type_make(is_unsigned ? TY_U64 : TY_I64);
+}
+
+static Type sema_binary_expr(Sema *s, Expr *e)
+{
+    Type unknown = type_make(TY_UNKNOWN);
+    e->resolved_binary.kind = KN_BINARY_LOWER_UNRESOLVED;
+    e->resolved_binary.lhs_coercion = unknown;
+    e->resolved_binary.rhs_coercion = unknown;
+    e->resolved_binary.pointer_side = KN_BINARY_POINTER_NONE;
+    e->resolved_binary.is_unsigned = 0;
+    e->resolved_binary.integer_bits = 0;
+
+    Type lt = sema_expr(s, e->v.binary.left);
+    Type rt = sema_expr(s, e->v.binary.right);
+    TokenType op = (TokenType)e->v.binary.op;
+    if (lt.kind == TY_UNKNOWN || rt.kind == TY_UNKNOWN)
+        return sema_binary_set_plan(e, KN_BINARY_LOWER_UNRESOLVED, unknown, unknown, unknown,
+                                    KN_BINARY_POINTER_NONE, false, 0);
+
+    if (op == TOK_PLUS || op == TOK_MINUS)
+    {
+        if (lt.kind == TY_PTR && is_integer_kind(rt.kind))
+        {
+            check_ptr_safety(s, e->line, e->col, 1, "Safe function cannot use pointer arithmetic");
+            return sema_binary_set_plan(e, KN_BINARY_LOWER_POINTER_ARITHMETIC, lt,
+                                        lt, type_make(TY_I64), KN_BINARY_POINTER_LHS, false, 0);
+        }
+        if (op == TOK_PLUS && rt.kind == TY_PTR && is_integer_kind(lt.kind))
+        {
+            check_ptr_safety(s, e->line, e->col, 1, "Safe function cannot use pointer arithmetic");
+            return sema_binary_set_plan(e, KN_BINARY_LOWER_POINTER_ARITHMETIC, rt,
+                                        type_make(TY_I64), rt, KN_BINARY_POINTER_RHS, false, 0);
+        }
+    }
+    if (op == TOK_PLUS || op == TOK_MINUS || op == TOK_STAR || op == TOK_SLASH || op == TOK_PERCENT)
+    {
+        bool lhs_cstr = (lt.kind == TY_PTR && lt.elem == TY_CHAR && lt.ptr_depth == 1);
+        bool rhs_cstr = (rt.kind == TY_PTR && rt.elem == TY_CHAR && rt.ptr_depth == 1);
+        bool lhs_concat_text = (lt.kind == TY_STRING) || lhs_cstr;
+        bool rhs_concat_text = (rt.kind == TY_STRING) || rhs_cstr;
+        bool lhs_stringify = lt.kind != TY_UNKNOWN && lt.kind != TY_VOID;
+        bool rhs_stringify = rt.kind != TY_UNKNOWN && rt.kind != TY_VOID;
+        if (op == TOK_PLUS &&
+            ((lhs_concat_text && rhs_stringify) || (rhs_concat_text && lhs_stringify)) &&
+            !(lhs_cstr && rhs_cstr))
+        {
+            Type string_type = type_make(TY_STRING);
+            return sema_binary_set_plan(e, KN_BINARY_LOWER_STRING_CONCAT, string_type,
+                                        string_type, string_type, KN_BINARY_POINTER_NONE, false, 0);
+        }
+        if (!is_numeric_kind(lt.kind) || !is_numeric_kind(rt.kind))
+            sema_error(s, e->line, e->col, 1, "Type Mismatch", "Arithmetic operators require numeric types");
+
+        Type result;
+        if (lt.kind == rt.kind)
+            result = lt;
+        else if (is_float_kind(lt.kind) || is_float_kind(rt.kind))
+            result = sema_binary_numeric_coercion(s, lt, rt);
+        else
+            result = lt; // existing mixed-integer rule casts to the left operand type
+        Type coercion = sema_binary_normalize_integer_coercion(s, result);
+        return sema_binary_set_plan(e, KN_BINARY_LOWER_NUMERIC_ARITHMETIC, result,
+                                    coercion, coercion, KN_BINARY_POINTER_NONE,
+                                    is_unsigned_kind(coercion.kind),
+                                    sema_binary_integer_bits(s, coercion));
+    }
+    if (op == TOK_AMP || op == TOK_BITOR || op == TOK_XOR || op == TOK_SHL || op == TOK_SHR)
+    {
+        if (!is_integer_kind(lt.kind) || !is_integer_kind(rt.kind))
+            sema_error(s, e->line, e->col, 1, "Type Mismatch", "Bitwise operators require integer types");
+        int lb = sema_binary_integer_bits(s, lt);
+        int rb = sema_binary_integer_bits(s, rt);
+        int bits = lb > rb ? lb : rb;
+        bool is_unsigned = is_unsigned_kind(lt.kind) || is_unsigned_kind(rt.kind);
+        TypeKind result_kind;
+        if (bits <= 8) result_kind = is_unsigned ? TY_U8 : TY_I8;
+        else if (bits <= 16) result_kind = is_unsigned ? TY_U16 : TY_I16;
+        else if (bits <= 32) result_kind = is_unsigned ? TY_U32 : TY_I32;
+        else result_kind = is_unsigned ? TY_U64 : TY_INT;
+        Type result = type_make(result_kind);
+        return sema_binary_set_plan(e, KN_BINARY_LOWER_BITWISE, result,
+                                    result, result, KN_BINARY_POINTER_NONE, is_unsigned,
+                                    sema_binary_integer_bits(s, result));
+    }
+    if (op == TOK_EQ || op == TOK_NE)
+    {
+        Type bool_type = type_make(TY_BOOL);
+        Type erased_reference = type_ptr(TY_BYTE);
+        if ((lt.kind == TY_NULL && (rt.kind == TY_PTR || rt.kind == TY_CLASS || rt.kind == TY_STRING || rt.kind == TY_NULL)) ||
+            (rt.kind == TY_NULL && (lt.kind == TY_PTR || lt.kind == TY_CLASS || lt.kind == TY_STRING || lt.kind == TY_NULL)))
+            return sema_binary_set_plan(e, KN_BINARY_LOWER_REFERENCE_EQUALITY, bool_type,
+                                        erased_reference, erased_reference, KN_BINARY_POINTER_NONE, false, 0);
+
+        if (lt.kind == TY_STRING && rt.kind == TY_STRING)
+            return sema_binary_set_plan(e, KN_BINARY_LOWER_STRING_EQUALITY, bool_type,
+                                        lt, rt, KN_BINARY_POINTER_NONE, false, 0);
+
+        if (lt.kind == TY_PTR && rt.kind == TY_PTR && type_equal(lt, rt))
+            return sema_binary_set_plan(e, KN_BINARY_LOWER_REFERENCE_EQUALITY, bool_type,
+                                        erased_reference, erased_reference, KN_BINARY_POINTER_NONE, false, 0);
+
+        if (!(type_equal(lt, rt) || (is_numeric_kind(lt.kind) && is_numeric_kind(rt.kind))))
+        {
+            sema_error(s, e->line, e->col, 1, "Type Mismatch", type_mismatch_detail(lt, rt));
+            return sema_binary_set_plan(e, KN_BINARY_LOWER_UNRESOLVED, unknown,
+                                        unknown, unknown, KN_BINARY_POINTER_NONE, false, 0);
+        }
+
+        if (is_numeric_kind(lt.kind) && is_numeric_kind(rt.kind))
+        {
+            Type coercion = sema_binary_numeric_coercion(s, lt, rt);
+            return sema_binary_set_plan(e, KN_BINARY_LOWER_NUMERIC_COMPARISON, bool_type,
+                                        coercion, coercion, KN_BINARY_POINTER_NONE,
+                                        is_unsigned_kind(coercion.kind),
+                                        sema_binary_integer_bits(s, coercion));
+        }
+        if (lt.kind == TY_CLASS && rt.kind == TY_CLASS)
+            return sema_binary_set_plan(e, KN_BINARY_LOWER_REFERENCE_EQUALITY, bool_type,
+                                        erased_reference, erased_reference, KN_BINARY_POINTER_NONE, false, 0);
+
+        if ((lt.kind == TY_BOOL && rt.kind == TY_BOOL) ||
+            (lt.kind == TY_ENUM && rt.kind == TY_ENUM && type_equal(lt, rt)))
+            return sema_binary_set_plan(e, KN_BINARY_LOWER_SCALAR_EQUALITY, bool_type,
+                                        lt, rt, KN_BINARY_POINTER_NONE, false, 0);
+
+        sema_error(s, e->line, e->col, 1, "Type Mismatch",
+                   "Equality is not defined for aggregate or any values");
+        return sema_binary_set_plan(e, KN_BINARY_LOWER_UNRESOLVED, unknown,
+                                    unknown, unknown,
+                                    KN_BINARY_POINTER_NONE, false, 0);
+    }
+    if (op == TOK_LT || op == TOK_LE || op == TOK_GT || op == TOK_GE)
+    {
+        if (!is_numeric_kind(lt.kind) || !is_numeric_kind(rt.kind))
+            sema_error(s, e->line, e->col, 1, "Type Mismatch", "Comparison requires numeric types");
+        Type coercion = sema_binary_numeric_coercion(s, lt, rt);
+        return sema_binary_set_plan(e, KN_BINARY_LOWER_NUMERIC_COMPARISON, type_make(TY_BOOL),
+                                    coercion, coercion, KN_BINARY_POINTER_NONE,
+                                    is_unsigned_kind(coercion.kind),
+                                    sema_binary_integer_bits(s, coercion));
+    }
+    if (op == TOK_ANDAND || op == TOK_OROR)
+    {
+        if (lt.kind != TY_BOOL || rt.kind != TY_BOOL)
+            sema_error(s, e->line, e->col, 1, "Type Mismatch", "Logical operators require bool");
+        Type bool_type = type_make(TY_BOOL);
+        return sema_binary_set_plan(e, KN_BINARY_LOWER_LOGICAL_SHORT_CIRCUIT, bool_type,
+                                    bool_type, bool_type, KN_BINARY_POINTER_NONE, false, 0);
+    }
+    sema_error(s, e->line, e->col, 1, "Invalid Operator", "Unknown binary operator");
+    return sema_binary_set_plan(e, KN_BINARY_LOWER_UNRESOLVED, unknown, unknown, unknown,
+                                KN_BINARY_POINTER_NONE, false, 0);
+}
+
+static Type sema_if_expr(Sema *s, Expr *e)
+{
+    Type ct = sema_expr(s, e->v.if_expr.cond);
+    if (!(ct.kind == TY_BOOL || is_integer_kind(ct.kind)))
+        sema_error(s, e->line, e->col, 1, "Type Mismatch", "If expression condition must be bool or integer");
+    Type tt = sema_expr(s, e->v.if_expr.then_expr);
+    Type et = sema_expr(s, e->v.if_expr.else_expr);
+    e->type = merge_branch_types(s, e->line, e->col,
+                                 e->v.if_expr.then_expr, tt,
+                                 e->v.if_expr.else_expr, et,
+                                 "If expression branches must have compatible types");
+    return e->type;
+}
+
+static Type sema_switch_expr(Sema *s, Expr *e)
+{
+    Type vt = sema_expr(s, e->v.switch_expr.value);
+    Type result = type_make(TY_UNKNOWN);
+    int default_count = 0;
+    for (int i = 0; i < e->v.switch_expr.cases.count; i++)
+    {
+        ExprSwitchCase *c = &e->v.switch_expr.cases.items[i];
+        if (c->is_default)
+        {
+            default_count++;
+        }
+        else
+        {
+            Type mt = sema_expr(s, c->match);
+            if (!types_support_switch_match(vt, mt))
+                sema_error(s, c->match->line, c->match->col, 1, "Type Mismatch",
+                           "Switch case value is not comparable to Switch value");
+        }
+
+        Type bt = sema_expr(s, c->body);
+        if (result.kind == TY_UNKNOWN)
+            result = bt;
+        else
+            result = merge_branch_types(s, e->line, e->col, c->body, bt, 0, result,
+                                        "Switch expression cases must have compatible types");
+    }
+    if (default_count == 0)
+        sema_error(s, e->line, e->col, 1, "Missing Default Case", "Switch expression requires Case(default)");
+    if (default_count > 1)
+        sema_error(s, e->line, e->col, 1, "Duplicate Default Case", "Switch expression can only have one Case(default)");
+    if (result.kind == TY_UNKNOWN)
+        sema_error(s, e->line, e->col, 1, "Default Literal", "Switch expression requires at least one typed case body");
+    if (result.kind != TY_UNKNOWN)
+    {
+        for (int i = 0; i < e->v.switch_expr.cases.count; i++)
+            bind_default_literal_type(s, e->v.switch_expr.cases.items[i].body, result,
+                                      "Default literal requires Switch expression result type");
+    }
+    e->type = result;
+    return e->type;
+}
+
+static Type sema_is_expr(Sema *s, Expr *e)
+{
+    Type value_type = sema_expr(s, e->v.is_expr.expr);
+    Type target = e->v.is_expr.target;
+    validate_type_ref(s, &target, e->line, e->col, 0);
+    e->v.is_expr.target = target;
+    if (target.kind == TY_VOID)
+        sema_error(s, e->line, e->col, 1, "Invalid Is", "Is target type cannot be void");
+    if (value_type.kind == TY_ANY && !any_is_supported_target(target))
+        sema_error(s, e->line, e->col, 1, "Invalid Is",
+                   "any only supports Is with primitive, enum, string, or any targets");
+    e->type = type_make(TY_BOOL);
+    return e->type;
+}
+
+static Type sema_unary_expr(Sema *s, Expr *e)
+{
+    Type vt = sema_expr(s, e->v.unary.expr);
+    if (e->v.unary.op == TOK_PLUSPLUS || e->v.unary.op == TOK_MINUSMINUS)
+    {
+        if (!is_lvalue_expr(e->v.unary.expr))
+            sema_error(s, e->line, e->col, 1, "Invalid Assignment", "Increment/decrement target must be assignable");
+        if (e->v.unary.expr->kind == EXPR_VAR)
+        {
+            VarSym *v = scope_find(s->scope, e->v.unary.expr->v.var.name);
+            if (v && v->is_const)
+                sema_error(s, e->line, e->col, 1, "Const Assignment", "Cannot modify const variable");
+        }
+        if (e->v.unary.expr->kind == EXPR_MEMBER && e->v.unary.expr->v.member.is_enum_const)
+            sema_error(s, e->line, e->col, 1, "Invalid Assignment", "Cannot modify enum constant");
+        if (!(is_numeric_kind(vt.kind) || vt.kind == TY_PTR))
+            sema_error(s, e->line, e->col, 1, "Type Mismatch", "Increment/decrement requires numeric or pointer type");
+        if (vt.kind == TY_PTR)
+            check_ptr_safety(s, e->line, e->col, 1, "Safe function cannot modify pointer with increment/decrement");
+        e->type = vt;
+        return e->type;
+    }
+    if (e->v.unary.op == TOK_MINUS)
+    {
+        if (!is_numeric_kind(vt.kind))
+            sema_error(s, e->line, e->col, 1, "Type Mismatch", "Unary '-' requires numeric type");
+        e->type = vt;
+        return e->type;
+    }
+    if (e->v.unary.op == TOK_NOT)
+    {
+        if (vt.kind != TY_BOOL)
+            sema_error(s, e->line, e->col, 1, "Type Mismatch", "Unary '!' requires bool");
+        e->type = type_make(TY_BOOL);
+        return e->type;
+    }
+    if (e->v.unary.op == TOK_TILDE)
+    {
+        if (!is_integer_kind(vt.kind))
+            sema_error(s, e->line, e->col, 1, "Type Mismatch", "Unary '~' requires integer type");
+        e->type = vt;
+        return e->type;
+    }
+    if (e->v.unary.op == TOK_STAR)
+    {
+        if (vt.kind != TY_PTR)
+            sema_error(s, e->line, e->col, 1, "Type Mismatch", "Unary '*' requires pointer type");
+        check_ptr_safety(s, e->line, e->col, 1, "Safe function cannot dereference pointer");
+        Type elem;
+        if (vt.ptr_depth > 1)
+        {
+            elem = type_ptr(vt.elem);
+            elem.ptr_depth = vt.ptr_depth - 1;
+            elem.name = vt.name;
+        }
+        else
+        {
+            elem = type_make(vt.elem);
+            elem.name = vt.name;
+        }
+        e->type = elem;
+        return e->type;
+    }
+    if (e->v.unary.op == TOK_AMP)
+    {
+        if (e->v.unary.expr && e->v.unary.expr->kind == EXPR_FUNC_REF)
+        {
+            Type ptr = type_ptr(TY_BYTE);
+            ptr.ptr_depth = 1;
+            e->type = ptr;
+            return e->type;
+        }
+        if (!is_lvalue_expr(e->v.unary.expr))
+            sema_error(s, e->line, e->col, 1, "Invalid Address", "Address-of requires an assignable expression");
+        if (vt.kind == TY_ARRAY)
+            sema_error(s, e->line, e->col, 1, "Invalid Address", "Address-of array not supported");
+        Type ptr;
+        if (vt.kind == TY_PTR)
+        {
+            ptr = type_ptr(vt.elem);
+            ptr.ptr_depth = vt.ptr_depth + 1;
+            ptr.name = vt.name;
+        }
+        else
+        {
+            ptr = type_ptr(vt.kind);
+            ptr.name = vt.name;
+        }
+        e->type = ptr;
+        return e->type;
+    }
+    sema_error(s, e->line, e->col, 1, "Invalid Operator", "Unknown unary operator");
+    return type_make(TY_UNKNOWN);
+}
+
+static Type sema_index_expr(Sema *s, Expr *e)
+{
+    Type rt = sema_expr(s, e->v.index.recv);
+    Type it = sema_expr(s, e->v.index.index);
+    if (!is_integer_kind(it.kind))
+        sema_error(s, e->line, e->col, 1, "Type Mismatch", "Index requires integer type");
+    if (rt.kind == TY_PACKAGE)
+    {
+        int64_t idx = 0;
+        if (!eval_const_expr_scoped(s, e->v.index.index, &idx))
+        {
+            sema_error(s, e->line, e->col, 1, "Invalid Package Index", "Package index must be a compile-time constant");
+            e->type = type_make(TY_UNKNOWN);
+            return e->type;
+        }
+        if (idx < 0 || idx >= rt.package_count)
+        {
+            sema_error(s, e->line, e->col, 1, "Invalid Package Index", "Package index out of range");
+            e->type = type_make(TY_UNKNOWN);
+            return e->type;
+        }
+        e->v.index.package_index = (int)idx;
+        e->type = rt.package_elems[(int)idx];
+        return e->type;
+    }
+    if (rt.kind == TY_ARRAY)
+    {
+        Type elem = type_immediate_elem(rt);
+        e->type = elem;
+        return e->type;
+    }
+    if (rt.kind == TY_STRING)
+    {
+        e->type = type_make(TY_CHAR);
+        return e->type;
+    }
+    if (rt.kind == TY_PTR)
+    {
+        check_ptr_safety(s, e->line, e->col, 1, "Safe function cannot index pointer");
+        Type elem;
+        if (rt.ptr_depth > 1)
+        {
+            elem = type_ptr(rt.elem);
+            elem.ptr_depth = rt.ptr_depth - 1;
+            elem.name = rt.name;
+        }
+        else
+        {
+            elem = type_make(rt.elem);
+            elem.name = rt.name;
+        }
+        e->type = elem;
+        return e->type;
+    }
+    sema_error(s, e->line, e->col, 1, "Invalid Index", "Indexing requires array, string or pointer");
+    return type_make(TY_UNKNOWN);
+}
+
+static Type sema_cast_expr(Sema *s, Expr *e)
+{
+    Type cast_type = e->v.cast.type;
+    Type value_type = sema_expr(s, e->v.cast.expr);
+    e->v.cast.custom_method_index = -1;
+    e->v.cast.custom_method_owner = 0;
+    validate_type_ref(s, &cast_type, e->line, e->col, 1);
+    e->v.cast.type = cast_type;
+
+    // Validate that cast_type is a valid type
+    if (cast_type.kind == TY_UNKNOWN)
+        sema_error(s, e->line, e->col, 1, "Unknown Type", "Cast target type is unknown");
+
+    if (cast_type.kind == TY_ARRAY && value_type.kind == TY_PACKAGE)
+    {
+        Type elem = type_immediate_elem(cast_type);
+        for (int i = 0; i < value_type.package_count; i++)
+        {
+            if (!type_assignable(s, elem, value_type.package_elems[i]))
+                sema_error(s, e->line, e->col, 1, "Invalid Cast", type_mismatch_detail(elem, value_type.package_elems[i]));
+        }
+        e->type = cast_type;
+        return e->type;
+    }
+
+    // Special case: allow [Object.Function](void*) — wraps a raw pointer as a callable object.
+    if (cast_type.kind == TY_CLASS && is_function_object_type(s, cast_type) && value_type.kind == TY_PTR)
+    {
+        check_ptr_safety(s, e->line, e->col, 1, "Safe function cannot cast pointer to Object.Function");
+        e->type = cast_type;
+        return e->type;
+    }
+
+    if (cast_type.kind == TY_CLASS && (value_type.kind == TY_CLASS || value_type.kind == TY_NULL))
+    {
+        if (explicit_object_cast_allowed(s, cast_type, value_type))
+        {
+            e->type = cast_type;
+            return e->type;
+        }
+    }
+
+    if (cast_type.kind == TY_CLASS)
+    {
+        const char *cast_owner = 0;
+        int cast_index = -1;
+        int cast_ambiguous = 0;
+        Method *cast_method = find_custom_cast_method_for_source(s, cast_type, value_type,
+                                                                 &cast_owner, &cast_index,
+                                                                 &cast_ambiguous);
+        if (cast_ambiguous)
+            sema_error(s, e->line, e->col, 1, "Ambiguous Cast", "Multiple custom cast methods match this value");
+        if (cast_method)
+        {
+            Type arg_type = cast_method->params.items[0].type;
+            if (!type_assignable(s, arg_type, value_type))
+                sema_error(s, e->line, e->col, 1, "Invalid Cast", type_mismatch_detail(arg_type, value_type));
+            e->v.cast.custom_method_owner = cast_owner;
+            e->v.cast.custom_method_index = cast_index;
+            e->type = cast_type;
+            return e->type;
+        }
+    }
+
+    if (cast_type.kind == TY_CLASS && (value_type.kind == TY_CLASS || value_type.kind == TY_NULL))
+        sema_error(s, e->line, e->col, 1, "Invalid Cast", invalid_cast_detail(value_type, cast_type));
+
+    // Disallow casting to object/schema types outside checked object-reference casts.
+    if (cast_type.kind == TY_CLASS || cast_type.kind == TY_STRUCT)
+        sema_error(s, e->line, e->col, 1, "Invalid Cast", "Cannot cast to Object types; use Object conversions instead");
+
+    // Object source values are also disallowed for non-object explicit casts.
+    if (value_type.kind == TY_CLASS || value_type.kind == TY_STRUCT)
+        sema_error(s, e->line, e->col, 1, "Invalid Cast", "Cannot cast Object values; use Object conversions instead");
+
+    // Explicit cast supports all non-object types.
+    // Keep safety checks for raw pointer/integer reinterprets.
+    if (cast_type.kind == TY_PTR && is_integer_kind(value_type.kind))
+        check_int_to_ptr_safety(s, cast_type, value_type, e->v.cast.expr);
+    if (is_integer_kind(cast_type.kind) && value_type.kind == TY_PTR)
+        check_ptr_safety(s, e->line, e->col, 1, "Safe function cannot cast pointer to integer");
+
+    e->type = cast_type;
+    return e->type;
+}
+
+static Type sema_anon_func_expr(Sema *s, Expr *e)
+{
+    validate_type_ref(s, &e->v.anon_func.ret_type, e->line, e->col, 1);
+    {
+        ParamList params;
+        params.items = e->v.anon_func.params;
+        params.count = e->v.anon_func.param_count;
+        params.cap = e->v.anon_func.param_cap;
+        validate_param_defaults(s, &params, e->line, e->col);
+    }
+
+    Func fake;
+    kn_memset(&fake, 0, sizeof(fake));
+    fake.ret_type = e->v.anon_func.ret_type;
+    fake.safety = e->v.anon_func.safety;
+
+    Func *prev_cur = s->current;
+    Method *prev_method = s->current_method;
+    Scope *prev_scope = s->scope;
+    const char *prev_unit = s->current_unit;
+    ClassDecl *prev_class = s->current_class;
+    int prev_static = s->current_is_static;
+    int prev_in_block = s->in_block_literal;
+    BlockRecordList *prev_records = s->block_records;
+    Safety prev_block_safety = s->block_safety;
+
+    s->current = &fake;
+    s->current_method = 0;
+    s->current_unit = prev_unit;
+    s->current_class = prev_class;
+    s->current_is_static = prev_static;
+    s->in_block_literal = 0;
+    s->block_records = 0;
+    s->block_safety = SAFETY_SAFE;
+
+    Scope sc;
+    sc.vars = 0;
+    sc.parent = prev_scope;
+    s->scope = &sc;
+    for (int i = 0; i < e->v.anon_func.param_count; i++)
+    {
+        Param *pr = &e->v.anon_func.params[i];
+        scope_add_param(s, &sc, pr->name, pr->type, e->line, e->col);
+    }
+    sema_stmt(s, e->v.anon_func.body);
+
+    s->scope = prev_scope;
+    s->current = prev_cur;
+    s->current_method = prev_method;
+    s->current_unit = prev_unit;
+    s->current_class = prev_class;
+    s->current_is_static = prev_static;
+    s->in_block_literal = prev_in_block;
+    s->block_records = prev_records;
+    s->block_safety = prev_block_safety;
+
+    e->type = type_class("IO.Type.Object.Function");
+    return e->type;
+}
+
+static Type sema_block_literal_expr(Sema *s, Expr *e)
+{
+    if (sema_is_freestanding_core())
+        sema_error(s, e->line, e->col, 1, "Freestanding Core", "Block literals require freestanding gc runtime");
+    if (e->v.block_lit.safety != SAFETY_UNSAFE)
+    {
+        for (int i = 0; i < e->v.block_lit.records.count; i++)
+        {
+            if (e->v.block_lit.records.items[i].nested_depth > 0)
+                sema_error(s, e->line, e->col, 1, "Unsafe Block", "Record inside nested control flow requires Unsafe Block");
+        }
+    }
+
+    Func fake;
+    kn_memset(&fake, 0, sizeof(fake));
+    fake.ret_type = type_make(TY_VOID);
+    fake.safety = e->v.block_lit.safety;
+
+    Func *prev_cur = s->current;
+    Method *prev_method = s->current_method;
+    Scope *prev_scope = s->scope;
+    const char *prev_unit = s->current_unit;
+    ClassDecl *prev_class = s->current_class;
+    int prev_static = s->current_is_static;
+    int prev_in_block = s->in_block_literal;
+    BlockRecordList *prev_records = s->block_records;
+    Safety prev_block_safety = s->block_safety;
+
+    s->current = &fake;
+    s->current_method = 0;
+    s->current_unit = prev_unit;
+    s->current_class = prev_class;
+    s->current_is_static = prev_static;
+    s->in_block_literal = 1;
+    s->block_records = &e->v.block_lit.records;
+    s->block_safety = e->v.block_lit.safety;
+
+    Scope sc;
+    sc.vars = 0;
+    sc.parent = prev_scope;
+    s->scope = &sc;
+    sema_stmt(s, e->v.block_lit.body);
+
+    s->scope = prev_scope;
+    s->current = prev_cur;
+    s->current_method = prev_method;
+    s->current_unit = prev_unit;
+    s->current_class = prev_class;
+    s->current_is_static = prev_static;
+    s->in_block_literal = prev_in_block;
+    s->block_records = prev_records;
+    s->block_safety = prev_block_safety;
+
+    e->type = type_class("IO.Type.Object.Block");
+    return e->type;
+}
+
+static Type sema_invoke_expr(Sema *s, Expr *e)
+{
+    Type ct = sema_expr(s, e->v.invoke.callee);
+    Type ret = type_make(TY_ANY);
+    ParamList args = {0};
+    args.count = e->v.invoke.args.count;
+    args.cap = e->v.invoke.args.count;
+    if (args.count > 0)
+    {
+        args.items = (Param *)kn_malloc(sizeof(Param) * (size_t)args.count);
+        for (int i = 0; i < args.count; i++)
+        {
+            Type at = sema_expr(s, e->v.invoke.args.items[i]);
+            args.items[i].type = at;
+            args.items[i].name = "";
+            args.items[i].src = s->src;
+        }
+    }
+    if (is_block_object_type(ct))
+        sema_error(s, e->line, e->col, 1, "Invalid Call", "Block object must use Run/Jump APIs");
+    else if (!is_function_object_type(s, ct))
+        sema_error(s, e->line, e->col, 1, "Invalid Call", "Call target is not a function object");
+    else if (e->v.invoke.callee->kind == EXPR_FUNC_REF &&
+             e->v.invoke.callee->v.func_ref.builtin_id != KN_BUILTIN_NONE)
+    {
+        if (call_has_named_args(&e->v.invoke.arg_names))
+            sema_error(s, e->line, e->col, 1, "Invalid Named Argument", "Named arguments are not supported for this callable");
+        KnBuiltinKind bk = (KnBuiltinKind)e->v.invoke.callee->v.func_ref.builtin_id;
+        return lower_invoke_builtin_ref(s, e, bk, &args);
+    }
+    else if (e->v.invoke.callee->kind == EXPR_VAR)
+    {
+        VarSym *v = scope_find(s->scope, e->v.invoke.callee->v.var.name);
+        if (v && v->origin)
+        {
+            if (v->origin->kind == EXPR_FUNC_REF &&
+                v->origin->v.func_ref.builtin_id != KN_BUILTIN_NONE)
+            {
+                if (call_has_named_args(&e->v.invoke.arg_names))
+                    sema_error(s, e->line, e->col, 1, "Invalid Named Argument", "Named arguments are not supported for this callable");
+                KnBuiltinKind bk = (KnBuiltinKind)v->origin->v.func_ref.builtin_id;
+                return lower_invoke_builtin_ref(s, e, bk, &args);
+            }
+            if (v->origin->kind == EXPR_FUNC_REF && v->origin->v.func_ref.qname)
+            {
+                FuncSym *fs = functable_find(&s->funcs, v->origin->v.func_ref.qname);
+                if (fs && fs->func)
+                {
+                    const char **param_names = alloc_param_names_from_paramlist(&fs->func->params);
+                    (void)prepare_call_args(s, e->line, e->col, &e->v.invoke.args, &e->v.invoke.arg_names,
+                                            &args, fs->func->params.items, fs->func->params.count,
+                                            param_names, fs->func->name, 1, 1);
+                    retype_prepared_args(s, &e->v.invoke.args, &args, fs->func->params.items, fs->func->params.count,
+                                         "Default literal requires parameter type");
+                    if (param_names) kn_free((void *)param_names);
+                    for (int i = 0; i < fs->func->params.count; i++)
+                    {
+                        Type pt = fs->func->params.items[i].type;
+                        Type at = args.items[i].type;
+                        check_int_to_ptr_safety(s, pt, at, e->v.invoke.args.items[i]);
+                        if (!type_assignable(s, pt, at))
+                            sema_error(s, e->v.invoke.args.items[i]->line, e->v.invoke.args.items[i]->col, 1, "Type Mismatch", type_mismatch_detail(pt, at));
+                    }
+                    check_call_safety(s, fs->func->safety, e->line, e->col, 1);
+                    ret = fs->func->ret_type;
+                }
+            }
+            else if (v->origin->kind == EXPR_ANON_FUNC)
+            {
+                const char **param_names = alloc_param_names_from_params(v->origin->v.anon_func.params,
+                                                                         v->origin->v.anon_func.param_count);
+                (void)prepare_call_args(s, e->line, e->col, &e->v.invoke.args, &e->v.invoke.arg_names,
+                                        &args, v->origin->v.anon_func.params,
+                                        v->origin->v.anon_func.param_count, param_names,
+                                        e->v.invoke.callee->v.var.name, 1, 1);
+                retype_prepared_args(s, &e->v.invoke.args, &args, v->origin->v.anon_func.params,
+                                     v->origin->v.anon_func.param_count,
+                                     "Default literal requires parameter type");
+                if (param_names) kn_free((void *)param_names);
+                for (int i = 0; i < v->origin->v.anon_func.param_count; i++)
+                {
+                    Type pt = v->origin->v.anon_func.params[i].type;
+                    Type at = args.items[i].type;
+                    check_int_to_ptr_safety(s, pt, at, e->v.invoke.args.items[i]);
+                    if (!type_assignable(s, pt, at))
+                        sema_error(s, e->v.invoke.args.items[i]->line, e->v.invoke.args.items[i]->col, 1, "Type Mismatch", type_mismatch_detail(pt, at));
+                }
+                check_call_safety(s, v->origin->v.anon_func.safety, e->line, e->col, 1);
+                ret = v->origin->v.anon_func.ret_type;
+            }
+        }
+    }
+    e->type = ret;
+    return e->type;
+}
+
+static Type sema_new_expr(Sema *s, Expr *e)
+{
+    if (sema_is_freestanding_core())
+        sema_error(s, e->line, e->col, 1, "Freestanding Core", "New is not available in freestanding core");
+    if (call_has_named_args(&e->v.new_expr.arg_names))
+        sema_error(s, e->line, e->col, 1, "Invalid Named Argument", "Named arguments are not supported for constructors");
+    ClassDecl *c = 0;
+    if (e->type.kind == TY_CLASS && e->v.new_expr.class_name && name_has_dot(e->v.new_expr.class_name))
+        c = find_class(s, e->v.new_expr.class_name);
+    if (!c)
+        c = find_visible_class(s, e->v.new_expr.class_name);
+    if (!c)
+    {
+        sema_error(s, e->line, e->col, 1, "Unknown Type", "Class not found");
+        e->type = type_make(TY_UNKNOWN);
+        return e->type;
+    }
+    if (c->is_static_class)
+        sema_error(s, e->line, e->col, 1, "Invalid New", "Cannot instantiate static class");
+    if (c->is_abstract)
+        sema_error(s, e->line, e->col, 1, "Invalid New", "Cannot instantiate abstract class");
+    // resolve ctor by params
+    ParamList params = {0};
+    params.count = e->v.new_expr.args.count;
+    params.cap = e->v.new_expr.args.count;
+    if (params.count > 0)
+    {
+        params.items = (Param *)kn_malloc(sizeof(Param) * (size_t)params.count);
+        for (int i = 0; i < params.count; i++)
+        {
+            Type at = sema_expr(s, e->v.new_expr.args.items[i]);
+            params.items[i].type = at;
+            params.items[i].name = "";
+            params.items[i].src = s->src;
+        }
+    }
+    int ctor_index = -1;
+    bool has_explicit_ctor = class_has_explicit_ctor(c);
+    Method *ctor = find_ctor(s, c, &e->v.new_expr.args, &e->v.new_expr.arg_names, &params, &ctor_index);
+    if (!ctor && (has_explicit_ctor || params.count > 0))
+        sema_error(s, e->line, e->col, 1, "Constructor", "Constructor not found");
+    if (ctor)
+    {
+        const char **param_names = alloc_param_names_from_paramlist(&ctor->params);
+        (void)prepare_call_args(s, e->line, e->col, &e->v.new_expr.args, &e->v.new_expr.arg_names,
+                                &params, ctor->params.items, ctor->params.count,
+                                param_names, c->name, 1, 1);
+        retype_prepared_args(s, &e->v.new_expr.args, &params, ctor->params.items, ctor->params.count,
+                             "Default literal requires parameter type");
+        if (param_names) kn_free((void *)param_names);
+        for (int i = 0; i < ctor->params.count; i++)
+        {
+            Type pt = ctor->params.items[i].type;
+            Type at = params.items[i].type;
+            check_int_to_ptr_safety(s, pt, at, e->v.new_expr.args.items[i]);
+            check_byte_literal_range(s, pt, e->v.new_expr.args.items[i]);
+        }
+        check_call_safety(s, ctor->safety, e->line, e->col, 1);
+    }
+    e->v.new_expr.ctor_index = ctor_index;
+    e->v.new_expr.class_name = class_qname(c);
+    e->type = type_class(class_qname(c));
+    return e->type;
+}
+
+static bool sema_try_member_block_builtin(Sema *s, Expr *e, const Type *rt, ParamList *args)
+{
+    if (is_block_object_type(*rt))
+    {
+        if (kn_strcmp(e->v.member_call.name, "Run") == 0)
+        {
+            if (sema_is_freestanding_core())
+                sema_error(s, e->line, e->col, 1, "Freestanding Core", "Block runtime is not available in freestanding core");
+            (void)remap_named_args(s, e->line, e->col, &e->v.member_call.args, &e->v.member_call.arg_names,
+                                   args, 0, 0);
+            if (e->v.member_call.args.count != 0)
+                sema_error_arg_count_named(s, e->line, e->col, 1, "Run", 0);
+            e->v.member_call.builtin_id = KN_BUILTIN_BLOCK_RUN;
+            e->type = type_make(TY_VOID);
+            return true;
+        }
+        if (kn_strcmp(e->v.member_call.name, "Jump") == 0)
+        {
+            if (sema_is_freestanding_core())
+                sema_error(s, e->line, e->col, 1, "Freestanding Core", "Block runtime is not available in freestanding core");
+            static const char *param_names[] = { "target" };
+            (void)remap_named_args(s, e->line, e->col, &e->v.member_call.args, &e->v.member_call.arg_names,
+                                   args, 1, param_names);
+            if (e->v.member_call.args.count != 1)
+                sema_error_arg_count_named(s, e->line, e->col, 1, "Jump", 1);
+            if (e->v.member_call.args.count == 1 && !is_integer_kind(args->items[0].type.kind))
+                sema_error_type_must_be_named(s, e->v.member_call.args.items[0]->line, e->v.member_call.args.items[0]->col, 1, "Jump", "target", "integer ip");
+            e->v.member_call.builtin_id = KN_BUILTIN_BLOCK_JUMP;
+            e->type = type_make(TY_VOID);
+            return true;
+        }
+        if (kn_strcmp(e->v.member_call.name, "RunUntil") == 0)
+        {
+            if (sema_is_freestanding_core())
+                sema_error(s, e->line, e->col, 1, "Freestanding Core", "Block runtime is not available in freestanding core");
+            static const char *param_names[] = { "target" };
+            (void)remap_named_args(s, e->line, e->col, &e->v.member_call.args, &e->v.member_call.arg_names,
+                                   args, 1, param_names);
+            if (e->v.member_call.args.count != 1)
+                sema_error_arg_count_named(s, e->line, e->col, 1, "RunUntil", 1);
+            if (e->v.member_call.args.count == 1 && !is_integer_kind(args->items[0].type.kind))
+                sema_error_type_must_be_named(s, e->v.member_call.args.items[0]->line, e->v.member_call.args.items[0]->col, 1, "RunUntil", "target", "integer ip");
+            e->v.member_call.builtin_id = KN_BUILTIN_BLOCK_RUN_UNTIL;
+            e->type = type_make(TY_VOID);
+            return true;
+        }
+        if (kn_strcmp(e->v.member_call.name, "JumpAndRunUntil") == 0)
+        {
+            if (sema_is_freestanding_core())
+                sema_error(s, e->line, e->col, 1, "Freestanding Core", "Block runtime is not available in freestanding core");
+            static const char *param_names[] = { "start", "end" };
+            (void)remap_named_args(s, e->line, e->col, &e->v.member_call.args, &e->v.member_call.arg_names,
+                                   args, 2, param_names);
+            if (e->v.member_call.args.count != 2)
+                sema_error_arg_count_named(s, e->line, e->col, 1, "JumpAndRunUntil", 2);
+            if (e->v.member_call.args.count >= 1 && !is_integer_kind(args->items[0].type.kind))
+                sema_error_type_must_be_named(s, e->v.member_call.args.items[0]->line, e->v.member_call.args.items[0]->col, 1, "JumpAndRunUntil", "start", "integer ip");
+            if (e->v.member_call.args.count >= 2 && !is_integer_kind(args->items[1].type.kind))
+                sema_error_type_must_be_named(s, e->v.member_call.args.items[1]->line, e->v.member_call.args.items[1]->col, 1, "JumpAndRunUntil", "end", "integer ip");
+            e->v.member_call.builtin_id = KN_BUILTIN_BLOCK_JUMP_AND_RUN_UNTIL;
+            e->type = type_make(TY_VOID);
+            return true;
+        }
+    }
+
+    return false;
+}
+
+static bool sema_try_member_common_builtin(Sema *s, Expr *e, const Type *rt)
+{
+    if (kn_strcmp(e->v.member_call.name, "TypeOf") == 0)
+    {
+        if (e->v.member_call.args.count != 0)
+            sema_error_arg_count_named(s, e->line, e->col, 1, "TypeOf", 0);
+        const char *tn = type_name(*rt);
+        e->kind = EXPR_STRING;
+        e->v.str_val.ptr = tn;
+        e->v.str_val.len = (int)kn_strlen(tn);
+        e->type = type_make(TY_STRING);
+        return true;
+    }
+
+    if (kn_strcmp(e->v.member_call.name, "IsNull") == 0)
+    {
+        if (e->v.member_call.args.count != 0)
+            sema_error_arg_count_named(s, e->line, e->col, 1, "IsNull", 0);
+        e->v.member_call.builtin_id = KN_BUILTIN_IO_ANY_ISNULL;
+        e->type = type_make(TY_BOOL);
+        return true;
+    }
+    if (kn_strcmp(e->v.member_call.name, "ToString") == 0)
+    {
+        if (e->v.member_call.args.count != 0)
+            sema_error_arg_count_named(s, e->line, e->col, 1, "ToString", 0);
+        e->v.member_call.builtin_id = KN_BUILTIN_IO_ANY_TOSTRING;
+        e->type = type_make(TY_STRING);
+        return true;
+    }
+    if (kn_strcmp(e->v.member_call.name, "Equals") == 0)
+    {
+        if (e->v.member_call.args.count != 1)
+            sema_error_arg_count_named(s, e->line, e->col, 1, "Equals", 1);
+        e->v.member_call.builtin_id = KN_BUILTIN_IO_ANY_EQUALS;
+        e->type = type_make(TY_BOOL);
+        return true;
+    }
+    if (kn_strcmp(e->v.member_call.name, "TypeName") == 0)
+    {
+        if (e->v.member_call.args.count != 0)
+            sema_error_arg_count_named(s, e->line, e->col, 1, "TypeName", 0);
+        e->v.member_call.builtin_id = KN_BUILTIN_IO_ANY_TYPENAME;
+        e->type = type_make(TY_STRING);
+        return true;
+    }
+
+    return false;
+}
+
+static bool sema_try_member_any_builtin(Sema *s, Expr *e, const Type *rt)
+{
+    if (rt->kind == TY_ANY)
+    {
+        if (kn_strcmp(e->v.member_call.name, "Tag") == 0)
+        {
+            if (e->v.member_call.args.count != 0)
+                sema_error_arg_count_named(s, e->line, e->col, 1, "Tag", 0);
+            e->v.member_call.builtin_id = KN_BUILTIN_IO_ANY_TAG;
+            e->type = type_make(TY_INT);
+            return true;
+        }
+        if (kn_strcmp(e->v.member_call.name, "IsNumber") == 0)
+        {
+            if (e->v.member_call.args.count != 0)
+                sema_error_arg_count_named(s, e->line, e->col, 1, "IsNumber", 0);
+            e->v.member_call.builtin_id = KN_BUILTIN_IO_ANY_ISNUMBER;
+            e->type = type_make(TY_BOOL);
+            return true;
+        }
+        if (kn_strcmp(e->v.member_call.name, "IsPointer") == 0)
+        {
+            if (e->v.member_call.args.count != 0)
+                sema_error_arg_count_named(s, e->line, e->col, 1, "IsPointer", 0);
+            e->v.member_call.builtin_id = KN_BUILTIN_IO_ANY_ISPOINTER;
+            e->type = type_make(TY_BOOL);
+            return true;
+        }
+        if (kn_strcmp(e->v.member_call.name, "IsInt") == 0)
+        {
+            if (e->v.member_call.args.count != 0)
+                sema_error_arg_count_named(s, e->line, e->col, 1, "IsInt", 0);
+            e->v.member_call.builtin_id = KN_BUILTIN_IO_ANY_ISINT;
+            e->type = type_make(TY_BOOL);
+            return true;
+        }
+        if (kn_strcmp(e->v.member_call.name, "IsFloat") == 0)
+        {
+            if (e->v.member_call.args.count != 0)
+                sema_error_arg_count_named(s, e->line, e->col, 1, "IsFloat", 0);
+            e->v.member_call.builtin_id = KN_BUILTIN_IO_ANY_ISFLOAT;
+            e->type = type_make(TY_BOOL);
+            return true;
+        }
+        if (kn_strcmp(e->v.member_call.name, "IsString") == 0)
+        {
+            if (e->v.member_call.args.count != 0)
+                sema_error_arg_count_named(s, e->line, e->col, 1, "IsString", 0);
+            e->v.member_call.builtin_id = KN_BUILTIN_IO_ANY_ISSTRING;
+            e->type = type_make(TY_BOOL);
+            return true;
+        }
+        if (kn_strcmp(e->v.member_call.name, "IsBool") == 0)
+        {
+            if (e->v.member_call.args.count != 0)
+                sema_error_arg_count_named(s, e->line, e->col, 1, "IsBool", 0);
+            e->v.member_call.builtin_id = KN_BUILTIN_IO_ANY_ISBOOL;
+            e->type = type_make(TY_BOOL);
+            return true;
+        }
+        if (kn_strcmp(e->v.member_call.name, "IsChar") == 0)
+        {
+            if (e->v.member_call.args.count != 0)
+                sema_error_arg_count_named(s, e->line, e->col, 1, "IsChar", 0);
+            e->v.member_call.builtin_id = KN_BUILTIN_IO_ANY_ISCHAR;
+            e->type = type_make(TY_BOOL);
+            return true;
+        }
+        if (kn_strcmp(e->v.member_call.name, "IsObject") == 0)
+        {
+            if (e->v.member_call.args.count != 0)
+                sema_error_arg_count_named(s, e->line, e->col, 1, "IsObject", 0);
+            e->v.member_call.builtin_id = KN_BUILTIN_IO_ANY_ISOBJECT;
+            e->type = type_make(TY_BOOL);
+            return true;
+        }
+    }
+
+    return false;
+}
+
+static bool sema_try_member_string_array_builtin(Sema *s, Expr *e, const Type *rt, ParamList *args)
+{
+    if (rt->kind == TY_STRING && kn_strcmp(e->v.member_call.name, "ToChars") == 0)
+    {
+        if (e->v.member_call.args.count != 0)
+            sema_error_arg_count_named(s, e->line, e->col, 1, "ToChars", 0);
+        if (sema_is_freestanding_core())
+            sema_error(s, e->line, e->col, 1, "Freestanding Core", "ToChars requires allocation and is not available in freestanding core");
+        e->v.member_call.builtin_id = KN_BUILTIN_IO_STRING_TOCHARS;
+        e->type = type_array(TY_CHAR, -1);
+        return true;
+    }
+
+    if (rt->kind == TY_STRING && kn_strcmp(e->v.member_call.name, "Length") == 0)
+    {
+        if (e->v.member_call.args.count != 0)
+            sema_error_arg_count_named(s, e->line, e->col, 1, "Length", 0);
+        e->v.member_call.builtin_id = KN_BUILTIN_IO_STRING_LENGTH;
+        e->type = type_make(TY_INT);
+        return true;
+    }
+
+    if (rt->kind == TY_STRING && kn_strcmp(e->v.member_call.name, "Index") == 0)
+    {
+        if (e->v.member_call.args.count != 1)
+            sema_error_arg_count_named(s, e->line, e->col, 1, "Index", 1);
+        if (e->v.member_call.args.count == 0)
+        {
+            e->v.member_call.builtin_id = KN_BUILTIN_STRING_INDEX;
+            e->type = type_make(TY_CHAR);
+            return true;
+        }
+        Type idx_type = args->items[0].type;
+        if (!is_integer_kind(idx_type.kind))
+            sema_error_type_must_be_named(s, e->v.member_call.args.items[0]->line, e->v.member_call.args.items[0]->col, 1, "Index", "argument", "integer");
+        e->v.member_call.builtin_id = KN_BUILTIN_STRING_INDEX;
+        e->type = type_make(TY_CHAR);
+        return true;
+    }
+
+    if (rt->kind == TY_ARRAY && kn_strcmp(e->v.member_call.name, "Length") == 0)
+    {
+        if (e->v.member_call.args.count != 0)
+            sema_error_arg_count_named(s, e->line, e->col, 1, "Length", 0);
+        e->v.member_call.builtin_id = KN_BUILTIN_ARRAY_LENGTH;
+        e->type = type_make(TY_INT);
+        return true;
+    }
+    if (rt->kind == TY_ARRAY && kn_strcmp(e->v.member_call.name, "Index") == 0)
+    {
+        if (e->v.member_call.args.count != 1)
+            sema_error_arg_count_named(s, e->line, e->col, 1, "Index", 1);
+        if (e->v.member_call.args.count == 0)
+        {
+            e->type = type_immediate_elem(*rt);
+            return true;
+        }
+        if (e->v.member_call.args.count == 1 && !is_integer_kind(args->items[0].type.kind))
+            sema_error_type_must_be_named(s, e->line, e->col, 1, "Index", "argument", "integer");
+        Expr *recv_expr = e->v.member_call.recv;
+        Expr *idx_expr = e->v.member_call.args.items[0];
+        e->kind = EXPR_INDEX;
+        e->v.index.recv = recv_expr;
+        e->v.index.index = idx_expr;
+        e->type = type_immediate_elem(*rt);
+        return true;
+    }
+    if (rt->kind == TY_ARRAY && kn_strcmp(e->v.member_call.name, "Add") == 0)
+    {
+        if (sema_is_freestanding_core())
+            sema_error(s, e->line, e->col, 1, "Freestanding Core", "Dynamic array Add requires freestanding gc runtime");
+        if (e->v.member_call.args.count != 1)
+            sema_error_arg_count_named(s, e->line, e->col, 1, "Add", 1);
+        if (e->v.member_call.args.count == 1)
+        {
+            Type elem = type_immediate_elem(*rt);
+            Type at = sema_expr_with_expected(s, e->v.member_call.args.items[0], elem,
+                                              "Default literal requires array element type");
+            if (!type_assignable(s, elem, at))
+                sema_error(s, e->v.member_call.args.items[0]->line, e->v.member_call.args.items[0]->col, 1,
+                           "Type Mismatch", type_mismatch_detail(elem, at));
+            check_byte_literal_range(s, elem, e->v.member_call.args.items[0]);
+        }
+        e->v.member_call.builtin_id = KN_BUILTIN_ARRAY_ADD;
+        e->type = *rt;
+        if (e->type.array_len >= 0)
+            e->type.array_len += 1;
+        return true;
+    }
+
+    return false;
+}
+
+static bool sema_try_member_dict_builtin(Sema *s, Expr *e, const Type *rt, ParamList *args)
+{
+    if (rt->kind == TY_CLASS && rt->name && kn_strcmp(rt->name, "IO.Collection.dict") == 0)
+    {
+        if (kn_strcmp(e->v.member_call.name, "Set") == 0)
+        {
+            if (e->v.member_call.args.count != 2)
+                sema_error_arg_count_named(s, e->line, e->col, 1, "Set", 2);
+            if (e->v.member_call.args.count >= 1 && !type_assignable(s, type_make(TY_STRING), args->items[0].type))
+                sema_error_type_must_be_named(s, e->v.member_call.args.items[0]->line, e->v.member_call.args.items[0]->col, 1, "Set", "key", "string");
+            e->v.member_call.builtin_id = KN_BUILTIN_IO_DICT_SET;
+            e->type = type_make(TY_VOID);
+            lower_member_builtin_to_call(e);
+            return true;
+        }
+        if (kn_strcmp(e->v.member_call.name, "Fetch") == 0)
+        {
+            if (e->v.member_call.args.count != 1)
+                sema_error_arg_count_named(s, e->line, e->col, 1, "Fetch", 1);
+            if (e->v.member_call.args.count == 1 && !type_assignable(s, type_make(TY_STRING), args->items[0].type))
+                sema_error_type_must_be_named(s, e->v.member_call.args.items[0]->line, e->v.member_call.args.items[0]->col, 1, "Fetch", "key", "string");
+            e->v.member_call.builtin_id = KN_BUILTIN_IO_DICT_GET;
+            e->type = type_make(TY_ANY);
+            lower_member_builtin_to_call(e);
+            return true;
+        }
+        if (kn_strcmp(e->v.member_call.name, "Contains") == 0)
+        {
+            if (e->v.member_call.args.count != 1)
+                sema_error_arg_count_named(s, e->line, e->col, 1, "Contains", 1);
+            if (e->v.member_call.args.count == 1 && !type_assignable(s, type_make(TY_STRING), args->items[0].type))
+                sema_error_type_must_be_named(s, e->v.member_call.args.items[0]->line, e->v.member_call.args.items[0]->col, 1, "Contains", "key", "string");
+            e->v.member_call.builtin_id = KN_BUILTIN_IO_DICT_CONTAINS;
+            e->type = type_make(TY_BOOL);
+            lower_member_builtin_to_call(e);
+            return true;
+        }
+        if (kn_strcmp(e->v.member_call.name, "TryFetch") == 0)
+        {
+            if (e->v.member_call.args.count != 2)
+                sema_error_arg_count_named(s, e->line, e->col, 1, "TryFetch", 2);
+            if (e->v.member_call.args.count >= 1 && !type_assignable(s, type_make(TY_STRING), args->items[0].type))
+                sema_error_type_must_be_named(s, e->v.member_call.args.items[0]->line, e->v.member_call.args.items[0]->col, 1, "TryFetch", "key", "string");
+            e->v.member_call.builtin_id = KN_BUILTIN_IO_DICT_TRY_FETCH;
+            e->type = type_make(TY_ANY);
+            lower_member_builtin_to_call(e);
+            return true;
+        }
+        if (kn_strcmp(e->v.member_call.name, "Count") == 0)
+        {
+            if (e->v.member_call.args.count != 0)
+                sema_error_arg_count_named(s, e->line, e->col, 1, "Count", 0);
+            e->v.member_call.builtin_id = KN_BUILTIN_IO_DICT_COUNT;
+            e->type = type_make(TY_INT);
+            lower_member_builtin_to_call(e);
+            return true;
+        }
+        if (kn_strcmp(e->v.member_call.name, "Remove") == 0)
+        {
+            if (e->v.member_call.args.count != 1)
+                sema_error_arg_count_named(s, e->line, e->col, 1, "Remove", 1);
+            if (e->v.member_call.args.count == 1 && !type_assignable(s, type_make(TY_STRING), args->items[0].type))
+                sema_error_type_must_be_named(s, e->v.member_call.args.items[0]->line, e->v.member_call.args.items[0]->col, 1, "Remove", "key", "string");
+            e->v.member_call.builtin_id = KN_BUILTIN_IO_DICT_REMOVE;
+            e->type = type_make(TY_BOOL);
+            lower_member_builtin_to_call(e);
+            return true;
+        }
+        if (kn_strcmp(e->v.member_call.name, "IsEmpty") == 0)
+        {
+            if (e->v.member_call.args.count != 0)
+                sema_error_arg_count_named(s, e->line, e->col, 1, "IsEmpty", 0);
+            e->v.member_call.builtin_id = KN_BUILTIN_IO_DICT_IS_EMPTY;
+            e->type = type_make(TY_BOOL);
+            lower_member_builtin_to_call(e);
+            return true;
+        }
+        if (kn_strcmp(e->v.member_call.name, "Keys") == 0)
+        {
+            if (e->v.member_call.args.count != 0)
+                sema_error_arg_count_named(s, e->line, e->col, 1, "Keys", 0);
+            e->v.member_call.builtin_id = KN_BUILTIN_IO_DICT_KEYS;
+            e->type = type_class("IO.Collection.list");
+            lower_member_builtin_to_call(e);
+            return true;
+        }
+        if (kn_strcmp(e->v.member_call.name, "Values") == 0)
+        {
+            if (e->v.member_call.args.count != 0)
+                sema_error_arg_count_named(s, e->line, e->col, 1, "Values", 0);
+            e->v.member_call.builtin_id = KN_BUILTIN_IO_DICT_VALUES;
+            e->type = type_class("IO.Collection.list");
+            lower_member_builtin_to_call(e);
+            return true;
+        }
+    }
+
+    return false;
+}
+
+static bool sema_try_member_list_builtin(Sema *s, Expr *e, const Type *rt, ParamList *args)
+{
+    if (rt->kind == TY_CLASS && rt->name && kn_strcmp(rt->name, "IO.Collection.list") == 0)
+    {
+        if (kn_strcmp(e->v.member_call.name, "Add") == 0)
+        {
+            if (e->v.member_call.args.count != 1)
+                sema_error_arg_count_named(s, e->line, e->col, 1, "Add", 1);
+            e->v.member_call.builtin_id = KN_BUILTIN_IO_LIST_ADD;
+            e->type = type_make(TY_VOID);
+            lower_member_builtin_to_call(e);
+            return true;
+        }
+        if (kn_strcmp(e->v.member_call.name, "Fetch") == 0)
+        {
+            if (e->v.member_call.args.count != 1)
+                sema_error_arg_count_named(s, e->line, e->col, 1, "Fetch", 1);
+            if (e->v.member_call.args.count == 1 && !is_integer_kind(args->items[0].type.kind))
+                sema_error_type_must_be_named(s, e->v.member_call.args.items[0]->line, e->v.member_call.args.items[0]->col, 1, "Fetch", "index", "integer");
+            e->v.member_call.builtin_id = KN_BUILTIN_IO_LIST_GET;
+            e->type = type_make(TY_ANY);
+            lower_member_builtin_to_call(e);
+            return true;
+        }
+        if (kn_strcmp(e->v.member_call.name, "Set") == 0)
+        {
+            if (e->v.member_call.args.count != 2)
+                sema_error_arg_count_named(s, e->line, e->col, 1, "Set", 2);
+            if (e->v.member_call.args.count >= 1 && !is_integer_kind(args->items[0].type.kind))
+                sema_error_type_must_be_named(s, e->v.member_call.args.items[0]->line, e->v.member_call.args.items[0]->col, 1, "Set", "index", "integer");
+            e->v.member_call.builtin_id = KN_BUILTIN_IO_LIST_SET;
+            e->type = type_make(TY_VOID);
+            lower_member_builtin_to_call(e);
+            return true;
+        }
+        if (kn_strcmp(e->v.member_call.name, "Insert") == 0)
+        {
+            if (e->v.member_call.args.count != 2)
+                sema_error_arg_count_named(s, e->line, e->col, 1, "Insert", 2);
+            if (e->v.member_call.args.count >= 1 && !is_integer_kind(args->items[0].type.kind))
+                sema_error_type_must_be_named(s, e->v.member_call.args.items[0]->line, e->v.member_call.args.items[0]->col, 1, "Insert", "index", "integer");
+            e->v.member_call.builtin_id = KN_BUILTIN_IO_LIST_INSERT;
+            e->type = type_make(TY_VOID);
+            lower_member_builtin_to_call(e);
+            return true;
+        }
+        if (kn_strcmp(e->v.member_call.name, "TryFetch") == 0)
+        {
+            if (e->v.member_call.args.count != 2)
+                sema_error_arg_count_named(s, e->line, e->col, 1, "TryFetch", 2);
+            if (e->v.member_call.args.count >= 1 && !is_integer_kind(args->items[0].type.kind))
+                sema_error_type_must_be_named(s, e->v.member_call.args.items[0]->line, e->v.member_call.args.items[0]->col, 1, "TryFetch", "index", "integer");
+            e->v.member_call.builtin_id = KN_BUILTIN_IO_LIST_TRY_FETCH;
+            e->type = type_make(TY_ANY);
+            lower_member_builtin_to_call(e);
+            return true;
+        }
+        if (kn_strcmp(e->v.member_call.name, "Count") == 0)
+        {
+            if (e->v.member_call.args.count != 0)
+                sema_error_arg_count_named(s, e->line, e->col, 1, "Count", 0);
+            e->v.member_call.builtin_id = KN_BUILTIN_IO_LIST_COUNT;
+            e->type = type_make(TY_INT);
+            lower_member_builtin_to_call(e);
+            return true;
+        }
+        if (kn_strcmp(e->v.member_call.name, "Clear") == 0)
+        {
+            if (e->v.member_call.args.count != 0)
+                sema_error_arg_count_named(s, e->line, e->col, 1, "Clear", 0);
+            e->v.member_call.builtin_id = KN_BUILTIN_IO_LIST_CLEAR;
+            e->type = type_make(TY_VOID);
+            lower_member_builtin_to_call(e);
+            return true;
+        }
+        if (kn_strcmp(e->v.member_call.name, "RemoveAt") == 0)
+        {
+            if (e->v.member_call.args.count != 1)
+                sema_error_arg_count_named(s, e->line, e->col, 1, "RemoveAt", 1);
+            if (e->v.member_call.args.count == 1 && !is_integer_kind(args->items[0].type.kind))
+                sema_error_type_must_be_named(s, e->v.member_call.args.items[0]->line, e->v.member_call.args.items[0]->col, 1, "RemoveAt", "index", "integer");
+            e->v.member_call.builtin_id = KN_BUILTIN_IO_LIST_REMOVE_AT;
+            e->type = type_make(TY_ANY);
+            lower_member_builtin_to_call(e);
+            return true;
+        }
+        if (kn_strcmp(e->v.member_call.name, "Contains") == 0)
+        {
+            if (e->v.member_call.args.count != 1)
+                sema_error_arg_count_named(s, e->line, e->col, 1, "Contains", 1);
+            e->v.member_call.builtin_id = KN_BUILTIN_IO_LIST_CONTAINS;
+            e->type = type_make(TY_BOOL);
+            lower_member_builtin_to_call(e);
+            return true;
+        }
+        if (kn_strcmp(e->v.member_call.name, "Pop") == 0)
+        {
+            if (e->v.member_call.args.count != 0)
+                sema_error_arg_count_named(s, e->line, e->col, 1, "Pop", 0);
+            e->v.member_call.builtin_id = KN_BUILTIN_IO_LIST_POP;
+            e->type = type_make(TY_ANY);
+            lower_member_builtin_to_call(e);
+            return true;
+        }
+        if (kn_strcmp(e->v.member_call.name, "Peek") == 0)
+        {
+            if (e->v.member_call.args.count != 0)
+                sema_error_arg_count_named(s, e->line, e->col, 1, "Peek", 0);
+            e->v.member_call.builtin_id = KN_BUILTIN_IO_LIST_PEEK;
+            e->type = type_make(TY_ANY);
+            lower_member_builtin_to_call(e);
+            return true;
+        }
+        if (kn_strcmp(e->v.member_call.name, "IndexOf") == 0)
+        {
+            if (e->v.member_call.args.count != 1)
+                sema_error_arg_count_named(s, e->line, e->col, 1, "IndexOf", 1);
+            e->v.member_call.builtin_id = KN_BUILTIN_IO_LIST_INDEX_OF;
+            e->type = type_make(TY_INT);
+            lower_member_builtin_to_call(e);
+            return true;
+        }
+        if (kn_strcmp(e->v.member_call.name, "IsEmpty") == 0)
+        {
+            if (e->v.member_call.args.count != 0)
+                sema_error_arg_count_named(s, e->line, e->col, 1, "IsEmpty", 0);
+            e->v.member_call.builtin_id = KN_BUILTIN_IO_LIST_IS_EMPTY;
+            e->type = type_make(TY_BOOL);
+            lower_member_builtin_to_call(e);
+            return true;
+        }
+    }
+
+    return false;
+}
+
+static bool sema_try_member_set_builtin(Sema *s, Expr *e, const Type *rt, ParamList *args)
+{
+    if (rt->kind == TY_CLASS && rt->name && kn_strcmp(rt->name, "IO.Collection.set") == 0)
+    {
+        if (kn_strcmp(e->v.member_call.name, "Add") == 0)
+        {
+            if (e->v.member_call.args.count != 1)
+                sema_error_arg_count_named(s, e->line, e->col, 1, "Add", 1);
+            if (e->v.member_call.args.count == 1 && !type_assignable(s, type_make(TY_STRING), args->items[0].type))
+                sema_error_type_must_be_named(s, e->v.member_call.args.items[0]->line, e->v.member_call.args.items[0]->col, 1, "Add", "value", "string");
+            e->v.member_call.builtin_id = KN_BUILTIN_IO_SET_ADD;
+            e->type = type_make(TY_VOID);
+            lower_member_builtin_to_call(e);
+            return true;
+        }
+        if (kn_strcmp(e->v.member_call.name, "Contains") == 0)
+        {
+            if (e->v.member_call.args.count != 1)
+                sema_error_arg_count_named(s, e->line, e->col, 1, "Contains", 1);
+            if (e->v.member_call.args.count == 1 && !type_assignable(s, type_make(TY_STRING), args->items[0].type))
+                sema_error_type_must_be_named(s, e->v.member_call.args.items[0]->line, e->v.member_call.args.items[0]->col, 1, "Contains", "value", "string");
+            e->v.member_call.builtin_id = KN_BUILTIN_IO_SET_CONTAINS;
+            e->type = type_make(TY_BOOL);
+            lower_member_builtin_to_call(e);
+            return true;
+        }
+        if (kn_strcmp(e->v.member_call.name, "Count") == 0)
+        {
+            if (e->v.member_call.args.count != 0)
+                sema_error_arg_count_named(s, e->line, e->col, 1, "Count", 0);
+            e->v.member_call.builtin_id = KN_BUILTIN_IO_SET_COUNT;
+            e->type = type_make(TY_INT);
+            lower_member_builtin_to_call(e);
+            return true;
+        }
+        if (kn_strcmp(e->v.member_call.name, "Remove") == 0)
+        {
+            if (e->v.member_call.args.count != 1)
+                sema_error_arg_count_named(s, e->line, e->col, 1, "Remove", 1);
+            if (e->v.member_call.args.count == 1 && !type_assignable(s, type_make(TY_STRING), args->items[0].type))
+                sema_error_type_must_be_named(s, e->v.member_call.args.items[0]->line, e->v.member_call.args.items[0]->col, 1, "Remove", "value", "string");
+            e->v.member_call.builtin_id = KN_BUILTIN_IO_SET_REMOVE;
+            e->type = type_make(TY_BOOL);
+            lower_member_builtin_to_call(e);
+            return true;
+        }
+        if (kn_strcmp(e->v.member_call.name, "Clear") == 0)
+        {
+            if (e->v.member_call.args.count != 0)
+                sema_error_arg_count_named(s, e->line, e->col, 1, "Clear", 0);
+            e->v.member_call.builtin_id = KN_BUILTIN_IO_SET_CLEAR;
+            e->type = type_make(TY_VOID);
+            lower_member_builtin_to_call(e);
+            return true;
+        }
+        if (kn_strcmp(e->v.member_call.name, "IsEmpty") == 0)
+        {
+            if (e->v.member_call.args.count != 0)
+                sema_error_arg_count_named(s, e->line, e->col, 1, "IsEmpty", 0);
+            e->v.member_call.builtin_id = KN_BUILTIN_IO_SET_IS_EMPTY;
+            e->type = type_make(TY_BOOL);
+            lower_member_builtin_to_call(e);
+            return true;
+        }
+        if (kn_strcmp(e->v.member_call.name, "Values") == 0)
+        {
+            if (e->v.member_call.args.count != 0)
+                sema_error_arg_count_named(s, e->line, e->col, 1, "Values", 0);
+            e->v.member_call.builtin_id = KN_BUILTIN_IO_SET_VALUES;
+            e->type = type_class("IO.Collection.list");
+            lower_member_builtin_to_call(e);
+            return true;
+        }
+    }
+
+    return false;
+}
+
+static Type sema_call_expr(Sema *s, Expr *e)
+{
+    VarSym *fv = scope_find(s->scope, e->v.call.name);
+    if (fv && is_function_object_type(s, fv->type))
+    {
+        if (e->v.call.type_args.count > 0)
+            sema_error(s, e->line, e->col, 1, "Invalid Generic Call", "Function object invocation does not accept generic type arguments");
+        Expr *callee = new_expr(EXPR_VAR, e->line, e->col);
+        callee->v.var.name = e->v.call.name;
+        ExprList args = e->v.call.args;
+        NameList arg_names = e->v.call.arg_names;
+        e->kind = EXPR_INVOKE;
+        e->v.invoke.callee = callee;
+        e->v.invoke.args = args;
+        e->v.invoke.arg_names = arg_names;
+        return sema_expr(s, e);
+    }
+
+    const char *resolved_call_name = expand_local_symbol_alias(s, e->v.call.name);
+    const KnStdFunc *std = resolve_std_by_local(s, resolved_call_name);
+    // No longer auto-resolve builtin type names as conversions
+    // Use [type](value) syntax instead
+    if (std)
+    {
+        if (e->v.call.type_args.count > 0)
+            sema_error(s, e->line, e->col, 1, "Invalid Generic Call", "Builtin function does not accept generic type arguments");
+        if (call_has_named_args(&e->v.call.arg_names))
+            sema_error(s, e->line, e->col, 1, "Invalid Named Argument", "Named arguments are not supported for this callable");
+        if (std->kind == KN_BUILTIN_IO_ASYNC_RUN)
+        {
+            if (e->v.call.args.count != 1)
+                sema_error_arg_count_named(s, e->line, e->col, 1, std->name, 1);
+            if (e->v.call.args.count == 1)
+            {
+                Type at = sema_expr(s, e->v.call.args.items[0]);
+                if (!is_async_task_type(at))
+                    sema_error(s, e->line, e->col, 1, "Async Run", "IO.Async.Run expects IO.Async.Task");
+                else if (e->v.call.args.items[0]->async_result_type.kind == TY_UNKNOWN)
+                    sema_error(s, e->line, e->col, 1, "Async Run", "Task result type is not known here");
+                e->v.call.builtin_id = (int)std->kind;
+                e->type = e->v.call.args.items[0]->async_result_type;
+                return e->type;
+            }
+        }
+        if (std->kind == KN_BUILTIN_IO_ASYNC_SLEEP)
+        {
+            if (e->v.call.args.count != 1)
+                sema_error_arg_count_named(s, e->line, e->col, 1, std->name, 1);
+            if (e->v.call.args.count == 1)
+            {
+                Type at = sema_expr_with_expected(s, e->v.call.args.items[0], type_make(TY_INT), "Default literal requires parameter type");
+                if (!type_assignable(s, type_make(TY_INT), at))
+                    sema_error(s, e->v.call.args.items[0]->line, e->v.call.args.items[0]->col, 1, "Type Mismatch", type_mismatch_detail(type_make(TY_INT), at));
+            }
+            e->v.call.builtin_id = (int)std->kind;
+            check_call_safety(s, std->safety, e->line, e->col, 1);
+            return sema_mark_async_task_expr(e, type_make(TY_VOID));
+        }
+        if (std->kind == KN_BUILTIN_IO_ASYNC_YIELD)
+        {
+            if (e->v.call.args.count != 0)
+                sema_error_arg_count_named(s, e->line, e->col, 1, std->name, 0);
+            e->v.call.builtin_id = (int)std->kind;
+            check_call_safety(s, std->safety, e->line, e->col, 1);
+            return sema_mark_async_task_expr(e, type_make(TY_VOID));
+        }
+        Type conv_dst = type_make(TY_UNKNOWN);
+        int is_conv = builtin_conv_target(std->kind, &conv_dst);
+        int is_vararg = builtin_is_vararg(std->kind);
+        if (!is_vararg && e->v.call.args.count != std->param_count)
+            sema_error_arg_count_named(s, e->line, e->col, 1, std->name, std->param_count);
+        for (int i = 0; i < e->v.call.args.count; i++)
+        {
+            Expr *arg = e->v.call.args.items[i];
+            Type pt = is_vararg ? std->params[0] : std->params[i];
+            Type at = sema_builtin_arg_with_expected(s, arg, pt, "Default literal requires parameter type",
+                                                     std->kind, i);
+            if (is_conv && at.kind == TY_PTR && is_integer_kind(conv_dst.kind))
+                check_ptr_safety(s, arg->line, arg->col, 1, "Safe function cannot cast pointer to integer");
+            check_int_to_ptr_safety(s, pt, at, arg);
+            if (!type_assignable(s, pt, at))
+                sema_error(s, arg->line, arg->col, 1, "Type Mismatch", type_mismatch_detail(pt, at));
+            check_byte_literal_range(s, pt, arg);
+        }
+        e->v.call.builtin_id = (int)std->kind;
+        e->type = std->ret_type;
+        check_call_safety(s, std->safety, e->line, e->col, 1);
+        return e->type;
+    }
+
+    // Check if user is trying to use old conversion syntax and provide helpful error
+    if (is_builtin_type_name(e->v.call.name))
+    {
+        sema_error(s, e->line, e->col, 1, "Conversion Syntax Changed",
+                   "Type conversion now use [type](value) syntax instead of type(value). "
+                   "For example: [int](\"123\") instead of int(\"123\")");
+        return type_make(TY_UNKNOWN);
+    }
+
+    ParamList args = {0};
+    args.count = e->v.call.args.count;
+    args.cap = e->v.call.args.count;
+    if (args.count > 0)
+    {
+        args.items = (Param *)kn_malloc(sizeof(Param) * (size_t)args.count);
+        for (int i = 0; i < args.count; i++)
+        {
+            Type at = sema_expr(s, e->v.call.args.items[i]);
+            args.items[i].type = at;
+            args.items[i].name = "";
+            args.items[i].src = s->src;
+        }
+    }
+
+    FuncSym *fn = 0;
+    int fn_ambiguous = 0;
+    if (name_has_dot(resolved_call_name))
+    {
+        fn = functable_find_visible_qualified_call(&s->funcs, s, resolved_call_name,
+                                                   &e->v.call.args, &e->v.call.arg_names,
+                                                   &args, &fn_ambiguous);
+    }
+    else
+    {
+        if (s->current_unit && s->current_unit[0])
+            fn = functable_find_call_by_name_in_unit(&s->funcs, s, resolved_call_name,
+                                                     &e->v.call.args, &e->v.call.arg_names,
+                                                     &args, s->current_unit, &fn_ambiguous);
+        else
+            fn = functable_find_call_by_name_without_unit(&s->funcs, s, resolved_call_name,
+                                                          &e->v.call.args, &e->v.call.arg_names,
+                                                          &args, &fn_ambiguous);
+    }
+    if (fn_ambiguous)
+    {
+        sema_error(s, e->line, e->col, 1, "Ambiguous Call", "Multiple overloaded functions match this call");
+    }
+    if (!fn)
+    {
+        if (resolved_call_name != e->v.call.name && name_has_dot(resolved_call_name) &&
+            e->v.call.type_args.count <= 0)
+        {
+            Expr *callee = build_qualified_symbol_expr(resolved_call_name, e->line, e->col);
+            if (callee)
+            {
+                ExprList args = e->v.call.args;
+                NameList arg_names = e->v.call.arg_names;
+                e->kind = EXPR_INVOKE;
+                e->v.invoke.callee = callee;
+                e->v.invoke.args = args;
+                e->v.invoke.arg_names = arg_names;
+                return sema_expr(s, e);
+            }
+        }
+        if (s->current_class && !name_has_dot(e->v.call.name))
+        {
+            Type mt = type_make(TY_UNKNOWN);
+            if (sema_try_current_class_method_call(s, e, &mt))
+                return mt;
+        }
+        if (find_scoped_symbol_module(s, e->v.call.name))
+            sema_error(s, e->line, e->col, 1, "Scoped Symbol Required", "Imported symbol must be called with module or alias qualifier");
+        else if (find_required_namespace_module_for_func(s, e->v.call.name))
+            sema_error(s, e->line, e->col, 1, "Scoped Symbol Required", "Imported module function must be called with module or alias qualifier");
+        else
+            sema_error(s, e->line, e->col, 1, "Unknown Function", "Function not found");
+        e->type = type_make(TY_UNKNOWN);
+        return e->type;
+    }
+
+    if (func_is_generic_template(fn->func))
+    {
+        if (e->v.call.type_args.count <= 0)
+        {
+            sema_error(s, e->line, e->col, 1, "Generic Function", "Generic call requires explicit type arguments");
+            e->type = type_make(TY_UNKNOWN);
+            return e->type;
+        }
+        Type *type_args = copy_and_validate_type_args(s, &e->v.call.type_args, e->line, e->col);
+        Func *inst = instantiate_generic_func(s, fn->func, type_args, e->v.call.type_args.count, e->line, e->col);
+        if (!inst)
+        {
+            e->type = type_make(TY_UNKNOWN);
+            return e->type;
+        }
+        fn = functable_find(&s->funcs, inst->qname ? inst->qname : inst->name);
+        if (!fn || !fn->func)
+        {
+            sema_error(s, e->line, e->col, 1, "Generic Function", "Failed to resolve instantiated generic function");
+            e->type = type_make(TY_UNKNOWN);
+            return e->type;
+        }
+    }
+    else if (e->v.call.type_args.count > 0)
+    {
+        sema_error(s, e->line, e->col, 1, "Invalid Generic Call", "Type arguments can only be used with generic functions");
+    }
+
+    {
+        const char **param_names = alloc_param_names_from_paramlist(&fn->func->params);
+        (void)prepare_call_args(s, e->line, e->col, &e->v.call.args, &e->v.call.arg_names,
+                                0, fn->func->params.items, fn->func->params.count,
+                                param_names, fn->func->name, 1, 1);
+        if (param_names) kn_free((void *)param_names);
+    }
+
+    for (int i = 0; i < fn->func->params.count; i++)
+    {
+        Expr *arg = e->v.call.args.items[i];
+        Type pt = fn->func->params.items[i].type;
+        Type at = sema_expr_with_expected(s, arg, pt, "Default literal requires parameter type");
+        check_int_to_ptr_safety(s, pt, at, arg);
+        if (!type_assignable(s, pt, at))
+            sema_error(s, arg->line, arg->col, 1, "Type Mismatch", type_mismatch_detail(pt, at));
+        check_byte_literal_range(s, pt, arg);
+    }
+    check_call_safety(s, fn->func->safety, e->line, e->col, 1);
+    if (fn->func->qname)
+        e->v.call.name = fn->func->qname;
+    if (fn->func->is_async)
+        return sema_mark_async_task_expr(e, fn->func->async_result_type);
+    e->type = fn->func->ret_type;
+    return e->type;
+}
+
 static Type sema_expr_impl(Sema *s, Expr *e)
 {
     if (!e) return type_make(TY_UNKNOWN);
@@ -237,6 +1859,8 @@ static Type sema_expr_impl(Sema *s, Expr *e)
     case EXPR_STRING:
         e->type = type_make(TY_STRING);
         return e->type;
+    case EXPR_PACKAGE:
+        return sema_package_literal(s, e, type_make(TY_UNKNOWN), false);
     case EXPR_AWAIT:
     {
         if (!sema_is_in_async(s))
@@ -301,20 +1925,68 @@ static Type sema_expr_impl(Sema *s, Expr *e)
             }
         }
 
+        const char *resolved_name = expand_local_symbol_alias(s, e->v.var.name);
         FuncSym *fn = 0;
-        if (name_has_dot(e->v.var.name))
+        int fn_ambiguous = 0;
+        if (name_has_dot(resolved_name))
         {
-            fn = functable_find_visible_qualified(&s->funcs, s, e->v.var.name);
+            for (int i = 0; i < s->funcs.count; i++)
+            {
+                FuncSym *cand = &s->funcs.items[i];
+                Func *f = cand->func;
+                if (!f)
+                    continue;
+                if (func_is_generic_template(f))
+                    continue;
+                if (!cand->qname || kn_strcmp(cand->qname, resolved_name) != 0)
+                    continue;
+                if (!module_accessible_by_namespace(s, f->unit))
+                    continue;
+                if (fn)
+                {
+                    fn_ambiguous = 1;
+                    break;
+                }
+                fn = cand;
+            }
         }
         else
         {
-            if (s->current_unit && s->current_unit[0])
-                fn = functable_find_by_name_in_unit(&s->funcs, e->v.var.name, s->current_unit);
-            else
-                fn = functable_find_by_name_without_unit(&s->funcs, e->v.var.name);
+            for (int i = 0; i < s->funcs.count; i++)
+            {
+                FuncSym *cand = &s->funcs.items[i];
+                Func *f = cand->func;
+                if (!f)
+                    continue;
+                if (func_is_generic_template(f))
+                    continue;
+                if (kn_strcmp(f->name, resolved_name) != 0)
+                    continue;
+                if (s->current_unit && s->current_unit[0])
+                {
+                    if (!f->unit || kn_strcmp(f->unit, s->current_unit) != 0)
+                        continue;
+                }
+                else if (f->unit && f->unit[0])
+                {
+                    continue;
+                }
+                if (fn)
+                {
+                    fn_ambiguous = 1;
+                    break;
+                }
+                fn = cand;
+            }
         }
         if (fn)
         {
+            if (fn_ambiguous)
+            {
+                sema_error(s, e->line, e->col, 1, "Ambiguous Function Reference", "Overloaded function reference requires an explicit unique symbol");
+                e->type = type_make(TY_UNKNOWN);
+                return e->type;
+            }
             if (func_is_generic_template(fn->func))
             {
                 sema_error(s, e->line, e->col, 1, "Generic Function", "Generic function reference requires explicit type arguments");
@@ -329,17 +2001,29 @@ static Type sema_expr_impl(Sema *s, Expr *e)
         }
 
         const KnStdFunc *std_ref = 0;
-        if (name_has_dot(e->v.var.name))
-            std_ref = resolve_std_by_qualified_name(s, e->v.var.name);
+        if (name_has_dot(resolved_name))
+            std_ref = resolve_std_by_qualified_name(s, resolved_name);
         else
-            std_ref = resolve_std_by_local(s, e->v.var.name);
+            std_ref = resolve_std_by_local(s, resolved_name);
         if (std_ref)
         {
             e->kind = EXPR_FUNC_REF;
-            e->v.func_ref.qname = e->v.var.name;
+            e->v.func_ref.qname = resolved_name;
             e->v.func_ref.builtin_id = (int)std_ref->kind;
             e->type = type_class("IO.Type.Object.Function");
             return e->type;
+        }
+
+        if (resolved_name != e->v.var.name && name_has_dot(resolved_name))
+        {
+            Expr *alias_expr = build_qualified_symbol_expr(resolved_name, e->line, e->col);
+            if (alias_expr)
+            {
+                Expr rewritten = *alias_expr;
+                kn_free(alias_expr);
+                *e = rewritten;
+                return sema_expr(s, e);
+            }
         }
 
         if (find_scoped_symbol_module(s, e->v.var.name))
@@ -369,215 +2053,11 @@ static Type sema_expr_impl(Sema *s, Expr *e)
         e->type = type_class("IO.Type.Object.Function");
         return e->type;
     case EXPR_ANON_FUNC:
-    {
-        validate_type_ref(s, &e->v.anon_func.ret_type, e->line, e->col, 1);
-        {
-            ParamList params;
-            params.items = e->v.anon_func.params;
-            params.count = e->v.anon_func.param_count;
-            params.cap = e->v.anon_func.param_cap;
-            validate_param_defaults(s, &params, e->line, e->col);
-        }
-
-        Func fake;
-        kn_memset(&fake, 0, sizeof(fake));
-        fake.ret_type = e->v.anon_func.ret_type;
-        fake.safety = e->v.anon_func.safety;
-
-        Func *prev_cur = s->current;
-        Method *prev_method = s->current_method;
-        Scope *prev_scope = s->scope;
-        const char *prev_unit = s->current_unit;
-        ClassDecl *prev_class = s->current_class;
-        int prev_static = s->current_is_static;
-        int prev_in_block = s->in_block_literal;
-        BlockRecordList *prev_records = s->block_records;
-        Safety prev_block_safety = s->block_safety;
-
-        s->current = &fake;
-        s->current_method = 0;
-        s->current_unit = prev_unit;
-        s->current_class = prev_class;
-        s->current_is_static = prev_static;
-        s->in_block_literal = 0;
-        s->block_records = 0;
-        s->block_safety = SAFETY_SAFE;
-
-        Scope sc;
-        sc.vars = 0;
-        sc.parent = prev_scope;
-        s->scope = &sc;
-        for (int i = 0; i < e->v.anon_func.param_count; i++)
-        {
-            Param *pr = &e->v.anon_func.params[i];
-            scope_add_param(s, &sc, pr->name, pr->type, e->line, e->col);
-        }
-        sema_stmt(s, e->v.anon_func.body);
-
-        s->scope = prev_scope;
-        s->current = prev_cur;
-        s->current_method = prev_method;
-        s->current_unit = prev_unit;
-        s->current_class = prev_class;
-        s->current_is_static = prev_static;
-        s->in_block_literal = prev_in_block;
-        s->block_records = prev_records;
-        s->block_safety = prev_block_safety;
-
-        e->type = type_class("IO.Type.Object.Function");
-        return e->type;
-    }
+        return sema_anon_func_expr(s, e);
     case EXPR_BLOCK_LITERAL:
-    {
-        if (sema_is_freestanding_core())
-            sema_error(s, e->line, e->col, 1, "Freestanding Core", "Block literals require freestanding gc runtime");
-        if (e->v.block_lit.safety != SAFETY_UNSAFE)
-        {
-            for (int i = 0; i < e->v.block_lit.records.count; i++)
-            {
-                if (e->v.block_lit.records.items[i].nested_depth > 0)
-                    sema_error(s, e->line, e->col, 1, "Unsafe Block", "Record inside nested control flow requires Unsafe Block");
-            }
-        }
-
-        Func fake;
-        kn_memset(&fake, 0, sizeof(fake));
-        fake.ret_type = type_make(TY_VOID);
-        fake.safety = e->v.block_lit.safety;
-
-        Func *prev_cur = s->current;
-        Method *prev_method = s->current_method;
-        Scope *prev_scope = s->scope;
-        const char *prev_unit = s->current_unit;
-        ClassDecl *prev_class = s->current_class;
-        int prev_static = s->current_is_static;
-        int prev_in_block = s->in_block_literal;
-        BlockRecordList *prev_records = s->block_records;
-        Safety prev_block_safety = s->block_safety;
-
-        s->current = &fake;
-        s->current_method = 0;
-        s->current_unit = prev_unit;
-        s->current_class = prev_class;
-        s->current_is_static = prev_static;
-        s->in_block_literal = 1;
-        s->block_records = &e->v.block_lit.records;
-        s->block_safety = e->v.block_lit.safety;
-
-        Scope sc;
-        sc.vars = 0;
-        sc.parent = prev_scope;
-        s->scope = &sc;
-        sema_stmt(s, e->v.block_lit.body);
-
-        s->scope = prev_scope;
-        s->current = prev_cur;
-        s->current_method = prev_method;
-        s->current_unit = prev_unit;
-        s->current_class = prev_class;
-        s->current_is_static = prev_static;
-        s->in_block_literal = prev_in_block;
-        s->block_records = prev_records;
-        s->block_safety = prev_block_safety;
-
-        e->type = type_class("IO.Type.Object.Block");
-        return e->type;
-    }
+        return sema_block_literal_expr(s, e);
     case EXPR_INVOKE:
-    {
-        Type ct = sema_expr(s, e->v.invoke.callee);
-        Type ret = type_make(TY_ANY);
-        ParamList args = {0};
-        args.count = e->v.invoke.args.count;
-        args.cap = e->v.invoke.args.count;
-        if (args.count > 0)
-        {
-            args.items = (Param *)kn_malloc(sizeof(Param) * (size_t)args.count);
-            for (int i = 0; i < args.count; i++)
-            {
-                Type at = sema_expr(s, e->v.invoke.args.items[i]);
-                args.items[i].type = at;
-                args.items[i].name = "";
-                args.items[i].src = s->src;
-            }
-        }
-        if (is_block_object_type(ct))
-            sema_error(s, e->line, e->col, 1, "Invalid Call", "Block object must use Run/Jump APIs");
-        else if (!is_function_object_type(s, ct))
-            sema_error(s, e->line, e->col, 1, "Invalid Call", "Call target is not a function object");
-        else if (e->v.invoke.callee->kind == EXPR_FUNC_REF &&
-                 e->v.invoke.callee->v.func_ref.builtin_id != KN_BUILTIN_NONE)
-        {
-            if (call_has_named_args(&e->v.invoke.arg_names))
-                sema_error(s, e->line, e->col, 1, "Invalid Named Argument", "Named arguments are not supported for this callable");
-            KnBuiltinKind bk = (KnBuiltinKind)e->v.invoke.callee->v.func_ref.builtin_id;
-            return lower_invoke_builtin_ref(s, e, bk, &args);
-        }
-        else if (e->v.invoke.callee->kind == EXPR_VAR)
-        {
-            VarSym *v = scope_find(s->scope, e->v.invoke.callee->v.var.name);
-            if (v && v->origin)
-            {
-                if (v->origin->kind == EXPR_FUNC_REF &&
-                    v->origin->v.func_ref.builtin_id != KN_BUILTIN_NONE)
-                {
-                    if (call_has_named_args(&e->v.invoke.arg_names))
-                        sema_error(s, e->line, e->col, 1, "Invalid Named Argument", "Named arguments are not supported for this callable");
-                    KnBuiltinKind bk = (KnBuiltinKind)v->origin->v.func_ref.builtin_id;
-                    return lower_invoke_builtin_ref(s, e, bk, &args);
-                }
-                if (v->origin->kind == EXPR_FUNC_REF && v->origin->v.func_ref.qname)
-                {
-                    FuncSym *fs = functable_find(&s->funcs, v->origin->v.func_ref.qname);
-                    if (fs && fs->func)
-                    {
-                        const char **param_names = alloc_param_names_from_paramlist(&fs->func->params);
-                        (void)prepare_call_args(s, e->line, e->col, &e->v.invoke.args, &e->v.invoke.arg_names,
-                                                &args, fs->func->params.items, fs->func->params.count,
-                                                param_names, fs->func->name, 1, 1);
-                        retype_prepared_args(s, &e->v.invoke.args, &args, fs->func->params.items, fs->func->params.count,
-                                             "Default literal requires parameter type");
-                        if (param_names) kn_free((void *)param_names);
-                        for (int i = 0; i < fs->func->params.count; i++)
-                        {
-                            Type pt = fs->func->params.items[i].type;
-                            Type at = args.items[i].type;
-                            check_int_to_ptr_safety(s, pt, at, e->v.invoke.args.items[i]);
-                            if (!type_assignable(s, pt, at))
-                                sema_error(s, e->v.invoke.args.items[i]->line, e->v.invoke.args.items[i]->col, 1, "Type Mismatch", type_mismatch_detail(pt, at));
-                        }
-                        check_call_safety(s, fs->func->safety, e->line, e->col, 1);
-                        ret = fs->func->ret_type;
-                    }
-                }
-                else if (v->origin->kind == EXPR_ANON_FUNC)
-                {
-                    const char **param_names = alloc_param_names_from_params(v->origin->v.anon_func.params,
-                                                                             v->origin->v.anon_func.param_count);
-                    (void)prepare_call_args(s, e->line, e->col, &e->v.invoke.args, &e->v.invoke.arg_names,
-                                            &args, v->origin->v.anon_func.params,
-                                            v->origin->v.anon_func.param_count, param_names,
-                                            e->v.invoke.callee->v.var.name, 1, 1);
-                    retype_prepared_args(s, &e->v.invoke.args, &args, v->origin->v.anon_func.params,
-                                         v->origin->v.anon_func.param_count,
-                                         "Default literal requires parameter type");
-                    if (param_names) kn_free((void *)param_names);
-                    for (int i = 0; i < v->origin->v.anon_func.param_count; i++)
-                    {
-                        Type pt = v->origin->v.anon_func.params[i].type;
-                        Type at = args.items[i].type;
-                        check_int_to_ptr_safety(s, pt, at, e->v.invoke.args.items[i]);
-                        if (!type_assignable(s, pt, at))
-                            sema_error(s, e->v.invoke.args.items[i]->line, e->v.invoke.args.items[i]->col, 1, "Type Mismatch", type_mismatch_detail(pt, at));
-                    }
-                    check_call_safety(s, v->origin->v.anon_func.safety, e->line, e->col, 1);
-                    ret = v->origin->v.anon_func.ret_type;
-                }
-            }
-        }
-        e->type = ret;
-        return e->type;
-    }
+        return sema_invoke_expr(s, e);
     case EXPR_THIS:
     {
         if (!s->current_class || s->current_is_static)
@@ -595,69 +2075,7 @@ static Type sema_expr_impl(Sema *s, Expr *e)
         return e->type;
     }
     case EXPR_NEW:
-    {
-        if (sema_is_freestanding_core())
-            sema_error(s, e->line, e->col, 1, "Freestanding Core", "New is not available in freestanding core");
-        if (call_has_named_args(&e->v.new_expr.arg_names))
-            sema_error(s, e->line, e->col, 1, "Invalid Named Argument", "Named arguments are not supported for constructors");
-        ClassDecl *c = 0;
-        if (e->type.kind == TY_CLASS && e->v.new_expr.class_name && name_has_dot(e->v.new_expr.class_name))
-            c = find_class(s, e->v.new_expr.class_name);
-        if (!c)
-            c = find_visible_class(s, e->v.new_expr.class_name);
-        if (!c)
-        {
-            sema_error(s, e->line, e->col, 1, "Unknown Type", "Class not found");
-            e->type = type_make(TY_UNKNOWN);
-            return e->type;
-        }
-        if (c->is_static_class)
-            sema_error(s, e->line, e->col, 1, "Invalid New", "Cannot instantiate static class");
-        if (c->is_abstract)
-            sema_error(s, e->line, e->col, 1, "Invalid New", "Cannot instantiate abstract class");
-        // resolve ctor by params
-        ParamList params = {0};
-        params.count = e->v.new_expr.args.count;
-        params.cap = e->v.new_expr.args.count;
-        if (params.count > 0)
-        {
-            params.items = (Param *)kn_malloc(sizeof(Param) * (size_t)params.count);
-            for (int i = 0; i < params.count; i++)
-            {
-                Type at = sema_expr(s, e->v.new_expr.args.items[i]);
-                params.items[i].type = at;
-                params.items[i].name = "";
-                params.items[i].src = s->src;
-            }
-        }
-        int ctor_index = -1;
-        bool has_explicit_ctor = class_has_explicit_ctor(c);
-        Method *ctor = find_ctor(s, c, &e->v.new_expr.args, &e->v.new_expr.arg_names, &params, &ctor_index);
-        if (!ctor && (has_explicit_ctor || params.count > 0))
-            sema_error(s, e->line, e->col, 1, "Constructor", "Constructor not found");
-        if (ctor)
-        {
-            const char **param_names = alloc_param_names_from_paramlist(&ctor->params);
-            (void)prepare_call_args(s, e->line, e->col, &e->v.new_expr.args, &e->v.new_expr.arg_names,
-                                    &params, ctor->params.items, ctor->params.count,
-                                    param_names, c->name, 1, 1);
-            retype_prepared_args(s, &e->v.new_expr.args, &params, ctor->params.items, ctor->params.count,
-                                 "Default literal requires parameter type");
-            if (param_names) kn_free((void *)param_names);
-            for (int i = 0; i < ctor->params.count; i++)
-            {
-                Type pt = ctor->params.items[i].type;
-                Type at = params.items[i].type;
-                check_int_to_ptr_safety(s, pt, at, e->v.new_expr.args.items[i]);
-                check_byte_literal_range(s, pt, e->v.new_expr.args.items[i]);
-            }
-            check_call_safety(s, ctor->safety, e->line, e->col, 1);
-        }
-        e->v.new_expr.ctor_index = ctor_index;
-        e->v.new_expr.class_name = class_qname(c);
-        e->type = type_class(class_qname(c));
-        return e->type;
-    }
+        return sema_new_expr(s, e);
     case EXPR_MEMBER:
     {
         Expr *recv = e->v.member.recv;
@@ -856,6 +2274,27 @@ static Type sema_expr_impl(Sema *s, Expr *e)
                 return e->type;
             }
         }
+        if (rt.kind == TY_PACKAGE)
+        {
+            int field_index = -1;
+            if (recv->kind == EXPR_VAR)
+            {
+                VarSym *pv = scope_find(s->scope, recv->v.var.name);
+                if (pv)
+                    field_index = package_field_alias_index(&pv->package_fields, e->v.member.name);
+            }
+            if (field_index < 0)
+            {
+                sema_error(s, e->line, e->col, 1, "Unknown Package Field", "Package field alias not found on this variable");
+                e->type = type_make(TY_UNKNOWN);
+                return e->type;
+            }
+            e->kind = EXPR_INDEX;
+            e->v.index.recv = recv;
+            e->v.index.index = make_int_literal_expr(e->line, e->col, field_index);
+            e->v.index.package_index = field_index;
+            return sema_expr(s, e);
+        }
         if (rt.kind == TY_STRUCT)
         {
             StructDecl *sd = find_struct(s, rt.name);
@@ -942,11 +2381,20 @@ static Type sema_expr_impl(Sema *s, Expr *e)
                 {
                     // Delegate assignment: RHS must be Object.Function (or ptr for By C)
                     Type rhs = sema_expr(s, e->v.assign.value);
+                    if (e->v.assign.value->kind == EXPR_FUNC_REF && e->v.assign.value->v.func_ref.qname)
+                    {
+                        FuncSym *rhs_func = functable_find(&s->funcs, e->v.assign.value->v.func_ref.qname);
+                        if (!rhs_func || !rhs_func->func ||
+                            !type_equal(dfn->func->ret_type, rhs_func->func->ret_type) ||
+                            !params_equal(&dfn->func->params, &rhs_func->func->params))
+                            sema_error(s, e->v.assign.value->line, e->v.assign.value->col, 1,
+                                       "Type Mismatch", "Delegate assignment requires a matching function signature");
+                    }
                     if (dfn->func->delegate_abi == KN_DELEGATE_ABI_C)
                     {
-                        if (!is_function_object_type(s, rhs) && rhs.kind != TY_NULL && rhs.kind != TY_PTR)
+                        if (e->v.assign.value->kind != EXPR_FUNC_REF && rhs.kind != TY_NULL && rhs.kind != TY_PTR)
                             sema_error(s, e->v.assign.value->line, e->v.assign.value->col, 1,
-                                       "Type Mismatch", "By C Delegate assignment requires Object.Function, pointer, or null");
+                                       "Type Mismatch", "By C Delegate assignment requires a top-level function, raw pointer, or null");
                     }
                     else
                     {
@@ -1017,187 +2465,7 @@ static Type sema_expr_impl(Sema *s, Expr *e)
             sema_error(s, e->line, e->col, 1, "Freestanding Core", "Dictionary literals require freestanding gc runtime");
         return sema_dict_literal(s, e);
     case EXPR_CALL:
-    {
-        VarSym *fv = scope_find(s->scope, e->v.call.name);
-        if (fv && is_function_object_type(s, fv->type))
-        {
-            if (e->v.call.type_args.count > 0)
-                sema_error(s, e->line, e->col, 1, "Invalid Generic Call", "Function object invocation does not accept generic type arguments");
-            Expr *callee = new_expr(EXPR_VAR, e->line, e->col);
-            callee->v.var.name = e->v.call.name;
-            ExprList args = e->v.call.args;
-            NameList arg_names = e->v.call.arg_names;
-            e->kind = EXPR_INVOKE;
-            e->v.invoke.callee = callee;
-            e->v.invoke.args = args;
-            e->v.invoke.arg_names = arg_names;
-            return sema_expr(s, e);
-        }
-
-        const KnStdFunc *std = resolve_std_by_local(s, e->v.call.name);
-        // No longer auto-resolve builtin type names as conversions
-        // Use [type](value) syntax instead
-        if (std)
-        {
-            if (e->v.call.type_args.count > 0)
-                sema_error(s, e->line, e->col, 1, "Invalid Generic Call", "Builtin function does not accept generic type arguments");
-            if (call_has_named_args(&e->v.call.arg_names))
-                sema_error(s, e->line, e->col, 1, "Invalid Named Argument", "Named arguments are not supported for this callable");
-            if (std->kind == KN_BUILTIN_IO_ASYNC_RUN)
-            {
-                if (e->v.call.args.count != 1)
-                    sema_error_arg_count_named(s, e->line, e->col, 1, std->name, 1);
-                if (e->v.call.args.count == 1)
-                {
-                    Type at = sema_expr(s, e->v.call.args.items[0]);
-                    if (!is_async_task_type(at))
-                        sema_error(s, e->line, e->col, 1, "Async Run", "IO.Async.Run expects IO.Async.Task");
-                    else if (e->v.call.args.items[0]->async_result_type.kind == TY_UNKNOWN)
-                        sema_error(s, e->line, e->col, 1, "Async Run", "Task result type is not known here");
-                    e->v.call.builtin_id = (int)std->kind;
-                    e->type = e->v.call.args.items[0]->async_result_type;
-                    return e->type;
-                }
-            }
-            if (std->kind == KN_BUILTIN_IO_ASYNC_SLEEP)
-            {
-                if (e->v.call.args.count != 1)
-                    sema_error_arg_count_named(s, e->line, e->col, 1, std->name, 1);
-                if (e->v.call.args.count == 1)
-                {
-                    Type at = sema_expr_with_expected(s, e->v.call.args.items[0], type_make(TY_INT), "Default literal requires parameter type");
-                    if (!type_assignable(s, type_make(TY_INT), at))
-                        sema_error(s, e->v.call.args.items[0]->line, e->v.call.args.items[0]->col, 1, "Type Mismatch", type_mismatch_detail(type_make(TY_INT), at));
-                }
-                e->v.call.builtin_id = (int)std->kind;
-                check_call_safety(s, std->safety, e->line, e->col, 1);
-                return sema_mark_async_task_expr(e, type_make(TY_VOID));
-            }
-            if (std->kind == KN_BUILTIN_IO_ASYNC_YIELD)
-            {
-                if (e->v.call.args.count != 0)
-                    sema_error_arg_count_named(s, e->line, e->col, 1, std->name, 0);
-                e->v.call.builtin_id = (int)std->kind;
-                check_call_safety(s, std->safety, e->line, e->col, 1);
-                return sema_mark_async_task_expr(e, type_make(TY_VOID));
-            }
-            Type conv_dst = type_make(TY_UNKNOWN);
-            int is_conv = builtin_conv_target(std->kind, &conv_dst);
-            int is_vararg = builtin_is_vararg(std->kind);
-            if (!is_vararg && e->v.call.args.count != std->param_count)
-                sema_error_arg_count_named(s, e->line, e->col, 1, std->name, std->param_count);
-            for (int i = 0; i < e->v.call.args.count; i++)
-            {
-                Expr *arg = e->v.call.args.items[i];
-                Type pt = is_vararg ? std->params[0] : std->params[i];
-                Type at = sema_builtin_arg_with_expected(s, arg, pt, "Default literal requires parameter type",
-                                                         std->kind, i);
-                if (is_conv && at.kind == TY_PTR && is_integer_kind(conv_dst.kind))
-                    check_ptr_safety(s, arg->line, arg->col, 1, "Safe function cannot cast pointer to integer");
-                check_int_to_ptr_safety(s, pt, at, arg);
-                if (!type_assignable(s, pt, at))
-                    sema_error(s, arg->line, arg->col, 1, "Type Mismatch", type_mismatch_detail(pt, at));
-                check_byte_literal_range(s, pt, arg);
-            }
-            e->v.call.builtin_id = (int)std->kind;
-            e->type = std->ret_type;
-            check_call_safety(s, std->safety, e->line, e->col, 1);
-            return e->type;
-        }
-        
-        // Check if user is trying to use old conversion syntax and provide helpful error
-        if (is_builtin_type_name(e->v.call.name))
-        {
-            sema_error(s, e->line, e->col, 1, "Conversion Syntax Changed", 
-                       "Type conversion now use [type](value) syntax instead of type(value). "
-                       "For example: [int](\"123\") instead of int(\"123\")");
-            return type_make(TY_UNKNOWN);
-        }
-
-        FuncSym *fn = 0;
-        if (name_has_dot(e->v.call.name))
-        {
-            fn = functable_find_visible_qualified(&s->funcs, s, e->v.call.name);
-        }
-        else
-        {
-            if (s->current_unit && s->current_unit[0])
-                fn = functable_find_by_name_in_unit(&s->funcs, e->v.call.name, s->current_unit);
-            else
-                fn = functable_find_by_name_without_unit(&s->funcs, e->v.call.name);
-        }
-        if (!fn)
-        {
-            if (s->current_class && !name_has_dot(e->v.call.name))
-            {
-                Type mt = type_make(TY_UNKNOWN);
-                if (sema_try_current_class_method_call(s, e, &mt))
-                    return mt;
-            }
-            if (find_scoped_symbol_module(s, e->v.call.name))
-                sema_error(s, e->line, e->col, 1, "Scoped Symbol Required", "Imported symbol must be called with module or alias qualifier");
-            else if (find_required_namespace_module_for_func(s, e->v.call.name))
-                sema_error(s, e->line, e->col, 1, "Scoped Symbol Required", "Imported module function must be called with module or alias qualifier");
-            else
-                sema_error(s, e->line, e->col, 1, "Unknown Function", "Function not found");
-            e->type = type_make(TY_UNKNOWN);
-            return e->type;
-        }
-
-        if (func_is_generic_template(fn->func))
-        {
-            if (e->v.call.type_args.count <= 0)
-            {
-                sema_error(s, e->line, e->col, 1, "Generic Function", "Generic call requires explicit type arguments");
-                e->type = type_make(TY_UNKNOWN);
-                return e->type;
-            }
-            Type *type_args = copy_and_validate_type_args(s, &e->v.call.type_args, e->line, e->col);
-            Func *inst = instantiate_generic_func(s, fn->func, type_args, e->v.call.type_args.count, e->line, e->col);
-            if (!inst)
-            {
-                e->type = type_make(TY_UNKNOWN);
-                return e->type;
-            }
-            fn = functable_find(&s->funcs, inst->qname ? inst->qname : inst->name);
-            if (!fn || !fn->func)
-            {
-                sema_error(s, e->line, e->col, 1, "Generic Function", "Failed to resolve instantiated generic function");
-                e->type = type_make(TY_UNKNOWN);
-                return e->type;
-            }
-        }
-        else if (e->v.call.type_args.count > 0)
-        {
-            sema_error(s, e->line, e->col, 1, "Invalid Generic Call", "Type arguments can only be used with generic functions");
-        }
-
-        {
-            const char **param_names = alloc_param_names_from_paramlist(&fn->func->params);
-            (void)prepare_call_args(s, e->line, e->col, &e->v.call.args, &e->v.call.arg_names,
-                                    0, fn->func->params.items, fn->func->params.count,
-                                    param_names, fn->func->name, 1, 1);
-            if (param_names) kn_free((void *)param_names);
-        }
-
-        for (int i = 0; i < fn->func->params.count; i++)
-        {
-            Expr *arg = e->v.call.args.items[i];
-            Type pt = fn->func->params.items[i].type;
-            Type at = sema_expr_with_expected(s, arg, pt, "Default literal requires parameter type");
-            check_int_to_ptr_safety(s, pt, at, arg);
-            if (!type_assignable(s, pt, at))
-                sema_error(s, arg->line, arg->col, 1, "Type Mismatch", type_mismatch_detail(pt, at));
-            check_byte_literal_range(s, pt, arg);
-        }
-        check_call_safety(s, fn->func->safety, e->line, e->col, 1);
-        if (fn->func->qname)
-            e->v.call.name = fn->func->qname;
-        if (fn->func->is_async)
-            return sema_mark_async_task_expr(e, fn->func->async_result_type);
-        e->type = fn->func->ret_type;
-        return e->type;
-    }
+        return sema_call_expr(s, e);
     case EXPR_MEMBER_CALL:
     {
         Expr *recv = e->v.member_call.recv;
@@ -1325,9 +2593,12 @@ static Type sema_expr_impl(Sema *s, Expr *e)
                             sema_error(s, e->line, e->col, 1, "Unsupported Generic Method", "Generic methods are not supported");
                         ClassDecl *owner = 0;
                         int midx = -1;
+                        int method_ambiguous = 0;
                         Method *m = find_method_hierarchy_call(s, c, e->v.member_call.name,
                                                                &e->v.member_call.args, &e->v.member_call.arg_names,
-                                                               &args, 1, &owner, &midx);
+                                                               &args, 1, &owner, &midx, &method_ambiguous);
+                        if (method_ambiguous)
+                            sema_error(s, e->line, e->col, 1, "Ambiguous Method", "Multiple overloaded methods match this call");
                         if (!m)
                         {
                             sema_error(s, e->line, e->col, 1, "Unknown Method", "Static method not found");
@@ -1389,9 +2660,12 @@ static Type sema_expr_impl(Sema *s, Expr *e)
                                 sema_error(s, e->line, e->col, 1, "Unsupported Generic Method", "Generic methods are not supported");
                             ClassDecl *owner = 0;
                             int midx = -1;
+                            int method_ambiguous = 0;
                             Method *m = find_method_hierarchy_call(s, qc, fname,
                                                                    &e->v.member_call.args, &e->v.member_call.arg_names,
-                                                                   &args, 1, &owner, &midx);
+                                                                   &args, 1, &owner, &midx, &method_ambiguous);
+                            if (method_ambiguous)
+                                sema_error(s, e->line, e->col, 1, "Ambiguous Method", "Multiple overloaded methods match this call");
                             if (m)
                             {
                                 const char **param_names = alloc_param_names_from_paramlist(&m->params);
@@ -1619,570 +2893,29 @@ static Type sema_expr_impl(Sema *s, Expr *e)
             }
         }
 
-        if (is_block_object_type(rt))
-        {
-            if (kn_strcmp(e->v.member_call.name, "Run") == 0)
-            {
-                if (sema_is_freestanding_core())
-                    sema_error(s, e->line, e->col, 1, "Freestanding Core", "Block runtime is not available in freestanding core");
-                (void)remap_named_args(s, e->line, e->col, &e->v.member_call.args, &e->v.member_call.arg_names,
-                                       &args, 0, 0);
-                if (e->v.member_call.args.count != 0)
-                    sema_error_arg_count_named(s, e->line, e->col, 1, "Run", 0);
-                e->v.member_call.builtin_id = KN_BUILTIN_BLOCK_RUN;
-                e->type = type_make(TY_VOID);
-                return e->type;
-            }
-            if (kn_strcmp(e->v.member_call.name, "Jump") == 0)
-            {
-                if (sema_is_freestanding_core())
-                    sema_error(s, e->line, e->col, 1, "Freestanding Core", "Block runtime is not available in freestanding core");
-                static const char *param_names[] = { "target" };
-                (void)remap_named_args(s, e->line, e->col, &e->v.member_call.args, &e->v.member_call.arg_names,
-                                       &args, 1, param_names);
-                if (e->v.member_call.args.count != 1)
-                    sema_error_arg_count_named(s, e->line, e->col, 1, "Jump", 1);
-                if (e->v.member_call.args.count == 1 && !is_integer_kind(args.items[0].type.kind))
-                    sema_error_type_must_be_named(s, e->v.member_call.args.items[0]->line, e->v.member_call.args.items[0]->col, 1, "Jump", "target", "integer ip");
-                e->v.member_call.builtin_id = KN_BUILTIN_BLOCK_JUMP;
-                e->type = type_make(TY_VOID);
-                return e->type;
-            }
-            if (kn_strcmp(e->v.member_call.name, "RunUntil") == 0)
-            {
-                if (sema_is_freestanding_core())
-                    sema_error(s, e->line, e->col, 1, "Freestanding Core", "Block runtime is not available in freestanding core");
-                static const char *param_names[] = { "target" };
-                (void)remap_named_args(s, e->line, e->col, &e->v.member_call.args, &e->v.member_call.arg_names,
-                                       &args, 1, param_names);
-                if (e->v.member_call.args.count != 1)
-                    sema_error_arg_count_named(s, e->line, e->col, 1, "RunUntil", 1);
-                if (e->v.member_call.args.count == 1 && !is_integer_kind(args.items[0].type.kind))
-                    sema_error_type_must_be_named(s, e->v.member_call.args.items[0]->line, e->v.member_call.args.items[0]->col, 1, "RunUntil", "target", "integer ip");
-                e->v.member_call.builtin_id = KN_BUILTIN_BLOCK_RUN_UNTIL;
-                e->type = type_make(TY_VOID);
-                return e->type;
-            }
-            if (kn_strcmp(e->v.member_call.name, "JumpAndRunUntil") == 0)
-            {
-                if (sema_is_freestanding_core())
-                    sema_error(s, e->line, e->col, 1, "Freestanding Core", "Block runtime is not available in freestanding core");
-                static const char *param_names[] = { "start", "end" };
-                (void)remap_named_args(s, e->line, e->col, &e->v.member_call.args, &e->v.member_call.arg_names,
-                                       &args, 2, param_names);
-                if (e->v.member_call.args.count != 2)
-                    sema_error_arg_count_named(s, e->line, e->col, 1, "JumpAndRunUntil", 2);
-                if (e->v.member_call.args.count >= 1 && !is_integer_kind(args.items[0].type.kind))
-                    sema_error_type_must_be_named(s, e->v.member_call.args.items[0]->line, e->v.member_call.args.items[0]->col, 1, "JumpAndRunUntil", "start", "integer ip");
-                if (e->v.member_call.args.count >= 2 && !is_integer_kind(args.items[1].type.kind))
-                    sema_error_type_must_be_named(s, e->v.member_call.args.items[1]->line, e->v.member_call.args.items[1]->col, 1, "JumpAndRunUntil", "end", "integer ip");
-                e->v.member_call.builtin_id = KN_BUILTIN_BLOCK_JUMP_AND_RUN_UNTIL;
-                e->type = type_make(TY_VOID);
-                return e->type;
-            }
-        }
+        if (sema_try_member_block_builtin(s, e, &rt, &args))
+            return e->type;
 
         if (has_named_member)
             sema_error(s, e->line, e->col, 1, "Invalid Named Argument", "Named arguments are not supported for this callable");
 
-        if (kn_strcmp(e->v.member_call.name, "TypeOf") == 0)
-        {
-            if (e->v.member_call.args.count != 0)
-                sema_error_arg_count_named(s, e->line, e->col, 1, "TypeOf", 0);
-            const char *tn = type_name(rt);
-            e->kind = EXPR_STRING;
-            e->v.str_val.ptr = tn;
-            e->v.str_val.len = (int)kn_strlen(tn);
-            e->type = type_make(TY_STRING);
+        if (sema_try_member_common_builtin(s, e, &rt))
             return e->type;
-        }
 
-        if (kn_strcmp(e->v.member_call.name, "IsNull") == 0)
-        {
-            if (e->v.member_call.args.count != 0)
-                sema_error_arg_count_named(s, e->line, e->col, 1, "IsNull", 0);
-            e->v.member_call.builtin_id = KN_BUILTIN_IO_ANY_ISNULL;
-            e->type = type_make(TY_BOOL);
+        if (sema_try_member_any_builtin(s, e, &rt))
             return e->type;
-        }
-        if (kn_strcmp(e->v.member_call.name, "ToString") == 0)
-        {
-            if (e->v.member_call.args.count != 0)
-                sema_error_arg_count_named(s, e->line, e->col, 1, "ToString", 0);
-            e->v.member_call.builtin_id = KN_BUILTIN_IO_ANY_TOSTRING;
-            e->type = type_make(TY_STRING);
-            return e->type;
-        }
-        if (kn_strcmp(e->v.member_call.name, "Equals") == 0)
-        {
-            if (e->v.member_call.args.count != 1)
-                sema_error_arg_count_named(s, e->line, e->col, 1, "Equals", 1);
-            e->v.member_call.builtin_id = KN_BUILTIN_IO_ANY_EQUALS;
-            e->type = type_make(TY_BOOL);
-            return e->type;
-        }
-        if (kn_strcmp(e->v.member_call.name, "TypeName") == 0)
-        {
-            if (e->v.member_call.args.count != 0)
-                sema_error_arg_count_named(s, e->line, e->col, 1, "TypeName", 0);
-            e->v.member_call.builtin_id = KN_BUILTIN_IO_ANY_TYPENAME;
-            e->type = type_make(TY_STRING);
-            return e->type;
-        }
 
-        if (rt.kind == TY_ANY)
-        {
-            if (kn_strcmp(e->v.member_call.name, "Tag") == 0)
-            {
-                if (e->v.member_call.args.count != 0)
-                    sema_error_arg_count_named(s, e->line, e->col, 1, "Tag", 0);
-                e->v.member_call.builtin_id = KN_BUILTIN_IO_ANY_TAG;
-                e->type = type_make(TY_INT);
-                return e->type;
-            }
-            if (kn_strcmp(e->v.member_call.name, "IsNumber") == 0)
-            {
-                if (e->v.member_call.args.count != 0)
-                    sema_error_arg_count_named(s, e->line, e->col, 1, "IsNumber", 0);
-                e->v.member_call.builtin_id = KN_BUILTIN_IO_ANY_ISNUMBER;
-                e->type = type_make(TY_BOOL);
-                return e->type;
-            }
-            if (kn_strcmp(e->v.member_call.name, "IsPointer") == 0)
-            {
-                if (e->v.member_call.args.count != 0)
-                    sema_error_arg_count_named(s, e->line, e->col, 1, "IsPointer", 0);
-                e->v.member_call.builtin_id = KN_BUILTIN_IO_ANY_ISPOINTER;
-                e->type = type_make(TY_BOOL);
-                return e->type;
-            }
-            if (kn_strcmp(e->v.member_call.name, "IsInt") == 0)
-            {
-                if (e->v.member_call.args.count != 0)
-                    sema_error_arg_count_named(s, e->line, e->col, 1, "IsInt", 0);
-                e->v.member_call.builtin_id = KN_BUILTIN_IO_ANY_ISINT;
-                e->type = type_make(TY_BOOL);
-                return e->type;
-            }
-            if (kn_strcmp(e->v.member_call.name, "IsFloat") == 0)
-            {
-                if (e->v.member_call.args.count != 0)
-                    sema_error_arg_count_named(s, e->line, e->col, 1, "IsFloat", 0);
-                e->v.member_call.builtin_id = KN_BUILTIN_IO_ANY_ISFLOAT;
-                e->type = type_make(TY_BOOL);
-                return e->type;
-            }
-            if (kn_strcmp(e->v.member_call.name, "IsString") == 0)
-            {
-                if (e->v.member_call.args.count != 0)
-                    sema_error_arg_count_named(s, e->line, e->col, 1, "IsString", 0);
-                e->v.member_call.builtin_id = KN_BUILTIN_IO_ANY_ISSTRING;
-                e->type = type_make(TY_BOOL);
-                return e->type;
-            }
-            if (kn_strcmp(e->v.member_call.name, "IsBool") == 0)
-            {
-                if (e->v.member_call.args.count != 0)
-                    sema_error_arg_count_named(s, e->line, e->col, 1, "IsBool", 0);
-                e->v.member_call.builtin_id = KN_BUILTIN_IO_ANY_ISBOOL;
-                e->type = type_make(TY_BOOL);
-                return e->type;
-            }
-            if (kn_strcmp(e->v.member_call.name, "IsChar") == 0)
-            {
-                if (e->v.member_call.args.count != 0)
-                    sema_error_arg_count_named(s, e->line, e->col, 1, "IsChar", 0);
-                e->v.member_call.builtin_id = KN_BUILTIN_IO_ANY_ISCHAR;
-                e->type = type_make(TY_BOOL);
-                return e->type;
-            }
-            if (kn_strcmp(e->v.member_call.name, "IsObject") == 0)
-            {
-                if (e->v.member_call.args.count != 0)
-                    sema_error_arg_count_named(s, e->line, e->col, 1, "IsObject", 0);
-                e->v.member_call.builtin_id = KN_BUILTIN_IO_ANY_ISOBJECT;
-                e->type = type_make(TY_BOOL);
-                return e->type;
-            }
-        }
-
-        if (rt.kind == TY_STRING && kn_strcmp(e->v.member_call.name, "ToChars") == 0)
-        {
-            if (e->v.member_call.args.count != 0)
-                sema_error_arg_count_named(s, e->line, e->col, 1, "ToChars", 0);
-            if (sema_is_freestanding_core())
-                sema_error(s, e->line, e->col, 1, "Freestanding Core", "ToChars requires allocation and is not available in freestanding core");
-            e->v.member_call.builtin_id = KN_BUILTIN_IO_STRING_TOCHARS;
-            e->type = type_array(TY_CHAR, -1);
+        if (sema_try_member_string_array_builtin(s, e, &rt, &args))
             return e->type;
-        }
 
-        if (rt.kind == TY_STRING && kn_strcmp(e->v.member_call.name, "Length") == 0)
-        {
-            if (e->v.member_call.args.count != 0)
-                sema_error_arg_count_named(s, e->line, e->col, 1, "Length", 0);
-            e->v.member_call.builtin_id = KN_BUILTIN_IO_STRING_LENGTH;
-            e->type = type_make(TY_INT);
+        if (sema_try_member_dict_builtin(s, e, &rt, &args))
             return e->type;
-        }
 
-        if (rt.kind == TY_STRING && kn_strcmp(e->v.member_call.name, "Index") == 0)
-        {
-            if (e->v.member_call.args.count != 1)
-                sema_error_arg_count_named(s, e->line, e->col, 1, "Index", 1);
-            Type idx_type = args.items[0].type;
-            if (!is_integer_kind(idx_type.kind))
-                sema_error_type_must_be_named(s, e->v.member_call.args.items[0]->line, e->v.member_call.args.items[0]->col, 1, "Index", "argument", "integer");
-            e->v.member_call.builtin_id = KN_BUILTIN_STRING_INDEX;
-            e->type = type_make(TY_CHAR);
+        if (sema_try_member_list_builtin(s, e, &rt, &args))
             return e->type;
-        }
 
-        if (rt.kind == TY_ARRAY && kn_strcmp(e->v.member_call.name, "Length") == 0)
-        {
-            if (e->v.member_call.args.count != 0)
-                sema_error_arg_count_named(s, e->line, e->col, 1, "Length", 0);
-            e->v.member_call.builtin_id = KN_BUILTIN_ARRAY_LENGTH;
-            e->type = type_make(TY_INT);
+        if (sema_try_member_set_builtin(s, e, &rt, &args))
             return e->type;
-        }
-        if (rt.kind == TY_ARRAY && kn_strcmp(e->v.member_call.name, "Index") == 0)
-        {
-            if (e->v.member_call.args.count != 1)
-                sema_error_arg_count_named(s, e->line, e->col, 1, "Index", 1);
-            if (e->v.member_call.args.count == 1 && !is_integer_kind(args.items[0].type.kind))
-                sema_error_type_must_be_named(s, e->line, e->col, 1, "Index", "argument", "integer");
-            Expr *recv_expr = e->v.member_call.recv;
-            Expr *idx_expr = e->v.member_call.args.items[0];
-            e->kind = EXPR_INDEX;
-            e->v.index.recv = recv_expr;
-            e->v.index.index = idx_expr;
-            e->type = type_make(rt.elem);
-            e->type.name = rt.name;
-            return e->type;
-        }
-        if (rt.kind == TY_ARRAY && kn_strcmp(e->v.member_call.name, "Add") == 0)
-        {
-            if (sema_is_freestanding_core())
-                sema_error(s, e->line, e->col, 1, "Freestanding Core", "Dynamic array Add requires freestanding gc runtime");
-            if (e->v.member_call.args.count != 1)
-                sema_error_arg_count_named(s, e->line, e->col, 1, "Add", 1);
-            if (e->v.member_call.args.count == 1)
-            {
-                Type elem = type_make(rt.elem);
-                elem.name = rt.name;
-                Type at = sema_expr_with_expected(s, e->v.member_call.args.items[0], elem,
-                                                  "Default literal requires array element type");
-                if (!type_assignable(s, elem, at))
-                    sema_error(s, e->v.member_call.args.items[0]->line, e->v.member_call.args.items[0]->col, 1,
-                               "Type Mismatch", type_mismatch_detail(elem, at));
-                check_byte_literal_range(s, elem, e->v.member_call.args.items[0]);
-            }
-            e->v.member_call.builtin_id = KN_BUILTIN_ARRAY_ADD;
-            e->type = rt;
-            if (e->type.array_len >= 0)
-                e->type.array_len += 1;
-            return e->type;
-        }
-
-        if (rt.kind == TY_CLASS && rt.name && kn_strcmp(rt.name, "IO.Collection.dict") == 0)
-        {
-            if (kn_strcmp(e->v.member_call.name, "Set") == 0)
-            {
-                if (e->v.member_call.args.count != 2)
-                    sema_error_arg_count_named(s, e->line, e->col, 1, "Set", 2);
-                if (e->v.member_call.args.count >= 1 && !type_assignable(s, type_make(TY_STRING), args.items[0].type))
-                    sema_error_type_must_be_named(s, e->v.member_call.args.items[0]->line, e->v.member_call.args.items[0]->col, 1, "Set", "key", "string");
-                e->v.member_call.builtin_id = KN_BUILTIN_IO_DICT_SET;
-                e->type = type_make(TY_VOID);
-                lower_member_builtin_to_call(e);
-                return e->type;
-            }
-            if (kn_strcmp(e->v.member_call.name, "Fetch") == 0)
-            {
-                if (e->v.member_call.args.count != 1)
-                    sema_error_arg_count_named(s, e->line, e->col, 1, "Fetch", 1);
-                if (e->v.member_call.args.count == 1 && !type_assignable(s, type_make(TY_STRING), args.items[0].type))
-                    sema_error_type_must_be_named(s, e->v.member_call.args.items[0]->line, e->v.member_call.args.items[0]->col, 1, "Fetch", "key", "string");
-                e->v.member_call.builtin_id = KN_BUILTIN_IO_DICT_GET;
-                e->type = type_make(TY_ANY);
-                lower_member_builtin_to_call(e);
-                return e->type;
-            }
-            if (kn_strcmp(e->v.member_call.name, "Contains") == 0)
-            {
-                if (e->v.member_call.args.count != 1)
-                    sema_error_arg_count_named(s, e->line, e->col, 1, "Contains", 1);
-                if (e->v.member_call.args.count == 1 && !type_assignable(s, type_make(TY_STRING), args.items[0].type))
-                    sema_error_type_must_be_named(s, e->v.member_call.args.items[0]->line, e->v.member_call.args.items[0]->col, 1, "Contains", "key", "string");
-                e->v.member_call.builtin_id = KN_BUILTIN_IO_DICT_CONTAINS;
-                e->type = type_make(TY_BOOL);
-                lower_member_builtin_to_call(e);
-                return e->type;
-            }
-            if (kn_strcmp(e->v.member_call.name, "TryFetch") == 0)
-            {
-                if (e->v.member_call.args.count != 2)
-                    sema_error_arg_count_named(s, e->line, e->col, 1, "TryFetch", 2);
-                if (e->v.member_call.args.count >= 1 && !type_assignable(s, type_make(TY_STRING), args.items[0].type))
-                    sema_error_type_must_be_named(s, e->v.member_call.args.items[0]->line, e->v.member_call.args.items[0]->col, 1, "TryFetch", "key", "string");
-                e->v.member_call.builtin_id = KN_BUILTIN_IO_DICT_TRY_FETCH;
-                e->type = type_make(TY_ANY);
-                lower_member_builtin_to_call(e);
-                return e->type;
-            }
-            if (kn_strcmp(e->v.member_call.name, "Count") == 0)
-            {
-                if (e->v.member_call.args.count != 0)
-                    sema_error_arg_count_named(s, e->line, e->col, 1, "Count", 0);
-                e->v.member_call.builtin_id = KN_BUILTIN_IO_DICT_COUNT;
-                e->type = type_make(TY_INT);
-                lower_member_builtin_to_call(e);
-                return e->type;
-            }
-            if (kn_strcmp(e->v.member_call.name, "Remove") == 0)
-            {
-                if (e->v.member_call.args.count != 1)
-                    sema_error_arg_count_named(s, e->line, e->col, 1, "Remove", 1);
-                if (e->v.member_call.args.count == 1 && !type_assignable(s, type_make(TY_STRING), args.items[0].type))
-                    sema_error_type_must_be_named(s, e->v.member_call.args.items[0]->line, e->v.member_call.args.items[0]->col, 1, "Remove", "key", "string");
-                e->v.member_call.builtin_id = KN_BUILTIN_IO_DICT_REMOVE;
-                e->type = type_make(TY_BOOL);
-                lower_member_builtin_to_call(e);
-                return e->type;
-            }
-            if (kn_strcmp(e->v.member_call.name, "IsEmpty") == 0)
-            {
-                if (e->v.member_call.args.count != 0)
-                    sema_error_arg_count_named(s, e->line, e->col, 1, "IsEmpty", 0);
-                e->v.member_call.builtin_id = KN_BUILTIN_IO_DICT_IS_EMPTY;
-                e->type = type_make(TY_BOOL);
-                lower_member_builtin_to_call(e);
-                return e->type;
-            }
-            if (kn_strcmp(e->v.member_call.name, "Keys") == 0)
-            {
-                if (e->v.member_call.args.count != 0)
-                    sema_error_arg_count_named(s, e->line, e->col, 1, "Keys", 0);
-                e->v.member_call.builtin_id = KN_BUILTIN_IO_DICT_KEYS;
-                e->type = type_class("IO.Collection.list");
-                lower_member_builtin_to_call(e);
-                return e->type;
-            }
-            if (kn_strcmp(e->v.member_call.name, "Values") == 0)
-            {
-                if (e->v.member_call.args.count != 0)
-                    sema_error_arg_count_named(s, e->line, e->col, 1, "Values", 0);
-                e->v.member_call.builtin_id = KN_BUILTIN_IO_DICT_VALUES;
-                e->type = type_class("IO.Collection.list");
-                lower_member_builtin_to_call(e);
-                return e->type;
-            }
-        }
-
-        if (rt.kind == TY_CLASS && rt.name && kn_strcmp(rt.name, "IO.Collection.list") == 0)
-        {
-            if (kn_strcmp(e->v.member_call.name, "Add") == 0)
-            {
-                if (e->v.member_call.args.count != 1)
-                    sema_error_arg_count_named(s, e->line, e->col, 1, "Add", 1);
-                e->v.member_call.builtin_id = KN_BUILTIN_IO_LIST_ADD;
-                e->type = type_make(TY_VOID);
-                lower_member_builtin_to_call(e);
-                return e->type;
-            }
-            if (kn_strcmp(e->v.member_call.name, "Fetch") == 0)
-            {
-                if (e->v.member_call.args.count != 1)
-                    sema_error_arg_count_named(s, e->line, e->col, 1, "Fetch", 1);
-                if (e->v.member_call.args.count == 1 && !is_integer_kind(args.items[0].type.kind))
-                    sema_error_type_must_be_named(s, e->v.member_call.args.items[0]->line, e->v.member_call.args.items[0]->col, 1, "Fetch", "index", "integer");
-                e->v.member_call.builtin_id = KN_BUILTIN_IO_LIST_GET;
-                e->type = type_make(TY_ANY);
-                lower_member_builtin_to_call(e);
-                return e->type;
-            }
-            if (kn_strcmp(e->v.member_call.name, "Set") == 0)
-            {
-                if (e->v.member_call.args.count != 2)
-                    sema_error_arg_count_named(s, e->line, e->col, 1, "Set", 2);
-                if (e->v.member_call.args.count >= 1 && !is_integer_kind(args.items[0].type.kind))
-                    sema_error_type_must_be_named(s, e->v.member_call.args.items[0]->line, e->v.member_call.args.items[0]->col, 1, "Set", "index", "integer");
-                e->v.member_call.builtin_id = KN_BUILTIN_IO_LIST_SET;
-                e->type = type_make(TY_VOID);
-                lower_member_builtin_to_call(e);
-                return e->type;
-            }
-            if (kn_strcmp(e->v.member_call.name, "Insert") == 0)
-            {
-                if (e->v.member_call.args.count != 2)
-                    sema_error_arg_count_named(s, e->line, e->col, 1, "Insert", 2);
-                if (e->v.member_call.args.count >= 1 && !is_integer_kind(args.items[0].type.kind))
-                    sema_error_type_must_be_named(s, e->v.member_call.args.items[0]->line, e->v.member_call.args.items[0]->col, 1, "Insert", "index", "integer");
-                e->v.member_call.builtin_id = KN_BUILTIN_IO_LIST_INSERT;
-                e->type = type_make(TY_VOID);
-                lower_member_builtin_to_call(e);
-                return e->type;
-            }
-            if (kn_strcmp(e->v.member_call.name, "TryFetch") == 0)
-            {
-                if (e->v.member_call.args.count != 2)
-                    sema_error_arg_count_named(s, e->line, e->col, 1, "TryFetch", 2);
-                if (e->v.member_call.args.count >= 1 && !is_integer_kind(args.items[0].type.kind))
-                    sema_error_type_must_be_named(s, e->v.member_call.args.items[0]->line, e->v.member_call.args.items[0]->col, 1, "TryFetch", "index", "integer");
-                e->v.member_call.builtin_id = KN_BUILTIN_IO_LIST_TRY_FETCH;
-                e->type = type_make(TY_ANY);
-                lower_member_builtin_to_call(e);
-                return e->type;
-            }
-            if (kn_strcmp(e->v.member_call.name, "Count") == 0)
-            {
-                if (e->v.member_call.args.count != 0)
-                    sema_error_arg_count_named(s, e->line, e->col, 1, "Count", 0);
-                e->v.member_call.builtin_id = KN_BUILTIN_IO_LIST_COUNT;
-                e->type = type_make(TY_INT);
-                lower_member_builtin_to_call(e);
-                return e->type;
-            }
-            if (kn_strcmp(e->v.member_call.name, "Clear") == 0)
-            {
-                if (e->v.member_call.args.count != 0)
-                    sema_error_arg_count_named(s, e->line, e->col, 1, "Clear", 0);
-                e->v.member_call.builtin_id = KN_BUILTIN_IO_LIST_CLEAR;
-                e->type = type_make(TY_VOID);
-                lower_member_builtin_to_call(e);
-                return e->type;
-            }
-            if (kn_strcmp(e->v.member_call.name, "RemoveAt") == 0)
-            {
-                if (e->v.member_call.args.count != 1)
-                    sema_error_arg_count_named(s, e->line, e->col, 1, "RemoveAt", 1);
-                if (e->v.member_call.args.count == 1 && !is_integer_kind(args.items[0].type.kind))
-                    sema_error_type_must_be_named(s, e->v.member_call.args.items[0]->line, e->v.member_call.args.items[0]->col, 1, "RemoveAt", "index", "integer");
-                e->v.member_call.builtin_id = KN_BUILTIN_IO_LIST_REMOVE_AT;
-                e->type = type_make(TY_ANY);
-                lower_member_builtin_to_call(e);
-                return e->type;
-            }
-            if (kn_strcmp(e->v.member_call.name, "Contains") == 0)
-            {
-                if (e->v.member_call.args.count != 1)
-                    sema_error_arg_count_named(s, e->line, e->col, 1, "Contains", 1);
-                e->v.member_call.builtin_id = KN_BUILTIN_IO_LIST_CONTAINS;
-                e->type = type_make(TY_BOOL);
-                lower_member_builtin_to_call(e);
-                return e->type;
-            }
-            if (kn_strcmp(e->v.member_call.name, "Pop") == 0)
-            {
-                if (e->v.member_call.args.count != 0)
-                    sema_error_arg_count_named(s, e->line, e->col, 1, "Pop", 0);
-                e->v.member_call.builtin_id = KN_BUILTIN_IO_LIST_POP;
-                e->type = type_make(TY_ANY);
-                lower_member_builtin_to_call(e);
-                return e->type;
-            }
-            if (kn_strcmp(e->v.member_call.name, "Peek") == 0)
-            {
-                if (e->v.member_call.args.count != 0)
-                    sema_error_arg_count_named(s, e->line, e->col, 1, "Peek", 0);
-                e->v.member_call.builtin_id = KN_BUILTIN_IO_LIST_PEEK;
-                e->type = type_make(TY_ANY);
-                lower_member_builtin_to_call(e);
-                return e->type;
-            }
-            if (kn_strcmp(e->v.member_call.name, "IndexOf") == 0)
-            {
-                if (e->v.member_call.args.count != 1)
-                    sema_error_arg_count_named(s, e->line, e->col, 1, "IndexOf", 1);
-                e->v.member_call.builtin_id = KN_BUILTIN_IO_LIST_INDEX_OF;
-                e->type = type_make(TY_INT);
-                lower_member_builtin_to_call(e);
-                return e->type;
-            }
-            if (kn_strcmp(e->v.member_call.name, "IsEmpty") == 0)
-            {
-                if (e->v.member_call.args.count != 0)
-                    sema_error_arg_count_named(s, e->line, e->col, 1, "IsEmpty", 0);
-                e->v.member_call.builtin_id = KN_BUILTIN_IO_LIST_IS_EMPTY;
-                e->type = type_make(TY_BOOL);
-                lower_member_builtin_to_call(e);
-                return e->type;
-            }
-        }
-
-        if (rt.kind == TY_CLASS && rt.name && kn_strcmp(rt.name, "IO.Collection.set") == 0)
-        {
-            if (kn_strcmp(e->v.member_call.name, "Add") == 0)
-            {
-                if (e->v.member_call.args.count != 1)
-                    sema_error_arg_count_named(s, e->line, e->col, 1, "Add", 1);
-                if (e->v.member_call.args.count == 1 && !type_assignable(s, type_make(TY_STRING), args.items[0].type))
-                    sema_error_type_must_be_named(s, e->v.member_call.args.items[0]->line, e->v.member_call.args.items[0]->col, 1, "Add", "value", "string");
-                e->v.member_call.builtin_id = KN_BUILTIN_IO_SET_ADD;
-                e->type = type_make(TY_VOID);
-                lower_member_builtin_to_call(e);
-                return e->type;
-            }
-            if (kn_strcmp(e->v.member_call.name, "Contains") == 0)
-            {
-                if (e->v.member_call.args.count != 1)
-                    sema_error_arg_count_named(s, e->line, e->col, 1, "Contains", 1);
-                if (e->v.member_call.args.count == 1 && !type_assignable(s, type_make(TY_STRING), args.items[0].type))
-                    sema_error_type_must_be_named(s, e->v.member_call.args.items[0]->line, e->v.member_call.args.items[0]->col, 1, "Contains", "value", "string");
-                e->v.member_call.builtin_id = KN_BUILTIN_IO_SET_CONTAINS;
-                e->type = type_make(TY_BOOL);
-                lower_member_builtin_to_call(e);
-                return e->type;
-            }
-            if (kn_strcmp(e->v.member_call.name, "Count") == 0)
-            {
-                if (e->v.member_call.args.count != 0)
-                    sema_error_arg_count_named(s, e->line, e->col, 1, "Count", 0);
-                e->v.member_call.builtin_id = KN_BUILTIN_IO_SET_COUNT;
-                e->type = type_make(TY_INT);
-                lower_member_builtin_to_call(e);
-                return e->type;
-            }
-            if (kn_strcmp(e->v.member_call.name, "Remove") == 0)
-            {
-                if (e->v.member_call.args.count != 1)
-                    sema_error_arg_count_named(s, e->line, e->col, 1, "Remove", 1);
-                if (e->v.member_call.args.count == 1 && !type_assignable(s, type_make(TY_STRING), args.items[0].type))
-                    sema_error_type_must_be_named(s, e->v.member_call.args.items[0]->line, e->v.member_call.args.items[0]->col, 1, "Remove", "value", "string");
-                e->v.member_call.builtin_id = KN_BUILTIN_IO_SET_REMOVE;
-                e->type = type_make(TY_BOOL);
-                lower_member_builtin_to_call(e);
-                return e->type;
-            }
-            if (kn_strcmp(e->v.member_call.name, "Clear") == 0)
-            {
-                if (e->v.member_call.args.count != 0)
-                    sema_error_arg_count_named(s, e->line, e->col, 1, "Clear", 0);
-                e->v.member_call.builtin_id = KN_BUILTIN_IO_SET_CLEAR;
-                e->type = type_make(TY_VOID);
-                lower_member_builtin_to_call(e);
-                return e->type;
-            }
-            if (kn_strcmp(e->v.member_call.name, "IsEmpty") == 0)
-            {
-                if (e->v.member_call.args.count != 0)
-                    sema_error_arg_count_named(s, e->line, e->col, 1, "IsEmpty", 0);
-                e->v.member_call.builtin_id = KN_BUILTIN_IO_SET_IS_EMPTY;
-                e->type = type_make(TY_BOOL);
-                lower_member_builtin_to_call(e);
-                return e->type;
-            }
-            if (kn_strcmp(e->v.member_call.name, "Values") == 0)
-            {
-                if (e->v.member_call.args.count != 0)
-                    sema_error_arg_count_named(s, e->line, e->col, 1, "Values", 0);
-                e->v.member_call.builtin_id = KN_BUILTIN_IO_SET_VALUES;
-                e->type = type_class("IO.Collection.list");
-                lower_member_builtin_to_call(e);
-                return e->type;
-            }
-        }
 
         if (rt.kind != TY_CLASS)
         {
@@ -2240,9 +2973,12 @@ static Type sema_expr_impl(Sema *s, Expr *e)
         }
         ClassDecl *owner = 0;
         int midx = -1;
+        int method_ambiguous = 0;
         Method *m = find_method_hierarchy_call(s, c, e->v.member_call.name,
                                                &e->v.member_call.args, &e->v.member_call.arg_names,
-                                               &args, 0, &owner, &midx);
+                                               &args, 0, &owner, &midx, &method_ambiguous);
+        if (method_ambiguous)
+            sema_error(s, e->line, e->col, 1, "Ambiguous Method", "Multiple overloaded methods match this call");
         if (!m)
         {
             sema_error(s, e->line, e->col, 1, "Unknown Method", "Method not found");
@@ -2271,373 +3007,19 @@ static Type sema_expr_impl(Sema *s, Expr *e)
         return e->type;
     }
     case EXPR_BINARY:
-    {
-        Type lt = sema_expr(s, e->v.binary.left);
-        Type rt = sema_expr(s, e->v.binary.right);
-        TokenType op = (TokenType)e->v.binary.op;
-        if (lt.kind == TY_UNKNOWN || rt.kind == TY_UNKNOWN)
-        {
-            e->type = type_make(TY_UNKNOWN);
-            return e->type;
-        }
-        if (op == TOK_PLUS || op == TOK_MINUS)
-        {
-            if (lt.kind == TY_PTR && is_integer_kind(rt.kind))
-            {
-                check_ptr_safety(s, e->line, e->col, 1, "Safe function cannot use pointer arithmetic");
-                e->type = lt;
-                return e->type;
-            }
-            if (op == TOK_PLUS && rt.kind == TY_PTR && is_integer_kind(lt.kind))
-            {
-                check_ptr_safety(s, e->line, e->col, 1, "Safe function cannot use pointer arithmetic");
-                e->type = rt;
-                return e->type;
-            }
-        }
-        if (op == TOK_PLUS || op == TOK_MINUS || op == TOK_STAR || op == TOK_SLASH || op == TOK_PERCENT)
-        {
-            bool lhs_cstr = (lt.kind == TY_PTR && lt.elem == TY_CHAR && lt.ptr_depth == 1);
-            bool rhs_cstr = (rt.kind == TY_PTR && rt.elem == TY_CHAR && rt.ptr_depth == 1);
-            bool lhs_concat_text = (lt.kind == TY_STRING) || lhs_cstr;
-            bool rhs_concat_text = (rt.kind == TY_STRING) || rhs_cstr;
-            bool lhs_stringify = lt.kind != TY_UNKNOWN && lt.kind != TY_VOID;
-            bool rhs_stringify = rt.kind != TY_UNKNOWN && rt.kind != TY_VOID;
-            if (op == TOK_PLUS &&
-                ((lhs_concat_text && rhs_stringify) || (rhs_concat_text && lhs_stringify)) &&
-                !(lhs_cstr && rhs_cstr))
-            {
-                e->type = type_make(TY_STRING);
-                return e->type;
-            }
-            if (!is_numeric_kind(lt.kind) || !is_numeric_kind(rt.kind))
-                sema_error(s, e->line, e->col, 1, "Type Mismatch", "Arithmetic operators require numeric types");
-            if (lt.kind == rt.kind)
-            {
-                e->type = lt;
-                return e->type;
-            }
-            if (is_float_kind(lt.kind) || is_float_kind(rt.kind))
-            {
-                if (is_float_kind(lt.kind) && is_float_kind(rt.kind))
-                {
-                    int lb = float_bits(lt.kind);
-                    int rb = float_bits(rt.kind);
-                    e->type = lb >= rb ? lt : rt;
-                }
-                else if (is_float_kind(lt.kind))
-                    e->type = lt;
-                else
-                    e->type = rt;
-                return e->type;
-            }
-            // allow mixed integer widths with implicit cast to left
-            e->type = lt;
-            return e->type;
-        }
-        if (op == TOK_AMP || op == TOK_BITOR || op == TOK_XOR || op == TOK_SHL || op == TOK_SHR)
-        {
-            if (!is_integer_kind(lt.kind) || !is_integer_kind(rt.kind))
-                sema_error(s, e->line, e->col, 1, "Type Mismatch", "Bitwise operators require integer types");
-            int lb = int_bits(lt.kind);
-            int rb = int_bits(rt.kind);
-            int bits = lb > rb ? lb : rb;
-            bool u = is_unsigned_kind(lt.kind) || is_unsigned_kind(rt.kind);
-            TypeKind rk;
-            if (bits <= 8) rk = u ? TY_U8 : TY_I8;
-            else if (bits <= 16) rk = u ? TY_U16 : TY_I16;
-            else if (bits <= 32) rk = u ? TY_U32 : TY_I32;
-            else rk = u ? TY_U64 : TY_INT;
-            e->type = type_make(rk);
-            return e->type;
-        }
-        if (op == TOK_EQ || op == TOK_NE)
-        {
-            if ((lt.kind == TY_NULL && (rt.kind == TY_PTR || rt.kind == TY_CLASS || rt.kind == TY_STRING || rt.kind == TY_NULL)) ||
-                (rt.kind == TY_NULL && (lt.kind == TY_PTR || lt.kind == TY_CLASS || lt.kind == TY_STRING || lt.kind == TY_NULL)))
-            {
-                e->type = type_make(TY_BOOL);
-                return e->type;
-            }
-            if (lt.kind == TY_STRING && rt.kind == TY_STRING)
-            {
-                e->type = type_make(TY_BOOL);
-                return e->type;
-            }
-            if (lt.kind == TY_PTR && rt.kind == TY_PTR && type_equal(lt, rt))
-            {
-                e->type = type_make(TY_BOOL);
-                return e->type;
-            }
-            if (!(type_equal(lt, rt) || (is_numeric_kind(lt.kind) && is_numeric_kind(rt.kind))))
-                sema_error(s, e->line, e->col, 1, "Type Mismatch", type_mismatch_detail(lt, rt));
-            e->type = type_make(TY_BOOL);
-            return e->type;
-        }
-        if (op == TOK_LT || op == TOK_LE || op == TOK_GT || op == TOK_GE)
-        {
-            if (!is_numeric_kind(lt.kind) || !is_numeric_kind(rt.kind))
-                sema_error(s, e->line, e->col, 1, "Type Mismatch", "Comparison requires numeric types");
-            e->type = type_make(TY_BOOL);
-            return e->type;
-        }
-        if (op == TOK_ANDAND || op == TOK_OROR)
-        {
-            if (lt.kind != TY_BOOL || rt.kind != TY_BOOL)
-                sema_error(s, e->line, e->col, 1, "Type Mismatch", "Logical operators require bool");
-            e->type = type_make(TY_BOOL);
-            return e->type;
-        }
-        sema_error(s, e->line, e->col, 1, "Invalid Operator", "Unknown binary operator");
-        return type_make(TY_UNKNOWN);
-    }
+        return sema_binary_expr(s, e);
     case EXPR_IF:
-    {
-        Type ct = sema_expr(s, e->v.if_expr.cond);
-        if (!(ct.kind == TY_BOOL || is_integer_kind(ct.kind)))
-            sema_error(s, e->line, e->col, 1, "Type Mismatch", "If expression condition must be bool or integer");
-        Type tt = sema_expr(s, e->v.if_expr.then_expr);
-        Type et = sema_expr(s, e->v.if_expr.else_expr);
-        e->type = merge_branch_types(s, e->line, e->col,
-                                     e->v.if_expr.then_expr, tt,
-                                     e->v.if_expr.else_expr, et,
-                                     "If expression branches must have compatible types");
-        return e->type;
-    }
+        return sema_if_expr(s, e);
     case EXPR_SWITCH:
-    {
-        Type vt = sema_expr(s, e->v.switch_expr.value);
-        Type result = type_make(TY_UNKNOWN);
-        int default_count = 0;
-        for (int i = 0; i < e->v.switch_expr.cases.count; i++)
-        {
-            ExprSwitchCase *c = &e->v.switch_expr.cases.items[i];
-            if (c->is_default)
-            {
-                default_count++;
-            }
-            else
-            {
-                Type mt = sema_expr(s, c->match);
-                if (!types_support_switch_match(vt, mt))
-                    sema_error(s, c->match->line, c->match->col, 1, "Type Mismatch",
-                               "Switch case value is not comparable to Switch value");
-            }
-
-            Type bt = sema_expr(s, c->body);
-            if (result.kind == TY_UNKNOWN)
-                result = bt;
-            else
-                result = merge_branch_types(s, e->line, e->col, c->body, bt, 0, result,
-                                            "Switch expression cases must have compatible types");
-        }
-        if (default_count == 0)
-            sema_error(s, e->line, e->col, 1, "Missing Default Case", "Switch expression requires Case(default)");
-        if (default_count > 1)
-            sema_error(s, e->line, e->col, 1, "Duplicate Default Case", "Switch expression can only have one Case(default)");
-        if (result.kind == TY_UNKNOWN)
-            sema_error(s, e->line, e->col, 1, "Default Literal", "Switch expression requires at least one typed case body");
-        if (result.kind != TY_UNKNOWN)
-        {
-            for (int i = 0; i < e->v.switch_expr.cases.count; i++)
-                bind_default_literal_type(s, e->v.switch_expr.cases.items[i].body, result,
-                                          "Default literal requires Switch expression result type");
-        }
-        e->type = result;
-        return e->type;
-    }
+        return sema_switch_expr(s, e);
     case EXPR_IS:
-    {
-        Type value_type = sema_expr(s, e->v.is_expr.expr);
-        Type target = e->v.is_expr.target;
-        validate_type_ref(s, &target, e->line, e->col, 0);
-        e->v.is_expr.target = target;
-        if (target.kind == TY_VOID)
-            sema_error(s, e->line, e->col, 1, "Invalid Is", "Is target type cannot be void");
-        if (value_type.kind == TY_ANY && !any_is_supported_target(target))
-            sema_error(s, e->line, e->col, 1, "Invalid Is",
-                       "any only supports Is with primitive, enum, string, or any targets");
-        e->type = type_make(TY_BOOL);
-        return e->type;
-    }
+        return sema_is_expr(s, e);
     case EXPR_UNARY:
-    {
-        Type vt = sema_expr(s, e->v.unary.expr);
-        if (e->v.unary.op == TOK_PLUSPLUS || e->v.unary.op == TOK_MINUSMINUS)
-        {
-            if (!is_lvalue_expr(e->v.unary.expr))
-                sema_error(s, e->line, e->col, 1, "Invalid Assignment", "Increment/decrement target must be assignable");
-            if (e->v.unary.expr->kind == EXPR_VAR)
-            {
-                VarSym *v = scope_find(s->scope, e->v.unary.expr->v.var.name);
-                if (v && v->is_const)
-                    sema_error(s, e->line, e->col, 1, "Const Assignment", "Cannot modify const variable");
-            }
-            if (e->v.unary.expr->kind == EXPR_MEMBER && e->v.unary.expr->v.member.is_enum_const)
-                sema_error(s, e->line, e->col, 1, "Invalid Assignment", "Cannot modify enum constant");
-            if (!(is_numeric_kind(vt.kind) || vt.kind == TY_PTR))
-                sema_error(s, e->line, e->col, 1, "Type Mismatch", "Increment/decrement requires numeric or pointer type");
-            if (vt.kind == TY_PTR)
-                check_ptr_safety(s, e->line, e->col, 1, "Safe function cannot modify pointer with increment/decrement");
-            e->type = vt;
-            return e->type;
-        }
-        if (e->v.unary.op == TOK_MINUS)
-        {
-            if (!is_numeric_kind(vt.kind))
-                sema_error(s, e->line, e->col, 1, "Type Mismatch", "Unary '-' requires numeric type");
-            e->type = vt;
-            return e->type;
-        }
-        if (e->v.unary.op == TOK_NOT)
-        {
-            if (vt.kind != TY_BOOL)
-                sema_error(s, e->line, e->col, 1, "Type Mismatch", "Unary '!' requires bool");
-            e->type = type_make(TY_BOOL);
-            return e->type;
-        }
-        if (e->v.unary.op == TOK_TILDE)
-        {
-            if (!is_integer_kind(vt.kind))
-                sema_error(s, e->line, e->col, 1, "Type Mismatch", "Unary '~' requires integer type");
-            e->type = vt;
-            return e->type;
-        }
-        if (e->v.unary.op == TOK_STAR)
-        {
-            if (vt.kind != TY_PTR)
-                sema_error(s, e->line, e->col, 1, "Type Mismatch", "Unary '*' requires pointer type");
-            check_ptr_safety(s, e->line, e->col, 1, "Safe function cannot dereference pointer");
-            Type elem;
-            if (vt.ptr_depth > 1)
-            {
-                elem = type_ptr(vt.elem);
-                elem.ptr_depth = vt.ptr_depth - 1;
-                elem.name = vt.name;
-            }
-            else
-            {
-                elem = type_make(vt.elem);
-                elem.name = vt.name;
-            }
-            e->type = elem;
-            return e->type;
-        }
-        if (e->v.unary.op == TOK_AMP)
-        {
-            if (e->v.unary.expr && e->v.unary.expr->kind == EXPR_FUNC_REF)
-            {
-                Type ptr = type_ptr(TY_BYTE);
-                ptr.ptr_depth = 1;
-                e->type = ptr;
-                return e->type;
-            }
-            if (!is_lvalue_expr(e->v.unary.expr))
-                sema_error(s, e->line, e->col, 1, "Invalid Address", "Address-of requires an assignable expression");
-            if (vt.kind == TY_ARRAY)
-                sema_error(s, e->line, e->col, 1, "Invalid Address", "Address-of array not supported");
-            Type ptr;
-            if (vt.kind == TY_PTR)
-            {
-                ptr = type_ptr(vt.elem);
-                ptr.ptr_depth = vt.ptr_depth + 1;
-                ptr.name = vt.name;
-            }
-            else
-            {
-                ptr = type_ptr(vt.kind);
-                ptr.name = vt.name;
-            }
-            e->type = ptr;
-            return e->type;
-        }
-        sema_error(s, e->line, e->col, 1, "Invalid Operator", "Unknown unary operator");
-        return type_make(TY_UNKNOWN);
-    }
+        return sema_unary_expr(s, e);
     case EXPR_INDEX:
-    {
-        Type rt = sema_expr(s, e->v.index.recv);
-        Type it = sema_expr(s, e->v.index.index);
-        if (!is_integer_kind(it.kind))
-            sema_error(s, e->line, e->col, 1, "Type Mismatch", "Index requires integer type");
-        if (rt.kind == TY_ARRAY)
-        {
-            Type elem = type_make(rt.elem);
-            elem.name = rt.name;
-            e->type = elem;
-            return e->type;
-        }
-        if (rt.kind == TY_STRING)
-        {
-            e->type = type_make(TY_CHAR);
-            return e->type;
-        }
-        if (rt.kind == TY_PTR)
-        {
-            check_ptr_safety(s, e->line, e->col, 1, "Safe function cannot index pointer");
-            Type elem;
-            if (rt.ptr_depth > 1)
-            {
-                elem = type_ptr(rt.elem);
-                elem.ptr_depth = rt.ptr_depth - 1;
-                elem.name = rt.name;
-            }
-            else
-            {
-                elem = type_make(rt.elem);
-                elem.name = rt.name;
-            }
-            e->type = elem;
-            return e->type;
-        }
-        sema_error(s, e->line, e->col, 1, "Invalid Index", "Indexing requires array, string or pointer");
-        return type_make(TY_UNKNOWN);
-    }
+        return sema_index_expr(s, e);
     case EXPR_CAST:
-    {
-        Type cast_type = e->v.cast.type;
-        Type value_type = sema_expr(s, e->v.cast.expr);
-        validate_type_ref(s, &cast_type, e->line, e->col, 1);
-        e->v.cast.type = cast_type;
-
-        // Validate that cast_type is a valid type
-        if (cast_type.kind == TY_UNKNOWN)
-            sema_error(s, e->line, e->col, 1, "Unknown Type", "Cast target type is unknown");
-
-        // Special case: allow [Object.Function](void*) — wraps a raw pointer as a callable object.
-        if (cast_type.kind == TY_CLASS && is_function_object_type(s, cast_type) && value_type.kind == TY_PTR)
-        {
-            check_ptr_safety(s, e->line, e->col, 1, "Safe function cannot cast pointer to Object.Function");
-            e->type = cast_type;
-            return e->type;
-        }
-
-        if (cast_type.kind == TY_CLASS && (value_type.kind == TY_CLASS || value_type.kind == TY_NULL))
-        {
-            if (!explicit_object_cast_allowed(s, cast_type, value_type))
-                sema_error(s, e->line, e->col, 1, "Invalid Cast", invalid_cast_detail(value_type, cast_type));
-            e->type = cast_type;
-            return e->type;
-        }
-
-        // Disallow casting to object/schema types outside checked object-reference casts.
-        if (cast_type.kind == TY_CLASS || cast_type.kind == TY_STRUCT)
-            sema_error(s, e->line, e->col, 1, "Invalid Cast", "Cannot cast to Object types; use Object conversions instead");
-
-        // Object source values are also disallowed for non-object explicit casts.
-        if (value_type.kind == TY_CLASS || value_type.kind == TY_STRUCT)
-            sema_error(s, e->line, e->col, 1, "Invalid Cast", "Cannot cast Object values; use Object conversions instead");
-
-        // Explicit cast supports all non-object types.
-        // Keep safety checks for raw pointer/integer reinterprets.
-        if (cast_type.kind == TY_PTR && is_integer_kind(value_type.kind))
-            check_int_to_ptr_safety(s, cast_type, value_type, e->v.cast.expr);
-        if (is_integer_kind(cast_type.kind) && value_type.kind == TY_PTR)
-            check_ptr_safety(s, e->line, e->col, 1, "Safe function cannot cast pointer to integer");
-
-        e->type = cast_type;
-        return e->type;
-    }
+        return sema_cast_expr(s, e);
     default: break;
     }
     sema_error(s, e->line, e->col, 1, "Unknown Expression", "Unsupported expression");

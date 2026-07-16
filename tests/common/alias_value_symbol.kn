@@ -1,0 +1,27 @@
+Unit App.AliasValues;
+
+Get IO.Console;
+
+Alias Print By IO.Console.PrintLine;
+Alias Say By App.AliasValues.Box.Say;
+Alias Ready By App.AliasValues.Mode.Ready;
+
+Enum Mode
+{
+    Ready = 7
+}
+
+Class Box
+{
+    Public Static Function string Say()
+    {
+        Return "method";
+    }
+}
+
+Static Function int Main()
+{
+    Print(Say());
+    Print(Ready);
+    Return 0;
+}

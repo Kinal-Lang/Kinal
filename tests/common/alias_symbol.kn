@@ -1,0 +1,9 @@
+Get IO.Console;
+
+Alias Print By IO.Console.PrintLine;
+
+Static Function int Main()
+{
+    Print("alias");
+    Return 0;
+}

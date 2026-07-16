@@ -16,6 +16,7 @@ Kinal 的标准库统一位于 `IO.*` 命名空间下。核心运行时模块可
 | `IO.Async` | 异步任务与进程辅助接口 | [→](async.md) |
 | `IO.System` | 进程、命令行与动态库接口 | [→](system.md) |
 | `IO.Meta` | 运行时元数据访问 | [→](meta.md) |
+| `IO.Json` | 基于 `dict` / `list` 的 JSON 解析与格式化 | [→](json.md) |
 | `IO.Request` | 对外 HTTP 客户端 | [→](request.md) |
 | `IO.Char` | 字符分类工具 | [→](core.md) |
 | `IO.Math` | 整数与浮点数学工具 | [→](core.md) |
@@ -98,6 +99,16 @@ Get IO.Request;
 IO.Request.Response response = IO.Request.Fetch("http://127.0.0.1:8000/");
 ```
 
+### IO.Json
+
+`IO.Json` 会把 JSON 对象解析成 `dict`，把数组解析成 `list`，同时提供一层属性风格包装。
+
+```kinal
+Get IO.Json;
+
+dict root = IO.Json.Parse("{\"name\":\"kinal\"}");
+```
+
 ### IO.UI
 
 `IO.UI` 提供原生窗口与控件层。
@@ -128,6 +139,7 @@ server.UseStatic("/static", "public").UseRoutes();
 - [IO.File / IO.Directory](filesystem.md)
 - [IO.Path](path.md)
 - [IO.Core](core.md)
+- [IO.Json](json.md)
 - [IO.Request](request.md)
 - [IO.UI](ui.md)
 - [IO.Web](web.md)

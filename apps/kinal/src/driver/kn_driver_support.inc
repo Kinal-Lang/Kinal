@@ -1947,11 +1947,33 @@ static char *parse_unit_name(const char *text)
     return buf;
 }
 
+static bool source_has_unsafe_alias_prefix(const char *text)
+{
+    Lexer l;
+    Token t;
+    int unsafe_count = 0;
+    if (!text) return false;
+    lex_init(&l, text);
+    for (;;)
+    {
+        t = lex_next(&l);
+        if (t.type != TOK_UNSAFE)
+            break;
+        unsafe_count++;
+    }
+    return (unsafe_count == 1 || unsafe_count == 3) && t.type == TOK_ALIAS;
+}
+
 static char *read_unit_name_from_file(const char *path)
 {
     size_t sz = 0;
     char *text = kn_read_file(path, &sz);
     if (!text) return 0;
+    if (source_has_unsafe_alias_prefix(text))
+    {
+        kn_free(text);
+        return 0;
+    }
     char *unit = parse_unit_name(text);
     kn_free(text);
     return unit;

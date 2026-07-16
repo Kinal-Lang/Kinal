@@ -1,0 +1,21 @@
+Unit Tests.ErrorOverloadAmbiguousCall;
+
+[Overload]
+[SymbolName("PickAny")]
+Static Function string Pick(any value)
+{
+    Return "any";
+}
+
+[Overload]
+[SymbolName("PickText")]
+Static Function string Pick(string value)
+{
+    Return "text";
+}
+
+Static Function int Main()
+{
+    string value = Pick("hello");
+    Return 0;
+}

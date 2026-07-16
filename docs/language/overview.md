@@ -14,6 +14,8 @@ Kinal's core design goals:
 
 ## Language Style at a Glance
 
+Identifiers can use ordinary UTF-8 names, including Chinese and Japanese spellings, as long as they do not collide with reserved keywords or ASCII operator/punctuation tokens.
+
 ```kinal
 Unit App.Demo;
 
@@ -77,6 +79,7 @@ Static Function int Main()
 - **Value types**: `struct` (value-semantic structs), `enum` (enumerations)
 - **Pointers**: `byte*`, `T*` (only usable in `Unsafe` contexts)
 - **Arrays**: `int[3]` (fixed-length), `int[]` (dynamic)
+- **Packages**: `<int, string>` fixed groups of values, accessed by constant index or local aliases
 - **any type**: can hold any value, similar to a boxing mechanism
 
 ### Module System

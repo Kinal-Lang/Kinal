@@ -1,0 +1,24 @@
+Unit Tests.OverloadFunctions;
+
+Get Console By IO.Console;
+
+[Overload]
+[SymbolName("DescribeInt")]
+Static Function string Describe(int value)
+{
+    Return "int";
+}
+
+[Overload]
+[SymbolName("DescribeText")]
+Static Function string Describe(string value)
+{
+    Return "string";
+}
+
+Static Function int Main()
+{
+    Console.PrintLine(Describe(7));
+    Console.PrintLine(Describe("hello"));
+    Return 0;
+}

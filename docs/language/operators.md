@@ -23,6 +23,9 @@ float y = 3.0;
 float result = x / y;  // 3.333...
 ```
 
+When the resolved integer type is unsigned, `/` and `%` use unsigned division
+and remainder semantics in both Native and VM builds.
+
 ### String Concatenation
 
 The `+` operator can be used for string concatenation:
@@ -72,6 +75,15 @@ string s2 = "hello";
 bool same = s1 == s2;  // true
 ```
 
+Direct `==` and `!=` are not defined for aggregate values (including arrays,
+structs, and packages) or for `any`. Compare the
+relevant fields/elements explicitly, or cast/unbox an `any` value to a concrete
+comparable type first. Unsupported equality is a compile-time error for both
+Native and VM builds.
+
+When numeric coercion resolves an integer comparison to an unsigned type,
+`<`, `<=`, `>`, and `>=` use unsigned ordering in both backends.
+
 ## Logical Operators
 
 | Operator | Meaning | Notes |
@@ -112,6 +124,9 @@ int shl = a << 1;   // 1010 = 10 (left shift)
 int shr = a >> 1;   // 0010 = 2  (right shift)
 int inv = ~a;       // bitwise NOT (result is platform-dependent)
 ```
+
+For an unsigned resolved integer type, `>>` is a logical right shift and fills
+the high bits with zero. Signed integer right shift preserves the sign bit.
 
 Compound bitwise assignment is not currently supported (must be expanded: `n = n & mask`).
 
@@ -163,6 +178,37 @@ Rules:
 - A failed checked object cast throws `IO.Error`.
 - Hosted native and bootstrap VM/KNC backends use the same checked-cast behavior.
 - If you want branch-based control flow instead of an exception, prefer `Is`.
+
+Classes can also define custom cast entry points with `[Cast]`:
+
+```kinal
+Class User
+{
+    Public string Name;
+
+    [Cast]
+    Public Static Function User From(dict value)
+    {
+        User user = New User();
+        user.Name = [string](value.TryFetch("name", ""));
+        Return user;
+    }
+}
+
+dict data = IO.Json.Parse("{\"name\":\"kinal\"}");
+User user = [User](data);
+```
+
+Custom cast rules:
+
+- `[Cast]` is declared on a class method, not on the class itself.
+- A class may declare multiple `[Cast]` methods.
+- The method must be `Public Static`.
+- The method must return its owning class type.
+- The method must take exactly one parameter.
+- `[Target](value)` selects the single `[Cast]` method whose parameter can accept the source value.
+- If multiple `[Cast]` methods match the same source value, the compiler reports `Ambiguous Cast`.
+- Normal checked hierarchy casts still take priority for class/interface reference casts.
 
 ## The `Is` Type Check Operator
 

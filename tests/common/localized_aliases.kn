@@ -1,0 +1,18 @@
+Unsafe Alias 获取 By Get;
+Unsafe Alias 别名 By Alias;
+Unsafe Alias 来自 By By;
+Unsafe Alias 静态 By Static;
+Unsafe Alias 函数 By Function;
+Unsafe Alias 整数 By int;
+Unsafe Alias 返回 By Return;
+
+获取 控制台 来自 IO.Console;
+获取 打印原 来自 IO.Console.PrintLine;
+别名 打印行 来自 打印原;
+
+静态 函数 整数 Main()
+{
+    控制台.PrintLine("module");
+    打印行("symbol");
+    返回 0;
+}

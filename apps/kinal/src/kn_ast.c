@@ -10,6 +10,11 @@ Expr *new_expr(ExprKind k, int line, int col)
     e->col = col;
     e->type = type_make(TY_UNKNOWN);
     e->async_result_type = type_make(TY_UNKNOWN);
+    e->resolved_call.builtin_id = -1;
+    e->resolved_call.method_index = -1;
+    e->resolved_binary.lhs_coercion = type_make(TY_UNKNOWN);
+    e->resolved_binary.rhs_coercion = type_make(TY_UNKNOWN);
+    e->resolved_binary.integer_bits = 0;
     return e;
 }
 

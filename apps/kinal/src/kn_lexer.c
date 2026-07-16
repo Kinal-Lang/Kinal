@@ -41,7 +41,8 @@ static char lex_peek(Lexer *l)
 
 static bool is_alpha(char c)
 {
-    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || c == '_';
+    unsigned char uc = (unsigned char)c;
+    return (uc >= 'a' && uc <= 'z') || (uc >= 'A' && uc <= 'Z') || uc == '_' || uc >= 0x80;
 }
 
 static bool is_digit(char c)
@@ -145,6 +146,7 @@ static const Kw g_keywords[] = {
     {"Unit", TOK_UNIT},
     {"Get", TOK_GET},
     {"Set", TOK_SET},
+    {"Alias", TOK_ALIAS},
     {"By", TOK_BY},
     {"Property", TOK_PROPERTY},
     {"Function", TOK_FUNCTION},

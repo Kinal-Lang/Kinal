@@ -1,0 +1,12 @@
+Unit Tests.StdlibSystemExit;
+
+Get Console By IO.Console;
+Get IO.System;
+Get IO.Text;
+
+Static Function int Main()
+{
+    Console.PrintLine(!IO.Text.IsEmpty(IO.System.CommandLine()));
+    IO.System.Exit(7);
+    Return 99;
+}

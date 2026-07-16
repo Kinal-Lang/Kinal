@@ -1,0 +1,15 @@
+Unit Tests.ErrorAggregateEquality;
+
+Struct Pair
+{
+    int Left;
+    int Right;
+}
+
+Static Function int Main()
+{
+    Pair lhs;
+    Pair rhs;
+    bool same= lhs== rhs;
+    Return same ? 0 : 1;
+}

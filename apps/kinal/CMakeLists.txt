@@ -58,9 +58,12 @@ set(KINAL_COMPILER_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/kn_source.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/kn_diag.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/kn_diag_registry.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/kn_session.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/kn_lexer.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/kn_ast.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/kn_hir.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/kn_builtins.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/kn_ffi_abi.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/kn_parser.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/kn_sema.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/kn_std.c"
@@ -130,6 +133,10 @@ target_link_libraries(kinal PRIVATE ${KINAL_LLVM_C_LIBRARY})
 
 if (WIN32)
     target_link_libraries(kinal PRIVATE kernel32 user32)
+    # Debug/ASan builds have large parser/sema/codegen frames. Reserving virtual
+    # address space here prevents the host compiler from failing before its
+    # explicit recursion/depth diagnostics can run; pages are committed on use.
+    target_link_options(kinal PRIVATE "LINKER:/stack:16777216")
 elseif (UNIX)
     target_link_libraries(kinal PRIVATE dl)
 endif()

@@ -18,3 +18,28 @@ KN_API const char *kn_native_hello(void)
 {
     return "ffi-native";
 }
+
+KN_API int kn_native_negative(void)
+{
+    return -7;
+}
+
+KN_API int kn_native_int_echo(int value)
+{
+    return value;
+}
+
+KN_API int kn_native_truthy_two(void)
+{
+    return 2;
+}
+
+KN_API int kn_native_false(void)
+{
+    return 0;
+}
+
+KN_API int kn_native_bool_echo(int value)
+{
+    return value ? 2 : 0;
+}

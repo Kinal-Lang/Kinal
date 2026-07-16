@@ -423,6 +423,9 @@ def cmd_dist(args: argparse.Namespace) -> int:
 
 def cmd_test(args: argparse.Namespace) -> int:
     ensure_build_prereqs()
+    run([sys.executable, str(ROOT / "tests" / "check_builtin_registry.py")])
+    run([sys.executable, str(ROOT / "tests" / "check_knc_opcode_registry.py")])
+    run([sys.executable, str(ROOT / "tests" / "check_stdlib_coverage.py")])
     compiler = Path(args.compiler).resolve() if args.compiler else default_staged_compiler(args.release)
     if args.build or not compiler.exists():
         cmd_dev(argparse.Namespace(release=args.release, clean=False))
@@ -455,6 +458,19 @@ def cmd_test(args: argparse.Namespace) -> int:
     else:
         run_manifest(ROOT / "tests" / "smoke.json", TEST_ROOT / "smoke")
         run_manifest(ROOT / "tests" / "freestanding.json", TEST_ROOT / "freestanding")
+
+    stage_out = TEST_ROOT / "stages"
+    stage_out.mkdir(parents=True, exist_ok=True)
+    run(
+        [
+            sys.executable,
+            str(ROOT / "tests" / "run_stage_tests.py"),
+            "--compiler",
+            str(compiler),
+            "--out-dir",
+            str(stage_out),
+        ]
+    )
     return 0
 
 

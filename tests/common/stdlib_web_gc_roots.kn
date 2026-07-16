@@ -1,0 +1,58 @@
+Unit Tests.StdlibWebGcRoots;
+
+Get IO.Console;
+Get IO.GC;
+Get IO.Time;
+Get IO.Web;
+
+Public Class Controller
+{
+    Public Static int Hits;
+    Public Static int LastPort;
+
+    [IO.Web.Route("/ping")]
+    Public Trusted Static Function void Ping(IO.Web.Context ctx)
+    {
+        IO.Web.Server current = IO.Web.Http.CurrentServer();
+        IO.Web.Server decoy = New IO.Web.Server(18085, "127.0.0.1");
+        IO.Web.Server[] reuse = {};
+        string trash = "";
+        int i = 0;
+
+        Hits = Hits + 1;
+        LastPort = current.Port;
+        ctx.Response.Text("ok");
+
+        If (Hits != 1)
+        {
+            Return;
+        }
+
+        IO.GC.Collect();
+        While (i < 1024)
+        {
+            reuse = {};
+            reuse = reuse.Add(decoy);
+            trash = "reuse-" + [string](i);
+            i++;
+        }
+    }
+}
+
+Trusted Static Function int Main()
+{
+    IO.Web.Server server = New IO.Web.Server(18084, "127.0.0.1");
+    int waits = 0;
+
+    server.RefreshRoutes().UseRoutes().Start();
+    While (Controller.Hits < 2 && waits < 200)
+    {
+        IO.Time.Sleep(10);
+        waits++;
+    }
+    server.Stop();
+
+    IO.Console.PrintLine(Controller.Hits == 2);
+    IO.Console.PrintLine(Controller.LastPort == 18084);
+    Return 0;
+}

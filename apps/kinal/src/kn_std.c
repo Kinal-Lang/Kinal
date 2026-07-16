@@ -6,7 +6,13 @@
 #define KN_STD_MASK_FREESTANDING_ALLOC  (1u << KN_STD_PROFILE_FREESTANDING_ALLOC)
 #define KN_STD_MASK_FREESTANDING_GC     (1u << KN_STD_PROFILE_FREESTANDING_GC)
 
-static int g_std_profile = KN_STD_PROFILE_HOSTED;
+#if defined(_MSC_VER)
+#define KN_STD_THREAD_LOCAL __declspec(thread)
+#else
+#define KN_STD_THREAD_LOCAL _Thread_local
+#endif
+
+static KN_STD_THREAD_LOCAL int g_std_profile = KN_STD_PROFILE_HOSTED;
 
 static const KnStdFunc g_console_funcs[] = {
     { "IO.Console", "PrintLine", KN_BUILTIN_IO_CONSOLE_PRINTLINE, { TY_VOID, TY_UNKNOWN, 0 }, 1, { { TY_ANY, TY_UNKNOWN, 0 } }, SAFETY_SAFE },
@@ -595,4 +601,114 @@ bool kn_std_builtin_allowed(KnBuiltinKind kind)
     if (g_std_profile < KN_STD_PROFILE_HOSTED || g_std_profile > KN_STD_PROFILE_FREESTANDING_GC)
         return (mask & KN_STD_MASK_HOSTED) != 0;
     return (mask & (1u << g_std_profile)) != 0;
+}
+
+typedef struct
+{
+    KnBuiltinKind first;
+    KnBuiltinKind last;
+    KnBuiltinLoweringGroup group;
+} KnBuiltinLoweringRange;
+
+static const KnBuiltinLoweringRange g_builtin_lowering_ranges[] = {
+    { KN_BUILTIN_IO_CONSOLE_PRINTLINE, KN_BUILTIN_IO_TIME_FORMAT, KN_BUILTIN_LOWERING_PLATFORM },
+    { KN_BUILTIN_IO_STRING_LENGTH, KN_BUILTIN_IO_MATH_CLAMP, KN_BUILTIN_LOWERING_COLLECTIONS },
+    { KN_BUILTIN_IO_PATH_COMBINE, KN_BUILTIN_IO_TEXT_LINES, KN_BUILTIN_LOWERING_TEXT },
+    { KN_BUILTIN_IO_FILE_CREATE, KN_BUILTIN_IO_DIRECTORY_DELETE_IF_EXISTS, KN_BUILTIN_LOWERING_FILESYSTEM },
+    { KN_BUILTIN_IO_TYPE_BOOL, KN_BUILTIN_IO_TYPE_LIST, KN_BUILTIN_LOWERING_COLLECTIONS },
+    { KN_BUILTIN_IO_ANY_ISNULL, KN_BUILTIN_IO_ANY_ISOBJECT, KN_BUILTIN_LOWERING_DYNAMIC },
+    { KN_BUILTIN_IO_SYSTEM_EXIT, KN_BUILTIN_IO_META_FIND, KN_BUILTIN_LOWERING_SYSTEM },
+    { KN_BUILTIN_IO_ERROR_LASTTRACE, KN_BUILTIN_ARRAY_ADD, KN_BUILTIN_LOWERING_DYNAMIC },
+    { KN_BUILTIN_STRING_INDEX, KN_BUILTIN_STRING_INDEX, KN_BUILTIN_LOWERING_COLLECTIONS },
+    { KN_BUILTIN_TYPEOF, KN_BUILTIN_BLOCK_JUMP_AND_RUN_UNTIL, KN_BUILTIN_LOWERING_DYNAMIC },
+    { KN_BUILTIN_IO_MEMORY_COPY, KN_BUILTIN_IO_PANIC_HALT, KN_BUILTIN_LOWERING_PLATFORM },
+};
+
+typedef struct
+{
+    KnBuiltinKind kind;
+    int vm_id;
+} KnBuiltinVmMapping;
+
+// IDs are the stable KNC/VM bytecode ABI. Gaps are reserved and must not be
+// compacted when a VM handler is unavailable.
+static const KnBuiltinVmMapping g_builtin_vm_mappings[] = {
+    { KN_BUILTIN_IO_CONSOLE_PRINTLINE, 0 },
+    { KN_BUILTIN_IO_CONSOLE_PRINT, 1 },
+    { KN_BUILTIN_IO_CONSOLE_READLINE, 2 },
+    { KN_BUILTIN_IO_CONSOLE_WRITE, 3 },
+    { KN_BUILTIN_IO_CONSOLE_WRITELINE, 4 },
+    { KN_BUILTIN_IO_CONSOLE_PRINTINT, 5 },
+    { KN_BUILTIN_IO_CONSOLE_PRINTBOOL, 6 },
+    { KN_BUILTIN_IO_CONSOLE_PRINTCHAR, 7 },
+    { KN_BUILTIN_IO_CONSOLE_PRINTLINEINT, 8 },
+    { KN_BUILTIN_IO_CONSOLE_PRINTLINEBOOL, 9 },
+    { KN_BUILTIN_IO_CONSOLE_PRINTLINECHAR, 10 },
+    { KN_BUILTIN_IO_CONSOLE_WRITEINT, 11 },
+    { KN_BUILTIN_IO_CONSOLE_WRITEBOOL, 12 },
+    { KN_BUILTIN_IO_CONSOLE_WRITECHAR, 13 },
+    { KN_BUILTIN_IO_TIME_GETTICK, 15 },
+    { KN_BUILTIN_IO_TIME_SLEEP, 16 },
+    { KN_BUILTIN_IO_TIME_NANOTICK, 17 },
+    { KN_BUILTIN_IO_STRING_LENGTH, 19 },
+    { KN_BUILTIN_IO_STRING_CONCAT, 20 },
+    { KN_BUILTIN_IO_STRING_EQUALS, 21 },
+    { KN_BUILTIN_IO_STRING_TOCHARS, 22 },
+    { KN_BUILTIN_IO_FILE_CREATE, 85 },
+    { KN_BUILTIN_IO_FILE_TOUCH, 86 },
+    { KN_BUILTIN_IO_FILE_READ_ALL_TEXT, 87 },
+    { KN_BUILTIN_IO_FILE_READ_FIRST_LINE, 88 },
+    { KN_BUILTIN_IO_FILE_WRITE_ALL_TEXT, 89 },
+    { KN_BUILTIN_IO_FILE_APPEND_ALL_TEXT, 90 },
+    { KN_BUILTIN_IO_FILE_APPEND_LINE, 91 },
+    { KN_BUILTIN_IO_FILE_DELETE, 92 },
+    { KN_BUILTIN_IO_FILE_DELETE_IF_EXISTS, 93 },
+    { KN_BUILTIN_IO_FILE_SIZE, 94 },
+    { KN_BUILTIN_IO_FILE_IS_EMPTY, 95 },
+    { KN_BUILTIN_IO_FILE_COPY, 96 },
+    { KN_BUILTIN_IO_FILE_MOVE, 97 },
+    { KN_BUILTIN_IO_FILE_READ_OR_DEFAULT, 98 },
+    { KN_BUILTIN_IO_FILE_READ_IF_EXISTS, 99 },
+    { KN_BUILTIN_IO_FILE_READ_OR, 100 },
+    { KN_BUILTIN_IO_FILE_REPLACE_TEXT, 103 },
+    { KN_BUILTIN_IO_ANY_ISNULL, 130 },
+    { KN_BUILTIN_IO_ANY_TOSTRING, 131 },
+    { KN_BUILTIN_IO_ANY_EQUALS, 132 },
+    { KN_BUILTIN_IO_ANY_TYPENAME, 134 },
+    { KN_BUILTIN_IO_ANY_ISNUMBER, 135 },
+    { KN_BUILTIN_IO_ANY_ISPOINTER, 136 },
+    { KN_BUILTIN_IO_ANY_ISINT, 137 },
+    { KN_BUILTIN_IO_ANY_ISFLOAT, 138 },
+    { KN_BUILTIN_IO_ANY_ISSTRING, 139 },
+    { KN_BUILTIN_IO_ANY_ISBOOL, 140 },
+    { KN_BUILTIN_IO_ANY_ISCHAR, 141 },
+    { KN_BUILTIN_IO_ANY_ISOBJECT, 142 },
+    { KN_BUILTIN_IO_SYSTEM_FILE_EXISTS, 145 },
+    { KN_BUILTIN_IO_TEXT_CONTAINS, 146 },
+    { KN_BUILTIN_IO_ERROR_LASTTRACE, 147 },
+    { KN_BUILTIN_IO_ERROR_HAS, 148 },
+    { KN_BUILTIN_IO_ERROR_CLEAR, 149 },
+    { KN_BUILTIN_IO_ERROR_CURRENT, 150 },
+    { KN_BUILTIN_IO_GC_COLLECT, 151 },
+};
+
+KnBuiltinLoweringGroup kn_builtin_lowering_group(KnBuiltinKind kind)
+{
+    for (size_t i = 0; i < sizeof(g_builtin_lowering_ranges) / sizeof(g_builtin_lowering_ranges[0]); i++)
+    {
+        const KnBuiltinLoweringRange *range = &g_builtin_lowering_ranges[i];
+        if (kind >= range->first && kind <= range->last)
+            return range->group;
+    }
+    return KN_BUILTIN_LOWERING_NONE;
+}
+
+int kn_builtin_vm_id(KnBuiltinKind kind)
+{
+    for (size_t i = 0; i < sizeof(g_builtin_vm_mappings) / sizeof(g_builtin_vm_mappings[0]); i++)
+    {
+        if (g_builtin_vm_mappings[i].kind == kind)
+            return g_builtin_vm_mappings[i].vm_id;
+    }
+    return -1;
 }

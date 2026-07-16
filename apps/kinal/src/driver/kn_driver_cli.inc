@@ -33,7 +33,7 @@ static void print_help(void)
         "Build quick reference:\n"
         "Output:\n"
         "  -o, --output <file>  Output file path\n"
-        "  --emit <bin|obj|asm|ir>  Output kind (default: bin)\n"
+        "  --emit <bin|obj|asm|ir|check>  Output kind (default: bin)\n"
         "  --kind <exe|static|shared>  Output artifact kind (link mode only)\n"
         "\n"
         "Target:\n"
@@ -127,7 +127,7 @@ static void print_build_help(void)
         "\n"
         "Output:\n"
         "  -o, --output <file>  Output file path\n"
-        "  --emit <bin|obj|asm|ir>  Output kind (default: bin)\n"
+        "  --emit <bin|obj|asm|ir|check>  Output kind (default: bin)\n"
         "  --kind <exe|static|shared>  Output artifact kind (link mode only)\n"
         "\n"
         "Target:\n"
@@ -287,6 +287,11 @@ static int parse_emit_mode(const char *text, int *out)
     if (str_eq_ci(text, "knc") || str_eq_ci(text, "bytecode"))
     {
         *out = KN_EMIT_KNC;
+        return 1;
+    }
+    if (str_eq_ci(text, "check") || str_eq_ci(text, "sema") || str_eq_ci(text, "sema-summary"))
+    {
+        *out = KN_EMIT_CHECK;
         return 1;
     }
     if (str_eq_ci(text, "vm-exe") || str_eq_ci(text, "vm-bundle") || str_eq_ci(text, "standalone") ||
@@ -455,6 +460,12 @@ static void make_default_output(char *out, size_t cap, int emit_mode, int artifa
         kn_append(out, cap, &off, ".ll");
         return;
     }
+    if (emit_mode == KN_EMIT_CHECK)
+    {
+        kn_append(out, cap, &off, stem);
+        kn_append(out, cap, &off, ".kcheck");
+        return;
+    }
 
     if (artifact_kind == KN_ARTIFACT_STATIC_LIB)
     {
@@ -572,7 +583,41 @@ static int kn_main(int argc, char **argv)
  *  Delegates to the same kn_compile() but enforces subcommand-clean
  *  argument parsing (no --vm, no --emit knc/vm-exe, no pkg ops).
  * ================================================================ */
-static int kn_build_main(int argc, char **argv)
+enum
+{
+    KN_BUILD_RAW_LINK_CAP = 256,
+    KN_BUILD_LINK_CAP = 512,
+    KN_BUILD_LINK_STORAGE_CAP = 512,
+    KN_RUN_PROGRAM_ARG_CAP = 256,
+    KN_RUN_RAW_LINK_CAP = 128,
+    KN_RUN_LINK_CAP = 256,
+    KN_RUN_LINK_STORAGE_CAP = 256
+};
+
+typedef struct
+{
+    KnLinkItem raw_link_items[KN_BUILD_RAW_LINK_CAP];
+    KnLinkItem link_items[KN_BUILD_LINK_CAP];
+    char link_item_storage[KN_BUILD_LINK_STORAGE_CAP][KN_MAX_PATH];
+} KnBuildCliStorage;
+
+typedef struct
+{
+    const char *program_args[KN_RUN_PROGRAM_ARG_CAP];
+    KnLinkItem raw_link_items[KN_RUN_RAW_LINK_CAP];
+    KnLinkItem link_items[KN_RUN_LINK_CAP];
+    char link_item_storage[KN_RUN_LINK_STORAGE_CAP][KN_MAX_PATH];
+} KnRunCliStorage;
+
+static KnPkgManifest *cli_alloc_pkg_manifest(void)
+{
+    KnPkgManifest *manifest = (KnPkgManifest *)kn_malloc(sizeof(KnPkgManifest));
+    if (manifest)
+        kn_memset(manifest, 0, sizeof(*manifest));
+    return manifest;
+}
+
+static int kn_build_main_with_storage(int argc, char **argv, KnBuildCliStorage *storage)
 {
     const char *lang = "en";
     const char *locale_file = 0;
@@ -590,10 +635,10 @@ static int kn_build_main(int argc, char **argv)
 
     const char *out = 0;
     const char *inputs[64];
-    KnLinkItem raw_link_items[256];
+    KnLinkItem *raw_link_items = storage->raw_link_items;
     int raw_link_item_count = 0;
-    KnLinkItem link_items[512];
-    char link_item_storage[512][KN_MAX_PATH];
+    KnLinkItem *link_items = storage->link_items;
+    char (*link_item_storage)[KN_MAX_PATH] = storage->link_item_storage;
     int link_item_storage_count = 0;
     int in_count = 0;
     int auto_link = 1;
@@ -632,6 +677,8 @@ static int kn_build_main(int argc, char **argv)
     const char *project_profile = 0;
     StrList pkg_roots = {0};
     StrList stdpkg_roots = {0};
+    StrList local_project_sources = {0};
+    int project_source_mode = KN_PROJ_SOURCE_MODE_UNSET;
     int auto_link_explicit = 0;
     int entry_explicit = 0;
     int linker_path_explicit = 0;
@@ -694,27 +741,27 @@ static int kn_build_main(int argc, char **argv)
         }
         if ((kn_strcmp(arg, "-o") == 0 || kn_strcmp(arg, "--output") == 0) && i + 1 < argc) { out = argv[++i]; continue; }
         if ((kn_strcmp(arg, "-L") == 0 || kn_strcmp(arg, "--lib-dir") == 0) && i + 1 < argc) {
-            if (!link_item_add(raw_link_items, &raw_link_item_count, (int)(sizeof(raw_link_items)/sizeof(raw_link_items[0])), KN_CLI_LINK_LIB_DIR, argv[++i])) { kn_write_str("too many link items\n"); return 1; }
+            if (!link_item_add(raw_link_items, &raw_link_item_count, KN_BUILD_RAW_LINK_CAP, KN_CLI_LINK_LIB_DIR, argv[++i])) { kn_write_str("too many link items\n"); return 1; }
             continue;
         }
         if (kn_strncmp(arg, "-L", 2) == 0 && arg[2]) {
-            if (!link_item_add(raw_link_items, &raw_link_item_count, (int)(sizeof(raw_link_items)/sizeof(raw_link_items[0])), KN_CLI_LINK_LIB_DIR, arg + 2)) { kn_write_str("too many link items\n"); return 1; }
+            if (!link_item_add(raw_link_items, &raw_link_item_count, KN_BUILD_RAW_LINK_CAP, KN_CLI_LINK_LIB_DIR, arg + 2)) { kn_write_str("too many link items\n"); return 1; }
             continue;
         }
         if ((kn_strcmp(arg, "-l") == 0 || kn_strcmp(arg, "--lib") == 0) && i + 1 < argc) {
-            if (!link_item_add(raw_link_items, &raw_link_item_count, (int)(sizeof(raw_link_items)/sizeof(raw_link_items[0])), KN_CLI_LINK_LIB_NAME, argv[++i])) { kn_write_str("too many link items\n"); return 1; }
+            if (!link_item_add(raw_link_items, &raw_link_item_count, KN_BUILD_RAW_LINK_CAP, KN_CLI_LINK_LIB_NAME, argv[++i])) { kn_write_str("too many link items\n"); return 1; }
             continue;
         }
         if (kn_strncmp(arg, "-l", 2) == 0 && arg[2]) {
-            if (!link_item_add(raw_link_items, &raw_link_item_count, (int)(sizeof(raw_link_items)/sizeof(raw_link_items[0])), KN_CLI_LINK_LIB_NAME, arg + 2)) { kn_write_str("too many link items\n"); return 1; }
+            if (!link_item_add(raw_link_items, &raw_link_item_count, KN_BUILD_RAW_LINK_CAP, KN_CLI_LINK_LIB_NAME, arg + 2)) { kn_write_str("too many link items\n"); return 1; }
             continue;
         }
         if (kn_strcmp(arg, "--link-root") == 0 && i + 1 < argc) {
-            if (!link_item_add(raw_link_items, &raw_link_item_count, (int)(sizeof(raw_link_items)/sizeof(raw_link_items[0])), KN_CLI_LINK_ROOT, argv[++i])) { kn_write_str("too many link items\n"); return 1; }
+            if (!link_item_add(raw_link_items, &raw_link_item_count, KN_BUILD_RAW_LINK_CAP, KN_CLI_LINK_ROOT, argv[++i])) { kn_write_str("too many link items\n"); return 1; }
             continue;
         }
         if (kn_strcmp(arg, "--link-arg") == 0 && i + 1 < argc) {
-            if (!link_item_add(raw_link_items, &raw_link_item_count, (int)(sizeof(raw_link_items)/sizeof(raw_link_items[0])), KN_CLI_LINK_ARG, argv[++i])) { kn_write_str("too many link items\n"); return 1; }
+            if (!link_item_add(raw_link_items, &raw_link_item_count, KN_BUILD_RAW_LINK_CAP, KN_CLI_LINK_ARG, argv[++i])) { kn_write_str("too many link items\n"); return 1; }
             continue;
         }
         if (kn_strcmp(arg, "--env") == 0 && i + 1 < argc) {
@@ -748,7 +795,7 @@ static int kn_build_main(int argc, char **argv)
             artifact_explicit = 1; i++; continue;
         }
         if (kn_strcmp(arg, "--link-file") == 0 && i + 1 < argc) {
-            if (!link_item_add(raw_link_items, &raw_link_item_count, (int)(sizeof(raw_link_items)/sizeof(raw_link_items[0])), KN_CLI_LINK_FILE, argv[++i])) { kn_write_str("too many link items\n"); return 1; }
+            if (!link_item_add(raw_link_items, &raw_link_item_count, KN_BUILD_RAW_LINK_CAP, KN_CLI_LINK_FILE, argv[++i])) { kn_write_str("too many link items\n"); return 1; }
             continue;
         }
         if (arg[0] == '-' && arg[1]) { kn_write_str("unknown option: "); kn_write_str(arg); kn_write_str("\n"); print_build_help(); return 2; }
@@ -762,7 +809,6 @@ static int kn_build_main(int argc, char **argv)
     }
 
     if (project_manifest) {
-        KnPkgManifest manifest;
         KnProjectConfig *project_cfg = 0;
         const KnProjProfile *project = 0;
         char manifest_path[KN_MAX_PATH], manifest_entry[KN_MAX_PATH], manifest_out[KN_MAX_PATH], local_pkg_root[KN_MAX_PATH];
@@ -813,9 +859,25 @@ static int kn_build_main(int argc, char **argv)
             if (!link_script_explicit && project->link_script[0]) link_script = dup_str(project->link_script);
             if (!no_crt_explicit && project->has_no_crt) no_crt = project->no_crt;
             if (!no_default_libs_explicit && project->has_no_default_libs) no_default_libs = project->no_default_libs;
-            if (!auto_link_explicit && project->has_auto_link) auto_link = project->auto_link;
+            if (!prepare_project_source_graph(project_cfg, project, (in_count > 0) ? inputs[0] : 0,
+                                              &local_project_sources, &project_source_mode))
+            {
+                kn_write_str("invalid project source graph: ");
+                if (g_knproj_runtime_error[0]) kn_write_str(g_knproj_runtime_error);
+                else kn_write_str(manifest_path);
+                kn_write_str("\n");
+                knproj_free_config(project_cfg);
+                return 1;
+            }
+            if (project_source_mode != KN_PROJ_SOURCE_MODE_UNSET)
+            {
+                if (auto_link_explicit && !auto_link)
+                    project_source_mode = KN_PROJ_SOURCE_MODE_FILE_ONLY;
+                auto_link = 1;
+            }
+            else if (!auto_link_explicit && project->has_auto_link) auto_link = project->auto_link;
             if (!append_project_link_items(project_cfg, project, raw_link_items, &raw_link_item_count,
-                                           (int)(sizeof(raw_link_items) / sizeof(raw_link_items[0]))))
+                                           KN_BUILD_RAW_LINK_CAP))
             {
                 kn_write_str("failed to apply link settings from project profile\n");
                 knproj_free_config(project_cfg);
@@ -825,21 +887,33 @@ static int kn_build_main(int argc, char **argv)
         }
         else
         {
-            if (!parse_pkg_manifest(manifest_path, &manifest)) {
-                kn_write_str("invalid manifest: "); kn_write_str(manifest_path); kn_write_str("\n"); return 1;
+            KnPkgManifest *manifest = cli_alloc_pkg_manifest();
+            if (!manifest) {
+                kn_write_str("out of memory while loading project manifest\n");
+                return 1;
             }
-            if (!manifest.is_project) { kn_write_str("--project expects a project manifest\n"); return 1; }
-            for (int pr = 0; pr < manifest.package_root_count; pr++) {
+            if (!parse_pkg_manifest(manifest_path, manifest)) {
+                kn_write_str("invalid manifest: "); kn_write_str(manifest_path); kn_write_str("\n");
+                kn_free(manifest);
+                return 1;
+            }
+            if (!manifest->is_project) {
+                kn_write_str("--project expects a project manifest\n");
+                kn_free(manifest);
+                return 1;
+            }
+            for (int pr = 0; pr < manifest->package_root_count; pr++) {
                 char resolved_root[KN_MAX_PATH];
-                if (manifest_resolve_path(&manifest, manifest.package_roots[pr], resolved_root, sizeof(resolved_root)))
+                if (manifest_resolve_path(manifest, manifest->package_roots[pr], resolved_root, sizeof(resolved_root)))
                     append_root_list(&pkg_roots, resolved_root);
             }
-            if (path_join(local_pkg_root, sizeof(local_pkg_root), manifest.manifest_dir, "kpkg"))
+            if (path_join(local_pkg_root, sizeof(local_pkg_root), manifest->manifest_dir, "kpkg"))
                 append_root_list(&pkg_roots, local_pkg_root);
-            if (!out && manifest.out_path[0] && manifest_resolve_path(&manifest, manifest.out_path, manifest_out, sizeof(manifest_out)))
+            if (!out && manifest->out_path[0] && manifest_resolve_path(manifest, manifest->out_path, manifest_out, sizeof(manifest_out)))
                 out = dup_str(manifest_out);
-            if (in_count == 0 && manifest.entry[0] && manifest_resolve_path(&manifest, manifest.entry, manifest_entry, sizeof(manifest_entry)))
+            if (in_count == 0 && manifest->entry[0] && manifest_resolve_path(manifest, manifest->entry, manifest_entry, sizeof(manifest_entry)))
                 inputs[in_count++] = dup_str(manifest_entry);
+            kn_free(manifest);
         }
     }
     collect_default_official_package_roots(&stdpkg_roots);
@@ -872,13 +946,13 @@ static int kn_build_main(int argc, char **argv)
         const KnLinkItem *raw = &raw_link_items[li];
         if (!raw->value || !raw->value[0]) continue;
         if (raw->kind == KN_CLI_LINK_ROOT) {
-            if (!expand_link_root(link_items, &link_item_count, (int)(sizeof(link_items)/sizeof(link_items[0])),
-                                  link_item_storage, &link_item_storage_count, (int)(sizeof(link_item_storage)/sizeof(link_item_storage[0])),
+            if (!expand_link_root(link_items, &link_item_count, KN_BUILD_LINK_CAP,
+                                  link_item_storage, &link_item_storage_count, KN_BUILD_LINK_STORAGE_CAP,
                                   raw->value, target_triple))
             { kn_write_str("failed to expand link root: "); kn_write_str(raw->value); kn_write_str("\n"); return 1; }
             continue;
         }
-        if (!link_item_add(link_items, &link_item_count, (int)(sizeof(link_items)/sizeof(link_items[0])), raw->kind, raw->value))
+        if (!link_item_add(link_items, &link_item_count, KN_BUILD_LINK_CAP, raw->kind, raw->value))
         { kn_write_str("too many link items\n"); return 1; }
     }
 
@@ -904,14 +978,18 @@ static int kn_build_main(int argc, char **argv)
     kn_memset(&cfg, 0, sizeof(cfg));
     cfg.out_path = out;
     cfg.auto_link = auto_link;
+    cfg.project_source_mode = project_source_mode;
     cfg.trace = trace;
     cfg.profile = profile;
     cfg.package_roots = pkg_roots.items;
     cfg.package_root_count = pkg_roots.count;
     cfg.official_package_roots = stdpkg_roots.items;
     cfg.official_package_root_count = stdpkg_roots.count;
+    cfg.project_local_sources = local_project_sources.items;
+    cfg.project_local_source_count = local_project_sources.count;
     cfg.link_items = link_items;
     cfg.link_item_count = link_item_count;
+    cfg.project_mode = project_manifest ? 1 : 0;
     cfg.target_triple = target_triple;
     cfg.linker_kind = linker_kind;
     cfg.linker_path = linker_path;
@@ -930,6 +1008,7 @@ static int kn_build_main(int argc, char **argv)
     cfg.show_link = show_link;
     cfg.show_link_search = show_link_search;
     cfg.knc_superloop = 1;
+    cfg.project_mode = project_manifest ? 1 : 0;
 
     int c_rc = kn_compile(in_count, inputs, &cfg);
     kn_diag_print_summary();
@@ -939,10 +1018,24 @@ static int kn_build_main(int argc, char **argv)
     return c_rc == 0 ? 0 : 1;
 }
 
+static int kn_build_main(int argc, char **argv)
+{
+    KnBuildCliStorage *storage = (KnBuildCliStorage *)kn_malloc(sizeof(KnBuildCliStorage));
+    if (!storage)
+    {
+        kn_write_str("out of memory while preparing build command\n");
+        return 1;
+    }
+    kn_memset(storage, 0, sizeof(*storage));
+    int rc = kn_build_main_with_storage(argc, argv, storage);
+    kn_free(storage);
+    return rc;
+}
+
 /* ================================================================
  *  kinal run — compile to native exe and execute immediately.
  * ================================================================ */
-static int kn_run_main(int argc, char **argv)
+static int kn_run_main_with_storage(int argc, char **argv, KnRunCliStorage *storage)
 {
     const char *lang = "en";
     const char *locale_file = 0;
@@ -954,16 +1047,18 @@ static int kn_run_main(int argc, char **argv)
     const char *input = 0;
     const char *project_manifest = 0;
     const char *project_profile = 0;
-    const char *prog_args[256];
+    const char **prog_args = storage->program_args;
     int prog_argc = 0;
     int dashdash = 0;
     StrList pkg_roots = {0};
     StrList stdpkg_roots = {0};
+    StrList local_project_sources = {0};
+    int project_source_mode = KN_PROJ_SOURCE_MODE_UNSET;
     int auto_link_explicit = 0;
-    KnLinkItem raw_link_items[128];
+    KnLinkItem *raw_link_items = storage->raw_link_items;
     int raw_link_item_count = 0;
-    KnLinkItem link_items[256];
-    char link_item_storage[256][KN_MAX_PATH];
+    KnLinkItem *link_items = storage->link_items;
+    char (*link_item_storage)[KN_MAX_PATH] = storage->link_item_storage;
     int link_item_storage_count = 0;
 
     for (int i = 1; i < argc; i++)
@@ -972,7 +1067,7 @@ static int kn_run_main(int argc, char **argv)
         if (dashdash)
         {
             /* Everything after -- is forwarded to the compiled program */
-            if (prog_argc < (int)(sizeof(prog_args)/sizeof(prog_args[0])))
+            if (prog_argc < KN_RUN_PROGRAM_ARG_CAP)
                 prog_args[prog_argc++] = arg;
             continue;
         }
@@ -996,31 +1091,31 @@ static int kn_run_main(int argc, char **argv)
         if (kn_strcmp(arg, "--pkg-root") == 0 && i + 1 < argc) { append_root_list(&pkg_roots, argv[++i]); continue; }
         if (kn_strcmp(arg, "--stdpkg-root") == 0 && i + 1 < argc) { append_root_list(&stdpkg_roots, argv[++i]); continue; }
         if ((kn_strcmp(arg, "-L") == 0 || kn_strcmp(arg, "--lib-dir") == 0) && i + 1 < argc) {
-            if (!link_item_add(raw_link_items, &raw_link_item_count, (int)(sizeof(raw_link_items) / sizeof(raw_link_items[0])), KN_CLI_LINK_LIB_DIR, argv[++i])) { kn_write_str("too many link items\n"); return 1; }
+            if (!link_item_add(raw_link_items, &raw_link_item_count, KN_RUN_RAW_LINK_CAP, KN_CLI_LINK_LIB_DIR, argv[++i])) { kn_write_str("too many link items\n"); return 1; }
             continue;
         }
         if (kn_strncmp(arg, "-L", 2) == 0 && arg[2]) {
-            if (!link_item_add(raw_link_items, &raw_link_item_count, (int)(sizeof(raw_link_items) / sizeof(raw_link_items[0])), KN_CLI_LINK_LIB_DIR, arg + 2)) { kn_write_str("too many link items\n"); return 1; }
+            if (!link_item_add(raw_link_items, &raw_link_item_count, KN_RUN_RAW_LINK_CAP, KN_CLI_LINK_LIB_DIR, arg + 2)) { kn_write_str("too many link items\n"); return 1; }
             continue;
         }
         if ((kn_strcmp(arg, "-l") == 0 || kn_strcmp(arg, "--lib") == 0) && i + 1 < argc) {
-            if (!link_item_add(raw_link_items, &raw_link_item_count, (int)(sizeof(raw_link_items) / sizeof(raw_link_items[0])), KN_CLI_LINK_LIB_NAME, argv[++i])) { kn_write_str("too many link items\n"); return 1; }
+            if (!link_item_add(raw_link_items, &raw_link_item_count, KN_RUN_RAW_LINK_CAP, KN_CLI_LINK_LIB_NAME, argv[++i])) { kn_write_str("too many link items\n"); return 1; }
             continue;
         }
         if (kn_strncmp(arg, "-l", 2) == 0 && arg[2]) {
-            if (!link_item_add(raw_link_items, &raw_link_item_count, (int)(sizeof(raw_link_items) / sizeof(raw_link_items[0])), KN_CLI_LINK_LIB_NAME, arg + 2)) { kn_write_str("too many link items\n"); return 1; }
+            if (!link_item_add(raw_link_items, &raw_link_item_count, KN_RUN_RAW_LINK_CAP, KN_CLI_LINK_LIB_NAME, arg + 2)) { kn_write_str("too many link items\n"); return 1; }
             continue;
         }
         if (kn_strcmp(arg, "--link-root") == 0 && i + 1 < argc) {
-            if (!link_item_add(raw_link_items, &raw_link_item_count, (int)(sizeof(raw_link_items) / sizeof(raw_link_items[0])), KN_CLI_LINK_ROOT, argv[++i])) { kn_write_str("too many link items\n"); return 1; }
+            if (!link_item_add(raw_link_items, &raw_link_item_count, KN_RUN_RAW_LINK_CAP, KN_CLI_LINK_ROOT, argv[++i])) { kn_write_str("too many link items\n"); return 1; }
             continue;
         }
         if (kn_strcmp(arg, "--link-arg") == 0 && i + 1 < argc) {
-            if (!link_item_add(raw_link_items, &raw_link_item_count, (int)(sizeof(raw_link_items) / sizeof(raw_link_items[0])), KN_CLI_LINK_ARG, argv[++i])) { kn_write_str("too many link items\n"); return 1; }
+            if (!link_item_add(raw_link_items, &raw_link_item_count, KN_RUN_RAW_LINK_CAP, KN_CLI_LINK_ARG, argv[++i])) { kn_write_str("too many link items\n"); return 1; }
             continue;
         }
         if (kn_strcmp(arg, "--link-file") == 0 && i + 1 < argc) {
-            if (!link_item_add(raw_link_items, &raw_link_item_count, (int)(sizeof(raw_link_items) / sizeof(raw_link_items[0])), KN_CLI_LINK_FILE, argv[++i])) { kn_write_str("too many link items\n"); return 1; }
+            if (!link_item_add(raw_link_items, &raw_link_item_count, KN_RUN_RAW_LINK_CAP, KN_CLI_LINK_FILE, argv[++i])) { kn_write_str("too many link items\n"); return 1; }
             continue;
         }
         if (kn_strcmp(arg, "--") == 0) { dashdash = 1; continue; }
@@ -1031,7 +1126,6 @@ static int kn_run_main(int argc, char **argv)
 
     if (project_manifest)
     {
-        KnPkgManifest manifest;
         KnProjectConfig *project_cfg = 0;
         const KnProjProfile *project = 0;
         char manifest_path[KN_MAX_PATH], manifest_entry[KN_MAX_PATH], local_pkg_root[KN_MAX_PATH], selected_profile_name[64];
@@ -1075,10 +1169,25 @@ static int kn_run_main(int argc, char **argv)
                 append_root_list(&pkg_roots, local_pkg_root);
             if (!input && project->entry[0] && knproj_resolve_path(project_cfg, project->entry, manifest_entry, sizeof(manifest_entry)))
                 input = dup_str(manifest_entry);
-            if (!auto_link_explicit && project->has_auto_link)
+            if (!prepare_project_source_graph(project_cfg, project, input, &local_project_sources, &project_source_mode))
+            {
+                kn_write_str("invalid project source graph: ");
+                if (g_knproj_runtime_error[0]) kn_write_str(g_knproj_runtime_error);
+                else kn_write_str(manifest_path);
+                kn_write_str("\n");
+                knproj_free_config(project_cfg);
+                return 1;
+            }
+            if (project_source_mode != KN_PROJ_SOURCE_MODE_UNSET)
+            {
+                if (auto_link_explicit && !auto_link)
+                    project_source_mode = KN_PROJ_SOURCE_MODE_FILE_ONLY;
+                auto_link = 1;
+            }
+            else if (!auto_link_explicit && project->has_auto_link)
                 auto_link = project->auto_link;
             if (!append_project_link_items(project_cfg, project, raw_link_items, &raw_link_item_count,
-                                           (int)(sizeof(raw_link_items) / sizeof(raw_link_items[0]))))
+                                           KN_RUN_RAW_LINK_CAP))
             {
                 kn_write_str("failed to apply link settings from project profile\n");
                 knproj_free_config(project_cfg);
@@ -1088,19 +1197,31 @@ static int kn_run_main(int argc, char **argv)
         }
         else
         {
-            if (!parse_pkg_manifest(manifest_path, &manifest)) {
-                kn_write_str("invalid manifest: "); kn_write_str(manifest_path); kn_write_str("\n"); return 1;
+            KnPkgManifest *manifest = cli_alloc_pkg_manifest();
+            if (!manifest) {
+                kn_write_str("out of memory while loading project manifest\n");
+                return 1;
             }
-            if (!manifest.is_project) { kn_write_str("--project expects a project manifest\n"); return 1; }
-            for (int pr = 0; pr < manifest.package_root_count; pr++) {
+            if (!parse_pkg_manifest(manifest_path, manifest)) {
+                kn_write_str("invalid manifest: "); kn_write_str(manifest_path); kn_write_str("\n");
+                kn_free(manifest);
+                return 1;
+            }
+            if (!manifest->is_project) {
+                kn_write_str("--project expects a project manifest\n");
+                kn_free(manifest);
+                return 1;
+            }
+            for (int pr = 0; pr < manifest->package_root_count; pr++) {
                 char resolved_root[KN_MAX_PATH];
-                if (manifest_resolve_path(&manifest, manifest.package_roots[pr], resolved_root, sizeof(resolved_root)))
+                if (manifest_resolve_path(manifest, manifest->package_roots[pr], resolved_root, sizeof(resolved_root)))
                     append_root_list(&pkg_roots, resolved_root);
             }
-            if (path_join(local_pkg_root, sizeof(local_pkg_root), manifest.manifest_dir, "kpkg"))
+            if (path_join(local_pkg_root, sizeof(local_pkg_root), manifest->manifest_dir, "kpkg"))
                 append_root_list(&pkg_roots, local_pkg_root);
-            if (!input && manifest.entry[0] && manifest_resolve_path(&manifest, manifest.entry, manifest_entry, sizeof(manifest_entry)))
+            if (!input && manifest->entry[0] && manifest_resolve_path(manifest, manifest->entry, manifest_entry, sizeof(manifest_entry)))
                 input = dup_str(manifest_entry);
+            kn_free(manifest);
         }
     }
 
@@ -1138,13 +1259,13 @@ static int kn_run_main(int argc, char **argv)
         const KnLinkItem *raw = &raw_link_items[li];
         if (!raw->value || !raw->value[0]) continue;
         if (raw->kind == KN_CLI_LINK_ROOT) {
-            if (!expand_link_root(link_items, &link_item_count, (int)(sizeof(link_items) / sizeof(link_items[0])),
-                                  link_item_storage, &link_item_storage_count, (int)(sizeof(link_item_storage) / sizeof(link_item_storage[0])),
+            if (!expand_link_root(link_items, &link_item_count, KN_RUN_LINK_CAP,
+                                  link_item_storage, &link_item_storage_count, KN_RUN_LINK_STORAGE_CAP,
                                   raw->value, default_target_triple()))
             { kn_write_str("failed to expand link root: "); kn_write_str(raw->value); kn_write_str("\n"); return 1; }
             continue;
         }
-        if (!link_item_add(link_items, &link_item_count, (int)(sizeof(link_items) / sizeof(link_items[0])), raw->kind, raw->value))
+        if (!link_item_add(link_items, &link_item_count, KN_RUN_LINK_CAP, raw->kind, raw->value))
         { kn_write_str("too many link items\n"); return 1; }
     }
 
@@ -1152,6 +1273,7 @@ static int kn_run_main(int argc, char **argv)
     kn_memset(&cfg, 0, sizeof(cfg));
     cfg.out_path = temp_exe;
     cfg.auto_link = auto_link;
+    cfg.project_source_mode = project_source_mode;
     cfg.emit_mode = KN_EMIT_LINK;
     cfg.artifact_kind = KN_ARTIFACT_EXE;
     cfg.target_triple = default_target_triple();
@@ -1165,6 +1287,8 @@ static int kn_run_main(int argc, char **argv)
     cfg.package_root_count = pkg_roots.count;
     cfg.official_package_roots = stdpkg_roots.items;
     cfg.official_package_root_count = stdpkg_roots.count;
+    cfg.project_local_sources = local_project_sources.items;
+    cfg.project_local_source_count = local_project_sources.count;
     cfg.link_items = link_items;
     cfg.link_item_count = link_item_count;
 
@@ -1181,6 +1305,20 @@ static int kn_run_main(int argc, char **argv)
     if (!keep_temps) try_delete_file(temp_exe);
     if (prog_rc < 0) { kn_write_str("failed to launch compiled program\n"); return 1; }
     return prog_rc;
+}
+
+static int kn_run_main(int argc, char **argv)
+{
+    KnRunCliStorage *storage = (KnRunCliStorage *)kn_malloc(sizeof(KnRunCliStorage));
+    if (!storage)
+    {
+        kn_write_str("out of memory while preparing run command\n");
+        return 1;
+    }
+    kn_memset(storage, 0, sizeof(*storage));
+    int rc = kn_run_main_with_storage(argc, argv, storage);
+    kn_free(storage);
+    return rc;
 }
 
 /* ================================================================
@@ -1217,6 +1355,8 @@ static int kn_vm_build_main(int argc, char **argv)
     int superloop_explicit = 0;
     StrList pkg_roots = {0};
     StrList stdpkg_roots = {0};
+    StrList local_project_sources = {0};
+    int project_source_mode = KN_PROJ_SOURCE_MODE_UNSET;
 
     for (int i = 1; i < argc; i++)
     {
@@ -1251,7 +1391,6 @@ static int kn_vm_build_main(int argc, char **argv)
 
     if (project_manifest)
     {
-        KnPkgManifest manifest;
         KnProjectConfig *project_cfg = 0;
         const KnProjProfile *project = 0;
         char manifest_path[KN_MAX_PATH], manifest_entry[KN_MAX_PATH], manifest_out[KN_MAX_PATH], local_pkg_root[KN_MAX_PATH], selected_profile_name[64];
@@ -1291,7 +1430,22 @@ static int kn_vm_build_main(int argc, char **argv)
                 input = dup_str(manifest_entry);
             if (!out && project->out_path[0] && knproj_resolve_path(project_cfg, project->out_path, manifest_out, sizeof(manifest_out)))
                 out = dup_str(manifest_out);
-            if (!auto_link_explicit && project->has_auto_link)
+            if (!prepare_project_source_graph(project_cfg, project, input, &local_project_sources, &project_source_mode))
+            {
+                kn_write_str("invalid project source graph: ");
+                if (g_knproj_runtime_error[0]) kn_write_str(g_knproj_runtime_error);
+                else kn_write_str(manifest_path);
+                kn_write_str("\n");
+                knproj_free_config(project_cfg);
+                return 1;
+            }
+            if (project_source_mode != KN_PROJ_SOURCE_MODE_UNSET)
+            {
+                if (auto_link_explicit && !auto_link)
+                    project_source_mode = KN_PROJ_SOURCE_MODE_FILE_ONLY;
+                auto_link = 1;
+            }
+            else if (!auto_link_explicit && project->has_auto_link)
                 auto_link = project->auto_link;
             if (!superloop_explicit && project->has_superloop)
                 knc_superloop = project->knc_superloop;
@@ -1299,21 +1453,33 @@ static int kn_vm_build_main(int argc, char **argv)
         }
         else
         {
-            if (!parse_pkg_manifest(manifest_path, &manifest)) {
-                kn_write_str("invalid manifest: "); kn_write_str(manifest_path); kn_write_str("\n"); return 1;
+            KnPkgManifest *manifest = cli_alloc_pkg_manifest();
+            if (!manifest) {
+                kn_write_str("out of memory while loading project manifest\n");
+                return 1;
             }
-            if (!manifest.is_project) { kn_write_str("--project expects a project manifest\n"); return 1; }
-            for (int pr = 0; pr < manifest.package_root_count; pr++) {
+            if (!parse_pkg_manifest(manifest_path, manifest)) {
+                kn_write_str("invalid manifest: "); kn_write_str(manifest_path); kn_write_str("\n");
+                kn_free(manifest);
+                return 1;
+            }
+            if (!manifest->is_project) {
+                kn_write_str("--project expects a project manifest\n");
+                kn_free(manifest);
+                return 1;
+            }
+            for (int pr = 0; pr < manifest->package_root_count; pr++) {
                 char resolved_root[KN_MAX_PATH];
-                if (manifest_resolve_path(&manifest, manifest.package_roots[pr], resolved_root, sizeof(resolved_root)))
+                if (manifest_resolve_path(manifest, manifest->package_roots[pr], resolved_root, sizeof(resolved_root)))
                     append_root_list(&pkg_roots, resolved_root);
             }
-            if (path_join(local_pkg_root, sizeof(local_pkg_root), manifest.manifest_dir, "kpkg"))
+            if (path_join(local_pkg_root, sizeof(local_pkg_root), manifest->manifest_dir, "kpkg"))
                 append_root_list(&pkg_roots, local_pkg_root);
-            if (!input && manifest.entry[0] && manifest_resolve_path(&manifest, manifest.entry, manifest_entry, sizeof(manifest_entry)))
+            if (!input && manifest->entry[0] && manifest_resolve_path(manifest, manifest->entry, manifest_entry, sizeof(manifest_entry)))
                 input = dup_str(manifest_entry);
-            if (!out && manifest.out_path[0] && manifest_resolve_path(&manifest, manifest.out_path, manifest_out, sizeof(manifest_out)))
+            if (!out && manifest->out_path[0] && manifest_resolve_path(manifest, manifest->out_path, manifest_out, sizeof(manifest_out)))
                 out = dup_str(manifest_out);
+            kn_free(manifest);
         }
     }
 
@@ -1337,6 +1503,7 @@ static int kn_vm_build_main(int argc, char **argv)
     kn_memset(&cfg, 0, sizeof(cfg));
     cfg.out_path = out;
     cfg.auto_link = auto_link;
+    cfg.project_source_mode = project_source_mode;
     cfg.emit_mode = KN_EMIT_KNC;
     cfg.artifact_kind = KN_ARTIFACT_EXE;
     cfg.target_triple = default_target_triple();
@@ -1349,6 +1516,9 @@ static int kn_vm_build_main(int argc, char **argv)
     cfg.package_root_count = pkg_roots.count;
     cfg.official_package_roots = stdpkg_roots.items;
     cfg.official_package_root_count = stdpkg_roots.count;
+    cfg.project_local_sources = local_project_sources.items;
+    cfg.project_local_source_count = local_project_sources.count;
+    cfg.project_mode = project_manifest ? 1 : 0;
 
     const char *inputs[1];
     inputs[0] = input;
@@ -1376,6 +1546,8 @@ static int kn_vm_run_main(int argc, char **argv)
     int dashdash = 0;
     StrList pkg_roots = {0};
     StrList stdpkg_roots = {0};
+    StrList local_project_sources = {0};
+    int project_source_mode = KN_PROJ_SOURCE_MODE_UNSET;
     int auto_link_explicit = 0;
     int superloop_explicit = 0;
 
@@ -1423,7 +1595,6 @@ static int kn_vm_run_main(int argc, char **argv)
 
     if (project_manifest)
     {
-        KnPkgManifest manifest;
         KnProjectConfig *project_cfg = 0;
         const KnProjProfile *project = 0;
         char manifest_path[KN_MAX_PATH], manifest_entry[KN_MAX_PATH], local_pkg_root[KN_MAX_PATH], selected_profile_name[64];
@@ -1461,7 +1632,22 @@ static int kn_vm_run_main(int argc, char **argv)
                 append_root_list(&pkg_roots, local_pkg_root);
             if (!input && project->entry[0] && knproj_resolve_path(project_cfg, project->entry, manifest_entry, sizeof(manifest_entry)))
                 input = dup_str(manifest_entry);
-            if (!auto_link_explicit && project->has_auto_link)
+            if (!prepare_project_source_graph(project_cfg, project, input, &local_project_sources, &project_source_mode))
+            {
+                kn_write_str("invalid project source graph: ");
+                if (g_knproj_runtime_error[0]) kn_write_str(g_knproj_runtime_error);
+                else kn_write_str(manifest_path);
+                kn_write_str("\n");
+                knproj_free_config(project_cfg);
+                return 1;
+            }
+            if (project_source_mode != KN_PROJ_SOURCE_MODE_UNSET)
+            {
+                if (auto_link_explicit && !auto_link)
+                    project_source_mode = KN_PROJ_SOURCE_MODE_FILE_ONLY;
+                auto_link = 1;
+            }
+            else if (!auto_link_explicit && project->has_auto_link)
                 auto_link = project->auto_link;
             if (!superloop_explicit && project->has_superloop)
                 knc_superloop = project->knc_superloop;
@@ -1469,19 +1655,31 @@ static int kn_vm_run_main(int argc, char **argv)
         }
         else
         {
-            if (!parse_pkg_manifest(manifest_path, &manifest)) {
-                kn_write_str("invalid manifest: "); kn_write_str(manifest_path); kn_write_str("\n"); return 1;
+            KnPkgManifest *manifest = cli_alloc_pkg_manifest();
+            if (!manifest) {
+                kn_write_str("out of memory while loading project manifest\n");
+                return 1;
             }
-            if (!manifest.is_project) { kn_write_str("--project expects a project manifest\n"); return 1; }
-            for (int pr = 0; pr < manifest.package_root_count; pr++) {
+            if (!parse_pkg_manifest(manifest_path, manifest)) {
+                kn_write_str("invalid manifest: "); kn_write_str(manifest_path); kn_write_str("\n");
+                kn_free(manifest);
+                return 1;
+            }
+            if (!manifest->is_project) {
+                kn_write_str("--project expects a project manifest\n");
+                kn_free(manifest);
+                return 1;
+            }
+            for (int pr = 0; pr < manifest->package_root_count; pr++) {
                 char resolved_root[KN_MAX_PATH];
-                if (manifest_resolve_path(&manifest, manifest.package_roots[pr], resolved_root, sizeof(resolved_root)))
+                if (manifest_resolve_path(manifest, manifest->package_roots[pr], resolved_root, sizeof(resolved_root)))
                     append_root_list(&pkg_roots, resolved_root);
             }
-            if (path_join(local_pkg_root, sizeof(local_pkg_root), manifest.manifest_dir, "kpkg"))
+            if (path_join(local_pkg_root, sizeof(local_pkg_root), manifest->manifest_dir, "kpkg"))
                 append_root_list(&pkg_roots, local_pkg_root);
-            if (!input && manifest.entry[0] && manifest_resolve_path(&manifest, manifest.entry, manifest_entry, sizeof(manifest_entry)))
+            if (!input && manifest->entry[0] && manifest_resolve_path(manifest, manifest->entry, manifest_entry, sizeof(manifest_entry)))
                 input = dup_str(manifest_entry);
+            kn_free(manifest);
         }
     }
 
@@ -1511,6 +1709,7 @@ static int kn_vm_run_main(int argc, char **argv)
         kn_memset(&cfg, 0, sizeof(cfg));
         cfg.out_path = temp_knc;
         cfg.auto_link = auto_link;
+        cfg.project_source_mode = project_source_mode;
         cfg.emit_mode = KN_EMIT_KNC;
         cfg.artifact_kind = KN_ARTIFACT_EXE;
         cfg.target_triple = default_target_triple();
@@ -1525,6 +1724,9 @@ static int kn_vm_run_main(int argc, char **argv)
         cfg.package_root_count = pkg_roots.count;
         cfg.official_package_roots = stdpkg_roots.items;
         cfg.official_package_root_count = stdpkg_roots.count;
+        cfg.project_local_sources = local_project_sources.items;
+        cfg.project_local_source_count = local_project_sources.count;
+        cfg.project_mode = project_manifest ? 1 : 0;
 
         const char *inputs[1];
         inputs[0] = input;
@@ -1577,6 +1779,8 @@ static int kn_vm_pack_main(int argc, char **argv)
     int target_explicit = 0;
     StrList pkg_roots = {0};
     StrList stdpkg_roots = {0};
+    StrList local_project_sources = {0};
+    int project_source_mode = KN_PROJ_SOURCE_MODE_UNSET;
 
     for (int i = 1; i < argc; i++)
     {
@@ -1616,7 +1820,6 @@ static int kn_vm_pack_main(int argc, char **argv)
 
     if (project_manifest)
     {
-        KnPkgManifest manifest;
         KnProjectConfig *project_cfg = 0;
         const KnProjProfile *project = 0;
         char manifest_path[KN_MAX_PATH], manifest_entry[KN_MAX_PATH], manifest_out[KN_MAX_PATH], local_pkg_root[KN_MAX_PATH], selected_profile_name[64];
@@ -1657,7 +1860,22 @@ static int kn_vm_pack_main(int argc, char **argv)
             if (!out && project->out_path[0] && knproj_resolve_path(project_cfg, project->out_path, manifest_out, sizeof(manifest_out)))
                 out = dup_str(manifest_out);
             if (!target_explicit && project->target[0]) { target_raw = dup_str(project->target); target_explicit = 1; }
-            if (!auto_link_explicit && project->has_auto_link)
+            if (!prepare_project_source_graph(project_cfg, project, input, &local_project_sources, &project_source_mode))
+            {
+                kn_write_str("invalid project source graph: ");
+                if (g_knproj_runtime_error[0]) kn_write_str(g_knproj_runtime_error);
+                else kn_write_str(manifest_path);
+                kn_write_str("\n");
+                knproj_free_config(project_cfg);
+                return 1;
+            }
+            if (project_source_mode != KN_PROJ_SOURCE_MODE_UNSET)
+            {
+                if (auto_link_explicit && !auto_link)
+                    project_source_mode = KN_PROJ_SOURCE_MODE_FILE_ONLY;
+                auto_link = 1;
+            }
+            else if (!auto_link_explicit && project->has_auto_link)
                 auto_link = project->auto_link;
             if (!superloop_explicit && project->has_superloop)
                 knc_superloop = project->knc_superloop;
@@ -1665,21 +1883,33 @@ static int kn_vm_pack_main(int argc, char **argv)
         }
         else
         {
-            if (!parse_pkg_manifest(manifest_path, &manifest)) {
-                kn_write_str("invalid manifest: "); kn_write_str(manifest_path); kn_write_str("\n"); return 1;
+            KnPkgManifest *manifest = cli_alloc_pkg_manifest();
+            if (!manifest) {
+                kn_write_str("out of memory while loading project manifest\n");
+                return 1;
             }
-            if (!manifest.is_project) { kn_write_str("--project expects a project manifest\n"); return 1; }
-            for (int pr = 0; pr < manifest.package_root_count; pr++) {
+            if (!parse_pkg_manifest(manifest_path, manifest)) {
+                kn_write_str("invalid manifest: "); kn_write_str(manifest_path); kn_write_str("\n");
+                kn_free(manifest);
+                return 1;
+            }
+            if (!manifest->is_project) {
+                kn_write_str("--project expects a project manifest\n");
+                kn_free(manifest);
+                return 1;
+            }
+            for (int pr = 0; pr < manifest->package_root_count; pr++) {
                 char resolved_root[KN_MAX_PATH];
-                if (manifest_resolve_path(&manifest, manifest.package_roots[pr], resolved_root, sizeof(resolved_root)))
+                if (manifest_resolve_path(manifest, manifest->package_roots[pr], resolved_root, sizeof(resolved_root)))
                     append_root_list(&pkg_roots, resolved_root);
             }
-            if (path_join(local_pkg_root, sizeof(local_pkg_root), manifest.manifest_dir, "kpkg"))
+            if (path_join(local_pkg_root, sizeof(local_pkg_root), manifest->manifest_dir, "kpkg"))
                 append_root_list(&pkg_roots, local_pkg_root);
-            if (!input && manifest.entry[0] && manifest_resolve_path(&manifest, manifest.entry, manifest_entry, sizeof(manifest_entry)))
+            if (!input && manifest->entry[0] && manifest_resolve_path(manifest, manifest->entry, manifest_entry, sizeof(manifest_entry)))
                 input = dup_str(manifest_entry);
-            if (!out && manifest.out_path[0] && manifest_resolve_path(&manifest, manifest.out_path, manifest_out, sizeof(manifest_out)))
+            if (!out && manifest->out_path[0] && manifest_resolve_path(manifest, manifest->out_path, manifest_out, sizeof(manifest_out)))
                 out = dup_str(manifest_out);
+            kn_free(manifest);
         }
     }
 
@@ -1715,6 +1945,7 @@ static int kn_vm_pack_main(int argc, char **argv)
         kn_memset(&knc_cfg, 0, sizeof(knc_cfg));
         knc_cfg.out_path = bundle_knc_path;
         knc_cfg.auto_link = auto_link;
+        knc_cfg.project_source_mode = project_source_mode;
         knc_cfg.emit_mode = KN_EMIT_KNC;
         knc_cfg.artifact_kind = KN_ARTIFACT_EXE;
         knc_cfg.target_triple = target_triple;
@@ -1728,6 +1959,9 @@ static int kn_vm_pack_main(int argc, char **argv)
         knc_cfg.package_root_count = pkg_roots.count;
         knc_cfg.official_package_roots = stdpkg_roots.items;
         knc_cfg.official_package_root_count = stdpkg_roots.count;
+        knc_cfg.project_local_sources = local_project_sources.items;
+        knc_cfg.project_local_source_count = local_project_sources.count;
+        knc_cfg.project_mode = project_manifest ? 1 : 0;
         const char *inputs[1]; inputs[0] = input;
         int rc = kn_compile(1, inputs, &knc_cfg);
         kn_diag_print_summary();
@@ -1845,17 +2079,22 @@ static int kn_pkg_build_main(int argc, char **argv)
 
     /* Default: build klib */
     if (!out || !out[0]) {
-        KnPkgManifest manifest;
-        if (parse_pkg_manifest(manifest_path, &manifest)) {
+        KnPkgManifest *manifest = cli_alloc_pkg_manifest();
+        if (!manifest) {
+            kn_write_str("out of memory while loading package manifest\n");
+            return 1;
+        }
+        if (parse_pkg_manifest(manifest_path, manifest)) {
             static char klib_out[KN_MAX_PATH];
             size_t off = 0; klib_out[0] = 0;
-            kn_append(klib_out, sizeof(klib_out), &off, manifest.name[0] ? manifest.name : "package");
-            if (manifest.version[0]) { kn_append(klib_out, sizeof(klib_out), &off, "-"); kn_append(klib_out, sizeof(klib_out), &off, manifest.version); }
+            kn_append(klib_out, sizeof(klib_out), &off, manifest->name[0] ? manifest->name : "package");
+            if (manifest->version[0]) { kn_append(klib_out, sizeof(klib_out), &off, "-"); kn_append(klib_out, sizeof(klib_out), &off, manifest->version); }
             kn_append(klib_out, sizeof(klib_out), &off, ".klib");
             out = klib_out;
         } else {
             out = "output.klib";
         }
+        kn_free(manifest);
     }
     if (klib_pack_from_manifest(manifest_path, out) != 0) return 1;
     return 0;
@@ -1910,16 +2149,31 @@ static int kn_pkg_unpack_main(int argc, char **argv)
 }
 // This is required when statically linking LLVM (C++), so we use `main` instead
 // of a freestanding `mainCRTStartup` entry point.
+static int kn_run_cli_session(int argc, char **argv)
+{
+    KnCompileSession *session = kn_compile_session_create(0);
+    if (!session)
+    {
+        kn_write_str("failed to create compile session\n");
+        return 1;
+    }
+    kn_compile_session_enter(session);
+    int result = kn_main(argc, argv);
+    kn_compile_session_leave(session);
+    kn_compile_session_destroy(session);
+    return result;
+}
+
 #if defined(_WIN32)
 int main(void)
 {
     KnArgs args = kn_parse_cmdline();
-    return kn_main(args.argc, args.argv);
+    return kn_run_cli_session(args.argc, args.argv);
 }
 #else
 int main(int argc, char **argv)
 {
-    return kn_main(argc, argv);
+    return kn_run_cli_session(argc, argv);
 }
 #endif
 #endif

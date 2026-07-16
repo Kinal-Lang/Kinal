@@ -1,0 +1,12 @@
+Unit Tests.ErrorPackageFieldCount;
+
+Function <int, string> Status()
+{
+    Return <200, "OK">;
+}
+
+Static Function int Main()
+{
+    Object.Package status<code> = Status();
+    Return status.code;
+}

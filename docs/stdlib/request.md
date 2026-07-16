@@ -1,6 +1,6 @@
 # IO.Request
 
-`IO.Request` is Kinal's outbound HTTP client package. It wraps the bundled CivetWeb client API through Kinal FFI and exposes a synchronous text-oriented request surface.
+`IO.Request` is Kinal's outbound HTTP client package. It wraps the bundled CivetWeb client API through Kinal FFI and exposes a synchronous text-oriented request surface built around properties and `dict` headers.
 
 ## Import
 
@@ -54,11 +54,14 @@ Static Function int Main()
 
 `IO.Request.Options` is the main configuration object.
 
-Important fields and helpers:
+Important properties and helpers:
 
 - `Url`
 - `Method`
 - `Body`
+- `BodyJson`
+- `BodyObject`
+- `BodyDict`
 - `ContentType`
 - `TimeoutMs`
 - `Headers`
@@ -74,12 +77,26 @@ IO.Request.Options options = New IO.Request.Options(
     IO.Request.Method.POST
 );
 
-options.SetHeader("X-App", "kinal");
-options.SetBody("{\"ok\":true}", "application/json");
-options.SetTimeout(3000);
+options.Headers.Set("X-App", "kinal");
+dict payload = dict.Create();
+payload.Set("ok", true);
+options.BodyDict = payload;
+options.TimeoutMs = 3000;
 
 IO.Request.Response response = IO.Request.Send(options);
 ```
+
+`Headers` is a `dict`. Header names are stored by their normalized text such as `Content-Type`.
+
+For JSON payloads, `Options` now exposes property-style JSON helpers:
+
+- `BodyJson` works with `IO.Json.Value`
+- `BodyObject` works with `IO.Json.Object`
+- `BodyDict` works with raw `dict`
+
+`BodyDict` is the preferred JSON path. `BodyObject` is only a convenience wrapper layered on top of the same `dict` data.
+
+Assigning any of these JSON properties updates `Body` and automatically switches `ContentType` to `application/json; charset=utf-8`.
 
 ## Response
 
@@ -88,6 +105,9 @@ IO.Request.Response response = IO.Request.Send(options);
 - `StatusCode`
 - `StatusText`
 - `BodyText`
+- `BodyJson`
+- `BodyObject`
+- `BodyDict`
 - `BodyLength`
 - `Headers`
 - `ContentType`
@@ -99,12 +119,17 @@ IO.Request.Response response = IO.Request.Send(options);
 If (response.IsSuccess())
 {
     Console.PrintLine(response.ContentType);
+    Console.PrintLine(response.Headers.TryFetch("Content-Type", ""));
+    Console.PrintLine(response.BodyDict.TryFetch("ok", false));
 }
 Else
 {
     response.EnsureSuccess();
 }
 ```
+
+`BodyText` remains available for plain-text or non-JSON responses. The JSON properties are convenience views when the body content is JSON.
+When the response body is a JSON object, prefer `BodyDict`; `BodyObject` is the property-style wrapper for the same parsed data.
 
 ## Convenience Functions
 
@@ -125,6 +150,7 @@ Else
 - The current bridge does not expose CA or peer-verification options yet. HTTPS requests are encrypted, but server certificates are not validated by `IO.Request` today.
 - The package is synchronous.
 - Header names and values are validated before the request is sent.
+- `Options.Headers` and `Response.Headers` both use `dict`.
 
 ## See Also
 

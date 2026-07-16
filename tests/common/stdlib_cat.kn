@@ -1,0 +1,14 @@
+Unit Tests.StdlibCat;
+
+Get Console By IO.Console;
+Get IO.Cat;
+
+Static Function int Main()
+{
+    IO.Cat.Rommy cat = New IO.Cat.Rommy(true, true);
+    Console.PrintLine(cat.Speak("hello"));
+    Console.PrintLine(cat.Touch());
+    Console.PrintLine(cat.Feed());
+    Console.PrintLine(cat.Play());
+    Return 0;
+}

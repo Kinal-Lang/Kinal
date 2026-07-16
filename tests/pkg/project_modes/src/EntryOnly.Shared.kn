@@ -1,0 +1,6 @@
+Unit Tests.ProjectModes.EntryOnly;
+
+Function string EntryOnlyText()
+{
+    Return "entry-unit";
+}

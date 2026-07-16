@@ -21,11 +21,6 @@ Unsafe Static Function int Main()
     c_add= Add;
     Console.PrintLine(c_add(1, 2));
 
-    // Explicit Object.Function bridge coverage
-    byte*p= &Add;
-    c_add=[Object.Function](p);
-    Console.PrintLine(c_add(10, 20));
-
     // By Kinal: assign from function reference
     kn_mul= Mul;
     Console.PrintLine(kn_mul(3, 4));

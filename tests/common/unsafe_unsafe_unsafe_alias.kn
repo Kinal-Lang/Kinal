@@ -1,0 +1,10 @@
+Unsafe Unsafe Unsafe Alias != By ==;
+
+Get IO.Console;
+
+Static Function int Main()
+{
+    If (1 != 1)
+        IO.Console.PrintLine("triple");
+    Return 0;
+}

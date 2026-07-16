@@ -38,8 +38,11 @@ typedef struct
 
 #define KN_KLIB_MAGIC "KNKLIB1"
 #define KN_KLIB_VERSION 1u
+#define KN_PKG_PAYLOAD_FILE_CAP 256
+#define KN_PKG_SELECTED_MANIFEST_CAP 256
+#define KN_PKG_EMITTED_MANIFEST_CAP 65536u
 
-static int g_pkg_error = 0;
+static KN_DRIVER_THREAD_LOCAL int g_pkg_error = 0;
 
 static void pkg_fail(const char *msg, const char *detail)
 {
@@ -816,26 +819,25 @@ static void write_u64_le(KN_HANDLE h, uint64_t v)
     WriteFile(h, buf, 8, &wrote, 0);
 }
 
-static int klib_pack_from_manifest(const char *manifest_path, const char *out_path)
+static int klib_pack_from_manifest_impl(const char *manifest_path, const char *out_path,
+                                        KnPkgManifest *manifest, char files[][KN_MAX_PATH])
 {
-    KnPkgManifest manifest;
     char compiler_path[KN_MAX_PATH];
     char manifest_full[KN_MAX_PATH];
     char manifest_dir[KN_MAX_PATH];
-    char files[256][KN_MAX_PATH];
     int file_count = 0;
     char *manifest_text = 0;
     size_t manifest_size = 0;
     KN_HANDLE h;
     KN_DWORD wrote = 0;
-    if (!manifest_path || !out_path)
+    if (!manifest_path || !out_path || !manifest || !files)
         return -1;
-    if (!parse_pkg_manifest(manifest_path, &manifest))
+    if (!parse_pkg_manifest(manifest_path, manifest))
     {
         pkg_fail("invalid package manifest", manifest_path);
         return -1;
     }
-    if (manifest.is_project)
+    if (manifest->is_project)
     {
         pkg_fail("expected a package manifest, got project manifest", manifest_path);
         return -1;
@@ -851,7 +853,7 @@ static int klib_pack_from_manifest(const char *manifest_path, const char *out_pa
     path_dirname(manifest_full, manifest_dir, sizeof(manifest_dir));
 
     if (!collect_manifest_payload_files_recursive(manifest_dir, manifest_dir, files, &file_count,
-                                                  (int)(sizeof(files) / sizeof(files[0]))))
+                                                  KN_PKG_PAYLOAD_FILE_CAP))
     {
         kn_free(manifest_text);
         pkg_fail("failed to enumerate package payload files", manifest_dir);
@@ -925,9 +927,31 @@ static int klib_pack_from_manifest(const char *manifest_path, const char *out_pa
     return 0;
 }
 
-static int emit_local_package_from_manifest(const char *manifest_path, const char *package_root)
+static int klib_pack_from_manifest(const char *manifest_path, const char *out_path)
 {
-    KnPkgManifest manifest;
+    KnPkgManifest *manifest;
+    char (*files)[KN_MAX_PATH];
+    int result;
+    if (!manifest_path || !out_path)
+        return -1;
+    manifest = (KnPkgManifest *)kn_malloc(sizeof(*manifest));
+    files = (char (*)[KN_MAX_PATH])kn_malloc(sizeof(*files) * KN_PKG_PAYLOAD_FILE_CAP);
+    if (!manifest || !files)
+    {
+        if (files) kn_free(files);
+        if (manifest) kn_free(manifest);
+        pkg_fail("out of memory while packing package", manifest_path);
+        return -1;
+    }
+    result = klib_pack_from_manifest_impl(manifest_path, out_path, manifest, files);
+    kn_free(files);
+    kn_free(manifest);
+    return result;
+}
+
+static int emit_local_package_from_manifest_impl(const char *manifest_path, const char *package_root,
+                                                 KnPkgManifest *manifest, char *json, size_t json_cap)
+{
     char root_dir[KN_MAX_PATH];
     char package_dir[KN_MAX_PATH];
     char lib_dir[KN_MAX_PATH];
@@ -935,34 +959,33 @@ static int emit_local_package_from_manifest(const char *manifest_path, const cha
     char manifest_out[KN_MAX_PATH];
     char rel_klib[KN_MAX_PATH];
     char klib_name[256];
-    char json[65536];
     size_t off = 0;
-    if (!manifest_path || !package_root)
+    if (!manifest_path || !package_root || !manifest || !json || json_cap == 0)
         return -1;
-    if (!parse_pkg_manifest(manifest_path, &manifest))
+    if (!parse_pkg_manifest(manifest_path, manifest))
     {
         pkg_fail("invalid package manifest", manifest_path);
         return -1;
     }
-    if (manifest.is_project)
+    if (manifest->is_project)
     {
         pkg_fail("expected a package manifest, got project manifest", manifest_path);
         return -1;
     }
     if (!path_full(root_dir, sizeof(root_dir), package_root))
         copy_str(root_dir, sizeof(root_dir), package_root);
-    if (!path_join(package_dir, sizeof(package_dir), root_dir, manifest.name) ||
-        !path_join(package_dir, sizeof(package_dir), package_dir, manifest.version[0] ? manifest.version : "0.0.0"))
+    if (!path_join(package_dir, sizeof(package_dir), root_dir, manifest->name) ||
+        !path_join(package_dir, sizeof(package_dir), package_dir, manifest->version[0] ? manifest->version : "0.0.0"))
     {
         pkg_fail("failed to resolve output package directory", package_root);
         return -1;
     }
-    copy_str(klib_name, sizeof(klib_name), manifest.name);
+    copy_str(klib_name, sizeof(klib_name), manifest->name);
     {
         size_t n = kn_strlen(klib_name);
         if (n + 5 >= sizeof(klib_name))
         {
-            pkg_fail("package name is too long for klib emission", manifest.name);
+            pkg_fail("package name is too long for klib emission", manifest->name);
             return -1;
         }
         kn_memcpy(klib_name + n, ".klib", 6);
@@ -993,60 +1016,60 @@ static int emit_local_package_from_manifest(const char *manifest_path, const cha
     }
 
     json[0] = 0;
-    kn_append(json, sizeof(json), &off, "{\n");
-    kn_append(json, sizeof(json), &off, "  \"kind\": \"package\",\n");
-    kn_append(json, sizeof(json), &off, "  \"name\": \"");
-    append_json_escaped_local(json, sizeof(json), &off, manifest.name);
-    kn_append(json, sizeof(json), &off, "\",\n");
-    kn_append(json, sizeof(json), &off, "  \"version\": \"");
-    append_json_escaped_local(json, sizeof(json), &off, manifest.version[0] ? manifest.version : "0.0.0");
-    kn_append(json, sizeof(json), &off, "\"");
-    if (manifest.summary[0])
+    kn_append(json, json_cap, &off, "{\n");
+    kn_append(json, json_cap, &off, "  \"kind\": \"package\",\n");
+    kn_append(json, json_cap, &off, "  \"name\": \"");
+    append_json_escaped_local(json, json_cap, &off, manifest->name);
+    kn_append(json, json_cap, &off, "\",\n");
+    kn_append(json, json_cap, &off, "  \"version\": \"");
+    append_json_escaped_local(json, json_cap, &off, manifest->version[0] ? manifest->version : "0.0.0");
+    kn_append(json, json_cap, &off, "\"");
+    if (manifest->summary[0])
     {
-        kn_append(json, sizeof(json), &off, ",\n  \"summary\": \"");
-        append_json_escaped_local(json, sizeof(json), &off, manifest.summary);
-        kn_append(json, sizeof(json), &off, "\"");
+        kn_append(json, json_cap, &off, ",\n  \"summary\": \"");
+        append_json_escaped_local(json, json_cap, &off, manifest->summary);
+        kn_append(json, json_cap, &off, "\"");
     }
-    if (manifest.url[0])
+    if (manifest->url[0])
     {
-        kn_append(json, sizeof(json), &off, ",\n  \"url\": \"");
-        append_json_escaped_local(json, sizeof(json), &off, manifest.url);
-        kn_append(json, sizeof(json), &off, "\"");
+        kn_append(json, json_cap, &off, ",\n  \"url\": \"");
+        append_json_escaped_local(json, json_cap, &off, manifest->url);
+        kn_append(json, json_cap, &off, "\"");
     }
-    if (manifest.entry[0])
+    if (manifest->entry[0])
     {
-        kn_append(json, sizeof(json), &off, ",\n  \"entry\": \"");
-        append_json_escaped_local(json, sizeof(json), &off, manifest.entry);
-        kn_append(json, sizeof(json), &off, "\"");
+        kn_append(json, json_cap, &off, ",\n  \"entry\": \"");
+        append_json_escaped_local(json, json_cap, &off, manifest->entry);
+        kn_append(json, json_cap, &off, "\"");
     }
-    kn_append(json, sizeof(json), &off, ",\n  \"klib\": \"");
-    append_json_escaped_local(json, sizeof(json), &off, rel_klib);
-    kn_append(json, sizeof(json), &off, "\"");
-    if (manifest.module_count > 0)
+    kn_append(json, json_cap, &off, ",\n  \"klib\": \"");
+    append_json_escaped_local(json, json_cap, &off, rel_klib);
+    kn_append(json, json_cap, &off, "\"");
+    if (manifest->module_count > 0)
     {
-        kn_append(json, sizeof(json), &off, ",\n  \"modules\": [");
-        for (int i = 0; i < manifest.module_count; i++)
+        kn_append(json, json_cap, &off, ",\n  \"modules\": [");
+        for (int i = 0; i < manifest->module_count; i++)
         {
-            if (i > 0) kn_append(json, sizeof(json), &off, ", ");
-            kn_append(json, sizeof(json), &off, "\"");
-            append_json_escaped_local(json, sizeof(json), &off, manifest.modules[i]);
-            kn_append(json, sizeof(json), &off, "\"");
+            if (i > 0) kn_append(json, json_cap, &off, ", ");
+            kn_append(json, json_cap, &off, "\"");
+            append_json_escaped_local(json, json_cap, &off, manifest->modules[i]);
+            kn_append(json, json_cap, &off, "\"");
         }
-        kn_append(json, sizeof(json), &off, "]");
+        kn_append(json, json_cap, &off, "]");
     }
-    if (manifest.dependency_count > 0)
+    if (manifest->dependency_count > 0)
     {
-        kn_append(json, sizeof(json), &off, ",\n  \"dependencies\": [");
-        for (int i = 0; i < manifest.dependency_count; i++)
+        kn_append(json, json_cap, &off, ",\n  \"dependencies\": [");
+        for (int i = 0; i < manifest->dependency_count; i++)
         {
-            if (i > 0) kn_append(json, sizeof(json), &off, ", ");
-            kn_append(json, sizeof(json), &off, "\"");
-            append_json_escaped_local(json, sizeof(json), &off, manifest.dependencies[i]);
-            kn_append(json, sizeof(json), &off, "\"");
+            if (i > 0) kn_append(json, json_cap, &off, ", ");
+            kn_append(json, json_cap, &off, "\"");
+            append_json_escaped_local(json, json_cap, &off, manifest->dependencies[i]);
+            kn_append(json, json_cap, &off, "\"");
         }
-        kn_append(json, sizeof(json), &off, "]");
+        kn_append(json, json_cap, &off, "]");
     }
-    kn_append(json, sizeof(json), &off, "\n}\n");
+    kn_append(json, json_cap, &off, "\n}\n");
     if (!write_text_file_local(manifest_out, json))
     {
         pkg_fail("failed to write emitted package manifest", manifest_out);
@@ -1056,6 +1079,29 @@ static int emit_local_package_from_manifest(const char *manifest_path, const cha
     kn_write_str(package_dir);
     kn_write_str("\n");
     return 0;
+}
+
+static int emit_local_package_from_manifest(const char *manifest_path, const char *package_root)
+{
+    KnPkgManifest *manifest;
+    char *json;
+    int result;
+    if (!manifest_path || !package_root)
+        return -1;
+    manifest = (KnPkgManifest *)kn_malloc(sizeof(*manifest));
+    json = (char *)kn_malloc(KN_PKG_EMITTED_MANIFEST_CAP);
+    if (!manifest || !json)
+    {
+        if (json) kn_free(json);
+        if (manifest) kn_free(manifest);
+        pkg_fail("out of memory while emitting package", manifest_path);
+        return -1;
+    }
+    result = emit_local_package_from_manifest_impl(manifest_path, package_root, manifest, json,
+                                                   KN_PKG_EMITTED_MANIFEST_CAP);
+    kn_free(json);
+    kn_free(manifest);
+    return result;
 }
 
 static int klib_read_info(const char *path, KnKlibInfo *info)
@@ -1258,11 +1304,26 @@ static bool scan_package_manifest_tree(const char *dir, StrList *manifests)
             const char *store = full;
             if (path_full(canonical, sizeof(canonical), full))
                 store = canonical;
-            strlist_add(manifests, dup_str(store));
+            if (!strlist_contains_path(manifests, store))
+                strlist_add(manifests, dup_str(store));
         }
     } while (FindNextFileA(h, &data));
     FindClose(h);
     return true;
+}
+
+static void pkg_dispose_owned_strlist(StrList *list)
+{
+    if (!list)
+        return;
+    for (int i = 0; i < list->count; i++)
+    {
+        if (list->items[i])
+            kn_free((void *)list->items[i]);
+    }
+    if (list->items)
+        kn_free((void *)list->items);
+    kn_memset(list, 0, sizeof(*list));
 }
 
 static bool manifest_resolve_path(const KnPkgManifest *manifest, const char *rel, char *out, size_t cap)
@@ -1295,7 +1356,6 @@ static bool register_manifest_into_module_map(const KnPkgManifest *manifest, Mod
         char cache_name[256];
         char safe_name[160];
         char safe_version[64];
-        KnPkgManifest extracted;
         if (!manifest_resolve_path(manifest, manifest->klib_path, klib, sizeof(klib)))
             return false;
         if (!file_exists(klib))
@@ -1329,12 +1389,24 @@ static bool register_manifest_into_module_map(const KnPkgManifest *manifest, Mod
                 pkg_fail("failed to extract klib", klib);
                 return false;
             }
-            if (!parse_pkg_manifest(embedded_manifest, &extracted))
             {
-                pkg_fail("failed to parse embedded package manifest", embedded_manifest);
-                return false;
+                KnPkgManifest *extracted = (KnPkgManifest *)kn_malloc(sizeof(*extracted));
+                bool registered;
+                if (!extracted)
+                {
+                    pkg_fail("out of memory while registering klib", klib);
+                    return false;
+                }
+                if (!parse_pkg_manifest(embedded_manifest, extracted))
+                {
+                    kn_free(extracted);
+                    pkg_fail("failed to parse embedded package manifest", embedded_manifest);
+                    return false;
+                }
+                registered = register_manifest_into_module_map(extracted, map, official_root);
+                kn_free(extracted);
+                return registered;
             }
-            return register_manifest_into_module_map(&extracted, map, official_root);
         }
     }
     if (manifest->source_file_count > 0)
@@ -1374,12 +1446,14 @@ static bool register_manifest_into_module_map(const KnPkgManifest *manifest, Mod
     return true;
 }
 
-static bool scan_package_roots_into_module_map(const char **roots, int root_count, ModuleMap *map, int official_root)
+static bool scan_package_roots_into_module_map_impl(const char **roots, int root_count, ModuleMap *map,
+                                                    int official_root, KnPkgSelectedManifest *selected,
+                                                    int selected_cap, KnPkgManifest *manifest)
 {
     StrList manifests = {0};
-    KnPkgSelectedManifest selected[256];
     int selected_count = 0;
-    if (!roots || root_count <= 0 || !map)
+    bool result = false;
+    if (!roots || root_count <= 0 || !map || !selected || selected_cap <= 0 || !manifest)
         return true;
     for (int i = 0; i < root_count; i++)
     {
@@ -1390,27 +1464,26 @@ static bool scan_package_roots_into_module_map(const char **roots, int root_coun
     }
     for (int i = 0; i < manifests.count; i++)
     {
-        KnPkgManifest manifest;
         const char *path = manifests.items[i];
         if (!path || !path[0])
             continue;
-        if (!parse_pkg_manifest(path, &manifest))
+        if (!parse_pkg_manifest(path, manifest))
         {
             pkg_fail("invalid package manifest", path);
-            return false;
+            goto cleanup;
         }
-        if (manifest.is_project)
+        if (manifest->is_project)
             continue;
-        if (!official_root && is_reserved_official_namespace(manifest.name))
+        if (!official_root && is_reserved_official_namespace(manifest->name))
         {
-            pkg_fail("reserved package namespace 'IO.*' is only allowed in stdpkg", manifest.name);
-            return false;
+            pkg_fail("reserved package namespace 'IO.*' is only allowed in stdpkg", manifest->name);
+            goto cleanup;
         }
         {
             int existing = -1;
             for (int j = 0; j < selected_count; j++)
             {
-                if (kn_strcmp(selected[j].name, manifest.name) == 0)
+                if (kn_strcmp(selected[j].name, manifest->name) == 0)
                 {
                     existing = j;
                     break;
@@ -1418,35 +1491,61 @@ static bool scan_package_roots_into_module_map(const char **roots, int root_coun
             }
             if (existing < 0)
             {
-                if (selected_count >= (int)(sizeof(selected) / sizeof(selected[0])))
+                if (selected_count >= selected_cap)
                 {
                     pkg_fail("too many packages in package roots", path);
-                    return false;
+                    goto cleanup;
                 }
-                copy_str(selected[selected_count].name, sizeof(selected[selected_count].name), manifest.name);
-                copy_str(selected[selected_count].version, sizeof(selected[selected_count].version), manifest.version);
+                copy_str(selected[selected_count].name, sizeof(selected[selected_count].name), manifest->name);
+                copy_str(selected[selected_count].version, sizeof(selected[selected_count].version), manifest->version);
                 copy_str(selected[selected_count].manifest_path, sizeof(selected[selected_count].manifest_path), path);
                 selected_count++;
             }
-            else if (compare_version_text(manifest.version, selected[existing].version) > 0)
+            else if (compare_version_text(manifest->version, selected[existing].version) > 0)
             {
-                copy_str(selected[existing].version, sizeof(selected[existing].version), manifest.version);
+                copy_str(selected[existing].version, sizeof(selected[existing].version), manifest->version);
                 copy_str(selected[existing].manifest_path, sizeof(selected[existing].manifest_path), path);
             }
         }
     }
     for (int i = 0; i < selected_count; i++)
     {
-        KnPkgManifest manifest;
-        if (!parse_pkg_manifest(selected[i].manifest_path, &manifest))
+        if (!parse_pkg_manifest(selected[i].manifest_path, manifest))
         {
             pkg_fail("invalid package manifest", selected[i].manifest_path);
-            return false;
+            goto cleanup;
         }
-        if (!register_manifest_into_module_map(&manifest, map, official_root))
-            return false;
+        if (!register_manifest_into_module_map(manifest, map, official_root))
+            goto cleanup;
     }
-    return !g_pkg_error;
+    result = !g_pkg_error;
+
+cleanup:
+    pkg_dispose_owned_strlist(&manifests);
+    return result;
+}
+
+static bool scan_package_roots_into_module_map(const char **roots, int root_count, ModuleMap *map, int official_root)
+{
+    KnPkgSelectedManifest *selected;
+    KnPkgManifest *manifest;
+    bool result;
+    if (!roots || root_count <= 0 || !map)
+        return true;
+    selected = (KnPkgSelectedManifest *)kn_malloc(sizeof(*selected) * KN_PKG_SELECTED_MANIFEST_CAP);
+    manifest = (KnPkgManifest *)kn_malloc(sizeof(*manifest));
+    if (!selected || !manifest)
+    {
+        if (manifest) kn_free(manifest);
+        if (selected) kn_free(selected);
+        pkg_fail("out of memory while scanning package roots", 0);
+        return false;
+    }
+    result = scan_package_roots_into_module_map_impl(roots, root_count, map, official_root, selected,
+                                                     KN_PKG_SELECTED_MANIFEST_CAP, manifest);
+    kn_free(manifest);
+    kn_free(selected);
+    return result;
 }
 
 static int append_root_list(StrList *roots, const char *path)
@@ -1517,9 +1616,10 @@ static const char *path_basename_local(const char *path)
 
 static void print_klib_info(const char *path)
 {
-    KnKlibInfo info;
-    if (!path || klib_read_info(path, &info) != 0)
+    KnKlibInfo *info = (KnKlibInfo *)kn_malloc(sizeof(*info));
+    if (!info || !path || klib_read_info(path, info) != 0)
     {
+        if (info) kn_free(info);
         kn_write_str("invalid klib: ");
         kn_write_str(path ? path : "<null>");
         kn_write_str("\n");
@@ -1530,12 +1630,13 @@ static void print_klib_info(const char *path)
     kn_write_str(path);
     kn_write_str("\n");
     kn_write_str("  Compiler: ");
-    kn_write_str(info.compiler_path[0] ? info.compiler_path : "<unknown>");
+    kn_write_str(info->compiler_path[0] ? info->compiler_path : "<unknown>");
     kn_write_str("\n");
     kn_write_str("  Sources: ");
-    kn_write_u32(info.source_count);
+    kn_write_u32(info->source_count);
     kn_write_str("\n");
     kn_write_str("  SourceBytes: ");
-    write_u64(info.source_bytes);
+    write_u64(info->source_bytes);
     kn_write_str("\n");
+    kn_free(info);
 }

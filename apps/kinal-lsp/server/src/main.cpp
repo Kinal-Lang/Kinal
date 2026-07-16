@@ -34,6 +34,7 @@ extern "C" {
 #include "kn/lexer.h"
 #include "kn/parser.h"
 #include "kn/sema.h"
+#include "kn/session.h"
 #include "kn/source.h"
 #include "kn/std.h"
 #include "kn/version.h"
@@ -476,6 +477,16 @@ struct Tok {
     int idx = 0;
 };
 
+struct UnsafeAliasTokSpec {
+    TokenType type = TOK_EOF;
+    std::string text;
+};
+
+struct UnsafeAliasRule {
+    std::vector<UnsafeAliasTokSpec> source;
+    std::vector<UnsafeAliasTokSpec> target;
+};
+
 enum class SymKind {
     Class,
     Struct,
@@ -536,6 +547,12 @@ static bool is_builtin_meta_attr(std::string_view s) {
            s == "Example" || s == "Experimental";
 }
 
+static bool is_builtin_compiler_attr(std::string_view s) {
+    return s == "LinkName" || s == "LinkLib" || s == "LinkFile" ||
+           s == "LinkLibTarget" || s == "LinkFileTarget" || s == "SymbolName" ||
+           s == "Cast" || s == "Overload";
+}
+
 static bool is_string_prefix_name(std::string_view s) {
     return s == "r" || s == "raw" ||
            s == "f" || s == "format" ||
@@ -552,6 +569,7 @@ struct Analysis {
     std::unordered_map<std::string, std::string> import_alias_to_module;
     std::unordered_map<std::string, std::string> import_symbol_to_qualified;
     std::vector<std::string> import_open_modules;
+    std::unordered_map<int, std::pair<int, int>> forced_tok_styles;
     std::vector<uint32_t> sem_data;
     std::vector<Completion> completions; // precomputed global-ish list, completion requests still filter by context
 };
@@ -600,6 +618,7 @@ bool is_kw(TokenType t) {
     case TOK_UNIT:
     case TOK_GET:
     case TOK_SET:
+    case TOK_ALIAS:
     case TOK_BY:
     case TOK_PROPERTY:
     case TOK_FUNCTION:
@@ -609,6 +628,7 @@ bool is_kw(TokenType t) {
     case TOK_ELSEIF:
     case TOK_WHILE:
     case TOK_FOR:
+    case TOK_FOREACH:
     case TOK_SWITCH:
     case TOK_CASE:
     case TOK_BREAK:
@@ -648,6 +668,7 @@ bool is_kw(TokenType t) {
     case TOK_TRUE:
     case TOK_FALSE:
     case TOK_IS:
+    case TOK_IN:
     case TOK_DEFAULT:
     case TOK_NULL:
         return true;
@@ -696,7 +717,214 @@ bool is_op(TokenType t) {
     }
 }
 
-std::vector<Tok> lex_all(const std::string &text) {
+static bool token_is_literal_type_lsp(TokenType t) {
+    return t == TOK_NUMBER || t == TOK_STRING || t == TOK_CHAR_LIT || t == TOK_TRUE || t == TOK_FALSE || t == TOK_NULL;
+}
+
+static bool token_is_keyword_type_lsp(TokenType t) {
+    return t >= TOK_UNIT && t <= TOK_TYPE_ANY;
+}
+
+static bool token_is_operator_or_punct_lsp(TokenType t) {
+    return t >= TOK_LPAREN;
+}
+
+static bool token_can_start_unsafe_alias_lhs_lsp(TokenType t, bool allow_tokens) {
+    if (t == TOK_ID || token_is_literal_type_lsp(t)) return true;
+    if (token_is_keyword_type_lsp(t)) return true;
+    if (allow_tokens && token_is_operator_or_punct_lsp(t)) return true;
+    return false;
+}
+
+static bool token_can_start_unsafe_alias_rhs_lsp(TokenType t, bool allow_tokens) {
+    if (token_is_literal_type_lsp(t)) return true;
+    if (token_is_keyword_type_lsp(t)) return true;
+    if (allow_tokens && token_is_operator_or_punct_lsp(t)) return true;
+    return false;
+}
+
+static bool unsafe_alias_token_matches_lsp(const UnsafeAliasTokSpec &spec, const Tok &tok) {
+    return tok.type == spec.type && tok.text == spec.text;
+}
+
+static bool unsafe_alias_sequence_matches_lsp(const UnsafeAliasRule &rule, const std::vector<Tok> &toks, int pos) {
+    if (rule.source.empty() || pos < 0 || pos + (int)rule.source.size() > (int)toks.size()) return false;
+    for (int i = 0; i < (int)rule.source.size(); ++i) {
+        if (!unsafe_alias_token_matches_lsp(rule.source[(size_t)i], toks[(size_t)(pos + i)]))
+            return false;
+    }
+    return true;
+}
+
+static bool unsafe_alias_is_directive_terminator_lsp(const std::vector<Tok> &toks, int pos) {
+    if (pos < 0 || pos >= (int)toks.size()) return false;
+    if (toks[(size_t)pos].type != TOK_SEMI) return false;
+    if (pos + 1 >= (int)toks.size()) return true;
+    return toks[(size_t)(pos + 1)].line != toks[(size_t)pos].line;
+}
+
+static int sem_type_for_token_type_lsp(TokenType t) {
+    if (is_kw(t)) return 12;
+    if (is_type_kw(t)) return 1;
+    if (t == TOK_STRING || t == TOK_BAD_STRING || t == TOK_CHAR_LIT || t == TOK_BAD_CHAR) return 13;
+    if (t == TOK_NUMBER) return 14;
+    if (is_op(t) || token_is_operator_or_punct_lsp(t)) return 15;
+    return -1;
+}
+
+static void collect_unsafe_alias_decl_styles_lsp(const std::vector<Tok> &toks,
+                                                 std::unordered_map<int, std::pair<int, int>> &out) {
+    int pos = 0;
+    while (pos < (int)toks.size()) {
+        int unsafe_count = 0;
+        while (pos + unsafe_count < (int)toks.size() && toks[(size_t)(pos + unsafe_count)].type == TOK_UNSAFE)
+            unsafe_count++;
+        if (unsafe_count == 0) break;
+        if (!((unsafe_count == 1 || unsafe_count == 3) &&
+              pos + unsafe_count < (int)toks.size() &&
+              toks[(size_t)(pos + unsafe_count)].type == TOK_ALIAS))
+            break;
+
+        const bool allow_tokens = unsafe_count == 3;
+        int j = pos + unsafe_count + 1;
+        int lhs_start = j;
+        int lhs_end = j - 1;
+        if (allow_tokens) {
+            while (j < (int)toks.size() && toks[(size_t)j].type != TOK_BY) {
+                lhs_end = j;
+                j++;
+            }
+        } else if (j < (int)toks.size()) {
+            lhs_end = j;
+            j++;
+        }
+        if (j >= (int)toks.size() || toks[(size_t)j].type != TOK_BY) break;
+        j++;
+        int target_start = j;
+        if (allow_tokens) {
+            while (j < (int)toks.size() && !unsafe_alias_is_directive_terminator_lsp(toks, j))
+                j++;
+        } else if (j < (int)toks.size()) {
+            j++;
+        }
+        if (target_start >= (int)toks.size() || target_start >= j) break;
+        int sem_type = sem_type_for_token_type_lsp(toks[(size_t)target_start].type);
+        if (sem_type >= 0) {
+            for (int k = lhs_start; k <= lhs_end; ++k) {
+                if (k >= 0 && k < (int)toks.size())
+                    out[toks[(size_t)k].idx] = {sem_type, 0};
+            }
+        }
+        if (allow_tokens) {
+            if (j >= (int)toks.size() || toks[(size_t)j].type != TOK_SEMI) break;
+        } else {
+            if (j >= (int)toks.size() || toks[(size_t)j].type != TOK_SEMI) break;
+        }
+        pos = j + 1;
+    }
+}
+
+static std::vector<Tok> preprocess_unsafe_alias_tokens_lsp(const std::vector<Tok> &raw) {
+    std::vector<UnsafeAliasRule> rules;
+    int pos = 0;
+    while (pos < (int)raw.size()) {
+        int unsafe_count = 0;
+        while (pos + unsafe_count < (int)raw.size() && raw[(size_t)(pos + unsafe_count)].type == TOK_UNSAFE)
+            unsafe_count++;
+        if (unsafe_count == 0) break;
+        if (!((unsafe_count == 1 || unsafe_count == 3) &&
+              pos + unsafe_count < (int)raw.size() &&
+              raw[(size_t)(pos + unsafe_count)].type == TOK_ALIAS))
+            break;
+
+        UnsafeAliasRule rule;
+        bool ok = true;
+        const bool allow_tokens = unsafe_count == 3;
+        int j = pos + unsafe_count + 1;
+        if (allow_tokens) {
+            while (j < (int)raw.size() && raw[(size_t)j].type != TOK_BY) {
+                const Tok &part = raw[(size_t)j];
+                if (!token_can_start_unsafe_alias_lhs_lsp(part.type, true)) { ok = false; break; }
+                rule.source.push_back({part.type, part.text});
+                j++;
+            }
+            if (rule.source.empty()) ok = false;
+            if (!ok || j >= (int)raw.size() || raw[(size_t)j].type != TOK_BY) break;
+            j++;
+            while (j < (int)raw.size() && !unsafe_alias_is_directive_terminator_lsp(raw, j)) {
+                const Tok &part = raw[(size_t)j];
+                if (!token_can_start_unsafe_alias_rhs_lsp(part.type, true)) { ok = false; break; }
+                rule.target.push_back({part.type, part.text});
+                j++;
+            }
+            if (rule.target.empty()) ok = false;
+            if (!ok || j >= (int)raw.size() || raw[(size_t)j].type != TOK_SEMI) break;
+        } else {
+            if (j >= (int)raw.size()) break;
+            const Tok &lhs = raw[(size_t)j++];
+            if (!token_can_start_unsafe_alias_lhs_lsp(lhs.type, false)) break;
+            rule.source.push_back({lhs.type, lhs.text});
+            if (j >= (int)raw.size() || raw[(size_t)j].type != TOK_BY) break;
+            j++;
+            if (j >= (int)raw.size()) break;
+            const Tok &rhs = raw[(size_t)j++];
+            if (!token_can_start_unsafe_alias_rhs_lsp(rhs.type, false)) break;
+            rule.target.push_back({rhs.type, rhs.text});
+            if (j >= (int)raw.size() || raw[(size_t)j].type != TOK_SEMI) break;
+        }
+        rules.push_back(std::move(rule));
+        pos = j + 1;
+    }
+
+    if (rules.empty()) return raw;
+
+    std::vector<Tok> out;
+    out.reserve(raw.size());
+    for (int i = 0; i < pos && i < (int)raw.size(); ++i)
+        out.push_back(raw[(size_t)i]);
+
+    auto push_rewritten = [&](const Tok &site, const UnsafeAliasTokSpec &spec, int span_len) {
+        Tok t = site;
+        t.type = spec.type;
+        t.text = spec.text;
+        if (span_len > 0) t.len = span_len;
+        out.push_back(std::move(t));
+    };
+
+    for (int i = pos; i < (int)raw.size();) {
+        bool matched = false;
+        for (int r = (int)rules.size() - 1; r >= 0; --r) {
+            const UnsafeAliasRule &rule = rules[(size_t)r];
+            if (!unsafe_alias_sequence_matches_lsp(rule, raw, i)) continue;
+            int span_len = raw[(size_t)i].len;
+            if (!rule.source.empty()) {
+                const Tok &first = raw[(size_t)i];
+                const Tok &last = raw[(size_t)(i + (int)rule.source.size() - 1)];
+                if (first.line == last.line)
+                    span_len = std::max(1, (last.col - first.col) + last.len);
+            }
+            if (rule.target.empty()) break;
+            if (rule.target.size() == 1) {
+                push_rewritten(raw[(size_t)i], rule.target[0], span_len);
+            } else {
+                for (size_t k = 0; k < rule.target.size(); ++k)
+                    push_rewritten(raw[(size_t)i], rule.target[k], k == 0 ? span_len : raw[(size_t)i].len);
+            }
+            i += (int)rule.source.size();
+            matched = true;
+            break;
+        }
+        if (matched) continue;
+        out.push_back(raw[(size_t)i]);
+        i++;
+    }
+
+    for (size_t i = 0; i < out.size(); ++i)
+        out[i].idx = (int)i;
+    return out;
+}
+
+std::vector<Tok> lex_all_raw(const std::string &text) {
     std::vector<Tok> out;
     Lexer l;
     lex_init(&l, text.c_str());
@@ -714,6 +942,10 @@ std::vector<Tok> lex_all(const std::string &text) {
         out.push_back(std::move(tk));
     }
     return out;
+}
+
+std::vector<Tok> lex_all(const std::string &text) {
+    return preprocess_unsafe_alias_tokens_lsp(lex_all_raw(text));
 }
 
 // The compiler lexer discards comments. For semantic tokens we still want comment styling,
@@ -915,6 +1147,9 @@ bool typeish(TokenType t) {
 bool qual_segment_tok(TokenType t) {
     if (t == TOK_ID || is_type_kw(t)) return true;
     switch (t) {
+    case TOK_ALIAS:
+    case TOK_GET:
+    case TOK_SET:
     case TOK_FUNCTION:
     case TOK_BLOCK:
     case TOK_CLASS:
@@ -1141,6 +1376,41 @@ void parse_imports_from_tokens(Analysis &an) {
         if (tt == TOK_RBRACE) brace_depth = std::max(0, brace_depth - 1);
         if (brace_depth != 0) continue;
 
+        auto add_visible_alias = [&](const std::string &local, const std::string &target) {
+            if (local.empty() || target.empty()) return;
+            GetQualifiedInfo info = classify_get_qualified(target, false);
+            if (info.symbol_import) {
+                an.import_symbol_to_qualified[local] = info.module + "." + info.member;
+                return;
+            }
+            if (kn_std_module_has(target.c_str()) || unit_decl_exists(target)) {
+                an.import_alias_to_module[local] = target;
+                return;
+            }
+            if (auto top = project_qualified_top_level_decl(target)) {
+                an.import_symbol_to_qualified[local] = top->qname;
+                return;
+            }
+            std::string module = prefix_before_last_segment(target);
+            std::string member = last_segment(target);
+            if (!module.empty() && (kn_std_module_has(module.c_str()) || unit_decl_exists(module))) {
+                an.import_symbol_to_qualified[local] = module + "." + member;
+            }
+        };
+
+        if (tt == TOK_ALIAS) {
+            int j = i + 1;
+            if (j >= (int)an.toks.size() || an.toks[(size_t)j].type != TOK_ID) continue;
+            std::string local = an.toks[(size_t)j].text;
+            ++j;
+            if (j >= (int)an.toks.size() || an.toks[(size_t)j].type != TOK_BY) continue;
+            ++j;
+            std::string target;
+            if (!parse_qualified_name(an.toks, j, target)) continue;
+            add_visible_alias(local, target);
+            continue;
+        }
+
         if (tt != TOK_GET) continue;
         int j = i + 1;
         std::string first;
@@ -1150,21 +1420,7 @@ void parse_imports_from_tokens(Analysis &an) {
             ++j;
             std::string target;
             if (!parse_qualified_name(an.toks, j, target)) continue;
-
-            GetQualifiedInfo info = classify_get_qualified(target, false);
-            if (info.symbol_import) {
-                an.import_symbol_to_qualified[first] = info.module + "." + info.member;
-            } else if (kn_std_module_has(target.c_str()) || unit_decl_exists(target)) {
-                an.import_alias_to_module[first] = target;
-            } else {
-                std::string module = prefix_before_last_segment(target);
-                std::string member = last_segment(target);
-                if (!module.empty() && kn_std_module_has(module.c_str())) {
-                    an.import_symbol_to_qualified[first] = module + "." + member;
-                } else {
-                    an.import_alias_to_module[first] = target;
-                }
-            }
+            add_visible_alias(first, target);
         } else if (j < (int)an.toks.size() && an.toks[(size_t)j].type == TOK_LBRACE) {
             ++j;
             std::string module = first;
@@ -1360,6 +1616,473 @@ std::string normalize_fs_path(const std::string &path) {
     return s;
 }
 
+enum class KnprojSourceMode {
+    Unset,
+    FileOnly,
+    EntryUnit,
+    ReachableUnits,
+    AllSources,
+};
+
+struct KnprojSourceSet {
+    std::string name;
+    std::vector<std::string> roots;
+    std::vector<std::string> files;
+    std::vector<std::string> include;
+    std::vector<std::string> exclude;
+    bool require_unit = true;
+};
+
+struct KnprojProfileLite {
+    std::string name;
+    std::string entry;
+    std::vector<std::string> sets;
+    std::vector<std::string> package_roots;
+    std::vector<std::string> official_package_roots;
+    KnprojSourceMode mode = KnprojSourceMode::Unset;
+    bool has_auto_discovery = false;
+    bool auto_discovery = true;
+};
+
+struct KnprojConfigLite {
+    std::string path;
+    std::filesystem::path project_dir;
+    std::string name;
+    std::string default_profile;
+    std::string lsp_profile;
+    std::vector<std::string> lsp_extra_sets;
+    bool strict_project_scope = false;
+    bool has_strict_project_scope = false;
+    std::vector<std::string> workspace_ignore;
+    std::vector<std::string> package_roots;
+    std::vector<std::string> official_package_roots;
+    std::vector<KnprojSourceSet> source_sets;
+    std::vector<KnprojProfileLite> profiles;
+};
+
+struct KnprojScopeLite {
+    KnprojConfigLite config;
+    KnprojProfileLite profile;
+    std::vector<std::filesystem::path> local_files;
+    std::unordered_map<std::string, std::vector<std::string>> local_unit_to_uris;
+    std::vector<std::filesystem::path> external_roots;
+    KnprojSourceMode mode = KnprojSourceMode::Unset;
+    bool strict_project_scope = false;
+    bool current_in_scope = false;
+};
+
+struct KnprojTokParserLite {
+    std::vector<Tok> toks;
+    size_t pos = 0;
+    std::string path;
+
+    const Tok &cur() const {
+        static Tok eof{};
+        if (pos >= toks.size()) return eof;
+        return toks[pos];
+    }
+
+    bool eof() const {
+        return cur().type == TOK_EOF;
+    }
+
+    void next() {
+        if (pos < toks.size()) ++pos;
+    }
+
+    bool accept(TokenType type) {
+        if (cur().type != type) return false;
+        next();
+        return true;
+    }
+};
+
+bool knproj_tok_eq_ci(const Tok &tok, std::string_view text) {
+    if (tok.text.size() != text.size()) return false;
+    for (size_t i = 0; i < text.size(); ++i) {
+        if (std::tolower((unsigned char)tok.text[i]) != std::tolower((unsigned char)text[i]))
+            return false;
+    }
+    return true;
+}
+
+std::string knproj_token_value(const Tok &tok) {
+    if (tok.type != TOK_STRING) return tok.text;
+    if (tok.text.size() < 2 || tok.text.front() != '"' || tok.text.back() != '"') return tok.text;
+    std::string out;
+    out.reserve(tok.text.size());
+    for (size_t i = 1; i + 1 < tok.text.size(); ++i) {
+        char c = tok.text[i];
+        if (c == '\\' && i + 2 < tok.text.size()) {
+            char e = tok.text[++i];
+            switch (e) {
+            case 'n': c = '\n'; break;
+            case 'r': c = '\r'; break;
+            case 't': c = '\t'; break;
+            case 'b': c = '\b'; break;
+            case 'f': c = '\f'; break;
+            case '\\': c = '\\'; break;
+            case '"': c = '"'; break;
+            default: c = e; break;
+            }
+        }
+        out.push_back(c);
+    }
+    return out;
+}
+
+bool knproj_expect(KnprojTokParserLite &p, TokenType type) {
+    if (p.cur().type != type) return false;
+    p.next();
+    return true;
+}
+
+bool knproj_parse_name(KnprojTokParserLite &p, std::string &out) {
+    if (p.cur().type != TOK_ID && p.cur().type != TOK_STRING) return false;
+    out = knproj_token_value(p.cur());
+    p.next();
+    return true;
+}
+
+bool knproj_parse_bool(KnprojTokParserLite &p, bool &out) {
+    if (p.cur().type == TOK_TRUE) {
+        out = true;
+        p.next();
+        return true;
+    }
+    if (p.cur().type == TOK_FALSE) {
+        out = false;
+        p.next();
+        return true;
+    }
+    return false;
+}
+
+bool knproj_parse_string_list(KnprojTokParserLite &p, std::vector<std::string> &out) {
+    if (!knproj_expect(p, TOK_LBRACKET)) return false;
+    while (!p.eof() && p.cur().type != TOK_RBRACKET) {
+        std::string value;
+        if (!knproj_parse_name(p, value)) return false;
+        out.push_back(std::move(value));
+        if (p.cur().type == TOK_COMMA) {
+            p.next();
+            continue;
+        }
+        break;
+    }
+    return knproj_expect(p, TOK_RBRACKET);
+}
+
+bool knproj_parse_mode(KnprojTokParserLite &p, KnprojSourceMode &out) {
+    if (p.cur().type != TOK_ID && p.cur().type != TOK_STRING) return false;
+    if (knproj_tok_eq_ci(p.cur(), "FileOnly")) out = KnprojSourceMode::FileOnly;
+    else if (knproj_tok_eq_ci(p.cur(), "EntryUnit")) out = KnprojSourceMode::EntryUnit;
+    else if (knproj_tok_eq_ci(p.cur(), "ReachableUnits")) out = KnprojSourceMode::ReachableUnits;
+    else if (knproj_tok_eq_ci(p.cur(), "AllSources")) out = KnprojSourceMode::AllSources;
+    else return false;
+    p.next();
+    return true;
+}
+
+bool knproj_skip_block(KnprojTokParserLite &p) {
+    if (!knproj_expect(p, TOK_LBRACE)) return false;
+    int depth = 1;
+    while (!p.eof() && depth > 0) {
+        if (p.cur().type == TOK_LBRACE) depth++;
+        else if (p.cur().type == TOK_RBRACE) depth--;
+        p.next();
+    }
+    return depth == 0;
+}
+
+bool knproj_parse_packages_block(KnprojTokParserLite &p, std::vector<std::string> &roots, std::vector<std::string> &official_roots) {
+    if (!knproj_expect(p, TOK_LBRACE)) return false;
+    while (!p.eof() && p.cur().type != TOK_RBRACE) {
+        Tok key = p.cur();
+        std::string dummy;
+        if (!knproj_parse_name(p, dummy)) return false;
+        if (!knproj_expect(p, TOK_ASSIGN)) return false;
+        if (knproj_tok_eq_ci(key, "Roots")) {
+            if (!knproj_parse_string_list(p, roots)) return false;
+        } else if (knproj_tok_eq_ci(key, "OfficialRoots")) {
+            if (!knproj_parse_string_list(p, official_roots)) return false;
+        } else {
+            return false;
+        }
+        if (!knproj_expect(p, TOK_SEMI)) return false;
+    }
+    return knproj_expect(p, TOK_RBRACE);
+}
+
+bool knproj_parse_workspace_block(KnprojTokParserLite &p, KnprojConfigLite &cfg) {
+    if (!knproj_expect(p, TOK_LBRACE)) return false;
+    while (!p.eof() && p.cur().type != TOK_RBRACE) {
+        Tok key = p.cur();
+        std::string dummy;
+        if (!knproj_parse_name(p, dummy)) return false;
+        if (!knproj_expect(p, TOK_ASSIGN)) return false;
+        if (knproj_tok_eq_ci(key, "Ignore")) {
+            if (!knproj_parse_string_list(p, cfg.workspace_ignore)) return false;
+        } else {
+            return false;
+        }
+        if (!knproj_expect(p, TOK_SEMI)) return false;
+    }
+    return knproj_expect(p, TOK_RBRACE);
+}
+
+bool knproj_parse_sourceset_block(KnprojTokParserLite &p, KnprojConfigLite &cfg) {
+    KnprojSourceSet set;
+    if (!knproj_parse_name(p, set.name)) return false;
+    if (!knproj_expect(p, TOK_LBRACE)) return false;
+    while (!p.eof() && p.cur().type != TOK_RBRACE) {
+        Tok key = p.cur();
+        std::string dummy;
+        if (!knproj_parse_name(p, dummy)) return false;
+        if (!knproj_expect(p, TOK_ASSIGN)) return false;
+        if (knproj_tok_eq_ci(key, "Roots")) {
+            if (!knproj_parse_string_list(p, set.roots)) return false;
+        } else if (knproj_tok_eq_ci(key, "Files")) {
+            if (!knproj_parse_string_list(p, set.files)) return false;
+        } else if (knproj_tok_eq_ci(key, "Include")) {
+            if (!knproj_parse_string_list(p, set.include)) return false;
+        } else if (knproj_tok_eq_ci(key, "Exclude")) {
+            if (!knproj_parse_string_list(p, set.exclude)) return false;
+        } else if (knproj_tok_eq_ci(key, "RequireUnit")) {
+            if (!knproj_parse_bool(p, set.require_unit)) return false;
+        } else {
+            return false;
+        }
+        if (!knproj_expect(p, TOK_SEMI)) return false;
+    }
+    if (!knproj_expect(p, TOK_RBRACE)) return false;
+    cfg.source_sets.push_back(std::move(set));
+    return true;
+}
+
+bool knproj_parse_source_block(KnprojTokParserLite &p, KnprojProfileLite &profile) {
+    if (!knproj_expect(p, TOK_LBRACE)) return false;
+    while (!p.eof() && p.cur().type != TOK_RBRACE) {
+        Tok key = p.cur();
+        std::string dummy;
+        if (!knproj_parse_name(p, dummy)) return false;
+        if (!knproj_expect(p, TOK_ASSIGN)) return false;
+        if (knproj_tok_eq_ci(key, "Entry")) {
+            if (!knproj_parse_name(p, profile.entry)) return false;
+        } else if (knproj_tok_eq_ci(key, "Sets")) {
+            if (!knproj_parse_string_list(p, profile.sets)) return false;
+        } else if (knproj_tok_eq_ci(key, "Mode")) {
+            if (!knproj_parse_mode(p, profile.mode)) return false;
+        } else if (knproj_tok_eq_ci(key, "AutoDiscovery")) {
+            if (!knproj_parse_bool(p, profile.auto_discovery)) return false;
+            profile.has_auto_discovery = true;
+        } else {
+            return false;
+        }
+        if (!knproj_expect(p, TOK_SEMI)) return false;
+    }
+    return knproj_expect(p, TOK_RBRACE);
+}
+
+bool knproj_parse_profile_block(KnprojTokParserLite &p, KnprojConfigLite &cfg) {
+    KnprojProfileLite profile;
+    if (!knproj_parse_name(p, profile.name)) return false;
+    if (!knproj_expect(p, TOK_LBRACE)) return false;
+    while (!p.eof() && p.cur().type != TOK_RBRACE) {
+        Tok sec = p.cur();
+        std::string dummy;
+        if (!knproj_parse_name(p, dummy)) return false;
+        if (knproj_tok_eq_ci(sec, "Source")) {
+            if (!knproj_parse_source_block(p, profile)) return false;
+        } else if (knproj_tok_eq_ci(sec, "Packages")) {
+            if (!knproj_parse_packages_block(p, profile.package_roots, profile.official_package_roots))
+                return false;
+        } else if (knproj_tok_eq_ci(sec, "Build") || knproj_tok_eq_ci(sec, "Link")) {
+            if (!knproj_skip_block(p)) return false;
+        } else {
+            return false;
+        }
+    }
+    if (!knproj_expect(p, TOK_RBRACE)) return false;
+    cfg.profiles.push_back(std::move(profile));
+    return true;
+}
+
+bool knproj_parse_lsp_block(KnprojTokParserLite &p, KnprojConfigLite &cfg) {
+    if (!knproj_expect(p, TOK_LBRACE)) return false;
+    while (!p.eof() && p.cur().type != TOK_RBRACE) {
+        Tok key = p.cur();
+        std::string dummy;
+        if (!knproj_parse_name(p, dummy)) return false;
+        if (!knproj_expect(p, TOK_ASSIGN)) return false;
+        if (knproj_tok_eq_ci(key, "Profile")) {
+            if (!knproj_parse_name(p, cfg.lsp_profile)) return false;
+        } else if (knproj_tok_eq_ci(key, "ExtraSets")) {
+            if (!knproj_parse_string_list(p, cfg.lsp_extra_sets)) return false;
+        } else if (knproj_tok_eq_ci(key, "StrictProjectScope")) {
+            if (!knproj_parse_bool(p, cfg.strict_project_scope)) return false;
+            cfg.has_strict_project_scope = true;
+        } else {
+            return false;
+        }
+        if (!knproj_expect(p, TOK_SEMI)) return false;
+    }
+    return knproj_expect(p, TOK_RBRACE);
+}
+
+std::optional<KnprojConfigLite> parse_knproj_file(const std::filesystem::path &project_path) {
+    auto text = read_file_text(project_path);
+    if (!text) return std::nullopt;
+
+    KnprojTokParserLite p;
+    p.toks = lex_all(*text);
+    p.path = project_path.string();
+
+    KnprojConfigLite cfg;
+    cfg.path = project_path.string();
+    cfg.project_dir = project_path.parent_path();
+
+    if (p.cur().type != TOK_ID || !knproj_tok_eq_ci(p.cur(), "Project")) return std::nullopt;
+    p.next();
+    if (!knproj_parse_name(p, cfg.name)) return std::nullopt;
+    if (!knproj_expect(p, TOK_LBRACE)) return std::nullopt;
+
+    while (!p.eof() && p.cur().type != TOK_RBRACE) {
+        Tok key = p.cur();
+        std::string dummy;
+        if (!knproj_parse_name(p, dummy)) return std::nullopt;
+        if (knproj_tok_eq_ci(key, "DefaultProfile")) {
+            if (!knproj_expect(p, TOK_ASSIGN)) return std::nullopt;
+            if (!knproj_parse_name(p, cfg.default_profile)) return std::nullopt;
+            if (!knproj_expect(p, TOK_SEMI)) return std::nullopt;
+            continue;
+        }
+        if (knproj_tok_eq_ci(key, "Packages")) {
+            if (!knproj_parse_packages_block(p, cfg.package_roots, cfg.official_package_roots)) return std::nullopt;
+            continue;
+        }
+        if (knproj_tok_eq_ci(key, "Workspace")) {
+            if (!knproj_parse_workspace_block(p, cfg)) return std::nullopt;
+            continue;
+        }
+        if (knproj_tok_eq_ci(key, "SourceSet")) {
+            if (!knproj_parse_sourceset_block(p, cfg)) return std::nullopt;
+            continue;
+        }
+        if (knproj_tok_eq_ci(key, "Profile")) {
+            if (!knproj_parse_profile_block(p, cfg)) return std::nullopt;
+            continue;
+        }
+        if (knproj_tok_eq_ci(key, "Lsp")) {
+            if (!knproj_parse_lsp_block(p, cfg)) return std::nullopt;
+            continue;
+        }
+        return std::nullopt;
+    }
+
+    if (!knproj_expect(p, TOK_RBRACE)) return std::nullopt;
+    if (cfg.default_profile.empty() && !cfg.profiles.empty())
+        cfg.default_profile = cfg.profiles.front().name;
+    return cfg;
+}
+
+std::optional<KnprojProfileLite> select_knproj_profile(const KnprojConfigLite &cfg) {
+    auto find_by_name = [&](std::string_view name) -> std::optional<KnprojProfileLite> {
+        for (const auto &profile : cfg.profiles) {
+            if (profile.name == name) return profile;
+        }
+        return std::nullopt;
+    };
+    if (!cfg.lsp_profile.empty()) {
+        if (auto p = find_by_name(cfg.lsp_profile)) return p;
+    }
+    if (!cfg.default_profile.empty()) {
+        if (auto p = find_by_name(cfg.default_profile)) return p;
+    }
+    if (!cfg.profiles.empty()) return cfg.profiles.front();
+    return std::nullopt;
+}
+
+std::filesystem::path resolve_knproj_path(const KnprojConfigLite &cfg, const std::string &rel) {
+    std::filesystem::path p(rel);
+    if (p.is_absolute()) return p.lexically_normal();
+    return (cfg.project_dir / p).lexically_normal();
+}
+
+std::string normalize_project_match_path(const std::filesystem::path &path) {
+    std::string s = path.generic_string();
+#if defined(_WIN32)
+    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return (char)std::tolower(c); });
+#endif
+    return s;
+}
+
+bool knproj_glob_match_ci(std::string_view pattern, std::string_view text) {
+    auto norm = [](char c) -> char {
+        if (c == '\\') c = '/';
+        return (char)std::tolower((unsigned char)c);
+    };
+    if (pattern.empty()) return text.empty();
+    char pc = norm(pattern.front());
+    char tc = text.empty() ? 0 : norm(text.front());
+    if (pc == '*') {
+        if (pattern.size() >= 2 && norm(pattern[1]) == '*') {
+            std::string_view next = pattern.substr(2);
+            while (!next.empty() && (norm(next.front()) == '/')) next.remove_prefix(1);
+            if (knproj_glob_match_ci(next, text)) return true;
+            for (size_t i = 0; i < text.size(); ++i) {
+                if (knproj_glob_match_ci(pattern, text.substr(i + 1))) return true;
+            }
+            return false;
+        }
+        if (knproj_glob_match_ci(pattern.substr(1), text)) return true;
+        for (size_t i = 0; i < text.size(); ++i) {
+            if (norm(text[i]) == '/') break;
+            if (knproj_glob_match_ci(pattern.substr(1), text.substr(i + 1))) return true;
+        }
+        return false;
+    }
+    if (pc == '?') {
+        if (text.empty() || tc == '/') return false;
+        return knproj_glob_match_ci(pattern.substr(1), text.substr(1));
+    }
+    if (text.empty() || pc != tc) return false;
+    return knproj_glob_match_ci(pattern.substr(1), text.substr(1));
+}
+
+bool knproj_match_any(const std::vector<std::string> &patterns, std::string_view a, std::string_view b = {}) {
+    for (const std::string &pattern : patterns) {
+        if (!a.empty() && knproj_glob_match_ci(pattern, a)) return true;
+        if (!b.empty() && knproj_glob_match_ci(pattern, b)) return true;
+    }
+    return false;
+}
+
+KnprojSourceMode knproj_effective_mode(const KnprojConfigLite &cfg, const KnprojProfileLite &profile) {
+    if (profile.mode != KnprojSourceMode::Unset) return profile.mode;
+    if (profile.has_auto_discovery) return profile.auto_discovery ? KnprojSourceMode::ReachableUnits : KnprojSourceMode::FileOnly;
+    if (!cfg.source_sets.empty()) return KnprojSourceMode::ReachableUnits;
+    return KnprojSourceMode::Unset;
+}
+
+std::optional<std::filesystem::path> find_nearest_knproj_for_source(const std::string &path) {
+    std::error_code ec;
+    std::filesystem::path cur(path);
+    if (std::filesystem::is_regular_file(cur, ec) || (!ec && cur.has_extension()))
+        cur = cur.parent_path();
+    cur = cur.lexically_normal();
+    while (!cur.empty()) {
+        std::filesystem::path candidate = cur / "kinal.knproj";
+        if (std::filesystem::exists(candidate, ec) && !ec && std::filesystem::is_regular_file(candidate, ec))
+            return candidate;
+        ec.clear();
+        std::filesystem::path parent = cur.parent_path();
+        if (parent == cur) break;
+        cur = parent;
+    }
+    return std::nullopt;
+}
+
 std::string canonical_file_uri(const std::string &uri) {
     if (uri.empty()) return {};
     if (uri.rfind("file://", 0) == 0) return path_to_uri(uri_to_path(uri));
@@ -1548,6 +2271,8 @@ static std::pair<int, int> utf16_span_from_utf8_line_span(const std::string &tex
     size_t line_end = text.size();
     if ((size_t)(line0 + 1) < line_starts.size())
         line_end = line_starts[(size_t)(line0 + 1)] - 1;
+    if (line_end > line_start && text[line_end - 1] == '\r')
+        --line_end;
 
     size_t start_off = line_start + (size_t)std::max(0, byte_col0);
     if (start_off > line_end) start_off = line_end;
@@ -1565,6 +2290,81 @@ static std::pair<int, int> utf16_span_from_utf8_line_span(const std::string &tex
     int utf16_col = utf16_units_for_utf8_span(line_view.substr(0, rel_start));
     int utf16_end = utf16_units_for_utf8_span(line_view.substr(0, rel_end));
     return { utf16_col, std::max(1, utf16_end - utf16_col) };
+}
+
+static std::vector<size_t> utf8_line_starts_for_lsp(const std::string &text) {
+    std::vector<size_t> out;
+    out.push_back(0);
+    for (size_t i = 0; i < text.size(); ++i) {
+        if (text[i] == '\n') out.push_back(i + 1);
+    }
+    return out;
+}
+
+static size_t utf8_line_end_for_lsp(const std::string &text, const std::vector<size_t> &line_starts, int line0) {
+    if (line0 < 0 || line0 >= (int)line_starts.size()) return text.size();
+    size_t end = text.size();
+    if ((size_t)(line0 + 1) < line_starts.size())
+        end = line_starts[(size_t)(line0 + 1)] - 1;
+    if (end > line_starts[(size_t)line0] && text[end - 1] == '\r')
+        --end;
+    return end;
+}
+
+static int utf16_col_from_utf8_byte_col(const std::string &text, int line0, int byte_col0) {
+    if (line0 < 0 || byte_col0 < 0) return std::max(0, byte_col0);
+    std::vector<size_t> starts = utf8_line_starts_for_lsp(text);
+    if (line0 >= (int)starts.size()) return std::max(0, byte_col0);
+    size_t start = starts[(size_t)line0];
+    size_t end = utf8_line_end_for_lsp(text, starts, line0);
+    size_t off = start + (size_t)byte_col0;
+    if (off > end) off = end;
+    return utf16_units_for_utf8_span(std::string_view(text.data() + start, off - start));
+}
+
+static int utf8_byte_col_from_utf16_col(const std::string &text, int line0, int utf16_col0) {
+    if (line0 < 0 || utf16_col0 < 0) return std::max(0, utf16_col0);
+    std::vector<size_t> starts = utf8_line_starts_for_lsp(text);
+    if (line0 >= (int)starts.size()) return std::max(0, utf16_col0);
+    size_t start = starts[(size_t)line0];
+    size_t end = utf8_line_end_for_lsp(text, starts, line0);
+    int units = 0;
+    size_t rel = 0;
+    while (start + rel < end) {
+        unsigned char c = (unsigned char)text[start + rel];
+        size_t step = utf8_seq_len(c);
+        if (start + rel + step > end) step = 1;
+        int char_units = (step == 4) ? 2 : 1;
+        if (units + char_units > utf16_col0) break;
+        units += char_units;
+        rel += step;
+        if (units == utf16_col0) break;
+    }
+    return (int)rel;
+}
+
+static Range internal_range_to_lsp_range(const std::string &text, const Range &r) {
+    Range out = r;
+    out.sc = utf16_col_from_utf8_byte_col(text, r.sl, r.sc);
+    out.ec = utf16_col_from_utf8_byte_col(text, r.el, r.ec);
+    return out;
+}
+
+static Range lsp_range_to_internal_range(const std::string &text, const Range &r) {
+    Range out = r;
+    out.sc = utf8_byte_col_from_utf16_col(text, r.sl, r.sc);
+    out.ec = utf8_byte_col_from_utf16_col(text, r.el, r.ec);
+    return out;
+}
+
+static std::string lsp_range_json_for_text(const std::string &text, const Range &r) {
+    return range_json(internal_range_to_lsp_range(text, r));
+}
+
+std::optional<size_t> pos_to_off(const std::string &text, int line, int ch);
+
+static std::optional<size_t> lsp_pos_to_off(const std::string &text, int line, int utf16_ch) {
+    return pos_to_off(text, line, utf8_byte_col_from_utf16_col(text, line, utf16_ch));
 }
 
 std::string first_declared_unit_name(const UnitDocIndex &idx);
@@ -1836,6 +2636,222 @@ std::vector<std::filesystem::path> stdlib_source_roots() {
     return out;
 }
 
+const KnprojSourceSet *knproj_source_set_by_name(const KnprojConfigLite &cfg, std::string_view name) {
+    for (const auto &set : cfg.source_sets) {
+        if (set.name == name) return &set;
+    }
+    return nullptr;
+}
+
+std::string knproj_casefold(std::string text) {
+    std::transform(text.begin(), text.end(), text.begin(),
+                   [](unsigned char c) { return (char)std::tolower(c); });
+    return text;
+}
+
+void knproj_add_unique_path(std::vector<std::filesystem::path> &out,
+                            std::unordered_set<std::string> &seen,
+                            std::filesystem::path path) {
+    if (path.empty()) return;
+    path = path.lexically_normal();
+    std::error_code ec;
+    if (!std::filesystem::exists(path, ec) || ec) return;
+    std::string key = normalize_fs_path(path.string());
+    if (key.empty()) return;
+    if (!seen.insert(key).second) return;
+    out.push_back(std::move(path));
+}
+
+std::optional<std::string> knproj_relative_match_path(const std::filesystem::path &base,
+                                                      const std::filesystem::path &path) {
+    std::string base_key = normalize_project_match_path(base.lexically_normal());
+    std::string path_key = normalize_project_match_path(path.lexically_normal());
+    if (base_key.empty() || path_key.empty()) return std::nullopt;
+    if (path_key == base_key) return std::string{};
+    if (!base_key.empty() && base_key.back() != '/') base_key.push_back('/');
+    if (path_key.rfind(base_key, 0) != 0) return std::nullopt;
+    return path_key.substr(base_key.size());
+}
+
+bool knproj_source_path_allowed(const KnprojConfigLite &cfg,
+                                const KnprojSourceSet &set,
+                                const std::filesystem::path &path,
+                                const std::optional<std::filesystem::path> &root_base = std::nullopt) {
+    std::string root_rel;
+    std::string project_rel;
+    if (root_base) {
+        if (auto rel = knproj_relative_match_path(*root_base, path)) root_rel = *rel;
+    }
+    if (auto rel = knproj_relative_match_path(cfg.project_dir, path)) project_rel = *rel;
+
+    if (!cfg.workspace_ignore.empty() &&
+        knproj_match_any(cfg.workspace_ignore, root_rel, project_rel))
+        return false;
+    if (!set.exclude.empty() &&
+        knproj_match_any(set.exclude, root_rel, project_rel))
+        return false;
+    if (set.include.empty()) return true;
+    return knproj_match_any(set.include, root_rel, project_rel);
+}
+
+std::vector<const KnprojSourceSet *> knproj_active_source_sets(const KnprojConfigLite &cfg,
+                                                               const KnprojProfileLite &profile,
+                                                               bool include_lsp_extra_sets) {
+    std::vector<const KnprojSourceSet *> out;
+    std::unordered_set<std::string> seen;
+
+    auto add_name = [&](const std::string &name) {
+        if (name.empty()) return;
+        const KnprojSourceSet *set = knproj_source_set_by_name(cfg, name);
+        if (!set) return;
+        std::string key = knproj_casefold(set->name);
+        if (!seen.insert(key).second) return;
+        out.push_back(set);
+    };
+
+    if (!profile.sets.empty()) {
+        for (const std::string &name : profile.sets) add_name(name);
+    } else {
+        for (const auto &set : cfg.source_sets) add_name(set.name);
+    }
+
+    if (include_lsp_extra_sets) {
+        for (const std::string &name : cfg.lsp_extra_sets) add_name(name);
+    }
+
+    return out;
+}
+
+std::vector<std::filesystem::path> knproj_collect_local_files(const KnprojConfigLite &cfg,
+                                                              const KnprojProfileLite &profile,
+                                                              bool include_lsp_extra_sets) {
+    std::vector<std::filesystem::path> out;
+    std::unordered_set<std::string> seen;
+    std::error_code ec;
+
+    for (const KnprojSourceSet *set : knproj_active_source_sets(cfg, profile, include_lsp_extra_sets)) {
+        if (!set) continue;
+
+        for (const std::string &root_rel : set->roots) {
+            std::filesystem::path root = resolve_knproj_path(cfg, root_rel);
+            if (!std::filesystem::exists(root, ec) || ec || !std::filesystem::is_directory(root, ec)) {
+                ec.clear();
+                continue;
+            }
+
+            std::filesystem::recursive_directory_iterator it(root, std::filesystem::directory_options::skip_permission_denied, ec);
+            std::filesystem::recursive_directory_iterator end;
+            for (; it != end && !ec; it.increment(ec)) {
+                const std::filesystem::directory_entry &de = *it;
+                const std::filesystem::path &pp = de.path();
+
+                if (de.is_directory(ec)) {
+                    if (should_skip_index_dir(pp.filename().string())) it.disable_recursion_pending();
+                    continue;
+                }
+                if (!de.is_regular_file(ec)) continue;
+                if (!is_indexable_source_path(pp)) continue;
+                if (!knproj_source_path_allowed(cfg, *set, pp, root)) continue;
+                knproj_add_unique_path(out, seen, pp);
+            }
+            ec.clear();
+        }
+
+        for (const std::string &file_rel : set->files) {
+            std::filesystem::path file = resolve_knproj_path(cfg, file_rel);
+            if (!std::filesystem::exists(file, ec) || ec || !std::filesystem::is_regular_file(file, ec)) {
+                ec.clear();
+                continue;
+            }
+            if (!is_indexable_source_path(file)) continue;
+            if (!knproj_source_path_allowed(cfg, *set, file)) continue;
+            knproj_add_unique_path(out, seen, file);
+        }
+    }
+
+    return out;
+}
+
+std::vector<std::filesystem::path> knproj_collect_external_roots(const KnprojConfigLite &cfg,
+                                                                 const KnprojProfileLite &profile) {
+    std::vector<std::filesystem::path> out;
+    std::unordered_set<std::string> seen;
+
+    auto add_resolved = [&](const std::string &rel) {
+        if (rel.empty()) return;
+        knproj_add_unique_path(out, seen, resolve_knproj_path(cfg, rel));
+    };
+
+    for (const std::string &rel : cfg.package_roots) add_resolved(rel);
+    for (const std::string &rel : cfg.official_package_roots) add_resolved(rel);
+    for (const std::string &rel : profile.package_roots) add_resolved(rel);
+    for (const std::string &rel : profile.official_package_roots) add_resolved(rel);
+    for (const std::filesystem::path &root : stdlib_source_roots())
+        knproj_add_unique_path(out, seen, root);
+
+    return out;
+}
+
+bool knproj_scope_has_explicit_local_rules(const KnprojScopeLite &scope) {
+    return !scope.config.source_sets.empty() ||
+           !scope.profile.sets.empty() ||
+           scope.profile.mode != KnprojSourceMode::Unset;
+}
+
+std::optional<KnprojScopeLite> build_knproj_scope_for_source(const std::string &path,
+                                                             const std::string &current_uri,
+                                                             const UnitDocIndex &current_idx) {
+    auto project_path = find_nearest_knproj_for_source(path);
+    if (!project_path) return std::nullopt;
+
+    auto cfg = parse_knproj_file(*project_path);
+    if (!cfg) return std::nullopt;
+    auto profile = select_knproj_profile(*cfg);
+    if (!profile) return std::nullopt;
+
+    KnprojScopeLite scope;
+    scope.config = *cfg;
+    scope.profile = *profile;
+    scope.mode = knproj_effective_mode(scope.config, scope.profile);
+    scope.strict_project_scope = scope.config.has_strict_project_scope && scope.config.strict_project_scope;
+    scope.local_files = knproj_collect_local_files(scope.config, scope.profile, true);
+    scope.external_roots = knproj_collect_external_roots(scope.config, scope.profile);
+
+    const std::string current_norm_path = normalize_fs_path(path);
+    const std::string current_norm_uri = canonical_file_uri(current_uri);
+
+    for (const std::filesystem::path &file : scope.local_files) {
+        std::string file_norm_path = normalize_fs_path(file.string());
+        std::string file_uri = path_to_uri(file.string());
+        std::string canonical_uri = canonical_file_uri(file_uri);
+        UnitDocIndex idx;
+
+        if (!current_norm_path.empty() && file_norm_path == current_norm_path) {
+            idx = current_idx;
+            if (!current_norm_uri.empty()) canonical_uri = current_norm_uri;
+            scope.current_in_scope = true;
+        } else {
+            auto known = g_unit_docs.find(canonical_uri);
+            if (known != g_unit_docs.end()) {
+                idx = known->second;
+            } else {
+                auto text = read_file_text(file);
+                if (!text) continue;
+                idx = index_units_from_tokens(lex_all(*text));
+            }
+        }
+
+        for (const UnitIndexItem &it : idx.items) {
+            if (!it.decl || it.unit.empty()) continue;
+            auto &uris = scope.local_unit_to_uris[it.unit];
+            if (std::find(uris.begin(), uris.end(), canonical_uri) == uris.end())
+                uris.push_back(canonical_uri);
+        }
+    }
+
+    return scope;
+}
+
 std::vector<std::filesystem::path> guess_project_roots_for_source(const std::string &path, const UnitDocIndex &idx) {
     std::vector<std::filesystem::path> out;
     std::unordered_set<std::string> seen;
@@ -2012,6 +3028,16 @@ void index_workspace(void) {
     std::vector<WsFile> files;
     std::unordered_set<std::string> seen_uris;
 
+    auto add_file = [&](const std::filesystem::path &pp) {
+        auto txt = read_file_text(pp);
+        if (!txt) return;
+        WsFile f;
+        f.uri = path_to_uri(pp.string());
+        if (!seen_uris.insert(canonical_file_uri(f.uri)).second) return;
+        f.toks = lex_all(*txt);
+        files.push_back(std::move(f));
+    };
+
     auto add_root_files = [&](const std::filesystem::path &rp) {
         std::error_code ec;
         if (rp.empty()) return;
@@ -2029,20 +3055,35 @@ void index_workspace(void) {
             }
             if (!de.is_regular_file(ec)) continue;
             if (!is_indexable_source_path(pp)) continue;
-
-            auto txt = read_file_text(pp);
-            if (!txt) continue;
-            WsFile f;
-            f.uri = path_to_uri(pp.string());
-            if (!seen_uris.insert(canonical_file_uri(f.uri)).second) continue;
-            f.toks = lex_all(*txt);
-            files.push_back(std::move(f));
+            add_file(pp);
         }
+    };
+
+    auto add_knproj_files = [&](const std::filesystem::path &project_path) -> bool {
+        std::error_code ec;
+        if (project_path.empty()) return false;
+        if (!std::filesystem::exists(project_path, ec) || ec || !std::filesystem::is_regular_file(project_path, ec))
+            return false;
+
+        auto cfg = parse_knproj_file(project_path);
+        if (!cfg) return false;
+        auto profile = select_knproj_profile(*cfg);
+        if (!profile) return false;
+
+        const bool explicit_local_rules =
+            !cfg->source_sets.empty() || !profile->sets.empty() || profile->mode != KnprojSourceMode::Unset;
+        std::vector<std::filesystem::path> local_files = knproj_collect_local_files(*cfg, *profile, true);
+        if (local_files.empty() && !explicit_local_rules) return false;
+
+        for (const std::filesystem::path &file : local_files) add_file(file);
+        return true;
     };
 
     for (const std::string &root : g_workspace_roots) {
         if (root.empty()) continue;
-        add_root_files(std::filesystem::path(root));
+        std::filesystem::path root_path(root);
+        if (!add_knproj_files(root_path / "kinal.knproj"))
+            add_root_files(root_path);
     }
     for (const std::filesystem::path &root : stdlib_source_roots()) add_root_files(root);
 
@@ -2556,6 +3597,7 @@ Analysis build_symbols(const std::string &path, const std::string &uri, const st
     (void)path;
     Analysis an;
     an.toks = lex_all(text);
+    collect_unsafe_alias_decl_styles_lsp(an.toks, an.forced_tok_styles);
     std::string local_prefix = uri.empty() ? "<memory>" : uri;
     parse_imports_from_tokens(an);
 
@@ -3073,7 +4115,19 @@ void build_semantic_and_completion(Analysis &an, const std::string &text) {
             const std::string &module = kv.second;
             int mods = kn_std_module_has(module.c_str()) ? (1 << 2) : 0;
             for (const Tok &t : an.toks) {
-                if (t.type == TOK_ID && t.text == alias) force(t.idx, 0, mods);
+                if (t.type == TOK_ID && t.text == alias) force_if_unbound(t.idx, 0, mods);
+            }
+        }
+
+        // Aliased symbols from Get/Alias should inherit the target symbol kind.
+        for (const auto &kv : an.import_symbol_to_qualified) {
+            const std::string &alias = kv.first;
+            auto top = project_qualified_top_level_decl(kv.second);
+            if (!top) continue;
+            int mods = top->is_static ? (1 << 1) : 0;
+            for (const Tok &t : an.toks) {
+                if (t.type == TOK_ID && t.text == alias)
+                    force_if_unbound(t.idx, sem_type_for_kind(top->kind), mods);
             }
         }
 
@@ -3221,7 +4275,7 @@ void build_semantic_and_completion(Analysis &an, const std::string &text) {
         } else if (t.type == TOK_ID) {
             if (prev != TOK_DOT &&
                 (t.text == "Meta" || t.text == "On" || t.text == "Keep" || t.text == "Repeatable" ||
-                 is_builtin_meta_attr(t.text) || is_string_prefix_name(t.text))) {
+                 is_builtin_meta_attr(t.text) || is_builtin_compiler_attr(t.text) || is_string_prefix_name(t.text))) {
                 type = 12;
             } else if (prev == TOK_AT) {
                 type = 12;
@@ -3258,7 +4312,7 @@ void build_semantic_and_completion(Analysis &an, const std::string &text) {
         if (t.type == TOK_ID) {
             if (prev != TOK_DOT &&
                 (t.text == "Meta" || t.text == "On" || t.text == "Keep" || t.text == "Repeatable" ||
-                 is_builtin_meta_attr(t.text) || is_string_prefix_name(t.text))) {
+                 is_builtin_meta_attr(t.text) || is_builtin_compiler_attr(t.text) || is_string_prefix_name(t.text))) {
                 type = 12;
             } else if (prev == TOK_AT) {
                 type = 12;
@@ -3268,6 +4322,11 @@ void build_semantic_and_completion(Analysis &an, const std::string &text) {
         if (fi != force_style.end()) {
             type = fi->second.first;
             mods |= fi->second.second;
+        }
+        auto afi = an.forced_tok_styles.find(t.idx);
+        if (afi != an.forced_tok_styles.end()) {
+            type = afi->second.first;
+            mods |= afi->second.second;
         }
         if (type < 0) continue;
         if (in_unnecessary(t)) mods |= 1 << 4; // deprecated
@@ -3799,6 +4858,12 @@ std::vector<ProjectSource> collect_project_sources(const std::string &uri, const
     cur.current = true;
     out.push_back(cur);
 
+    std::optional<KnprojScopeLite> scope_opt = build_knproj_scope_for_source(path, cur.uri, cur.idx);
+    const KnprojScopeLite *scope = scope_opt ? &*scope_opt : nullptr;
+    const bool has_explicit_local_rules = scope && knproj_scope_has_explicit_local_rules(*scope);
+    const bool use_knproj_local_scope = has_explicit_local_rules && scope->current_in_scope;
+    const bool suppress_legacy_local_scope = has_explicit_local_rules && scope->strict_project_scope && !scope->current_in_scope;
+
     std::unordered_map<std::string, std::vector<std::string>> unit_to_uris;
     auto add_unit_uri = [&](std::string_view unit, const std::string &doc_uri) {
         if (unit.empty() || doc_uri.empty()) return;
@@ -3817,8 +4882,14 @@ std::vector<ProjectSource> collect_project_sources(const std::string &uri, const
         if (!it.decl || it.unit.empty()) continue;
         add_unit_uri(it.unit, cur.uri);
     }
+    if (use_knproj_local_scope && scope) {
+        for (const auto &kv : scope->local_unit_to_uris) {
+            for (const std::string &doc_uri : kv.second) add_unit_uri(kv.first, doc_uri);
+        }
+    }
 
-    const std::vector<std::filesystem::path> fallback_roots = guess_project_roots_for_source(path, cur.idx);
+    const std::vector<std::filesystem::path> fallback_roots =
+        scope ? scope->external_roots : guess_project_roots_for_source(path, cur.idx);
     std::vector<std::filesystem::path> same_unit_roots;
     std::unordered_set<std::string> same_unit_root_seen;
     auto add_same_unit_root = [&](std::filesystem::path p) {
@@ -3829,22 +4900,22 @@ std::vector<ProjectSource> collect_project_sources(const std::string &uri, const
         if (!same_unit_root_seen.insert(key).second) return;
         same_unit_roots.push_back(std::move(p));
     };
-    std::filesystem::path file_path(path);
-    add_same_unit_root(file_path.parent_path());
-    std::string current_unit = first_declared_unit_name(cur.idx);
-    if (!current_unit.empty()) {
-        std::filesystem::path root = file_path.parent_path();
-        int steps = std::max(0, qualified_segment_count(current_unit) - 1);
-        for (int i = 0; i < steps && !root.empty(); ++i) root = root.parent_path();
-        add_same_unit_root(root);
+    if (!use_knproj_local_scope && !suppress_legacy_local_scope) {
+        std::filesystem::path file_path(path);
+        add_same_unit_root(file_path.parent_path());
+        std::string current_unit = first_declared_unit_name(cur.idx);
+        if (!current_unit.empty()) {
+            std::filesystem::path root = file_path.parent_path();
+            int steps = std::max(0, qualified_segment_count(current_unit) - 1);
+            for (int i = 0; i < steps && !root.empty(); ++i) root = root.parent_path();
+            add_same_unit_root(root);
+        }
+        for (const std::filesystem::path &root : guess_project_roots_for_source(path, cur.idx))
+            add_same_unit_root(root);
     }
-    for (const std::filesystem::path &root : fallback_roots) add_same_unit_root(root);
     bool added_workspace_units = false;
 
-    auto resolve_unit_uris = [&](std::string_view unit) -> std::vector<std::string> {
-        auto uit = unit_to_uris.find(std::string(unit));
-        if (uit != unit_to_uris.end()) return uit->second;
-
+    auto resolve_external_unit_uris = [&](std::string_view unit) -> std::vector<std::string> {
         std::vector<std::string> out_uris;
 
         if (auto fallback = resolve_unit_uri_from_roots(unit, fallback_roots)) {
@@ -3874,8 +4945,36 @@ std::vector<ProjectSource> collect_project_sources(const std::string &uri, const
 
         return out_uris;
     };
+    auto resolve_unit_uris = [&](std::string_view unit) -> std::vector<std::string> {
+        if (use_knproj_local_scope && scope) {
+            auto local = scope->local_unit_to_uris.find(std::string(unit));
+            if (local != scope->local_unit_to_uris.end()) {
+                if (scope->mode == KnprojSourceMode::ReachableUnits) return local->second;
+                return {};
+            }
+            return resolve_external_unit_uris(unit);
+        }
+
+        if (!suppress_legacy_local_scope) {
+            auto uit = unit_to_uris.find(std::string(unit));
+            if (uit != unit_to_uris.end()) return uit->second;
+        }
+
+        return resolve_external_unit_uris(unit);
+    };
     auto resolve_same_unit_uris = [&](std::string_view unit) -> std::vector<std::string> {
         std::vector<std::string> out_uris;
+
+        if (use_knproj_local_scope && scope) {
+            if (scope->mode != KnprojSourceMode::EntryUnit && scope->mode != KnprojSourceMode::ReachableUnits)
+                return out_uris;
+            auto local = scope->local_unit_to_uris.find(std::string(unit));
+            if (local != scope->local_unit_to_uris.end()) out_uris = local->second;
+            return out_uris;
+        }
+
+        if (suppress_legacy_local_scope) return out_uris;
+
         auto uit = unit_to_uris.find(std::string(unit));
         if (uit != unit_to_uris.end()) out_uris = uit->second;
 
@@ -3917,7 +5016,12 @@ std::vector<ProjectSource> collect_project_sources(const std::string &uri, const
         }
     };
 
-    enqueue_same_unit_sources(cur.idx);
+    if (use_knproj_local_scope && scope && scope->mode == KnprojSourceMode::AllSources) {
+        for (const std::filesystem::path &file : scope->local_files)
+            enqueue_uri(path_to_uri(file.string()));
+    } else {
+        enqueue_same_unit_sources(cur.idx);
+    }
     enqueue_refs(cur.idx);
 
     for (size_t i = 0; i < queue.size(); ++i) {
@@ -3940,7 +5044,8 @@ std::vector<ProjectSource> collect_project_sources(const std::string &uri, const
         }
 
         out.push_back(dep);
-        enqueue_same_unit_sources(dep.idx);
+        if (!(use_knproj_local_scope && scope && scope->mode == KnprojSourceMode::AllSources))
+            enqueue_same_unit_sources(dep.idx);
         enqueue_refs(dep.idx);
     }
 
@@ -3996,7 +5101,8 @@ Analysis analyze_doc(const std::string &uri, const std::string &path, const std:
         return an;
     }
 
-    kn_temp_arena_begin();
+    KnCompileSession *compile_session = kn_compile_session_create(nullptr);
+    kn_compile_session_enter(compile_session);
     std::vector<CapDiag> cap;
     MetaList metas{};
     FuncList funcs{};
@@ -4153,7 +5259,8 @@ Analysis analyze_doc(const std::string &uri, const std::string &path, const std:
 
     build_semantic_and_completion(an, text);
     for (KnSource &src : parsed_sources) kn_source_free(&src);
-    kn_temp_arena_end();
+    kn_compile_session_leave(compile_session);
+    kn_compile_session_destroy(compile_session);
     return an;
 }
 
@@ -4166,7 +5273,7 @@ std::string diag_params_json(const Doc &d) {
         if (i) oss << ",";
         const Diag &x = d.an.diags[i];
         oss << "{";
-        oss << "\"range\":" << range_json(x.range) << ",";
+        oss << "\"range\":" << lsp_range_json_for_text(d.text, x.range) << ",";
         oss << "\"severity\":" << x.severity << ",";
         oss << "\"code\":\"" << esc(x.code) << "\",";
         oss << "\"source\":\"" << esc(x.source) << "\",";
@@ -4823,7 +5930,9 @@ std::string locs_json(const std::vector<Loc> &locs) {
         std::string uri = locs[i].uri;
         std::string virt = file_uri_to_klib_virtual_uri(uri);
         if (!virt.empty()) uri = virt;
-        oss << "{\"uri\":\"" << esc(uri) << "\",\"range\":" << range_json(locs[i].range) << "}";
+        std::string range = range_json(locs[i].range);
+        if (auto text = load_doc_text_for_uri(uri)) range = lsp_range_json_for_text(*text, locs[i].range);
+        oss << "{\"uri\":\"" << esc(uri) << "\",\"range\":" << range << "}";
     }
     oss << "]";
     return oss.str();
@@ -4857,7 +5966,7 @@ std::string document_symbols_json(const Doc &d) {
         oss << "{";
         oss << "\"name\":\"" << esc(s.name) << "\",";
         oss << "\"kind\":" << lsp_symbol_kind(s.kind) << ",";
-        oss << "\"location\":{\"uri\":\"" << esc(d.uri) << "\",\"range\":" << range_json(s.decl) << "}";
+        oss << "\"location\":{\"uri\":\"" << esc(d.uri) << "\",\"range\":" << lsp_range_json_for_text(d.text, s.decl) << "}";
         if (!s.container.empty()) oss << ",\"containerName\":\"" << esc(s.container) << "\"";
         oss << "}";
     }
@@ -5083,6 +6192,7 @@ std::string typekind_text(TypeKind k) {
     case TY_NULL: return "null";
     case TY_PTR: return "ptr";
     case TY_ARRAY: return "array";
+    case TY_PACKAGE: return "package";
     case TY_CLASS: return "class";
     case TY_STRUCT: return "struct";
     case TY_ENUM: return "enum";
@@ -5101,6 +6211,16 @@ std::string type_text(Type t) {
     if (t.kind == TY_ARRAY) {
         std::string b = typekind_text(t.elem);
         b += "[]";
+        return b;
+    }
+    if (t.kind == TY_PACKAGE) {
+        if (t.package_count <= 0) return "Object.Package";
+        std::string b = "<";
+        for (int i = 0; i < t.package_count; ++i) {
+            if (i) b += ", ";
+            b += type_text(t.package_elems[i]);
+        }
+        b += ">";
         return b;
     }
     if (t.kind == TY_CLASS || t.kind == TY_STRUCT || t.kind == TY_ENUM) {
@@ -5409,7 +6529,7 @@ static void emit_format_string_interpolation_tokens(const Analysis &an,
             if (tok.type == TOK_ID) {
                 if (prev != TOK_DOT &&
                     (tok.text == "Meta" || tok.text == "On" || tok.text == "Keep" || tok.text == "Repeatable" ||
-                     is_builtin_meta_attr(tok.text) || is_string_prefix_name(tok.text))) {
+                     is_builtin_meta_attr(tok.text) || is_builtin_compiler_attr(tok.text) || is_string_prefix_name(tok.text))) {
                     sem_type = 12;
                 } else if (prev == TOK_AT) {
                     sem_type = 12;
@@ -5738,6 +6858,35 @@ static void add_identifier_snippet(std::vector<Completion> &out,
     add_unique(out, seen, std::move(c));
 }
 
+static void add_attribute_completion_items(std::vector<Completion> &out,
+                                           std::set<std::pair<std::string, int>> &seen,
+                                           std::string_view label_prefix) {
+    static const char *meta_attrs[] = {
+        "Docs", "Deprecated", "Since", "Example", "Experimental"
+    };
+    static const char *compiler_attrs[] = {
+        "LinkName", "LinkLib", "LinkFile", "LinkLibTarget", "LinkFileTarget", "SymbolName", "Cast", "Overload"
+    };
+
+    for (const char *kw : meta_attrs) {
+        if (!starts_with(kw, label_prefix)) continue;
+        Completion c;
+        c.label = kw;
+        c.kind = 7;
+        c.detail = "builtin meta attribute";
+        add_unique(out, seen, std::move(c));
+    }
+
+    for (const char *kw : compiler_attrs) {
+        if (!starts_with(kw, label_prefix)) continue;
+        Completion c;
+        c.label = kw;
+        c.kind = 7;
+        c.detail = "builtin compiler attribute";
+        add_unique(out, seen, std::move(c));
+    }
+}
+
 static bool is_string_prefix_context(const Analysis &an, int line, int ch, std::string &label_prefix) {
     int idx = token_before_or_at_for_prefix(an, line, ch, label_prefix);
     if (idx < 0) return false;
@@ -5754,6 +6903,42 @@ static bool is_string_prefix_context(const Analysis &an, int line, int ch, std::
     }
     return j < (int)an.toks.size() &&
            (an.toks[(size_t)j].type == TOK_STRING || an.toks[(size_t)j].type == TOK_BAD_STRING);
+}
+
+static bool is_attribute_context(const Analysis &an, int line, int ch, std::string &label_prefix) {
+    int idx = token_before_or_at_for_prefix(an, line, ch, label_prefix);
+    if (idx < 0) return false;
+
+    int lb = idx;
+    if (an.toks[(size_t)lb].type != TOK_LBRACKET) {
+        if (lb > 0 && an.toks[(size_t)(lb - 1)].type == TOK_LBRACKET) lb--;
+        else return false;
+    }
+
+    int rb = -1;
+    int depth = 0;
+    for (int i = lb; i < (int)an.toks.size(); ++i) {
+        if (an.toks[(size_t)i].type == TOK_LBRACKET) depth++;
+        else if (an.toks[(size_t)i].type == TOK_RBRACKET) {
+            depth--;
+            if (depth == 0) {
+                rb = i;
+                break;
+            }
+        }
+    }
+    if (rb < 0) return false;
+    if (!(idx >= lb && idx <= rb)) return false;
+
+    int name_i = lb + 1;
+    if (name_i >= (int)an.toks.size()) return false;
+    if (an.toks[(size_t)name_i].type != TOK_ID && an.toks[(size_t)name_i].type != TOK_RBRACKET) return false;
+
+    int next = rb + 1;
+    if (next < (int)an.toks.size() && an.toks[(size_t)next].type == TOK_LPAREN) return false;
+    if (is_string_prefix_context(an, line, ch, label_prefix)) return false;
+
+    return true;
 }
 
 static bool is_unit_name_context(const Analysis &an, int line, int ch, std::string &label_prefix) {
@@ -5935,6 +7120,11 @@ std::vector<Completion> completion_items_at(const Doc &d, int line, int ch) {
     std::string ctx_prefix;
     if (is_string_prefix_context(an, line, ch, ctx_prefix)) {
         add_string_prefix_completion_items(out, seen, ctx_prefix);
+        return out;
+    }
+
+    if (is_attribute_context(an, line, ch, ctx_prefix)) {
+        add_attribute_completion_items(out, seen, ctx_prefix);
         return out;
     }
 
@@ -6408,7 +7598,7 @@ std::string code_actions_json(const Doc &d, const Json *params) {
         if (code != "W-SYN-00001") continue;
         auto range = json_to_range(diag.find("range"));
         if (!range) continue;
-        auto fix = legacy_array_fix_at(d, *range);
+        auto fix = legacy_array_fix_at(d, lsp_range_to_internal_range(d.text, *range));
         if (!fix) continue;
 
         std::ostringstream key;
@@ -6422,7 +7612,7 @@ std::string code_actions_json(const Doc &d, const Json *params) {
         oss << "\"kind\":\"quickfix\",";
         oss << "\"isPreferred\":true,";
         oss << "\"edit\":{\"changes\":{\"" << esc(d.uri) << "\":[{";
-        oss << "\"range\":" << range_json(fix->first) << ",";
+        oss << "\"range\":" << lsp_range_json_for_text(d.text, fix->first) << ",";
         oss << "\"newText\":\"" << esc(fix->second) << "\"";
         oss << "}]}}";
         oss << "}";
@@ -6446,8 +7636,8 @@ void apply_change(std::string &text, const Json &chg) {
     int sc = sv->find("character") ? sv->find("character")->i32(0) : 0;
     int el = ev->find("line") ? ev->find("line")->i32(0) : 0;
     int ec = ev->find("character") ? ev->find("character")->i32(0) : 0;
-    auto so = pos_to_off(text, sl, sc);
-    auto eo = pos_to_off(text, el, ec);
+    auto so = lsp_pos_to_off(text, sl, sc);
+    auto eo = lsp_pos_to_off(text, el, ec);
     if (!so || !eo || *so > *eo || *eo > text.size()) return;
     text.replace(*so, *eo - *so, tv->s);
 }
@@ -6695,7 +7885,8 @@ int main() {
                     auto it = g_docs.find(uri);
                     if (it != g_docs.end() && pv && pv->kind == Json::Kind::Object) {
                         int line = pv->find("line") ? pv->find("line")->i32(0) : 0;
-                        int ch = pv->find("character") ? pv->find("character")->i32(0) : 0;
+                        int ch = utf8_byte_col_from_utf16_col(
+                            it->second.text, line, pv->find("character") ? pv->find("character")->i32(0) : 0);
                         rs = completion_json_at(it->second, line, ch);
                     } else if (it != g_docs.end()) {
                         rs = completion_json(it->second);
@@ -6728,9 +7919,12 @@ int main() {
                 if (td && pv && td->kind == Json::Kind::Object && pv->kind == Json::Kind::Object) {
                     std::string uri = td->find("uri") ? td->find("uri")->str() : "";
                     int line = pv->find("line") ? pv->find("line")->i32(0) : 0;
-                    int ch = pv->find("character") ? pv->find("character")->i32(0) : 0;
                     auto it = g_docs.find(uri);
-                    if (it != g_docs.end()) rs = hover_json_at(it->second, line, ch);
+                    if (it != g_docs.end()) {
+                        int ch = utf8_byte_col_from_utf16_col(
+                            it->second.text, line, pv->find("character") ? pv->find("character")->i32(0) : 0);
+                        rs = hover_json_at(it->second, line, ch);
+                    }
                 }
             }
             write_message(response(id, rs));
@@ -6759,9 +7953,10 @@ int main() {
                 if (td && pv && td->kind == Json::Kind::Object && pv->kind == Json::Kind::Object) {
                     std::string uri = td->find("uri") ? td->find("uri")->str() : "";
                     int line = pv->find("line") ? pv->find("line")->i32(0) : 0;
-                    int ch = pv->find("character") ? pv->find("character")->i32(0) : 0;
                     auto it = g_docs.find(uri);
                     if (it != g_docs.end()) {
+                        int ch = utf8_byte_col_from_utf16_col(
+                            it->second.text, line, pv->find("character") ? pv->find("character")->i32(0) : 0);
                         auto h = hit_at(it->second, line, ch);
                         if (h) {
                             if (is_unit_key(h->key)) rs = locs_json(unit_defs_for_name(unit_name_from_key(h->key)));
@@ -6815,9 +8010,10 @@ int main() {
                 if (td && pv && td->kind == Json::Kind::Object && pv->kind == Json::Kind::Object) {
                     std::string uri = td->find("uri") ? td->find("uri")->str() : "";
                     int line = pv->find("line") ? pv->find("line")->i32(0) : 0;
-                    int ch = pv->find("character") ? pv->find("character")->i32(0) : 0;
                     auto it = g_docs.find(uri);
                     if (it != g_docs.end()) {
+                        int ch = utf8_byte_col_from_utf16_col(
+                            it->second.text, line, pv->find("character") ? pv->find("character")->i32(0) : 0);
                         auto h = hit_at(it->second, line, ch);
                         if (h) {
                             if (is_unit_key(h->key)) rs = locs_json(unit_refs_for_name(unit_name_from_key(h->key), inc_decl));

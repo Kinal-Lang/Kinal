@@ -1,0 +1,23 @@
+Unit Tests.StdlibCharComplete;
+
+Get Console By IO.Console;
+Get IO.Char;
+
+Safe Static Function int Main()
+{
+    Console.PrintLine(IO.Char.IsDigit('0'));
+    Console.PrintLine(!IO.Char.IsDigit('x'));
+    Console.PrintLine(IO.Char.IsLower('z'));
+    Console.PrintLine(!IO.Char.IsLower('Z'));
+    Console.PrintLine(IO.Char.IsUpper('Z'));
+    Console.PrintLine(!IO.Char.IsUpper('z'));
+    Console.PrintLine(IO.Char.IsLetter('a'));
+    Console.PrintLine(IO.Char.IsLetter('Z'));
+    Console.PrintLine(!IO.Char.IsLetter('1'));
+    Console.PrintLine(IO.Char.IsWhitespace(' '));
+    Console.PrintLine(IO.Char.ToLower('Q') == 'q');
+    Console.PrintLine(IO.Char.ToLower('q') == 'q');
+    Console.PrintLine(IO.Char.ToUpper('r') == 'R');
+    Console.PrintLine(IO.Char.ToUpper('R') == 'R');
+    Return 0;
+}

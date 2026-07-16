@@ -1,0 +1,8 @@
+Unit Tests.ErrorFfiUnsupportedType;
+
+Extern Function int BadArray(int[] values) By C;
+
+Static Function int Main()
+{
+    Return 0;
+}

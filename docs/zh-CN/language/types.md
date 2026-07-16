@@ -277,9 +277,81 @@ nums = nums.Add(4);
 
 ### 多维数组
 
+Kinal 现在支持嵌套数组语法。`T[][]` 表示 `T[]` 的数组，`T[][][]` 表示 `T[][]` 的数组。
+
+```kinal
+int[][] grid = {
+    { 1, 2 },
+    { 3 }
+};
+
+string[][][] words = {
+    {
+        { "a", "b" },
+        { "c" }
+    }
+};
+
+any[][][] values = {
+    {
+        { 1, "two" },
+        { true }
+    }
+};
+```
+
+多维数组按 jagged array 处理，内层数组长度可以不同。使用 `any` 时需要显式写出数组维度，例如 `any[][][]`。
 
 
-Kinal 目前支持一维数组；多维结构可通过类封装实现。
+
+## Package
+
+`Object.Package` 是编译期结构化值，用于在不声明新 `struct` 的情况下返回或传递一组固定数量的值。
+
+Package 类型使用尖括号：
+
+```kinal
+Function <int, string> Status()
+{
+    Return <200, "OK">;
+}
+```
+
+重复的元素类型可以使用重复后缀：
+
+```kinal
+Function <int(2), string(2)> Repeated()
+{
+    Return <1, 2, "left", "right">;
+}
+```
+
+当希望变量类型由初始化表达式推断时，可以使用 `Object.Package`：
+
+```kinal
+Object.Package status = Status();
+IO.Console.PrintLine(status[0]);  // 200
+IO.Console.PrintLine(status[1]);  // OK
+```
+
+Package 索引必须是编译期常量。
+
+可以在变量声明上附加字段别名。别名只属于这个变量，不属于 Package 类型：
+
+```kinal
+Object.Package status<code, message> = Status();
+IO.Console.PrintLine(status.code);
+IO.Console.PrintLine(status.message);
+```
+
+Package 值可以显式物化为数组：
+
+```kinal
+any[] items = [any[]](status);
+int[] nums = [int[]](<1, 2, 3>);
+```
+
+空 Package 不受支持。Package v1 不支持解构、命名 Package 字面量或命名 Package 类型。
 
 
 
@@ -610,6 +682,8 @@ Kinal 内置了几个特殊运行时类型：
 | `IO.Type.Object.Function` | 函数对象（可存储函数引用） |
 
 | `IO.Type.Object.Block` | Block 对象（代码块封装） |
+
+| `IO.Type.Object.Package` | Package 占位类型，用于从初始化表达式推断具体元素类型 |
 
 | `IO.Error` | 标准异常类，含 `Title`、`Message`、`Inner`、`Trace` 字段 |
 

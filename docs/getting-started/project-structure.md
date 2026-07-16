@@ -1,26 +1,27 @@
 # Project Structure
 
-Kinal supports single-file programs, multi-file modules, and a full package system. This document covers all three approaches.
+Kinal supports single-file programs, multi-file modules, packages, and project files. This document shows the common layouts and explains how `kinal.knproj` defines the local project graph.
 
 ## Single-File Program
 
-The simplest structure: one `.kn` file is a complete program.
+The simplest structure is one `.kn` file:
 
-```
+```text
 myapp/
 └── main.kn
 ```
 
 Build:
+
 ```bash
 kinal build main.kn -o myapp
 ```
 
-## Multi-File Module (Shared Unit)
+## Multi-File Module
 
-Multiple `.kn` files can share the same `Unit` name; the compiler merges them into a single module.
+Multiple files can participate in one program:
 
-```
+```text
 myapp/
 ├── main.kn        # Unit App.Main;
 ├── utils.kn       # Unit App.Utils;
@@ -28,6 +29,7 @@ myapp/
 ```
 
 **main.kn**
+
 ```kinal
 Unit App.Main;
 
@@ -44,6 +46,7 @@ Static Function int Main()
 ```
 
 **utils.kn**
+
 ```kinal
 Unit App.Utils;
 
@@ -53,25 +56,27 @@ Function string Greet(string name)
 }
 ```
 
-When building, specify only the entry file; the compiler automatically discovers other `.kn` files in the same directory:
+If you build by entry file outside project mode, the compiler can still auto-discover nearby files:
+
 ```bash
 kinal build main.kn -o myapp
 ```
 
-To disable auto-discovery:
+To disable that legacy directory-based discovery:
+
 ```bash
 kinal build main.kn utils.kn models.kn -o myapp --no-module-discovery
 ```
 
-## Multiple Units in a Single File
+## Multiple Units in One File
 
-A single file can contribute declarations to multiple units (via nested blocks), but one-unit-per-file is generally recommended.
+A single file can contribute declarations to multiple units through nested blocks, but one unit per file is usually easier to maintain.
 
 ## Package Structure
 
-For reusable libraries, use the package format:
+Reusable libraries use package manifests:
 
-```
+```text
 MyLib/
 ├── 1.0.0/
 │   ├── package.knpkg.json
@@ -80,10 +85,11 @@ MyLib/
 │   │       ├── Core.kn
 │   │       └── Utils.kn
 │   └── lib/
-│       └── MyLib.klib    # Pre-compiled package (optional)
+│       └── MyLib.klib
 ```
 
 **package.knpkg.json**
+
 ```json
 {
   "kind": "package",
@@ -96,38 +102,64 @@ MyLib/
 ```
 
 Using the package:
+
 ```bash
-# Specify the package root directory
 kinal build main.kn --pkg-root ./packages -o myapp
 ```
 
 In code:
+
 ```kinal
-Get MyLib;       // Open the entire MyLib module
-Get ML By MyLib; // Access via alias ML
+Get MyLib;
+Get ML By MyLib;
 ```
 
 ## Project File (`kinal.knproj`)
 
-For larger projects, place `kinal.knproj` at the project root and keep build settings there.
+For larger projects, place `kinal.knproj` at the project root and declare the project boundary there.
 
-```
+```text
 myapp/
 ├── kinal.knproj
 ├── src/
+│   ├── Main.kn
+│   └── App/
+│       └── Greeter.kn
+├── tests/
 │   └── Main.kn
 └── kpkg/
 ```
 
 **kinal.knproj**
+
 ```kinal
 Project MyApp
 {
     DefaultProfile = "native";
 
+    Workspace
+    {
+        Ignore = ["out/**", ".git/**"];
+    }
+
     Packages
     {
         Roots = ["./kpkg"];
+    }
+
+    SourceSet "app"
+    {
+        Roots = ["src"];
+        Include = ["**/*.kn"];
+        Exclude = ["generated/**"];
+        RequireUnit = true;
+    }
+
+    SourceSet "tests"
+    {
+        Roots = ["tests"];
+        Include = ["**/*.kn"];
+        RequireUnit = true;
     }
 
     Profile "native"
@@ -135,7 +167,8 @@ Project MyApp
         Source
         {
             Entry = "src/Main.kn";
-            AutoDiscovery = true;
+            Sets = ["app"];
+            Mode = ReachableUnits;
         }
 
         Build
@@ -151,7 +184,8 @@ Project MyApp
         Source
         {
             Entry = "src/Main.kn";
-            AutoDiscovery = true;
+            Sets = ["app"];
+            Mode = ReachableUnits;
         }
 
         Build
@@ -165,58 +199,100 @@ Project MyApp
     Lsp
     {
         Profile = "native";
+        ExtraSets = ["tests"];
+        StrictProjectScope = true;
     }
 }
 ```
 
 Build with the default profile:
+
 ```bash
 kinal build --project .
 ```
 
 Select another profile explicitly:
+
 ```bash
 kinal vm build --project . --profile vm
 ```
 
-When `--project` points to a directory, `kinal` looks for `kinal.knproj` first. Legacy project manifests such as `kinal.pkg.json` are still accepted for compatibility.
+When `--project` points to a directory, `kinal` looks for `kinal.knproj` first. Legacy manifests such as `kinal.pkg.json` are still accepted for compatibility.
 
-### How `kinal.knproj` is organized
+### How `kinal.knproj` Is Organized
 
-The root form is:
+Root form:
 
 ```kinal
 Project MyApp
 {
     DefaultProfile = "native";
+    Workspace { ... }
+    SourceSet "app" { ... }
     Packages { ... }
     Profile "native" { ... }
     Lsp { ... }
 }
-kinal
+```
 
 - `Project <Name>` declares the project name.
 - `DefaultProfile` selects the profile used when `--profile` is omitted.
-- `Packages` defines package roots shared by all profiles.
+- `Workspace` defines paths or patterns tools should ignore.
+- `SourceSet "<name>"` defines which local source files belong to the project.
+- `Packages` defines shared package roots.
 - `Profile "<name>"` defines one build configuration.
-- `Lsp` tells the language server which profile to use for editor analysis.
+- `Lsp` selects the preferred editor-analysis profile and any extra source sets.
 
-### Top-level fields
+### Top-Level Fields
 
 #### `DefaultProfile`
 
 ```kinal
 DefaultProfile = "native";
-kinal
+```
 
-The profile named here is used by commands such as:
+Used by commands such as:
 
 ```bash
 kinal build --project .
 kinal run --project .
 ```
 
-If `DefaultProfile` is omitted, the first declared profile is used.
+If omitted, the first declared profile is used.
+
+#### `Workspace`
+
+```kinal
+Workspace
+{
+    Ignore = ["out/**", ".git/**"];
+}
+```
+
+- `Ignore`: patterns CLI/LSP should not treat as normal project content.
+
+#### `SourceSet`
+
+```kinal
+SourceSet "app"
+{
+    Roots = ["src"];
+    Files = ["tools/Generate.kn"];
+    Include = ["**/*.kn"];
+    Exclude = ["scratch/**"];
+    RequireUnit = true;
+}
+```
+
+`SourceSet` controls the local project graph.
+
+- `Roots`: directories to scan recursively.
+- `Files`: extra explicit files.
+- `Include`: allow-list patterns inside the set.
+- `Exclude`: deny-list patterns inside the set.
+- `RequireUnit`: whether files in the set are expected to declare `Unit`.
+
+In project mode, local membership comes from the active `SourceSet`s, not from broad folder guessing.
 
 #### `Packages`
 
@@ -226,9 +302,9 @@ Packages
     Roots = ["./kpkg", "../shared-packages"];
     OfficialRoots = ["../stdpkg"];
 }
-kinal
+```
 
-- `Roots`: local package roots, similar to passing `--pkg-root`.
+- `Roots`: local package roots, similar to `--pkg-root`.
 - `OfficialRoots`: official package roots, similar to `--stdpkg-root`.
 
 These roots apply to every profile unless a profile adds more package roots of its own.
@@ -239,18 +315,22 @@ These roots apply to every profile unless a profile adds more package roots of i
 Lsp
 {
     Profile = "native";
+    ExtraSets = ["tests"];
+    StrictProjectScope = true;
 }
-kinal
+```
 
-This is only for editor analysis. It does not force the CLI to build with that profile.
+- `Profile`: preferred profile for editor analysis.
+- `ExtraSets`: additional `SourceSet`s visible in the editor.
+- `StrictProjectScope`: keep LSP analysis inside the declared project graph instead of falling back to broad workspace scanning.
 
-Profile selection order in the LSP is:
+LSP profile selection order:
 
 1. `Lsp.Profile`
 2. `DefaultProfile`
 3. the first declared profile
 
-### `Profile` blocks
+### `Profile` Blocks
 
 A project can contain multiple profiles, for example native, VM, debug, release, or freestanding builds.
 
@@ -262,34 +342,43 @@ Profile "native"
     Link { ... }
     Packages { ... }
 }
-kinal
+```
 
 Each profile may contain these sections:
 
-- `Source`: source entry and source discovery behavior
+- `Source`: entry file and local source-graph mode
 - `Build`: backend, environment, output, target, and runtime-related settings
 - `Link`: linker and link input settings
 - `Packages`: extra package roots for this profile only
 
-### `Source` section
+### `Source` Section
 
 ```kinal
 Source
 {
     Entry = "src/Main.kn";
-    AutoDiscovery = true;
+    Sets = ["app"];
+    Mode = ReachableUnits;
 }
-kinal
+```
 
 - `Entry`: entry source file for the profile
-- `AutoDiscovery`: whether `kinal` should automatically discover additional `.kn` files near the entry
+- `Sets`: which `SourceSet`s are active for this profile
+- `Mode`: how local files are pulled into the build
 
-Typical values:
+Supported `Mode` values:
 
-- `true`: convenient for most apps and libraries
-- `false`: use when you want explicit file control
+- `FileOnly`: compile only the entry file
+- `EntryUnit`: compile the entry file plus other files that declare the same `Unit`
+- `ReachableUnits`: compile the entry unit, then pull local units referenced through `Get`
+- `AllSources`: compile every file in the active `SourceSet`s
 
-### `Build` section
+`AutoDiscovery` is still accepted for compatibility:
+
+- `AutoDiscovery = true` behaves like `Mode = ReachableUnits`
+- `AutoDiscovery = false` behaves like `Mode = FileOnly`
+
+### `Build` Section
 
 ```kinal
 Build
@@ -298,7 +387,7 @@ Build
     Environment = Hosted;
     Output = "out/myapp";
 }
-kinal
+```
 
 Supported fields:
 
@@ -317,14 +406,14 @@ Supported fields:
 
 ```kinal
 Backend = Native;
-kinal
+```
 
 Supported values:
 
 - `Native`: build a native executable or native output
-- `VM`: build KinalVM bytecode / VM-oriented output
+- `VM`: build KinalVM bytecode or VM-oriented output
 
-Use with the matching CLI flow:
+Typical CLI pairing:
 
 - `Native` profiles: `kinal build --project .`, `kinal run --project .`
 - `VM` profiles: `kinal vm build --project .`, `kinal vm run --project .`, `kinal vm pack --project .`
@@ -333,20 +422,18 @@ Use with the matching CLI flow:
 
 ```kinal
 Environment = Hosted;
-kinal
+```
 
 Supported values:
 
 - `Hosted`: normal operating-system process entry, usually `Main`
 - `Freestanding`: bare-metal or kernel-style entry, usually `KMain`
 
-Use `Freestanding` when building kernels, boot-stage code, or other non-hosted targets.
-
 #### `Runtime`
 
 ```kinal
 Runtime = None;
-kinal
+```
 
 Supported values:
 
@@ -354,26 +441,24 @@ Supported values:
 - `Alloc`
 - `GC`
 
-This is mainly relevant for freestanding/native configurations where you want to choose how much runtime support is linked in.
+This is mainly relevant for freestanding/native configurations.
 
 #### `Panic`
 
 ```kinal
 Panic = Trap;
-kinal
+```
 
 Supported values:
 
 - `Trap`
 - `Loop`
 
-This controls panic behavior for freestanding-style builds.
-
 #### `Target`
 
 ```kinal
 Target = "x86_64-linux-gnu";
-kinal
+```
 
 Use this to override the target triple for the profile.
 
@@ -381,29 +466,29 @@ Use this to override the target triple for the profile.
 
 ```kinal
 Output = "out/myapp";
-kinal
+```
 
-Sets the output path used when the CLI command does not provide `-o` or `--output`.
+Sets the output path used when the CLI command does not provide `-o`.
 
 #### `EntrySymbol`
 
 ```kinal
 EntrySymbol = "KernelMain";
-kinal
+```
 
-Overrides the default entry symbol inference.
+Overrides the default entry-symbol inference.
 
 Default behavior:
 
-- hosted native analysis/builds expect `Main`
-- freestanding native analysis/builds expect `KMain`
-- VM analysis/builds expect `Main`
+- hosted native builds expect `Main`
+- freestanding native builds expect `KMain`
+- VM builds expect `Main`
 
 #### `Linker`
 
 ```kinal
 Linker = LLD;
-kinal
+```
 
 Supported values:
 
@@ -415,19 +500,19 @@ Supported values:
 
 ```kinal
 LinkerPath = "C:/toolchains/lld-link.exe";
-kinal
+```
 
-Use this when the linker executable is not on `PATH` or you want a specific toolchain binary.
+Use this when the linker executable is not on `PATH`.
 
 #### `Superloop`
 
 ```kinal
 Superloop = true;
-kinal
+```
 
-This is for VM-oriented profiles and controls superloop mode in generated bytecode/bundles.
+This is for VM-oriented profiles and controls superloop mode in generated bytecode or bundles.
 
-### `Link` section
+### `Link` Section
 
 ```kinal
 Link
@@ -441,7 +526,7 @@ Link
     LinkArgs = ["--gc-sections"];
     LinkRoots = ["./deps"];
 }
-kinal
+```
 
 Supported fields:
 
@@ -454,9 +539,9 @@ Supported fields:
 - `LinkArgs`: raw linker arguments
 - `LinkRoots`: dependency roots expanded into target-specific search locations
 
-This section is the project-file equivalent of CLI options such as `-L`, `-l`, `--link-file`, `--link-root`, and `--link-arg`.
+This is the project-file equivalent of CLI options such as `-L`, `-l`, `--link-file`, `--link-root`, and `--link-arg`.
 
-### Profile-local `Packages`
+### Profile-Local `Packages`
 
 Profiles can add package roots on top of the global `Packages` block:
 
@@ -468,11 +553,11 @@ Profile "native"
         Roots = ["./native-packages"];
     }
 }
-kinal
+```
 
 Use this when one profile needs extra packages that other profiles do not use.
 
-### Example: hosted native + VM
+### Example: Hosted Native + VM
 
 ```kinal
 Project MyApp
@@ -484,12 +569,19 @@ Project MyApp
         Roots = ["./kpkg"];
     }
 
+    SourceSet "app"
+    {
+        Roots = ["src"];
+        Include = ["**/*.kn"];
+    }
+
     Profile "native"
     {
         Source
         {
             Entry = "src/Main.kn";
-            AutoDiscovery = true;
+            Sets = ["app"];
+            Mode = ReachableUnits;
         }
 
         Build
@@ -505,7 +597,8 @@ Project MyApp
         Source
         {
             Entry = "src/Main.kn";
-            AutoDiscovery = true;
+            Sets = ["app"];
+            Mode = ReachableUnits;
         }
 
         Build
@@ -521,21 +614,28 @@ Project MyApp
         Profile = "native";
     }
 }
-kinal
+```
 
-### Example: freestanding kernel profile
+### Example: Freestanding Kernel Profile
 
 ```kinal
 Project KinalOS
 {
     DefaultProfile = "kernel";
 
+    SourceSet "kernel"
+    {
+        Roots = ["src"];
+        Include = ["**/*.kn"];
+    }
+
     Profile "kernel"
     {
         Source
         {
             Entry = "src/kernel.kn";
-            AutoDiscovery = true;
+            Sets = ["kernel"];
+            Mode = ReachableUnits;
         }
 
         Build
@@ -563,11 +663,9 @@ Project KinalOS
         Profile = "kernel";
     }
 }
-kinal
+```
 
-This kind of profile is appropriate for kernels and other bare-metal targets.
-
-### Commands and profile compatibility
+### Commands and Profile Compatibility
 
 - `kinal build --project .` expects a `Native` profile
 - `kinal run --project .` expects a `Native` hosted profile
@@ -579,13 +677,14 @@ If you have both native and VM profiles, select the correct one with `--profile`
 
 ## Packaging and Distribution
 
-Package source code into a `.klib` (a compressed archive containing source code and metadata):
+Package source code into a `.klib`:
 
 ```bash
 kinal pkg build --manifest ./MyLib/1.0.0/ -o output/MyLib.klib
 ```
 
 Restore source from a `.klib`:
+
 ```bash
 kinal pkg unpack MyLib.klib -o ./recovered/
 ```

@@ -1,0 +1,6 @@
+Alias Print By IO.Console.PrintLine;
+
+Static Function int Main()
+{
+    Return 0;
+}

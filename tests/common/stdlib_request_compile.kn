@@ -1,17 +1,28 @@
 Unit Tests.StdRequestCompile;
 
 Get IO.Request;
+Get IO.Json;
 
 Static Function int Main()
 {
     IO.Request.Options options = New IO.Request.Options("http://127.0.0.1:8080/api/echo", IO.Request.Method.POST);
-    options.SetHeader("X-Test", "kinal");
-    options.SetBody("{\"hello\":true}", "application/json");
-    options.RemoveHeader("Missing");
-    options.SetTimeout(500);
+    dict payload = dict.Create();
+    payload.Set("hello", true);
+    payload.Set("name", "kinal");
+    options.Headers.Set("X-Test", "kinal");
+    options.BodyDict = payload;
+    dict.Remove(options.Headers, "Missing");
+    options.TimeoutMs = 500;
 
     IO.Request.Response response = IO.Request.Send(options);
     response.EnsureSuccess();
+    response.Headers.TryFetch("content-type", "");
+    response.BodyJson;
+    response.BodyObject;
+    response.BodyDict;
+
+    options.BodyObject = New IO.Json.Object(payload);
+    options.BodyJson = New IO.Json.Value(payload);
 
     IO.Request.Fetch("https://127.0.0.1:8443/", 250);
     IO.Request.Head("http://127.0.0.1:8080/health", 250);

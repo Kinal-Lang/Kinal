@@ -1,6 +1,7 @@
 Unit IO.Request;
 
 Get IO.Error;
+Get IO.Json;
 Get IO.Text;
 Get Native By IO.__Request;
 
@@ -97,42 +98,109 @@ Trusted Function bool __RequestHeaderNameEquals(string a, string b)
     Return IO.Text.ToLower(IO.Text.Trim(a)) == IO.Text.ToLower(IO.Text.Trim(b));
 }
 
-Public Class Header
-{
-    Public string Name;
-    Public string Value;
-
-    Public Constructor(string name, string value)
-    {
-        Name = __RequestNormalizeHeaderName(name);
-        Value = __RequestNormalizeHeaderValue(value);
-    }
-
-    Public Safe Function string ToLine()
-    {
-        Return Name + ": " + Value + "\r\n";
-    }
-}
-
 Public Class Response
 {
-    Public int StatusCode;
-    Public string StatusText;
-    Public string BodyText;
-    Public int BodyLength;
-    Public IO.Request.Header[] Headers;
+    Private int _StatusCode;
+    Private string _StatusText;
+    Private string _BodyText;
+    Private int _BodyLength;
+    Private dict _Headers;
 
     Public Constructor(int statusCode,
                        string statusText,
                        string bodyText,
                        int bodyLength,
-                       IO.Request.Header[] headers)
+                       dict headers)
     {
-        StatusCode = statusCode;
-        StatusText = statusText;
-        BodyText = bodyText;
-        BodyLength = bodyLength;
-        Headers = headers;
+        _StatusCode = statusCode;
+        _StatusText = statusText;
+        _BodyText = bodyText;
+        _BodyLength = bodyLength;
+        _Headers = headers;
+    }
+
+    Public Property int StatusCode
+    {
+        Get
+        {
+            Return _StatusCode;
+        }
+        Set
+        {
+            _StatusCode = value;
+        }
+    }
+
+    Public Property string StatusText
+    {
+        Get
+        {
+            Return _StatusText;
+        }
+        Set
+        {
+            _StatusText = value;
+        }
+    }
+
+    Public Property string BodyText
+    {
+        Get
+        {
+            Return _BodyText;
+        }
+        Set
+        {
+            _BodyText = value;
+        }
+    }
+
+    Public Trusted Property IO.Json.Value BodyJson
+    {
+        Get
+        {
+            Return New IO.Json.Value(IO.Json.ParseValue(BodyText));
+        }
+    }
+
+    Public Trusted Property IO.Json.Object BodyObject
+    {
+        Get
+        {
+            Return IO.Json.Wrap(BodyDict);
+        }
+    }
+
+    Public Trusted Property dict BodyDict
+    {
+        Get
+        {
+            Return IO.Json.Parse(BodyText);
+        }
+    }
+
+    Public Property int BodyLength
+    {
+        Get
+        {
+            Return _BodyLength;
+        }
+        Set
+        {
+            _BodyLength = value;
+        }
+    }
+
+    Public Property dict Headers
+    {
+        Get
+        {
+            Return _Headers;
+        }
+        Set
+        {
+            _Headers = value;
+        }
     }
 
     Public Safe Function bool IsSuccess()
@@ -143,16 +211,7 @@ Public Class Response
     Public Trusted Function string Header(string name)
     {
         string want = __RequestNormalizeHeaderName(name);
-
-        For (int i = 0; i < Headers.Length(); i++)
-        {
-            If (__RequestHeaderNameEquals(Headers[i].Name, want))
-            {
-                Return Headers[i].Value;
-            }
-        }
-
-        Return "";
+        Return [string](Headers.TryFetch(want, ""));
     }
 
     Public Trusted Property string ContentType
@@ -174,21 +233,168 @@ Public Class Response
 
 Public Class Options
 {
-    Public string Url;
-    Public IO.Request.Method Method;
-    Public string Body;
-    Public string ContentType;
-    Public int TimeoutMs;
-    Public IO.Request.Header[] Headers;
+    Private string _Url;
+    Private IO.Request.Method _Method;
+    Private string _Body;
+    Private string _ContentType;
+    Private int _TimeoutMs;
+    Private dict _Headers;
 
     Public Constructor(string url, IO.Request.Method method = IO.Request.Method.GET)
     {
-        Url = url;
-        Method = method;
-        Body = null;
-        ContentType = "text/plain; charset=utf-8";
-        TimeoutMs = 10000;
-        Headers = {};
+        _Url = url;
+        _Method = method;
+        _Body = null;
+        _ContentType = "text/plain; charset=utf-8";
+        _TimeoutMs = 10000;
+        _Headers = dict.Create();
+    }
+
+    Public Property string Url
+    {
+        Get
+        {
+            Return _Url;
+        }
+        Set
+        {
+            _Url = value;
+        }
+    }
+
+    Public Property IO.Request.Method Method
+    {
+        Get
+        {
+            Return _Method;
+        }
+        Set
+        {
+            _Method = value;
+        }
+    }
+
+    Public Property string Body
+    {
+        Get
+        {
+            Return _Body;
+        }
+        Set
+        {
+            _Body = value;
+        }
+    }
+
+    Public Trusted Property IO.Json.Value BodyJson
+    {
+        Get
+        {
+            If (_Body == null || _Body == "")
+            {
+                Return New IO.Json.Value();
+            }
+            Return New IO.Json.Value(IO.Json.ParseValue(_Body));
+        }
+        Set
+        {
+            If (value == null || value.Raw.IsNull())
+            {
+                _Body = null;
+            }
+            Else
+            {
+                _Body = IO.Json.Minify(IO.Json.Format(value.Raw, false));
+            }
+            _ContentType = "application/json; charset=utf-8";
+        }
+    }
+
+    Public Trusted Property IO.Json.Object BodyObject
+    {
+        Get
+        {
+            Return IO.Json.Wrap(BodyDict);
+        }
+        Set
+        {
+            If (value == null)
+            {
+                _Body = null;
+            }
+            Else
+            {
+                _Body = IO.Json.Minify(IO.Json.Format(value.Data, false));
+            }
+            _ContentType = "application/json; charset=utf-8";
+        }
+    }
+
+    Public Trusted Property dict BodyDict
+    {
+        Get
+        {
+            If (_Body == null || _Body == "")
+            {
+                Return dict.Create();
+            }
+            Return IO.Json.Parse(_Body);
+        }
+        Set
+        {
+            If (value == null)
+            {
+                _Body = null;
+            }
+            Else
+            {
+                _Body = IO.Json.Minify(IO.Json.Format(value, false));
+            }
+            _ContentType = "application/json; charset=utf-8";
+        }
+    }
+
+    Public Property string ContentType
+    {
+        Get
+        {
+            Return _ContentType;
+        }
+        Set
+        {
+            _ContentType = value;
+        }
+    }
+
+    Public Property int TimeoutMs
+    {
+        Get
+        {
+            Return _TimeoutMs;
+        }
+        Set
+        {
+            _TimeoutMs = value;
+        }
+    }
+
+    Public Property dict Headers
+    {
+        Get
+        {
+            Return _Headers;
+        }
+        Set
+        {
+            If (value == null)
+            {
+                _Headers = dict.Create();
+            }
+            Else
+            {
+                _Headers = value;
+            }
+        }
     }
 
     Public Trusted Function IO.Request.Options SetMethod(IO.Request.Method method)
@@ -218,71 +424,29 @@ Public Class Options
     {
         string cleanName = __RequestNormalizeHeaderName(name);
         string cleanValue = __RequestNormalizeHeaderValue(value);
-        IO.Request.Header[] next = {};
-        bool replaced = false;
-
-        For (int i = 0; i < Headers.Length(); i++)
-        {
-            IO.Request.Header current = Headers[i];
-            If (__RequestHeaderNameEquals(current.Name, cleanName))
-            {
-                If (!replaced)
-                {
-                    next = next.Add(New IO.Request.Header(cleanName, cleanValue));
-                    replaced = true;
-                }
-            }
-            Else
-            {
-                next = next.Add(current);
-            }
-        }
-
-        If (!replaced)
-        {
-            next = next.Add(New IO.Request.Header(cleanName, cleanValue));
-        }
-
-        Headers = next;
+        Headers.Set(cleanName, cleanValue);
         Return This;
     }
 
     Public Trusted Function IO.Request.Options RemoveHeader(string name)
     {
         string want = __RequestNormalizeHeaderName(name);
-        IO.Request.Header[] next = {};
-
-        For (int i = 0; i < Headers.Length(); i++)
-        {
-            IO.Request.Header current = Headers[i];
-            If (!__RequestHeaderNameEquals(current.Name, want))
-            {
-                next = next.Add(current);
-            }
-        }
-
-        Headers = next;
+        dict.Remove(Headers, want);
         Return This;
     }
 
     Public Trusted Function string HeaderBlock()
     {
         string text = "";
-        bool hasUserAgent = false;
-        bool hasContentType = false;
+        bool hasUserAgent = dict.Contains(Headers, "User-Agent");
+        bool hasContentType = dict.Contains(Headers, "Content-Type");
+        list keys = Headers.Keys();
 
-        For (int i = 0; i < Headers.Length(); i++)
+        For (int i = 0; i < keys.Count(); i++)
         {
-            IO.Request.Header current = Headers[i];
-            If (__RequestHeaderNameEquals(current.Name, "User-Agent"))
-            {
-                hasUserAgent = true;
-            }
-            If (__RequestHeaderNameEquals(current.Name, "Content-Type"))
-            {
-                hasContentType = true;
-            }
-            text += current.ToLine();
+            string key = [string](keys.Fetch(i));
+            string value = __RequestNormalizeHeaderValue([string](Headers.Fetch(key)));
+            text += __RequestNormalizeHeaderName(key) + ": " + value + "\r\n";
         }
 
         If (!hasUserAgent)
@@ -313,15 +477,15 @@ Public Class Options
 
 Trusted Function IO.Request.Response __RequestBuildResponse(byte* handle)
 {
-    IO.Request.Header[] headers = {};
+    dict headers = dict.Create();
     int headerCount = Native.ResponseHeaderCount(handle);
 
     For (int i = 0; i < headerCount; i++)
     {
-        headers = headers.Add(New IO.Request.Header(
-            Native.ResponseHeaderNameAt(handle, i),
-            Native.ResponseHeaderValueAt(handle, i)
-        ));
+        headers.Set(
+            __RequestNormalizeHeaderName(Native.ResponseHeaderNameAt(handle, i)),
+            __RequestNormalizeHeaderValue(Native.ResponseHeaderValueAt(handle, i))
+        );
     }
 
     Return New IO.Request.Response(

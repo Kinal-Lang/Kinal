@@ -152,7 +152,14 @@ typedef enum
     KNC_OP_BITOR_INT_IMM = 126,
     KNC_OP_BITXOR_INT_IMM = 127,
     KNC_OP_SHL_INT_IMM = 128,
-    KNC_OP_SHR_INT_IMM = 129
+    KNC_OP_SHR_INT_IMM = 129,
+    KNC_OP_UDIV_INT = 130,
+    KNC_OP_UREM_INT = 131,
+    KNC_OP_ULT_INT = 132,
+    KNC_OP_ULE_INT = 133,
+    KNC_OP_UGT_INT = 134,
+    KNC_OP_UGE_INT = 135,
+    KNC_OP_LSHR_INT = 136
 } KncOpCode;
 
 typedef enum
@@ -658,6 +665,7 @@ static int type_is_vm_value(Type t)
     case TY_PTR:
     case TY_CLASS:
     case TY_STRUCT:
+    case TY_PACKAGE:
     case TY_ANY:
     case TY_NULL:
     case TY_VOID:
@@ -680,11 +688,22 @@ static int value_kind_from_type(Type t)
     case TY_BOOL:   return KNC_VALUE_BOOL;
     case TY_STRING: return KNC_VALUE_STRING;
     case TY_ARRAY:  return KNC_VALUE_ARRAY;
+    case TY_PACKAGE:return KNC_VALUE_ARRAY;
     case TY_PTR:    return KNC_VALUE_POINTER;
     case TY_CLASS:
     case TY_STRUCT: return KNC_VALUE_OBJECT;
     default:        return KNC_VALUE_NULL;
     }
+}
+
+static int knc_binary_has_signed_int_comparison_plan(const Expr *e)
+{
+    if (!e || e->kind != EXPR_BINARY)
+        return 0;
+    return e->resolved_binary.kind == KN_BINARY_LOWER_NUMERIC_COMPARISON &&
+           !e->resolved_binary.is_unsigned &&
+           value_kind_from_type(e->resolved_binary.lhs_coercion) == KNC_VALUE_INT &&
+           value_kind_from_type(e->resolved_binary.rhs_coercion) == KNC_VALUE_INT;
 }
 
 static char *knc_dup_text(const char *s)
@@ -729,6 +748,7 @@ static const char *knc_base_type_name(TypeKind k)
     case TY_STRING: return "string";
     case TY_ANY: return "any";
     case TY_NULL: return "null";
+    case TY_PACKAGE: return "Package";
     default: return "unknown";
     }
 }
@@ -737,10 +757,21 @@ static void knc_append_type_text(char *buf, size_t cap, size_t *off, Type t)
 {
     if (t.kind == TY_ARRAY)
     {
-        Type elem = type_make(t.elem);
-        elem.name = t.name;
+        Type elem = type_immediate_elem(t);
         knc_append_type_text(buf, cap, off, elem);
         kn_append(buf, cap, off, "[]");
+        return;
+    }
+    if (t.kind == TY_PACKAGE)
+    {
+        kn_append(buf, cap, off, "<");
+        for (int i = 0; i < t.package_count; i++)
+        {
+            if (i > 0)
+                kn_append(buf, cap, off, ",");
+            knc_append_type_text(buf, cap, off, t.package_elems[i]);
+        }
+        kn_append(buf, cap, off, ">");
         return;
     }
     if (t.kind == TY_PTR)
@@ -774,10 +805,16 @@ static int knc_type_equal(Type a, Type b)
     if (a.kind != b.kind) return 0;
     if (a.kind == TY_ARRAY)
     {
-        if (a.elem != b.elem || a.array_len != b.array_len) return 0;
-        if ((a.elem == TY_CLASS || a.elem == TY_STRUCT || a.elem == TY_ENUM) && a.name && b.name)
-            return kn_strcmp(a.name, b.name) == 0;
-        return a.elem == b.elem;
+        if (a.array_len != b.array_len) return 0;
+        return knc_type_equal(type_immediate_elem(a), type_immediate_elem(b));
+    }
+    if (a.kind == TY_PACKAGE)
+    {
+        if (a.package_count != b.package_count) return 0;
+        for (int i = 0; i < a.package_count; i++)
+            if (!knc_type_equal(a.package_elems[i], b.package_elems[i]))
+                return 0;
+        return 1;
     }
     if (a.kind == TY_PTR)
     {
@@ -1111,11 +1148,9 @@ static int emit_condition_false_branch(KncFuncState *st, Expr *cond)
     if (!st || !cond)
         return -1;
 
-    if (cond->kind == EXPR_BINARY &&
+    if (knc_binary_has_signed_int_comparison_plan(cond) &&
         cond->v.binary.left &&
-        cond->v.binary.right &&
-        type_is_integerish(cond->v.binary.left->type) &&
-        type_is_integerish(cond->v.binary.right->type))
+        cond->v.binary.right)
     {
         switch (cond->v.binary.op)
         {
@@ -1290,14 +1325,6 @@ static int program_find_method_function(KncProgram *program, const char *owner_q
     return program->types.items[type_index].direct_methods[method_index];
 }
 
-static int program_method_is_virtual(KncProgram *program, const char *owner_qname, int method_index)
-{
-    ClassDecl *c = program_find_class(program, owner_qname);
-    if (!c || method_index < 0 || method_index >= c->methods.count)
-        return 0;
-    return c->methods.items[method_index].is_virtual || c->methods.items[method_index].is_override || c->methods.items[method_index].is_abstract;
-}
-
 static int capturebuf_find_name(const CaptureBuf *buf, const char *name)
 {
     if (!buf || !name)
@@ -1337,69 +1364,7 @@ static int block_record_slot(KncFuncState *st, int ip)
 
 static int map_builtin_id(int builtin_id)
 {
-    switch ((KnBuiltinKind)builtin_id)
-    {
-    case KN_BUILTIN_IO_CONSOLE_PRINTLINE:      return 0;
-    case KN_BUILTIN_IO_CONSOLE_PRINT:          return 1;
-    case KN_BUILTIN_IO_CONSOLE_READLINE:       return 2;
-    case KN_BUILTIN_IO_CONSOLE_WRITE:          return 3;
-    case KN_BUILTIN_IO_CONSOLE_WRITELINE:      return 4;
-    case KN_BUILTIN_IO_CONSOLE_PRINTINT:       return 5;
-    case KN_BUILTIN_IO_CONSOLE_PRINTBOOL:      return 6;
-    case KN_BUILTIN_IO_CONSOLE_PRINTCHAR:      return 7;
-    case KN_BUILTIN_IO_CONSOLE_PRINTLINEINT:   return 8;
-    case KN_BUILTIN_IO_CONSOLE_PRINTLINEBOOL:  return 9;
-    case KN_BUILTIN_IO_CONSOLE_PRINTLINECHAR:  return 10;
-    case KN_BUILTIN_IO_CONSOLE_WRITEINT:       return 11;
-    case KN_BUILTIN_IO_CONSOLE_WRITEBOOL:      return 12;
-    case KN_BUILTIN_IO_CONSOLE_WRITECHAR:      return 13;
-    case KN_BUILTIN_IO_TIME_NOW:               return 14;
-    case KN_BUILTIN_IO_TIME_GETTICK:           return 15;
-    case KN_BUILTIN_IO_TIME_SLEEP:             return 16;
-    case KN_BUILTIN_IO_TIME_NANOTICK:          return 17;
-    case KN_BUILTIN_IO_TIME_FORMAT:            return 18;
-    case KN_BUILTIN_IO_STRING_LENGTH:          return 19;
-    case KN_BUILTIN_IO_STRING_CONCAT:          return 20;
-    case KN_BUILTIN_IO_STRING_EQUALS:          return 21;
-    case KN_BUILTIN_IO_STRING_TOCHARS:         return 22;
-    case KN_BUILTIN_IO_FILE_CREATE:            return 85;
-    case KN_BUILTIN_IO_FILE_TOUCH:             return 86;
-    case KN_BUILTIN_IO_FILE_READ_ALL_TEXT:     return 87;
-    case KN_BUILTIN_IO_FILE_READ_FIRST_LINE:   return 88;
-    case KN_BUILTIN_IO_FILE_WRITE_ALL_TEXT:    return 89;
-    case KN_BUILTIN_IO_FILE_APPEND_ALL_TEXT:   return 90;
-    case KN_BUILTIN_IO_FILE_APPEND_LINE:       return 91;
-    case KN_BUILTIN_IO_FILE_DELETE:            return 92;
-    case KN_BUILTIN_IO_FILE_DELETE_IF_EXISTS:  return 93;
-    case KN_BUILTIN_IO_FILE_SIZE:              return 94;
-    case KN_BUILTIN_IO_FILE_IS_EMPTY:          return 95;
-    case KN_BUILTIN_IO_FILE_COPY:              return 96;
-    case KN_BUILTIN_IO_FILE_MOVE:              return 97;
-    case KN_BUILTIN_IO_FILE_READ_OR_DEFAULT:   return 98;
-    case KN_BUILTIN_IO_FILE_READ_IF_EXISTS:    return 99;
-    case KN_BUILTIN_IO_FILE_READ_OR:           return 100;
-    case KN_BUILTIN_IO_FILE_REPLACE_TEXT:      return 103;
-    case KN_BUILTIN_IO_ANY_ISNULL:             return 130;
-    case KN_BUILTIN_IO_ANY_TOSTRING:           return 131;
-    case KN_BUILTIN_IO_ANY_EQUALS:             return 132;
-    case KN_BUILTIN_IO_ANY_TYPENAME:           return 134;
-    case KN_BUILTIN_IO_ANY_ISNUMBER:           return 135;
-    case KN_BUILTIN_IO_ANY_ISPOINTER:          return 136;
-    case KN_BUILTIN_IO_ANY_ISINT:              return 137;
-    case KN_BUILTIN_IO_ANY_ISFLOAT:            return 138;
-    case KN_BUILTIN_IO_ANY_ISSTRING:           return 139;
-    case KN_BUILTIN_IO_ANY_ISBOOL:             return 140;
-    case KN_BUILTIN_IO_ANY_ISCHAR:             return 141;
-    case KN_BUILTIN_IO_ANY_ISOBJECT:           return 142;
-    case KN_BUILTIN_IO_SYSTEM_FILE_EXISTS:     return 145;
-    case KN_BUILTIN_IO_TEXT_CONTAINS:          return 146;
-    case KN_BUILTIN_IO_ERROR_LASTTRACE:        return 147;
-    case KN_BUILTIN_IO_ERROR_HAS:              return 148;
-    case KN_BUILTIN_IO_ERROR_CLEAR:            return 149;
-    case KN_BUILTIN_IO_ERROR_CURRENT:          return 150;
-    case KN_BUILTIN_IO_GC_COLLECT:            return 151;
-    default:                                   return -1;
-    }
+    return kn_builtin_vm_id((KnBuiltinKind)builtin_id);
 }
 
 static int map_runtime_extern_symbol(const char *name)
@@ -1468,9 +1433,8 @@ static void emit_default_value(KncFuncState *st, int reg, Type type)
     }
     if (type.kind == TY_ARRAY)
     {
-        Type elem_type = type_make(type.elem);
+        Type elem_type = type_immediate_elem(type);
         int len_reg = alloc_reg(st);
-        elem_type.name = type.name;
         emit_u8(st->code, KNC_OP_LOAD_INT);
         emit_u8(st->code, len_reg);
         emit_u16(st->code, program_add_int(st->program, type.array_len >= 0 ? (int)type.array_len : 0));
@@ -1478,6 +1442,31 @@ static void emit_default_value(KncFuncState *st, int reg, Type type)
         emit_u8(st->code, reg);
         emit_u8(st->code, len_reg);
         emit_u8(st->code, value_kind_from_type(elem_type));
+        return;
+    }
+    if (type.kind == TY_PACKAGE)
+    {
+        int len_reg = alloc_reg(st);
+        emit_u8(st->code, KNC_OP_LOAD_INT);
+        emit_u8(st->code, len_reg);
+        emit_u16(st->code, program_add_int(st->program, type.package_count));
+        emit_u8(st->code, KNC_OP_NEW_ARRAY);
+        emit_u8(st->code, reg);
+        emit_u8(st->code, len_reg);
+        emit_u8(st->code, KNC_VALUE_NULL);
+        for (int i = 0; i < type.package_count; i++)
+        {
+            int idx_reg = alloc_reg(st);
+            int item_reg = alloc_reg(st);
+            emit_u8(st->code, KNC_OP_LOAD_INT);
+            emit_u8(st->code, idx_reg);
+            emit_u16(st->code, program_add_int(st->program, i));
+            emit_default_value(st, item_reg, type.package_elems[i]);
+            emit_u8(st->code, KNC_OP_STORE_INDEX);
+            emit_u8(st->code, reg);
+            emit_u8(st->code, idx_reg);
+            emit_u8(st->code, item_reg);
+        }
         return;
     }
     if (type.kind == TY_STRUCT)
@@ -1769,6 +1758,8 @@ static int knc_match_loop_cond(KncFuncState *st,
         return 0;
     if (cond->kind != EXPR_BINARY || !cond->v.binary.left || !cond->v.binary.right)
         return 0;
+    if (!knc_binary_has_signed_int_comparison_plan(cond))
+        return 0;
 
     cmp_op = cond->v.binary.op;
     if (cond->v.binary.left->kind == EXPR_VAR && kn_strcmp(cond->v.binary.left->v.var.name, local->name) == 0)
@@ -1801,8 +1792,7 @@ static int knc_local_is_raw_int_array(KncLocal *local)
     if (!local || local->storage != KNC_LOCAL_VALUE || local->type.kind != TY_ARRAY)
         return 0;
 
-    elem_type = type_make(local->type.elem);
-    elem_type.name = local->type.name;
+    elem_type = type_immediate_elem(local->type);
     return value_kind_from_type(elem_type) == KNC_VALUE_INT;
 }
 
@@ -1972,6 +1962,8 @@ static int knc_match_superloop_inc_cond(KncFuncState *st,
     if (!st || !cond || !counter_local || !out_limit || !out_inclusive)
         return 0;
     if (cond->kind != EXPR_BINARY || !cond->v.binary.left || !cond->v.binary.right)
+        return 0;
+    if (!knc_binary_has_signed_int_comparison_plan(cond))
         return 0;
 
     cmp_op = cond->v.binary.op;
@@ -3536,6 +3528,716 @@ static int compile_store_ptr(KncFuncState *st, Expr *target, KncValue value)
     return value.reg;
 }
 
+static KncValue compile_resolved_call(KncFuncState *st, Expr *expr)
+{
+    KncValue out;
+    out.reg = 0;
+    out.type = expr ? expr->type : type_make(TY_UNKNOWN);
+    if (expr->resolved_call.kind == KN_CALL_TARGET_BUILTIN)
+        return compile_builtin_invoke(st, expr->type, expr->resolved_call.builtin_id,
+                                      0, 0, &expr->v.call.args);
+    if (expr->resolved_call.kind == KN_CALL_TARGET_FUNCTION ||
+        expr->resolved_call.kind == KN_CALL_TARGET_DELEGATE_KINAL ||
+        expr->resolved_call.kind == KN_CALL_TARGET_DELEGATE_C)
+        return compile_direct_call(st, expr, expr->resolved_call.symbol,
+                                   expr->type, &expr->v.call.args);
+    knc_diag_expr(st, expr, "Typed call target was not resolved before KNC lowering");
+    return out;
+}
+
+static KncValue compile_resolved_member_call(KncFuncState *st, Expr *expr)
+{
+    KncValue out;
+    out.reg = 0;
+    out.type = expr ? expr->type : type_make(TY_UNKNOWN);
+    KnResolvedCall *target = &expr->resolved_call;
+    if (target->kind == KN_CALL_TARGET_BUILTIN &&
+        (target->builtin_id == KN_BUILTIN_BLOCK_RUN ||
+         target->builtin_id == KN_BUILTIN_BLOCK_JUMP ||
+         target->builtin_id == KN_BUILTIN_BLOCK_RUN_UNTIL ||
+         target->builtin_id == KN_BUILTIN_BLOCK_JUMP_AND_RUN_UNTIL))
+        return compile_block_invoke(st, expr, expr->v.member_call.recv,
+                                    target->builtin_id, &expr->v.member_call.args);
+    if (target->kind == KN_CALL_TARGET_BUILTIN && target->builtin_id == KN_BUILTIN_ARRAY_LENGTH)
+    {
+        KncValue recv = compile_expr(st, expr->v.member_call.recv);
+        if (kn_diag_error_count() > 0)
+            return out;
+        out.reg = alloc_reg(st);
+        emit_u8(st->code, KNC_OP_ARRAY_LENGTH);
+        emit_u8(st->code, out.reg);
+        emit_u8(st->code, recv.reg);
+        return out;
+    }
+    if (target->kind == KN_CALL_TARGET_BUILTIN && target->builtin_id == KN_BUILTIN_ARRAY_ADD)
+    {
+        KncValue recv = compile_expr(st, expr->v.member_call.recv);
+        KncValue value;
+        if (kn_diag_error_count() > 0)
+            return out;
+        if (expr->v.member_call.args.count != 1)
+        {
+            knc_diag_expr(st, expr, "Bootstrap KNC emitter requires exactly one array Add argument");
+            return out;
+        }
+        value = compile_expr(st, expr->v.member_call.args.items[0]);
+        if (kn_diag_error_count() > 0)
+            return out;
+        out.reg = alloc_reg(st);
+        emit_u8(st->code, KNC_OP_ARRAY_ADD);
+        emit_u8(st->code, out.reg);
+        emit_u8(st->code, recv.reg);
+        emit_u8(st->code, value.reg);
+        return out;
+    }
+    if (target->kind == KN_CALL_TARGET_BUILTIN)
+    {
+        int has_receiver = expr->v.member_call.recv && target->has_receiver;
+        return compile_builtin_invoke(st, expr->type, target->builtin_id,
+                                      expr->v.member_call.recv, has_receiver,
+                                      &expr->v.member_call.args);
+    }
+    if (target->kind == KN_CALL_TARGET_FUNCTION ||
+        target->kind == KN_CALL_TARGET_DELEGATE_KINAL ||
+        target->kind == KN_CALL_TARGET_DELEGATE_C)
+        return compile_direct_call(st, expr, target->symbol, expr->type,
+                                   &expr->v.member_call.args);
+    if (target->kind == KN_CALL_TARGET_STATIC_METHOD)
+    {
+        int function_index = program_find_method_function(st->program, target->owner,
+                                                          target->method_index);
+        return compile_call_func_index(st, expr, function_index, expr->type,
+                                       &expr->v.member_call.args);
+    }
+    if (target->kind == KN_CALL_TARGET_DIRECT_METHOD ||
+        target->kind == KN_CALL_TARGET_VIRTUAL_METHOD ||
+        target->kind == KN_CALL_TARGET_INTERFACE_METHOD)
+    {
+        KncValue recv = compile_expr(st, expr->v.member_call.recv);
+        if (kn_diag_error_count() > 0)
+            return out;
+        if (target->kind == KN_CALL_TARGET_DIRECT_METHOD)
+        {
+            int function_index = program_find_method_function(st->program, target->owner,
+                                                              target->method_index);
+            return compile_direct_method_call(st, expr, function_index, expr->type,
+                                              recv, &expr->v.member_call.args);
+        }
+        return compile_virtual_method_call(st, expr, target->method_index,
+                                           expr->type, recv, &expr->v.member_call.args);
+    }
+    knc_diag_expr(st, expr, "This member call is not supported by the bootstrap KNC emitter yet");
+    return out;
+}
+
+static int knc_unsigned_integer_source_bits(Type type)
+{
+    switch (type.kind)
+    {
+    case TY_BYTE:
+    case TY_U8: return 8;
+    case TY_U16: return 16;
+    case TY_U32: return 32;
+    case TY_U64:
+    case TY_USIZE: return 64;
+    default: return 0;
+    }
+}
+
+static KncValue knc_normalize_unsigned_integer_operand(KncFuncState *st, KncValue value)
+{
+    int bits = knc_unsigned_integer_source_bits(value.type);
+    if (bits == 0 || value.reg < 0)
+        return value;
+
+    int zero_reg = alloc_reg(st);
+    KncValue out = value;
+    out.reg = alloc_reg(st);
+    emit_u8(st->code, KNC_OP_LOAD_INT);
+    emit_u8(st->code, zero_reg);
+    emit_u16(st->code, program_add_int(st->program, 0));
+    // Logical shift by zero canonicalizes the VM's shared signed Int register
+    // to the source unsigned width before a wider HIR coercion is applied.
+    emit_u8(st->code, KNC_OP_LSHR_INT);
+    emit_u8(st->code, out.reg);
+    emit_u8(st->code, value.reg);
+    emit_u8(st->code, zero_reg);
+    emit_u8(st->code, bits);
+    return out;
+}
+
+static KncValue knc_coerce_binary_numeric_operand(KncFuncState *st, Expr *site,
+                                                   KncValue value, Type target)
+{
+    value = knc_normalize_unsigned_integer_operand(st, value);
+    KncValue out = value;
+    int source_reg = value.reg;
+
+    if (type_is_floatish(target))
+    {
+        if (type_is_floatish(value.type))
+        {
+            out.type = target;
+            return out;
+        }
+        if (value.type.kind == TY_CHAR)
+        {
+            source_reg = alloc_reg(st);
+            emit_u8(st->code, KNC_OP_CHAR_TO_INT);
+            emit_u8(st->code, source_reg);
+            emit_u8(st->code, value.reg);
+        }
+        else if (!type_is_integerish(value.type))
+        {
+            knc_diag_expr(st, site, "Internal KNC HIR error: non-numeric operand in numeric binary plan");
+            out.reg = -1;
+            return out;
+        }
+        out.reg = alloc_reg(st);
+        out.type = target;
+        emit_u8(st->code, KNC_OP_INT_TO_FLOAT);
+        emit_u8(st->code, out.reg);
+        emit_u8(st->code, source_reg);
+        return out;
+    }
+
+    if (!type_is_integerish(target))
+    {
+        knc_diag_expr(st, site, "Internal KNC HIR error: invalid integer coercion in binary plan");
+        out.reg = -1;
+        return out;
+    }
+    if (type_is_floatish(value.type))
+    {
+        out.reg = alloc_reg(st);
+        emit_u8(st->code, KNC_OP_FLOAT_TO_INT);
+        emit_u8(st->code, out.reg);
+        emit_u8(st->code, value.reg);
+    }
+    else if (value.type.kind == TY_CHAR)
+    {
+        out.reg = alloc_reg(st);
+        emit_u8(st->code, KNC_OP_CHAR_TO_INT);
+        emit_u8(st->code, out.reg);
+        emit_u8(st->code, value.reg);
+    }
+    else if (!type_is_integerish(value.type))
+    {
+        knc_diag_expr(st, site, "Internal KNC HIR error: non-numeric operand in integer binary plan");
+        out.reg = -1;
+        return out;
+    }
+    out.type = type_make(TY_INT); // all integer widths share the VM Int register kind
+    return out;
+}
+
+static KncValue knc_finish_binary_arithmetic(KncFuncState *st, Expr *e, KncValue raw)
+{
+    KncValue out = raw;
+    out.type = e->type;
+    if (e->type.kind != TY_CHAR)
+        return out;
+
+    out.reg = alloc_reg(st);
+    emit_u8(st->code, KNC_OP_INT_TO_CHAR);
+    emit_u8(st->code, out.reg);
+    emit_u8(st->code, raw.reg);
+    return out;
+}
+
+static int knc_binary_integer_bits_valid(int bits)
+{
+    return bits == 8 || bits == 16 || bits == 32 || bits == 64;
+}
+
+static void emit_width_binary_op(KncFuncState *st, KncOpCode opcode,
+                                 int dst_reg, int lhs_reg, int rhs_reg,
+                                 int integer_bits)
+{
+    emit_u8(st->code, opcode);
+    emit_u8(st->code, dst_reg);
+    emit_u8(st->code, lhs_reg);
+    emit_u8(st->code, rhs_reg);
+    emit_u8(st->code, integer_bits);
+}
+
+static KncValue compile_binary_expr(KncFuncState *st, Expr *e)
+{
+    KncValue out;
+    KncValue lhs;
+    KncValue rhs;
+    KnBinaryLoweringKind lowering;
+    TokenType binary_op;
+    int numeric_coercion = 0;
+    int use_float = 0;
+    int rhs_int_imm_index = -1;
+    int use_rhs_int_imm = 0;
+
+    out.reg = -1;
+    out.type = e ? e->type : type_make(TY_UNKNOWN);
+    if (!e)
+    {
+        knc_diag_expr(st, e, "Internal KNC HIR error: missing binary expression");
+        return out;
+    }
+
+    lowering = e->resolved_binary.kind;
+    binary_op = (TokenType)e->v.binary.op;
+    switch (lowering)
+    {
+    case KN_BINARY_LOWER_UNRESOLVED:
+        knc_diag_expr(st, e, "Internal KNC HIR error: unresolved binary lowering plan");
+        return out;
+    case KN_BINARY_LOWER_LOGICAL_SHORT_CIRCUIT:
+        if (binary_op != TOK_ANDAND && binary_op != TOK_OROR)
+        {
+            knc_diag_expr(st, e, "Internal KNC HIR error: logical plan has a non-logical operator");
+            return out;
+        }
+        return compile_short_circuit(st, e);
+    case KN_BINARY_LOWER_NUMERIC_ARITHMETIC:
+        if (binary_op != TOK_PLUS && binary_op != TOK_MINUS && binary_op != TOK_STAR &&
+            binary_op != TOK_SLASH && binary_op != TOK_PERCENT)
+        {
+            knc_diag_expr(st, e, "Internal KNC HIR error: arithmetic plan has a non-arithmetic operator");
+            return out;
+        }
+        numeric_coercion = 1;
+        break;
+    case KN_BINARY_LOWER_BITWISE:
+        if (binary_op != TOK_AMP && binary_op != TOK_BITOR && binary_op != TOK_XOR &&
+            binary_op != TOK_SHL && binary_op != TOK_SHR)
+        {
+            knc_diag_expr(st, e, "Internal KNC HIR error: bitwise plan has a non-bitwise operator");
+            return out;
+        }
+        numeric_coercion = 1;
+        break;
+    case KN_BINARY_LOWER_NUMERIC_COMPARISON:
+        if (binary_op != TOK_EQ && binary_op != TOK_NE && binary_op != TOK_LT &&
+            binary_op != TOK_LE && binary_op != TOK_GT && binary_op != TOK_GE)
+        {
+            knc_diag_expr(st, e, "Internal KNC HIR error: comparison plan has a non-comparison operator");
+            return out;
+        }
+        numeric_coercion = 1;
+        break;
+    case KN_BINARY_LOWER_STRING_CONCAT:
+        if (binary_op != TOK_PLUS)
+        {
+            knc_diag_expr(st, e, "Internal KNC HIR error: string concatenation plan has a non-add operator");
+            return out;
+        }
+        break;
+    case KN_BINARY_LOWER_POINTER_ARITHMETIC:
+        if ((binary_op != TOK_PLUS && binary_op != TOK_MINUS) ||
+            (binary_op == TOK_MINUS && e->resolved_binary.pointer_side != KN_BINARY_POINTER_LHS) ||
+            e->resolved_binary.pointer_side == KN_BINARY_POINTER_NONE)
+        {
+            knc_diag_expr(st, e, "Internal KNC HIR error: invalid pointer arithmetic plan");
+            return out;
+        }
+        break;
+    case KN_BINARY_LOWER_STRING_EQUALITY:
+    case KN_BINARY_LOWER_REFERENCE_EQUALITY:
+    case KN_BINARY_LOWER_SCALAR_EQUALITY:
+        if (binary_op != TOK_EQ && binary_op != TOK_NE)
+        {
+            knc_diag_expr(st, e, "Internal KNC HIR error: equality plan has a non-equality operator");
+            return out;
+        }
+        break;
+    default:
+        knc_diag_expr(st, e, "Internal KNC HIR error: unknown binary lowering plan");
+        return out;
+    }
+
+    if (numeric_coercion)
+    {
+        int lhs_float = type_is_floatish(e->resolved_binary.lhs_coercion);
+        int rhs_float = type_is_floatish(e->resolved_binary.rhs_coercion);
+        if (lhs_float != rhs_float)
+        {
+            knc_diag_expr(st, e, "Internal KNC HIR error: binary operands use different VM coercion kinds");
+            return out;
+        }
+        use_float = lhs_float;
+        if (use_float && e->resolved_binary.integer_bits != 0)
+        {
+            knc_diag_expr(st, e, "Internal KNC HIR error: floating-point binary plan has an integer width");
+            return out;
+        }
+        if (!use_float && !knc_binary_integer_bits_valid(e->resolved_binary.integer_bits))
+        {
+            knc_diag_expr(st, e, "Internal KNC HIR error: integer binary plan has an invalid width");
+            return out;
+        }
+        if (binary_op == TOK_PERCENT && use_float)
+        {
+            knc_diag_expr(st, e, "Floating-point '%' is not supported by the bootstrap KNC emitter yet");
+            return out;
+        }
+    }
+
+    lhs = compile_expr(st, e->v.binary.left);
+    if (kn_diag_error_count() > 0)
+        return out;
+    if (numeric_coercion)
+        lhs = knc_coerce_binary_numeric_operand(st, e, lhs, e->resolved_binary.lhs_coercion);
+
+    if (numeric_coercion && !use_float &&
+        value_kind_from_type(e->resolved_binary.rhs_coercion) == KNC_VALUE_INT)
+    {
+        int immediate_allowed = 0;
+        if (lowering == KN_BINARY_LOWER_NUMERIC_ARITHMETIC)
+            immediate_allowed = binary_op == TOK_PLUS || binary_op == TOK_MINUS ||
+                                binary_op == TOK_STAR ||
+                                (binary_op == TOK_SLASH && !e->resolved_binary.is_unsigned);
+        else if (lowering == KN_BINARY_LOWER_BITWISE)
+            immediate_allowed = !(binary_op == TOK_SHR && e->resolved_binary.is_unsigned);
+        else if (lowering == KN_BINARY_LOWER_NUMERIC_COMPARISON)
+            immediate_allowed = !e->resolved_binary.is_unsigned &&
+                                (binary_op == TOK_LT || binary_op == TOK_LE ||
+                                 binary_op == TOK_GT || binary_op == TOK_GE);
+        if (immediate_allowed)
+            use_rhs_int_imm = expr_int_immediate_index(st, e->v.binary.right, &rhs_int_imm_index);
+    }
+
+    rhs.reg = -1;
+    rhs.type = e->v.binary.right ? e->v.binary.right->type : type_make(TY_UNKNOWN);
+    if (!use_rhs_int_imm)
+    {
+        rhs = compile_expr(st, e->v.binary.right);
+        if (kn_diag_error_count() > 0)
+            return out;
+        if (numeric_coercion)
+            rhs = knc_coerce_binary_numeric_operand(st, e, rhs, e->resolved_binary.rhs_coercion);
+    }
+    if (kn_diag_error_count() > 0)
+        return out;
+
+    if (lowering == KN_BINARY_LOWER_POINTER_ARITHMETIC)
+    {
+        if (e->resolved_binary.pointer_side == KN_BINARY_POINTER_LHS)
+            rhs = knc_coerce_binary_numeric_operand(st, e, rhs, e->resolved_binary.rhs_coercion);
+        else
+            lhs = knc_coerce_binary_numeric_operand(st, e, lhs, e->resolved_binary.lhs_coercion);
+        if (kn_diag_error_count() > 0)
+            return out;
+    }
+
+    if (lowering == KN_BINARY_LOWER_STRING_CONCAT)
+    {
+        out = emit_string_concat(st, lhs, rhs);
+        out.type = e->type;
+        return out;
+    }
+
+    out.reg = alloc_reg(st);
+
+    switch (binary_op)
+    {
+    case TOK_PLUS:
+                if (lowering == KN_BINARY_LOWER_POINTER_ARITHMETIC)
+                {
+                    KncValue ptrv = e->resolved_binary.pointer_side == KN_BINARY_POINTER_LHS ? lhs : rhs;
+                    KncValue offv = e->resolved_binary.pointer_side == KN_BINARY_POINTER_LHS ? rhs : lhs;
+                    emit_u8(st->code, KNC_OP_ADD_PTR);
+                    emit_u8(st->code, out.reg);
+                    emit_u8(st->code, ptrv.reg);
+                    emit_u8(st->code, offv.reg);
+                    return out;
+                }
+                if (use_rhs_int_imm)
+                {
+                    emit_u8(st->code, KNC_OP_ADD_INT_IMM);
+                    emit_u8(st->code, out.reg);
+                    emit_u8(st->code, lhs.reg);
+                    emit_u16(st->code, rhs_int_imm_index);
+                    return knc_finish_binary_arithmetic(st, e, out);
+                }
+                emit_u8(st->code, use_float ? KNC_OP_ADD_FLOAT : KNC_OP_ADD_INT);
+                emit_u8(st->code, out.reg);
+                emit_u8(st->code, lhs.reg);
+                emit_u8(st->code, rhs.reg);
+                return knc_finish_binary_arithmetic(st, e, out);
+            case TOK_MINUS:
+                if (lowering == KN_BINARY_LOWER_POINTER_ARITHMETIC)
+                {
+                    int neg_reg = alloc_reg(st);
+                    emit_u8(st->code, KNC_OP_NEG_INT);
+                    emit_u8(st->code, neg_reg);
+                    emit_u8(st->code, rhs.reg);
+                    emit_u8(st->code, KNC_OP_ADD_PTR);
+                    emit_u8(st->code, out.reg);
+                    emit_u8(st->code, lhs.reg);
+                    emit_u8(st->code, neg_reg);
+                    return out;
+                }
+                if (use_rhs_int_imm)
+                {
+                    emit_u8(st->code, KNC_OP_SUB_INT_IMM);
+                    emit_u8(st->code, out.reg);
+                    emit_u8(st->code, lhs.reg);
+                    emit_u16(st->code, rhs_int_imm_index);
+                    return knc_finish_binary_arithmetic(st, e, out);
+                }
+                emit_u8(st->code, use_float ? KNC_OP_SUB_FLOAT : KNC_OP_SUB_INT);
+                emit_u8(st->code, out.reg);
+                emit_u8(st->code, lhs.reg);
+                emit_u8(st->code, rhs.reg);
+                return knc_finish_binary_arithmetic(st, e, out);
+            case TOK_STAR:
+                if (use_rhs_int_imm)
+                {
+                    emit_u8(st->code, KNC_OP_MUL_INT_IMM);
+                    emit_u8(st->code, out.reg);
+                    emit_u8(st->code, lhs.reg);
+                    emit_u16(st->code, rhs_int_imm_index);
+                    return knc_finish_binary_arithmetic(st, e, out);
+                }
+                emit_u8(st->code, use_float ? KNC_OP_MUL_FLOAT : KNC_OP_MUL_INT);
+                emit_u8(st->code, out.reg);
+                emit_u8(st->code, lhs.reg);
+                emit_u8(st->code, rhs.reg);
+                return knc_finish_binary_arithmetic(st, e, out);
+            case TOK_SLASH:
+                if (use_rhs_int_imm)
+                {
+                    emit_u8(st->code, KNC_OP_DIV_INT_IMM);
+                    emit_u8(st->code, out.reg);
+                    emit_u8(st->code, lhs.reg);
+                    emit_u16(st->code, rhs_int_imm_index);
+                    return knc_finish_binary_arithmetic(st, e, out);
+                }
+                if (e->resolved_binary.is_unsigned)
+                {
+                    emit_width_binary_op(st, KNC_OP_UDIV_INT, out.reg, lhs.reg, rhs.reg,
+                                         e->resolved_binary.integer_bits);
+                    return knc_finish_binary_arithmetic(st, e, out);
+                }
+                emit_u8(st->code, use_float ? KNC_OP_DIV_FLOAT : KNC_OP_DIV_INT);
+                emit_u8(st->code, out.reg);
+                emit_u8(st->code, lhs.reg);
+                emit_u8(st->code, rhs.reg);
+                return knc_finish_binary_arithmetic(st, e, out);
+            case TOK_PERCENT:
+            {
+                if (use_float)
+                {
+                    knc_diag_expr(st, e, "Floating-point '%' is not supported by the bootstrap KNC emitter yet");
+                    return out;
+                }
+                if (e->resolved_binary.is_unsigned)
+                {
+                    emit_width_binary_op(st, KNC_OP_UREM_INT, out.reg, lhs.reg, rhs.reg,
+                                         e->resolved_binary.integer_bits);
+                    return knc_finish_binary_arithmetic(st, e, out);
+                }
+                int div_reg = alloc_reg(st);
+                int mul_reg = alloc_reg(st);
+                emit_u8(st->code, KNC_OP_DIV_INT);
+                emit_u8(st->code, div_reg);
+                emit_u8(st->code, lhs.reg);
+                emit_u8(st->code, rhs.reg);
+                emit_u8(st->code, KNC_OP_MUL_INT);
+                emit_u8(st->code, mul_reg);
+                emit_u8(st->code, div_reg);
+                emit_u8(st->code, rhs.reg);
+                emit_u8(st->code, KNC_OP_SUB_INT);
+                emit_u8(st->code, out.reg);
+                emit_u8(st->code, lhs.reg);
+                emit_u8(st->code, mul_reg);
+                return knc_finish_binary_arithmetic(st, e, out);
+            }
+            case TOK_EQ:
+                emit_u8(st->code, KNC_OP_EQ);
+                emit_u8(st->code, out.reg);
+                emit_u8(st->code, lhs.reg);
+                emit_u8(st->code, rhs.reg);
+                out.type = type_make(TY_BOOL);
+                return out;
+            case TOK_NE:
+                emit_u8(st->code, KNC_OP_NE);
+                emit_u8(st->code, out.reg);
+                emit_u8(st->code, lhs.reg);
+                emit_u8(st->code, rhs.reg);
+                out.type = type_make(TY_BOOL);
+                return out;
+            case TOK_LT:
+                if (use_rhs_int_imm)
+                {
+                    emit_u8(st->code, KNC_OP_LT_INT_IMM);
+                    emit_u8(st->code, out.reg);
+                    emit_u8(st->code, lhs.reg);
+                    emit_u16(st->code, rhs_int_imm_index);
+                    out.type = type_make(TY_BOOL);
+                    return out;
+                }
+                if (e->resolved_binary.is_unsigned)
+                {
+                    emit_width_binary_op(st, KNC_OP_ULT_INT, out.reg, lhs.reg, rhs.reg,
+                                         e->resolved_binary.integer_bits);
+                    out.type = type_make(TY_BOOL);
+                    return out;
+                }
+                emit_u8(st->code, use_float ? KNC_OP_LT_FLOAT : KNC_OP_LT_INT);
+                emit_u8(st->code, out.reg);
+                emit_u8(st->code, lhs.reg);
+                emit_u8(st->code, rhs.reg);
+                out.type = type_make(TY_BOOL);
+                return out;
+            case TOK_LE:
+                if (use_rhs_int_imm)
+                {
+                    emit_u8(st->code, KNC_OP_LE_INT_IMM);
+                    emit_u8(st->code, out.reg);
+                    emit_u8(st->code, lhs.reg);
+                    emit_u16(st->code, rhs_int_imm_index);
+                    out.type = type_make(TY_BOOL);
+                    return out;
+                }
+                if (e->resolved_binary.is_unsigned)
+                {
+                    emit_width_binary_op(st, KNC_OP_ULE_INT, out.reg, lhs.reg, rhs.reg,
+                                         e->resolved_binary.integer_bits);
+                    out.type = type_make(TY_BOOL);
+                    return out;
+                }
+                emit_u8(st->code, use_float ? KNC_OP_LE_FLOAT : KNC_OP_LE_INT);
+                emit_u8(st->code, out.reg);
+                emit_u8(st->code, lhs.reg);
+                emit_u8(st->code, rhs.reg);
+                out.type = type_make(TY_BOOL);
+                return out;
+            case TOK_GT:
+                if (use_rhs_int_imm)
+                {
+                    emit_u8(st->code, KNC_OP_GT_INT_IMM);
+                    emit_u8(st->code, out.reg);
+                    emit_u8(st->code, lhs.reg);
+                    emit_u16(st->code, rhs_int_imm_index);
+                    out.type = type_make(TY_BOOL);
+                    return out;
+                }
+                if (e->resolved_binary.is_unsigned)
+                {
+                    emit_width_binary_op(st, KNC_OP_UGT_INT, out.reg, lhs.reg, rhs.reg,
+                                         e->resolved_binary.integer_bits);
+                    out.type = type_make(TY_BOOL);
+                    return out;
+                }
+                emit_u8(st->code, use_float ? KNC_OP_GT_FLOAT : KNC_OP_GT_INT);
+                emit_u8(st->code, out.reg);
+                emit_u8(st->code, lhs.reg);
+                emit_u8(st->code, rhs.reg);
+                out.type = type_make(TY_BOOL);
+                return out;
+            case TOK_GE:
+                if (use_rhs_int_imm)
+                {
+                    emit_u8(st->code, KNC_OP_GE_INT_IMM);
+                    emit_u8(st->code, out.reg);
+                    emit_u8(st->code, lhs.reg);
+                    emit_u16(st->code, rhs_int_imm_index);
+                    out.type = type_make(TY_BOOL);
+                    return out;
+                }
+                if (e->resolved_binary.is_unsigned)
+                {
+                    emit_width_binary_op(st, KNC_OP_UGE_INT, out.reg, lhs.reg, rhs.reg,
+                                         e->resolved_binary.integer_bits);
+                    out.type = type_make(TY_BOOL);
+                    return out;
+                }
+                emit_u8(st->code, use_float ? KNC_OP_GE_FLOAT : KNC_OP_GE_INT);
+                emit_u8(st->code, out.reg);
+                emit_u8(st->code, lhs.reg);
+                emit_u8(st->code, rhs.reg);
+                out.type = type_make(TY_BOOL);
+                return out;
+            case TOK_AMP:
+                if (use_rhs_int_imm)
+                {
+                    emit_u8(st->code, KNC_OP_BITAND_INT_IMM);
+                    emit_u8(st->code, out.reg);
+                    emit_u8(st->code, lhs.reg);
+                    emit_u16(st->code, rhs_int_imm_index);
+                    return out;
+                }
+                emit_u8(st->code, KNC_OP_BITAND_INT);
+                emit_u8(st->code, out.reg);
+                emit_u8(st->code, lhs.reg);
+                emit_u8(st->code, rhs.reg);
+                return out;
+            case TOK_BITOR:
+                if (use_rhs_int_imm)
+                {
+                    emit_u8(st->code, KNC_OP_BITOR_INT_IMM);
+                    emit_u8(st->code, out.reg);
+                    emit_u8(st->code, lhs.reg);
+                    emit_u16(st->code, rhs_int_imm_index);
+                    return out;
+                }
+                emit_u8(st->code, KNC_OP_BITOR_INT);
+                emit_u8(st->code, out.reg);
+                emit_u8(st->code, lhs.reg);
+                emit_u8(st->code, rhs.reg);
+                return out;
+            case TOK_XOR:
+                if (use_rhs_int_imm)
+                {
+                    emit_u8(st->code, KNC_OP_BITXOR_INT_IMM);
+                    emit_u8(st->code, out.reg);
+                    emit_u8(st->code, lhs.reg);
+                    emit_u16(st->code, rhs_int_imm_index);
+                    return out;
+                }
+                emit_u8(st->code, KNC_OP_BITXOR_INT);
+                emit_u8(st->code, out.reg);
+                emit_u8(st->code, lhs.reg);
+                emit_u8(st->code, rhs.reg);
+                return out;
+            case TOK_SHL:
+                if (use_rhs_int_imm)
+                {
+                    emit_u8(st->code, KNC_OP_SHL_INT_IMM);
+                    emit_u8(st->code, out.reg);
+                    emit_u8(st->code, lhs.reg);
+                    emit_u16(st->code, rhs_int_imm_index);
+                    return out;
+                }
+                emit_u8(st->code, KNC_OP_SHL_INT);
+                emit_u8(st->code, out.reg);
+                emit_u8(st->code, lhs.reg);
+                emit_u8(st->code, rhs.reg);
+                return out;
+            case TOK_SHR:
+                if (use_rhs_int_imm)
+                {
+                    emit_u8(st->code, KNC_OP_SHR_INT_IMM);
+                    emit_u8(st->code, out.reg);
+                    emit_u8(st->code, lhs.reg);
+                    emit_u16(st->code, rhs_int_imm_index);
+                    return out;
+                }
+                if (e->resolved_binary.is_unsigned)
+                {
+                    emit_width_binary_op(st, KNC_OP_LSHR_INT, out.reg, lhs.reg, rhs.reg,
+                                         e->resolved_binary.integer_bits);
+                    return out;
+                }
+                emit_u8(st->code, KNC_OP_SHR_INT);
+                emit_u8(st->code, out.reg);
+                emit_u8(st->code, lhs.reg);
+                emit_u8(st->code, rhs.reg);
+                return out;
+    default:
+        knc_diag_expr(st, e, "Internal KNC HIR error: binary plan reached an unsupported operator");
+        return out;
+    }
+}
+
 static KncValue compile_expr(KncFuncState *st, Expr *e)
 {
     KncValue out;
@@ -3627,11 +4329,9 @@ static KncValue compile_expr(KncFuncState *st, Expr *e)
 
     case EXPR_ARRAY:
     {
-        Type elem_type = type_make(e->type.elem);
+        Type elem_type = type_immediate_elem(e->type);
         int length = (e->type.kind == TY_ARRAY && e->type.array_len >= 0) ? (int)e->type.array_len : e->v.array.items.count;
         int len_reg;
-
-        elem_type.name = e->type.name;
         out.reg = alloc_reg(st);
         len_reg = alloc_reg(st);
 
@@ -3665,6 +4365,48 @@ static KncValue compile_expr(KncFuncState *st, Expr *e)
             if (kn_diag_error_count() > 0)
                 return out;
 
+            emit_u8(st->code, KNC_OP_STORE_INDEX);
+            emit_u8(st->code, out.reg);
+            emit_u8(st->code, idx.reg);
+            emit_u8(st->code, item.reg);
+        }
+        return out;
+    }
+
+    case EXPR_PACKAGE:
+    {
+        int length = e->type.package_count;
+        int len_reg;
+        out.reg = alloc_reg(st);
+        out.type = e->type;
+        len_reg = alloc_reg(st);
+        emit_u8(st->code, KNC_OP_LOAD_INT);
+        emit_u8(st->code, len_reg);
+        emit_u16(st->code, program_add_int(st->program, length));
+        emit_u8(st->code, KNC_OP_NEW_ARRAY);
+        emit_u8(st->code, out.reg);
+        emit_u8(st->code, len_reg);
+        emit_u8(st->code, KNC_VALUE_NULL);
+
+        for (int i = 0; i < length; i++)
+        {
+            KncValue idx;
+            KncValue item;
+            idx.reg = alloc_reg(st);
+            idx.type = type_make(TY_INT);
+            emit_u8(st->code, KNC_OP_LOAD_INT);
+            emit_u8(st->code, idx.reg);
+            emit_u16(st->code, program_add_int(st->program, i));
+            if (i < e->v.package.items.count)
+                item = compile_expr(st, e->v.package.items.items[i]);
+            else
+            {
+                item.reg = alloc_reg(st);
+                item.type = e->type.package_elems[i];
+                emit_default_value(st, item.reg, item.type);
+            }
+            if (kn_diag_error_count() > 0)
+                return out;
             emit_u8(st->code, KNC_OP_STORE_INDEX);
             emit_u8(st->code, out.reg);
             emit_u8(st->code, idx.reg);
@@ -3916,318 +4658,7 @@ static KncValue compile_expr(KncFuncState *st, Expr *e)
         return out;
 
     case EXPR_BINARY:
-        if (e->v.binary.op == TOK_ANDAND || e->v.binary.op == TOK_OROR)
-            return compile_short_circuit(st, e);
-        else
-        {
-            KncValue lhs = compile_expr(st, e->v.binary.left);
-            KncValue rhs;
-            int rhs_int_imm_index = -1;
-            int use_float = type_is_floatish(e->v.binary.left->type) || type_is_floatish(e->v.binary.right->type);
-            int has_rhs_int_imm = !use_float && expr_int_immediate_index(st, e->v.binary.right, &rhs_int_imm_index);
-            int use_rhs_int_imm = 0;
-            TokenType binary_op = (TokenType)e->v.binary.op;
-            switch (binary_op)
-            {
-            case TOK_PLUS:
-                use_rhs_int_imm = has_rhs_int_imm && e->type.kind != TY_PTR && e->type.kind != TY_STRING;
-                break;
-            case TOK_MINUS:
-                use_rhs_int_imm = has_rhs_int_imm && e->type.kind != TY_PTR;
-                break;
-            case TOK_STAR:
-            case TOK_SLASH:
-            case TOK_LT:
-            case TOK_LE:
-            case TOK_GT:
-            case TOK_GE:
-            case TOK_AMP:
-            case TOK_BITOR:
-            case TOK_XOR:
-            case TOK_SHL:
-            case TOK_SHR:
-                use_rhs_int_imm = has_rhs_int_imm;
-                break;
-            default:
-                break;
-            }
-            rhs.reg = -1;
-            rhs.type = e->v.binary.right ? e->v.binary.right->type : type_make(TY_UNKNOWN);
-            if (!use_rhs_int_imm)
-                rhs = compile_expr(st, e->v.binary.right);
-            if (kn_diag_error_count() > 0)
-                return out;
-            out.reg = alloc_reg(st);
-
-            switch (binary_op)
-            {
-            case TOK_PLUS:
-                if (e->type.kind == TY_PTR)
-                {
-                    KncValue ptrv = lhs.type.kind == TY_PTR ? lhs : rhs;
-                    KncValue offv = lhs.type.kind == TY_PTR ? rhs : lhs;
-                    emit_u8(st->code, KNC_OP_ADD_PTR);
-                    emit_u8(st->code, out.reg);
-                    emit_u8(st->code, ptrv.reg);
-                    emit_u8(st->code, offv.reg);
-                    return out;
-                }
-                if (e->type.kind == TY_STRING)
-                {
-                    out.reg = alloc_reg(st);
-                    emit_u8(st->code, KNC_OP_CALL_BUILTIN);
-                    emit_u8(st->code, out.reg);
-                    emit_u16(st->code, 20);
-                    emit_u8(st->code, 2);
-                    emit_u8(st->code, lhs.reg);
-                    emit_u8(st->code, rhs.reg);
-                    emit_u8(st->code, 255);
-                    emit_u8(st->code, 255);
-                    return out;
-                }
-                if (use_rhs_int_imm)
-                {
-                    emit_u8(st->code, KNC_OP_ADD_INT_IMM);
-                    emit_u8(st->code, out.reg);
-                    emit_u8(st->code, lhs.reg);
-                    emit_u16(st->code, rhs_int_imm_index);
-                    return out;
-                }
-                emit_u8(st->code, use_float ? KNC_OP_ADD_FLOAT : KNC_OP_ADD_INT);
-                emit_u8(st->code, out.reg);
-                emit_u8(st->code, lhs.reg);
-                emit_u8(st->code, rhs.reg);
-                return out;
-            case TOK_MINUS:
-                if (e->type.kind == TY_PTR)
-                {
-                    int neg_reg = alloc_reg(st);
-                    emit_u8(st->code, KNC_OP_NEG_INT);
-                    emit_u8(st->code, neg_reg);
-                    emit_u8(st->code, rhs.reg);
-                    emit_u8(st->code, KNC_OP_ADD_PTR);
-                    emit_u8(st->code, out.reg);
-                    emit_u8(st->code, lhs.reg);
-                    emit_u8(st->code, neg_reg);
-                    return out;
-                }
-                if (use_rhs_int_imm)
-                {
-                    emit_u8(st->code, KNC_OP_SUB_INT_IMM);
-                    emit_u8(st->code, out.reg);
-                    emit_u8(st->code, lhs.reg);
-                    emit_u16(st->code, rhs_int_imm_index);
-                    return out;
-                }
-                emit_u8(st->code, use_float ? KNC_OP_SUB_FLOAT : KNC_OP_SUB_INT);
-                emit_u8(st->code, out.reg);
-                emit_u8(st->code, lhs.reg);
-                emit_u8(st->code, rhs.reg);
-                return out;
-            case TOK_STAR:
-                if (use_rhs_int_imm)
-                {
-                    emit_u8(st->code, KNC_OP_MUL_INT_IMM);
-                    emit_u8(st->code, out.reg);
-                    emit_u8(st->code, lhs.reg);
-                    emit_u16(st->code, rhs_int_imm_index);
-                    return out;
-                }
-                emit_u8(st->code, use_float ? KNC_OP_MUL_FLOAT : KNC_OP_MUL_INT);
-                emit_u8(st->code, out.reg);
-                emit_u8(st->code, lhs.reg);
-                emit_u8(st->code, rhs.reg);
-                return out;
-            case TOK_SLASH:
-                if (use_rhs_int_imm)
-                {
-                    emit_u8(st->code, KNC_OP_DIV_INT_IMM);
-                    emit_u8(st->code, out.reg);
-                    emit_u8(st->code, lhs.reg);
-                    emit_u16(st->code, rhs_int_imm_index);
-                    return out;
-                }
-                emit_u8(st->code, use_float ? KNC_OP_DIV_FLOAT : KNC_OP_DIV_INT);
-                emit_u8(st->code, out.reg);
-                emit_u8(st->code, lhs.reg);
-                emit_u8(st->code, rhs.reg);
-                return out;
-            case TOK_PERCENT:
-            {
-                int div_reg = alloc_reg(st);
-                int mul_reg = alloc_reg(st);
-                if (use_float)
-                {
-                    knc_diag_expr(st, e, "Floating-point '%' is not supported by the bootstrap KNC emitter yet");
-                    return out;
-                }
-                emit_u8(st->code, KNC_OP_DIV_INT);
-                emit_u8(st->code, div_reg);
-                emit_u8(st->code, lhs.reg);
-                emit_u8(st->code, rhs.reg);
-                emit_u8(st->code, KNC_OP_MUL_INT);
-                emit_u8(st->code, mul_reg);
-                emit_u8(st->code, div_reg);
-                emit_u8(st->code, rhs.reg);
-                emit_u8(st->code, KNC_OP_SUB_INT);
-                emit_u8(st->code, out.reg);
-                emit_u8(st->code, lhs.reg);
-                emit_u8(st->code, mul_reg);
-                return out;
-            }
-            case TOK_EQ:
-                emit_u8(st->code, KNC_OP_EQ);
-                emit_u8(st->code, out.reg);
-                emit_u8(st->code, lhs.reg);
-                emit_u8(st->code, rhs.reg);
-                out.type = type_make(TY_BOOL);
-                return out;
-            case TOK_NE:
-                emit_u8(st->code, KNC_OP_NE);
-                emit_u8(st->code, out.reg);
-                emit_u8(st->code, lhs.reg);
-                emit_u8(st->code, rhs.reg);
-                out.type = type_make(TY_BOOL);
-                return out;
-            case TOK_LT:
-                if (use_rhs_int_imm)
-                {
-                    emit_u8(st->code, KNC_OP_LT_INT_IMM);
-                    emit_u8(st->code, out.reg);
-                    emit_u8(st->code, lhs.reg);
-                    emit_u16(st->code, rhs_int_imm_index);
-                    out.type = type_make(TY_BOOL);
-                    return out;
-                }
-                emit_u8(st->code, use_float ? KNC_OP_LT_FLOAT : KNC_OP_LT_INT);
-                emit_u8(st->code, out.reg);
-                emit_u8(st->code, lhs.reg);
-                emit_u8(st->code, rhs.reg);
-                out.type = type_make(TY_BOOL);
-                return out;
-            case TOK_LE:
-                if (use_rhs_int_imm)
-                {
-                    emit_u8(st->code, KNC_OP_LE_INT_IMM);
-                    emit_u8(st->code, out.reg);
-                    emit_u8(st->code, lhs.reg);
-                    emit_u16(st->code, rhs_int_imm_index);
-                    out.type = type_make(TY_BOOL);
-                    return out;
-                }
-                emit_u8(st->code, use_float ? KNC_OP_LE_FLOAT : KNC_OP_LE_INT);
-                emit_u8(st->code, out.reg);
-                emit_u8(st->code, lhs.reg);
-                emit_u8(st->code, rhs.reg);
-                out.type = type_make(TY_BOOL);
-                return out;
-            case TOK_GT:
-                if (use_rhs_int_imm)
-                {
-                    emit_u8(st->code, KNC_OP_GT_INT_IMM);
-                    emit_u8(st->code, out.reg);
-                    emit_u8(st->code, lhs.reg);
-                    emit_u16(st->code, rhs_int_imm_index);
-                    out.type = type_make(TY_BOOL);
-                    return out;
-                }
-                emit_u8(st->code, use_float ? KNC_OP_GT_FLOAT : KNC_OP_GT_INT);
-                emit_u8(st->code, out.reg);
-                emit_u8(st->code, lhs.reg);
-                emit_u8(st->code, rhs.reg);
-                out.type = type_make(TY_BOOL);
-                return out;
-            case TOK_GE:
-                if (use_rhs_int_imm)
-                {
-                    emit_u8(st->code, KNC_OP_GE_INT_IMM);
-                    emit_u8(st->code, out.reg);
-                    emit_u8(st->code, lhs.reg);
-                    emit_u16(st->code, rhs_int_imm_index);
-                    out.type = type_make(TY_BOOL);
-                    return out;
-                }
-                emit_u8(st->code, use_float ? KNC_OP_GE_FLOAT : KNC_OP_GE_INT);
-                emit_u8(st->code, out.reg);
-                emit_u8(st->code, lhs.reg);
-                emit_u8(st->code, rhs.reg);
-                out.type = type_make(TY_BOOL);
-                return out;
-            case TOK_AMP:
-                if (use_rhs_int_imm)
-                {
-                    emit_u8(st->code, KNC_OP_BITAND_INT_IMM);
-                    emit_u8(st->code, out.reg);
-                    emit_u8(st->code, lhs.reg);
-                    emit_u16(st->code, rhs_int_imm_index);
-                    return out;
-                }
-                emit_u8(st->code, KNC_OP_BITAND_INT);
-                emit_u8(st->code, out.reg);
-                emit_u8(st->code, lhs.reg);
-                emit_u8(st->code, rhs.reg);
-                return out;
-            case TOK_BITOR:
-                if (use_rhs_int_imm)
-                {
-                    emit_u8(st->code, KNC_OP_BITOR_INT_IMM);
-                    emit_u8(st->code, out.reg);
-                    emit_u8(st->code, lhs.reg);
-                    emit_u16(st->code, rhs_int_imm_index);
-                    return out;
-                }
-                emit_u8(st->code, KNC_OP_BITOR_INT);
-                emit_u8(st->code, out.reg);
-                emit_u8(st->code, lhs.reg);
-                emit_u8(st->code, rhs.reg);
-                return out;
-            case TOK_XOR:
-                if (use_rhs_int_imm)
-                {
-                    emit_u8(st->code, KNC_OP_BITXOR_INT_IMM);
-                    emit_u8(st->code, out.reg);
-                    emit_u8(st->code, lhs.reg);
-                    emit_u16(st->code, rhs_int_imm_index);
-                    return out;
-                }
-                emit_u8(st->code, KNC_OP_BITXOR_INT);
-                emit_u8(st->code, out.reg);
-                emit_u8(st->code, lhs.reg);
-                emit_u8(st->code, rhs.reg);
-                return out;
-            case TOK_SHL:
-                if (use_rhs_int_imm)
-                {
-                    emit_u8(st->code, KNC_OP_SHL_INT_IMM);
-                    emit_u8(st->code, out.reg);
-                    emit_u8(st->code, lhs.reg);
-                    emit_u16(st->code, rhs_int_imm_index);
-                    return out;
-                }
-                emit_u8(st->code, KNC_OP_SHL_INT);
-                emit_u8(st->code, out.reg);
-                emit_u8(st->code, lhs.reg);
-                emit_u8(st->code, rhs.reg);
-                return out;
-            case TOK_SHR:
-                if (use_rhs_int_imm)
-                {
-                    emit_u8(st->code, KNC_OP_SHR_INT_IMM);
-                    emit_u8(st->code, out.reg);
-                    emit_u8(st->code, lhs.reg);
-                    emit_u16(st->code, rhs_int_imm_index);
-                    return out;
-                }
-                emit_u8(st->code, KNC_OP_SHR_INT);
-                emit_u8(st->code, out.reg);
-                emit_u8(st->code, lhs.reg);
-                emit_u8(st->code, rhs.reg);
-                return out;
-            default:
-                knc_diag_expr(st, e, "This binary operator is not supported by the bootstrap KNC emitter yet");
-                return out;
-            }
-        }
+        return compile_binary_expr(st, e);
 
     case EXPR_IF:
         return compile_if_expr(st, e);
@@ -4303,79 +4734,10 @@ static KncValue compile_expr(KncFuncState *st, Expr *e)
     }
 
     case EXPR_CALL:
-        if (e->v.call.builtin_id != KN_BUILTIN_NONE)
-            return compile_builtin_invoke(st, e->type, e->v.call.builtin_id, 0, 0, &e->v.call.args);
-        return compile_direct_call(st, e, e->v.call.name, e->type, &e->v.call.args);
+        return compile_resolved_call(st, e);
 
     case EXPR_MEMBER_CALL:
-        if (e->v.member_call.builtin_id == KN_BUILTIN_BLOCK_RUN ||
-            e->v.member_call.builtin_id == KN_BUILTIN_BLOCK_JUMP ||
-            e->v.member_call.builtin_id == KN_BUILTIN_BLOCK_RUN_UNTIL ||
-            e->v.member_call.builtin_id == KN_BUILTIN_BLOCK_JUMP_AND_RUN_UNTIL)
-        {
-            return compile_block_invoke(st, e, e->v.member_call.recv, e->v.member_call.builtin_id, &e->v.member_call.args);
-        }
-        if (e->v.member_call.builtin_id == KN_BUILTIN_ARRAY_LENGTH)
-        {
-            KncValue recv = compile_expr(st, e->v.member_call.recv);
-            if (kn_diag_error_count() > 0)
-                return out;
-            out.reg = alloc_reg(st);
-            emit_u8(st->code, KNC_OP_ARRAY_LENGTH);
-            emit_u8(st->code, out.reg);
-            emit_u8(st->code, recv.reg);
-            return out;
-        }
-        if (e->v.member_call.builtin_id == KN_BUILTIN_ARRAY_ADD)
-        {
-            KncValue recv = compile_expr(st, e->v.member_call.recv);
-            KncValue value;
-            if (kn_diag_error_count() > 0)
-                return out;
-            if (e->v.member_call.args.count != 1)
-            {
-                knc_diag_expr(st, e, "Bootstrap KNC emitter requires exactly one array Add argument");
-                return out;
-            }
-            value = compile_expr(st, e->v.member_call.args.items[0]);
-            if (kn_diag_error_count() > 0)
-                return out;
-            out.reg = alloc_reg(st);
-            emit_u8(st->code, KNC_OP_ARRAY_ADD);
-            emit_u8(st->code, out.reg);
-            emit_u8(st->code, recv.reg);
-            emit_u8(st->code, value.reg);
-            return out;
-        }
-        if (e->v.member_call.builtin_id != KN_BUILTIN_NONE)
-        {
-            int is_instance_recv = e->v.member_call.recv && !e->v.member_call.is_static;
-            return compile_builtin_invoke(st, e->type, e->v.member_call.builtin_id,
-                                          e->v.member_call.recv, is_instance_recv, &e->v.member_call.args);
-        }
-        if (e->v.member_call.is_qual_call && e->v.member_call.qual_name)
-            return compile_direct_call(st, e, e->v.member_call.qual_name, e->type, &e->v.member_call.args);
-        if (e->v.member_call.is_static && e->v.member_call.method_owner)
-        {
-            int func_index = program_find_method_function(st->program, e->v.member_call.method_owner, e->v.member_call.method_index);
-            return compile_call_func_index(st, e, func_index, e->type, &e->v.member_call.args);
-        }
-        if (e->v.member_call.recv && e->v.member_call.method_owner)
-        {
-            KncValue recv = compile_expr(st, e->v.member_call.recv);
-            if (kn_diag_error_count() > 0)
-                return out;
-            if (e->v.member_call.recv->kind == EXPR_BASE ||
-                !program_method_is_virtual(st->program, e->v.member_call.method_owner, e->v.member_call.method_index))
-            {
-                int func_index = program_find_method_function(st->program, e->v.member_call.method_owner, e->v.member_call.method_index);
-                return compile_direct_method_call(st, e, func_index, e->type, recv, &e->v.member_call.args);
-            }
-            return compile_virtual_method_call(st, e, e->v.member_call.method_index, e->type, recv, &e->v.member_call.args);
-        }
-        knc_diag_expr(st, e, "This member call is not supported by the bootstrap KNC emitter yet");
-        return out;
-
+        return compile_resolved_member_call(st, e);
     case EXPR_INDEX:
     {
         KncValue recv = compile_expr(st, e->v.index.recv);
@@ -4560,6 +4922,18 @@ static KncValue compile_expr(KncFuncState *st, Expr *e)
 
     case EXPR_CAST:
     {
+        if (e->v.cast.custom_method_owner && e->v.cast.custom_method_index >= 0)
+        {
+            int func_index = program_find_method_function(st->program, e->v.cast.custom_method_owner, e->v.cast.custom_method_index);
+            Expr *items[1];
+            ExprList args;
+            items[0] = e->v.cast.expr;
+            args.items = items;
+            args.count = 1;
+            args.cap = 1;
+            return compile_call_func_index(st, e, func_index, e->type, &args);
+        }
+
         KncValue value = compile_expr(st, e->v.cast.expr);
         if (kn_diag_error_count() > 0)
             return out;
@@ -4571,6 +4945,40 @@ static KncValue compile_expr(KncFuncState *st, Expr *e)
         }
         if (e->type.kind == TY_CLASS && (value.type.kind == TY_CLASS || value.type.kind == TY_NULL))
             return emit_checked_object_cast(st, e, value, e->type);
+        if (e->type.kind == TY_ARRAY && value.type.kind == TY_PACKAGE)
+        {
+            Type elem_type = type_immediate_elem(e->type);
+            int len_reg = alloc_reg(st);
+            out.reg = alloc_reg(st);
+            out.type = e->type;
+
+            emit_u8(st->code, KNC_OP_LOAD_INT);
+            emit_u8(st->code, len_reg);
+            emit_u16(st->code, program_add_int(st->program, value.type.package_count));
+            emit_u8(st->code, KNC_OP_NEW_ARRAY);
+            emit_u8(st->code, out.reg);
+            emit_u8(st->code, len_reg);
+            emit_u8(st->code, value_kind_from_type(elem_type));
+
+            for (int i = 0; i < value.type.package_count; i++)
+            {
+                int idx_reg = alloc_reg(st);
+                int item_reg = alloc_reg(st);
+
+                emit_u8(st->code, KNC_OP_LOAD_INT);
+                emit_u8(st->code, idx_reg);
+                emit_u16(st->code, program_add_int(st->program, i));
+                emit_u8(st->code, KNC_OP_LOAD_INDEX);
+                emit_u8(st->code, item_reg);
+                emit_u8(st->code, value.reg);
+                emit_u8(st->code, idx_reg);
+                emit_u8(st->code, KNC_OP_STORE_INDEX);
+                emit_u8(st->code, out.reg);
+                emit_u8(st->code, idx_reg);
+                emit_u8(st->code, item_reg);
+            }
+            return out;
+        }
 
         out.reg = alloc_reg(st);
         out.type = e->type;

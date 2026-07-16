@@ -1,26 +1,27 @@
 # 项目结构
 
-Kinal 支持单文件程序、多文件模块和完整的 Package 系统。本文介绍三种组织方式。
+Kinal 支持单文件程序、多文件模块、Package，以及完整的项目文件。本文介绍常见目录结构，并说明 `kinal.knproj` 如何定义本地项目图。
 
 ## 单文件程序
 
-最简单的结构：一个 `.kn` 文件即为一个完整程序。
+最简单的结构就是一个 `.kn` 文件：
 
-```
+```text
 myapp/
 └── main.kn
 ```
 
 编译：
+
 ```bash
 kinal build main.kn -o myapp
 ```
 
-## 多文件模块（同一 Unit）
+## 多文件模块
 
-多个 `.kn` 文件可以共享同一个 `Unit` 名，编译器会将它们合并为同一模块。
+多个文件可以共同组成一个程序：
 
-```
+```text
 myapp/
 ├── main.kn        # Unit App.Main;
 ├── utils.kn       # Unit App.Utils;
@@ -28,6 +29,7 @@ myapp/
 ```
 
 **main.kn**
+
 ```kinal
 Unit App.Main;
 
@@ -44,6 +46,7 @@ Static Function int Main()
 ```
 
 **utils.kn**
+
 ```kinal
 Unit App.Utils;
 
@@ -53,25 +56,27 @@ Function string Greet(string name)
 }
 ```
 
-编译时只需指定入口文件，编译器会自动发现同目录下的其他 `.kn` 文件：
+如果不走 project 模式、直接按入口文件编译，编译器仍然可以自动发现附近的文件：
+
 ```bash
 kinal build main.kn -o myapp
 ```
 
-如需禁用自动发现：
+如果想禁用这种旧式的目录自动发现：
+
 ```bash
 kinal build main.kn utils.kn models.kn -o myapp --no-module-discovery
 ```
 
 ## 同一文件多个 Unit
 
-一个文件也可以贡献多个声明给不同单元（通过嵌套 Block）。但通常推荐每文件一个 Unit。
+一个文件也可以通过嵌套 Block 给多个 Unit 贡献声明，但通常还是建议一文件一个 Unit。
 
 ## Package 结构
 
-对于可复用的库，使用 Package 格式：
+可复用库使用 Package 清单：
 
-```
+```text
 MyLib/
 ├── 1.0.0/
 │   ├── package.knpkg.json
@@ -80,10 +85,11 @@ MyLib/
 │   │       ├── Core.kn
 │   │       └── Utils.kn
 │   └── lib/
-│       └── MyLib.klib    # 预编译的包（可选）
+│       └── MyLib.klib
 ```
 
 **package.knpkg.json**
+
 ```json
 {
   "kind": "package",
@@ -96,38 +102,64 @@ MyLib/
 ```
 
 使用 Package：
+
 ```bash
-# 指定包根目录
 kinal build main.kn --pkg-root ./packages -o myapp
 ```
 
 在代码中：
+
 ```kinal
-Get MyLib;       // 打开整个 MyLib 模块
-Get ML By MyLib; // 以别名 ML 访问
+Get MyLib;
+Get ML By MyLib;
 ```
 
 ## 项目文件（`kinal.knproj`）
 
-对于稍大的项目，可以把构建配置放在项目根目录的 `kinal.knproj` 里。
+对于稍大的项目，建议把构建配置和项目边界都放进项目根目录的 `kinal.knproj`。
 
-```
+```text
 myapp/
 ├── kinal.knproj
 ├── src/
+│   ├── Main.kn
+│   └── App/
+│       └── Greeter.kn
+├── tests/
 │   └── Main.kn
 └── kpkg/
 ```
 
 **kinal.knproj**
+
 ```kinal
 Project MyApp
 {
     DefaultProfile = "native";
 
+    Workspace
+    {
+        Ignore = ["out/**", ".git/**"];
+    }
+
     Packages
     {
         Roots = ["./kpkg"];
+    }
+
+    SourceSet "app"
+    {
+        Roots = ["src"];
+        Include = ["**/*.kn"];
+        Exclude = ["generated/**"];
+        RequireUnit = true;
+    }
+
+    SourceSet "tests"
+    {
+        Roots = ["tests"];
+        Include = ["**/*.kn"];
+        RequireUnit = true;
     }
 
     Profile "native"
@@ -135,7 +167,8 @@ Project MyApp
         Source
         {
             Entry = "src/Main.kn";
-            AutoDiscovery = true;
+            Sets = ["app"];
+            Mode = ReachableUnits;
         }
 
         Build
@@ -151,7 +184,8 @@ Project MyApp
         Source
         {
             Entry = "src/Main.kn";
-            AutoDiscovery = true;
+            Sets = ["app"];
+            Mode = ReachableUnits;
         }
 
         Build
@@ -165,16 +199,20 @@ Project MyApp
     Lsp
     {
         Profile = "native";
+        ExtraSets = ["tests"];
+        StrictProjectScope = true;
     }
 }
 ```
 
 使用默认 Profile 编译：
+
 ```bash
 kinal build --project .
 ```
 
 显式选择其他 Profile：
+
 ```bash
 kinal vm build --project . --profile vm
 ```
@@ -189,17 +227,21 @@ kinal vm build --project . --profile vm
 Project MyApp
 {
     DefaultProfile = "native";
+    Workspace { ... }
+    SourceSet "app" { ... }
     Packages { ... }
     Profile "native" { ... }
     Lsp { ... }
 }
-kinal
+```
 
 - `Project <Name>`：声明项目名
 - `DefaultProfile`：当命令行未传 `--profile` 时使用的 Profile
-- `Packages`：对所有 Profile 生效的包根目录配置
+- `Workspace`：定义工具应该忽略的路径或模式
+- `SourceSet "<name>"`：定义哪些本地源文件属于项目
+- `Packages`：对所有 Profile 生效的共享包根目录
 - `Profile "<name>"`：一组构建配置
-- `Lsp`：告诉语言服务器在编辑器里应该按哪个 Profile 做分析
+- `Lsp`：选择编辑器分析使用的 Profile，以及额外可见的 `SourceSet`
 
 ### 顶层字段
 
@@ -207,16 +249,50 @@ kinal
 
 ```kinal
 DefaultProfile = "native";
-kinal
+```
 
-这个字段决定了以下命令默认使用哪个 Profile：
+它会影响这些命令默认选择哪个 Profile：
 
 ```bash
 kinal build --project .
 kinal run --project .
-kinal
+```
 
 如果省略 `DefaultProfile`，则默认使用第一个声明的 Profile。
+
+#### `Workspace`
+
+```kinal
+Workspace
+{
+    Ignore = ["out/**", ".git/**"];
+}
+```
+
+- `Ignore`：CLI / LSP 不应当作正常项目内容去扫描的路径模式
+
+#### `SourceSet`
+
+```kinal
+SourceSet "app"
+{
+    Roots = ["src"];
+    Files = ["tools/Generate.kn"];
+    Include = ["**/*.kn"];
+    Exclude = ["scratch/**"];
+    RequireUnit = true;
+}
+```
+
+`SourceSet` 用来控制本地项目图。
+
+- `Roots`：递归扫描的目录
+- `Files`：额外显式加入的源文件
+- `Include`：允许进入该集合的模式
+- `Exclude`：从该集合排除的模式
+- `RequireUnit`：该集合中的文件是否要求声明 `Unit`
+
+在 project 模式下，本地源码成员关系由激活的 `SourceSet` 决定，而不是靠宽松的整目录猜测。
 
 #### `Packages`
 
@@ -226,7 +302,7 @@ Packages
     Roots = ["./kpkg", "../shared-packages"];
     OfficialRoots = ["../stdpkg"];
 }
-kinal
+```
 
 - `Roots`：本地包根目录，等价于命令行里的 `--pkg-root`
 - `OfficialRoots`：官方包根目录，等价于命令行里的 `--stdpkg-root`
@@ -239,10 +315,14 @@ kinal
 Lsp
 {
     Profile = "native";
+    ExtraSets = ["tests"];
+    StrictProjectScope = true;
 }
-kinal
+```
 
-这个块只影响编辑器中的语义分析、跳转、诊断和补全，不会强制 CLI 使用该 Profile 编译。
+- `Profile`：编辑器分析优先使用的 Profile
+- `ExtraSets`：在编辑器里额外可见的 `SourceSet`
+- `StrictProjectScope`：让 LSP 严格停留在声明过的项目图内，而不是回退到宽松的整个工作区扫描
 
 LSP 的 Profile 选择顺序是：
 
@@ -262,11 +342,11 @@ Profile "native"
     Link { ... }
     Packages { ... }
 }
-kinal
+```
 
 每个 Profile 可以包含这些部分：
 
-- `Source`：源码入口和自动发现行为
+- `Source`：入口文件和本地源码图模式
 - `Build`：后端、运行环境、输出路径、目标平台等构建设置
 - `Link`：链接器与链接输入设置
 - `Packages`：仅对该 Profile 生效的额外包根目录
@@ -277,17 +357,26 @@ kinal
 Source
 {
     Entry = "src/Main.kn";
-    AutoDiscovery = true;
+    Sets = ["app"];
+    Mode = ReachableUnits;
 }
-kinal
+```
 
 - `Entry`：该 Profile 的入口源文件
-- `AutoDiscovery`：是否自动发现入口附近的其他 `.kn` 文件
+- `Sets`：该 Profile 激活哪些 `SourceSet`
+- `Mode`：本地文件如何被拉入构建
 
-常见用法：
+`Mode` 支持这些值：
 
-- `true`：适合大多数普通项目
-- `false`：适合你希望完全显式控制输入文件的情况
+- `FileOnly`：只编译入口文件
+- `EntryUnit`：编译入口文件，以及声明同一 `Unit` 的其他文件
+- `ReachableUnits`：从入口单元开始，再根据 `Get` 拉入本地 Unit
+- `AllSources`：把激活的 `SourceSet` 中所有文件全部编译进去
+
+`AutoDiscovery` 仍然保留兼容，等价关系如下：
+
+- `AutoDiscovery = true`：等价于 `Mode = ReachableUnits`
+- `AutoDiscovery = false`：等价于 `Mode = FileOnly`
 
 ### `Build` 部分
 
@@ -298,9 +387,9 @@ Build
     Environment = Hosted;
     Output = "out/myapp";
 }
-kinal
+```
 
-支持的字段有：
+支持的字段：
 
 - `Backend`
 - `Environment`
@@ -317,14 +406,14 @@ kinal
 
 ```kinal
 Backend = Native;
-kinal
+```
 
 支持值：
 
-- `Native`：生成本地程序或本地目标文件
-- `VM`：生成 KinalVM 字节码或面向 VM 的产物
+- `Native`：生成本地可执行文件或本地目标产物
+- `VM`：生成 KinalVM 字节码或面向 VM 的输出
 
-通常和命令这样对应：
+常见命令对应关系：
 
 - `Native` Profile：`kinal build --project .`、`kinal run --project .`
 - `VM` Profile：`kinal vm build --project .`、`kinal vm run --project .`、`kinal vm pack --project .`
@@ -333,20 +422,18 @@ kinal
 
 ```kinal
 Environment = Hosted;
-kinal
+```
 
 支持值：
 
 - `Hosted`：普通操作系统进程环境，默认入口通常是 `Main`
 - `Freestanding`：裸机、内核、无宿主环境，默认入口通常是 `KMain`
 
-如果你在做内核、引导程序、裸机运行时，通常就要用 `Freestanding`。
-
 #### `Runtime`
 
 ```kinal
 Runtime = None;
-kinal
+```
 
 支持值：
 
@@ -354,42 +441,40 @@ kinal
 - `Alloc`
 - `GC`
 
-这个字段主要对 freestanding/native 这类配置有意义，用来控制运行时支持级别。
+这个字段主要对 freestanding/native 这类配置有意义。
 
 #### `Panic`
 
 ```kinal
 Panic = Trap;
-kinal
+```
 
 支持值：
 
 - `Trap`
 - `Loop`
 
-这个字段用于控制 freestanding 风格构建中的 panic 行为。
-
 #### `Target`
 
 ```kinal
 Target = "x86_64-linux-gnu";
-kinal
+```
 
-用于显式指定目标三元组。
+用于覆盖该 Profile 的目标三元组。
 
 #### `Output`
 
 ```kinal
 Output = "out/myapp";
-kinal
+```
 
-当命令行没有传 `-o` 或 `--output` 时，使用这里定义的输出路径。
+当命令行没有传 `-o` 时，使用这里定义的输出路径。
 
 #### `EntrySymbol`
 
 ```kinal
 EntrySymbol = "KernelMain";
-kinal
+```
 
 用于覆盖默认入口符号推断。
 
@@ -403,7 +488,7 @@ kinal
 
 ```kinal
 Linker = LLD;
-kinal
+```
 
 支持值：
 
@@ -415,17 +500,17 @@ kinal
 
 ```kinal
 LinkerPath = "C:/toolchains/lld-link.exe";
-kinal
+```
 
-当链接器不在 `PATH` 中，或你希望固定使用某个工具链里的链接器时使用。
+当链接器不在 `PATH` 中时，可以在这里指定其路径。
 
 #### `Superloop`
 
 ```kinal
 Superloop = true;
-kinal
+```
 
-这个字段主要用于 VM Profile，用来控制生成的字节码 / VM bundle 是否启用 superloop 模式。
+这个字段主要用于 VM Profile，用来控制生成的字节码或 bundle 是否启用 superloop 模式。
 
 ### `Link` 部分
 
@@ -441,7 +526,7 @@ Link
     LinkArgs = ["--gc-sections"];
     LinkRoots = ["./deps"];
 }
-kinal
+```
 
 支持的字段：
 
@@ -452,7 +537,7 @@ kinal
 - `Libs`：按名字链接库
 - `LinkFiles`：精确链接输入，例如 `.obj`、`.lib`、`.a`
 - `LinkArgs`：原样传给链接器的参数
-- `LinkRoots`：依赖根目录，会被展开为目标相关的搜索路径
+- `LinkRoots`：依赖根目录，会被展开成目标相关的搜索路径
 
 这一节本质上就是命令行里 `-L`、`-l`、`--link-file`、`--link-root`、`--link-arg` 的项目文件版本。
 
@@ -468,7 +553,7 @@ Profile "native"
         Roots = ["./native-packages"];
     }
 }
-kinal
+```
 
 适合某个 Profile 需要额外包，而其他 Profile 不需要的情况。
 
@@ -484,12 +569,19 @@ Project MyApp
         Roots = ["./kpkg"];
     }
 
+    SourceSet "app"
+    {
+        Roots = ["src"];
+        Include = ["**/*.kn"];
+    }
+
     Profile "native"
     {
         Source
         {
             Entry = "src/Main.kn";
-            AutoDiscovery = true;
+            Sets = ["app"];
+            Mode = ReachableUnits;
         }
 
         Build
@@ -505,7 +597,8 @@ Project MyApp
         Source
         {
             Entry = "src/Main.kn";
-            AutoDiscovery = true;
+            Sets = ["app"];
+            Mode = ReachableUnits;
         }
 
         Build
@@ -521,7 +614,7 @@ Project MyApp
         Profile = "native";
     }
 }
-kinal
+```
 
 ### 示例：Freestanding 内核 Profile
 
@@ -530,12 +623,19 @@ Project KinalOS
 {
     DefaultProfile = "kernel";
 
+    SourceSet "kernel"
+    {
+        Roots = ["src"];
+        Include = ["**/*.kn"];
+    }
+
     Profile "kernel"
     {
         Source
         {
             Entry = "src/kernel.kn";
-            AutoDiscovery = true;
+            Sets = ["kernel"];
+            Mode = ReachableUnits;
         }
 
         Build
@@ -563,9 +663,7 @@ Project KinalOS
         Profile = "kernel";
     }
 }
-kinal
-
-这种 Profile 就很适合内核、引导阶段代码或其他裸机目标。
+```
 
 ### 命令与 Profile 的匹配关系
 
@@ -579,13 +677,14 @@ kinal
 
 ## 打包与分发
 
-将包源码打包为 `.klib`（一个包含源代码和元信息的压缩归档）：
+将源码打包成 `.klib`：
 
 ```bash
 kinal pkg build --manifest ./MyLib/1.0.0/ -o output/MyLib.klib
 ```
 
 从 `.klib` 恢复源码：
+
 ```bash
 kinal pkg unpack MyLib.klib -o ./recovered/
 ```
@@ -597,7 +696,7 @@ kinal pkg unpack MyLib.klib -o ./recovered/
 | `.kn` / `.kinal` | Kinal 源文件 |
 | `.knproj` | 项目文件 |
 | `.knc` | 编译后的字节码文件（KNC 格式） |
-| `.klib` | 打包的 Package 归档 |
+| `.klib` | 打包归档 |
 | `.knpkg.json` | Package 清单文件 |
 
 ## 下一步

@@ -1,5 +1,6 @@
 ﻿#include "kn/codegen.h"
 #include "kn/util.h"
+#include "kn/ffi_abi.h"
 #include "kn/lexer.h"
 #include "kn/std.h"
 #include "llvm-c/Core.h"
@@ -42,7 +43,8 @@ typedef struct
     LLVMValueRef wrapper_fn;
     LLVMTypeRef wrapper_fn_ty;
     LLVMValueRef delegate_global;   // global variable for delegate function pointer (byte*)
-    LLVMValueRef delegate_bridge;   // bridge thunk for By Kinal delegates (any(byte*,any*,i64))
+    LLVMValueRef c_abi_adapter;     // C ABI entry thunk for a Kinal function
+    LLVMTypeRef c_abi_adapter_ty;
 } FuncSymbol;
 
 typedef struct
@@ -375,7 +377,6 @@ typedef struct
     LLVMValueRef fn_global_init;
     LLVMTypeRef fn_global_init_ty;
     LLVMValueRef gv_global_init_done;
-    LLVMValueRef gv_global_gc_frame;
     LLVMValueRef fn_main;
     LLVMTypeRef fn_main_ty;
     int fn_main_is_async;
@@ -508,6 +509,8 @@ typedef struct
     LLVMTypeRef fn_gc_push_ty;
     LLVMValueRef fn_gc_add_root;
     LLVMTypeRef fn_gc_add_root_ty;
+    LLVMValueRef fn_gc_add_global_root;
+    LLVMTypeRef fn_gc_add_global_root_ty;
     LLVMValueRef fn_gc_pop;
     LLVMTypeRef fn_gc_pop_ty;
     LLVMValueRef fn_gc_init;
@@ -722,6 +725,7 @@ typedef struct
     const char *current_func_name;
     int target_is_windows;
     int target_is_x86;
+    int target_pointer_bits;
     int emit_entry;
     int env_kind;
     int runtime_mode;

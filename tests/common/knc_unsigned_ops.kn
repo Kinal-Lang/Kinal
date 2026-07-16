@@ -1,0 +1,142 @@
+Unit Tests.KncUnsignedOps;
+
+Get Console By IO.Console;
+
+Function bool CheckU8()
+{
+    u8 one= 1;
+    u8 two= 2;
+    u8 shift= 7;
+    int rawHigh= -128;
+    u8 high= rawHigh;
+
+    Return high/ two== 64&&
+           high% 3== 2&&
+           one< high&&
+           one<= high&&
+           high> 1&&
+           high>= one&&
+           high>> 7== one&&
+           high>> one== 64&&
+           high>> shift== one;
+}
+
+Function bool CheckU16()
+{
+    u16 one= 1;
+    u16 two= 2;
+    u16 three= 3;
+    u16 shift= 15;
+    int rawHigh= -32768;
+    u16 high= rawHigh;
+
+    Return high/ 2== 16384&&
+           high% three== two&&
+           one< high&&
+           one<= high&&
+           high> one&&
+           high>= 1&&
+           high>> shift== one&&
+           high>> one== 16384;
+}
+
+Function bool CheckU32()
+{
+    u32 one= 1;
+    u32 two= 2;
+    u32 shift= 31;
+    int rawHigh= ~2147483647;
+    u32 high= rawHigh;
+
+    Return high/ two== 1073741824&&
+           high% 3== two&&
+           one< high&&
+           one<= high&&
+           high> 1&&
+           high>= one&&
+           high>> shift== one&&
+           high>> one== 1073741824;
+}
+
+Function bool CheckU64()
+{
+    u64 one= 1;
+    u64 two= 2;
+    u64 shift= 63;
+    int rawMax= -1;
+    u64 max= rawMax;
+    u64 half= (one<< 63)- one;
+
+    Return max/ 2== half&&
+           max% two== one&&
+           one< max&&
+           one<= max&&
+           max> 1&&
+           max>= one&&
+           max>> shift== one&&
+           max>> one== half;
+}
+
+Function bool CheckUsize()
+{
+    usize one= 1;
+    usize two= 2;
+    usize shift= 63;
+    int rawMax= -1;
+    usize max= rawMax;
+    usize half= (one<< 63)- one;
+
+    Return max/ two== half&&
+           max% 2== one&&
+           one< max&&
+           one<= max&&
+           max> one&&
+           max>= 1&&
+           max>> shift== one&&
+           max>> one== half;
+}
+
+Function bool CheckSignedContrast()
+{
+    int zero= 0;
+    int one= 1;
+    int two= 2;
+    int negative= ~zero;
+
+    Return negative/ two== zero&&
+           negative% two== negative&&
+           negative< zero&&
+           negative<= zero&&
+           zero> negative&&
+           zero>= negative&&
+           negative>> one== negative;
+}
+
+Static Function int Main()
+{
+    int rawMax= -1;
+    u64 max= rawMax;
+    u64 one= 1;
+    int branchHits= 0;
+    If (max> one)
+    {
+        branchHits= branchHits+ 1;
+    }
+
+    int loopHits= 0;
+    u16 limit= 4;
+    For (u16 i= 0; i< limit; i++)
+    {
+        loopHits= loopHits+ 1;
+    }
+
+    If (CheckU8()&& CheckU16()&& CheckU32()&& CheckU64()&& CheckUsize()&&
+        CheckSignedContrast()&& branchHits== 1&& loopHits== 4)
+    {
+        Console.PrintLine("ok");
+        Return 0;
+    }
+
+    Console.PrintLine("bad");
+    Return 1;
+}

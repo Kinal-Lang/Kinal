@@ -141,7 +141,79 @@ nums = nums.Add(4);
 
 ### Multi-Dimensional Arrays
 
-Kinal currently supports one-dimensional arrays; multi-dimensional structures can be implemented via class encapsulation.
+Kinal supports nested array syntax. `T[][]` is an array of `T[]`, and `T[][][]` is an array of `T[][]`.
+
+```kinal
+int[][] grid = {
+    { 1, 2 },
+    { 3 }
+};
+
+string[][][] words = {
+    {
+        { "a", "b" },
+        { "c" }
+    }
+};
+
+any[][][] values = {
+    {
+        { 1, "two" },
+        { true }
+    }
+};
+```
+
+Nested arrays are jagged, so inner arrays can have different lengths. When using `any`, write the array rank explicitly, such as `any[][][]`.
+
+## Packages
+
+`Object.Package` is a compile-time structural value for returning or passing a fixed group of values without declaring a new `struct`.
+
+Package types use angle brackets:
+
+```kinal
+Function <int, string> Status()
+{
+    Return <200, "OK">;
+}
+```
+
+Repeated element types can be written with a repeat suffix:
+
+```kinal
+Function <int(2), string(2)> Repeated()
+{
+    Return <1, 2, "left", "right">;
+}
+```
+
+Use `Object.Package` when you want the variable type inferred from the initializer:
+
+```kinal
+Object.Package status = Status();
+IO.Console.PrintLine(status[0]);  // 200
+IO.Console.PrintLine(status[1]);  // OK
+```
+
+Package indexes must be compile-time constants.
+
+You can attach field aliases to one variable declaration. Aliases are local to that variable and are not part of the Package type:
+
+```kinal
+Object.Package status<code, message> = Status();
+IO.Console.PrintLine(status.code);
+IO.Console.PrintLine(status.message);
+```
+
+Package values can be explicitly materialized into arrays:
+
+```kinal
+any[] items = [any[]](status);
+int[] nums = [int[]](<1, 2, 3>);
+```
+
+Empty packages are not supported. Package v1 does not support destructuring, named package literals, or named package types.
 
 ## Pointers
 

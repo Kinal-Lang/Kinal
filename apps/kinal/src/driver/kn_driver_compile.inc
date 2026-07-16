@@ -351,6 +351,364 @@ static const char *sema_info_host_static_library_suffix(void)
 #endif
 }
 
+static void compile_init_link_options(KnLinkOptions *out,
+                                      const KnCompileConfig *cfg,
+                                      const char *obj_path,
+                                      const KnLinkItem *items,
+                                      int item_count,
+                                      int include_runtime,
+                                      const char *entry_symbol)
+{
+    kn_memset(out, 0, sizeof(*out));
+    out->obj_path = obj_path;
+    out->out_path = cfg->out_path;
+    out->linker_path = cfg->linker_path;
+    out->items = items;
+    out->item_count = item_count;
+    out->target_triple = cfg->target_triple;
+    out->linker_kind = cfg->linker_kind;
+    out->artifact_kind = cfg->artifact_kind;
+    out->include_runtime = include_runtime;
+    out->lto_mode = cfg->lto_mode;
+    out->env_kind = cfg->env_kind;
+    out->runtime_mode = cfg->runtime_mode;
+    out->panic_mode = cfg->panic_mode;
+    out->crt_mode = cfg->crt_mode;
+    out->no_crt = cfg->no_crt;
+    out->no_default_libs = cfg->no_default_libs;
+    out->entry_symbol = entry_symbol;
+    out->link_script = cfg->link_script;
+    out->trace = cfg->trace;
+    out->show_link = cfg->show_link;
+    out->show_link_search = cfg->show_link_search;
+}
+
+static void compile_init_sema_options(KnSemaOptions *out,
+                                      const KnCompileConfig *cfg,
+                                      int require_entry,
+                                      const char *entry_name)
+{
+    kn_memset(out, 0, sizeof(*out));
+    out->require_entry = require_entry;
+    out->env_kind = cfg->env_kind;
+    out->entry_name = entry_name;
+    out->target_os = sema_info_os_from_triple(cfg->target_triple);
+    out->target_arch = sema_info_arch_from_triple(cfg->target_triple);
+    out->target_env = sema_info_env_from_cfg(cfg->env_kind);
+    out->target_pointer_bits = sema_info_pointer_bits_from_triple(cfg->target_triple);
+    out->target_path_separator = sema_info_path_separator_from_triple(cfg->target_triple);
+    out->target_new_line = sema_info_new_line_from_triple(cfg->target_triple);
+    out->target_exe_suffix = sema_info_exe_suffix_from_triple(cfg->target_triple);
+    out->target_object_suffix = sema_info_object_suffix_from_triple(cfg->target_triple);
+    out->target_dynamic_library_suffix = sema_info_dynamic_library_suffix_from_triple(cfg->target_triple);
+    out->target_static_library_suffix = sema_info_static_library_suffix_from_triple(cfg->target_triple);
+    out->host_os = sema_info_host_os();
+    out->host_arch = sema_info_host_arch();
+    out->host_env = KN_INFO_ENV_HOSTED;
+    out->host_pointer_bits = sema_info_host_pointer_bits();
+    out->host_path_separator = sema_info_host_path_separator();
+    out->host_new_line = sema_info_host_new_line();
+    out->host_exe_suffix = sema_info_host_exe_suffix();
+    out->host_object_suffix = sema_info_host_object_suffix();
+    out->host_dynamic_library_suffix = sema_info_host_dynamic_library_suffix();
+    out->host_static_library_suffix = sema_info_host_static_library_suffix();
+    out->runtime_backend = sema_info_runtime_backend_from_cfg(cfg);
+}
+
+static void compile_init_codegen_options(KnCodegenOptions *out,
+                                         const KnCompileConfig *cfg,
+                                         int emit_kind,
+                                         int emit_entry,
+                                         int emit_pic,
+                                         const char *entry_name)
+{
+    kn_memset(out, 0, sizeof(*out));
+    out->target_triple = cfg->target_triple;
+    out->emit_kind = emit_kind;
+    out->emit_entry = emit_entry;
+    out->emit_pic = emit_pic;
+    out->env_kind = cfg->env_kind;
+    out->runtime_mode = cfg->runtime_mode;
+    out->panic_mode = cfg->panic_mode;
+    out->entry_name = entry_name;
+}
+
+static void compile_append_uint(char *buf, size_t cap, size_t *off, unsigned value)
+{
+    char digits[16];
+    int count = 0;
+    do
+    {
+        digits[count++] = (char)('0' + (value % 10u));
+        value /= 10u;
+    } while (value && count < (int)sizeof(digits));
+    while (count > 0)
+    {
+        char one[2] = { digits[--count], 0 };
+        kn_append(buf, cap, off, one);
+    }
+}
+
+static void compile_append_summary_count(char *buf, size_t cap, size_t *off,
+                                         const char *name, int value)
+{
+    kn_append(buf, cap, off, name);
+    kn_append(buf, cap, off, "=");
+    compile_append_uint(buf, cap, off, (unsigned)(value > 0 ? value : 0));
+    kn_append(buf, cap, off, "\n");
+}
+
+static int compile_write_sema_summary(const char *out_path,
+                                      const KnCompileConfig *cfg,
+                                      const SourceList *sources,
+                                      const MetaList *metas,
+                                      const FuncList *funcs,
+                                      const ImportList *imports,
+                                      const ClassList *classes,
+                                      const InterfaceList *interfaces,
+                                      const StructList *structs,
+                                      const EnumList *enums,
+                                      const StmtList *globals)
+{
+    char text[4096];
+    size_t off = 0;
+    text[0] = 0;
+    kn_append(text, sizeof(text), &off, "format=kinal-sema-v1\n");
+    kn_append(text, sizeof(text), &off, "target=");
+    kn_append(text, sizeof(text), &off, cfg->target_triple ? cfg->target_triple : "");
+    kn_append(text, sizeof(text), &off, "\n");
+    compile_append_summary_count(text, sizeof(text), &off, "pointer_bits", sema_info_pointer_bits_from_triple(cfg->target_triple));
+    kn_append(text, sizeof(text), &off, "environment=");
+    kn_append(text, sizeof(text), &off, cfg->env_kind == KN_ENV_FREESTANDING ? "freestanding\n" : "hosted\n");
+    compile_append_summary_count(text, sizeof(text), &off, "sources", sources ? sources->count : 0);
+    compile_append_summary_count(text, sizeof(text), &off, "metas", metas ? metas->count : 0);
+    compile_append_summary_count(text, sizeof(text), &off, "functions", funcs ? funcs->count : 0);
+    compile_append_summary_count(text, sizeof(text), &off, "imports", imports ? imports->count : 0);
+    compile_append_summary_count(text, sizeof(text), &off, "classes", classes ? classes->count : 0);
+    compile_append_summary_count(text, sizeof(text), &off, "interfaces", interfaces ? interfaces->count : 0);
+    compile_append_summary_count(text, sizeof(text), &off, "structs", structs ? structs->count : 0);
+    compile_append_summary_count(text, sizeof(text), &off, "enums", enums ? enums->count : 0);
+    compile_append_summary_count(text, sizeof(text), &off, "globals", globals ? globals->count : 0);
+    {
+        KnHirStats hir;
+        kn_hir_collect_stats(funcs, classes, interfaces, globals, &hir);
+        kn_append(text, sizeof(text), &off, "hir_format=kinal-call-hir-v1\n");
+        kn_append(text, sizeof(text), &off, "binary_hir_format=kinal-binary-hir-v1\n");
+        compile_append_summary_count(text, sizeof(text), &off, "hir_expressions", (int)hir.expressions);
+        compile_append_summary_count(text, sizeof(text), &off, "hir_typed_expressions", (int)hir.typed_expressions);
+        compile_append_summary_count(text, sizeof(text), &off, "hir_calls", (int)hir.calls);
+        compile_append_summary_count(text, sizeof(text), &off, "hir_unresolved_calls", (int)hir.unresolved_calls);
+        compile_append_summary_count(text, sizeof(text), &off, "hir_builtin_calls", (int)hir.builtin_calls);
+        compile_append_summary_count(text, sizeof(text), &off, "hir_function_calls", (int)hir.function_calls);
+        compile_append_summary_count(text, sizeof(text), &off, "hir_delegate_calls", (int)hir.delegate_calls);
+        compile_append_summary_count(text, sizeof(text), &off, "hir_static_method_calls", (int)hir.static_method_calls);
+        compile_append_summary_count(text, sizeof(text), &off, "hir_direct_method_calls", (int)hir.direct_method_calls);
+        compile_append_summary_count(text, sizeof(text), &off, "hir_virtual_method_calls", (int)hir.virtual_method_calls);
+        compile_append_summary_count(text, sizeof(text), &off, "hir_interface_method_calls", (int)hir.interface_method_calls);
+        compile_append_summary_count(text, sizeof(text), &off, "hir_binaries", (int)hir.binaries);
+        compile_append_summary_count(text, sizeof(text), &off, "hir_unresolved_binaries", (int)hir.unresolved_binaries);
+        compile_append_summary_count(text, sizeof(text), &off, "hir_binary_numeric_arithmetic", (int)hir.binary_numeric_arithmetic);
+        compile_append_summary_count(text, sizeof(text), &off, "hir_binary_string_concat", (int)hir.binary_string_concat);
+        compile_append_summary_count(text, sizeof(text), &off, "hir_binary_pointer_arithmetic", (int)hir.binary_pointer_arithmetic);
+        compile_append_summary_count(text, sizeof(text), &off, "hir_binary_bitwise", (int)hir.binary_bitwise);
+        compile_append_summary_count(text, sizeof(text), &off, "hir_binary_string_equality", (int)hir.binary_string_equality);
+        compile_append_summary_count(text, sizeof(text), &off, "hir_binary_reference_equality", (int)hir.binary_reference_equality);
+        compile_append_summary_count(text, sizeof(text), &off, "hir_binary_scalar_equality", (int)hir.binary_scalar_equality);
+        compile_append_summary_count(text, sizeof(text), &off, "hir_binary_numeric_comparison", (int)hir.binary_numeric_comparison);
+        compile_append_summary_count(text, sizeof(text), &off, "hir_binary_logical_short_circuit", (int)hir.binary_logical_short_circuit);
+    }
+
+    KN_HANDLE handle = CreateFileA(out_path, KN_GENERIC_WRITE, 0, 0,
+                                   KN_CREATE_ALWAYS, KN_FILE_ATTRIBUTE_NORMAL, 0);
+    if (!handle || handle == KN_INVALID_HANDLE_VALUE)
+        return -1;
+    KN_DWORD written = 0;
+    int ok = WriteFile(handle, text, (KN_DWORD)off, &written, 0) && written == (KN_DWORD)off;
+    CloseHandle(handle);
+    return ok ? 0 : -1;
+}
+
+static void compile_free_sources(SourceList *sources)
+{
+    if (!sources)
+        return;
+    for (int i = 0; i < sources->count; i++)
+    {
+        KnSource *source = sources->items[i];
+        if (!source) continue;
+        kn_source_free(source);
+        if (source->text)
+            kn_free((void *)source->text);
+        kn_free(source);
+    }
+    sources->count = 0;
+}
+
+static int compile_non_kinal_inputs(const StrList *inputs,
+                                    const KnCompileConfig *cfg,
+                                    int include_runtime,
+                                    const char *link_entry_symbol)
+{
+    const char *out_path = cfg->out_path;
+    if (cfg->emit_mode == KN_EMIT_CHECK)
+    {
+        kn_write_str("check emit requires at least one Kinal source input\n");
+        return -1;
+    }
+    if (cfg->emit_mode == KN_EMIT_OBJECT)
+    {
+        if (inputs->count != 1)
+        {
+            kn_write_str("object emit from non-.fx inputs requires exactly one input\n");
+            return -1;
+        }
+        if (compile_intermediate_to_obj(inputs->items[0], out_path, cfg->target_triple, cfg->lto_mode,
+                                        cfg->artifact_kind == KN_ARTIFACT_SHARED_LIB) != 0)
+        {
+            kn_write_str("failed to compile intermediate input to object\n");
+            return -1;
+        }
+        return 0;
+    }
+    if (cfg->emit_mode == KN_EMIT_ASSEMBLY)
+    {
+        if (inputs->count != 1 || classify_input(inputs->items[0]) != KN_INPUT_LL)
+        {
+            kn_write_str("assembly emit from non-.fx inputs currently supports only one .ll input\n");
+            return -1;
+        }
+        if (compile_ll_to_asm(inputs->items[0], out_path, cfg->target_triple) != 0)
+        {
+            kn_write_str("failed to compile .ll to assembly\n");
+            return -1;
+        }
+        return 0;
+    }
+    if (cfg->emit_mode == KN_EMIT_LLVM_IR)
+    {
+        if (inputs->count != 1 || classify_input(inputs->items[0]) != KN_INPUT_LL)
+        {
+            kn_write_str("llvm ir emit from non-.fx inputs currently supports only one .ll input\n");
+            return -1;
+        }
+        if (!copy_file_overwrite(inputs->items[0], out_path))
+        {
+            kn_write_str("failed to copy .ll output\n");
+            return -1;
+        }
+        return 0;
+    }
+
+    const char *link_inputs[256];
+    int link_inputs_count = 0;
+    char temp_objs[64][KN_MAX_PATH];
+    int temp_count = 0;
+    for (int i = 0; i < inputs->count; i++)
+    {
+        const char *path = inputs->items[i];
+        KnInputKind kind = classify_input(path);
+        if (kind == KN_INPUT_OBJ)
+        {
+            if (link_inputs_count < (int)(sizeof(link_inputs) / sizeof(link_inputs[0])))
+                link_inputs[link_inputs_count++] = path;
+            continue;
+        }
+        if (kind != KN_INPUT_ASM && kind != KN_INPUT_LL)
+            continue;
+        if (temp_count >= (int)(sizeof(temp_objs) / sizeof(temp_objs[0])))
+        {
+            kn_write_str("too many intermediate inputs\n");
+            return -1;
+        }
+        int use_bc = (kind == KN_INPUT_LL && cfg->lto_mode != KN_LTO_OFF && cfg->linker_kind == KN_LINKER_LLD);
+        if (use_bc)
+        {
+            if (!derive_temp_bc_input_path(out_path, temp_count + 1, temp_objs[temp_count], sizeof(temp_objs[temp_count])))
+                return -1;
+            if (compile_ir_to_bc(path, temp_objs[temp_count]) != 0)
+            {
+                kn_write_str("failed to compile intermediate llvm ir to bitcode\n");
+                return -1;
+            }
+        }
+        else
+        {
+            if (!derive_temp_obj_path(out_path, cfg->target_triple, temp_count + 1, temp_objs[temp_count], sizeof(temp_objs[temp_count])))
+                return -1;
+            if (compile_intermediate_to_obj(path, temp_objs[temp_count], cfg->target_triple, cfg->lto_mode,
+                                            cfg->artifact_kind == KN_ARTIFACT_SHARED_LIB) != 0)
+            {
+                kn_write_str("failed to compile intermediate input to object\n");
+                return -1;
+            }
+        }
+        if (link_inputs_count < (int)(sizeof(link_inputs) / sizeof(link_inputs[0])))
+            link_inputs[link_inputs_count++] = temp_objs[temp_count];
+        temp_count++;
+    }
+
+    if (link_inputs_count == 0)
+    {
+        kn_write_str("no object-like inputs available for linking\n");
+        return -1;
+    }
+    KnLinkItem extra_items[512];
+    int extra_count = 0;
+    for (int i = 1; i < link_inputs_count && extra_count < (int)(sizeof(extra_items) / sizeof(extra_items[0])); i++)
+        link_item_add(extra_items, &extra_count, (int)(sizeof(extra_items) / sizeof(extra_items[0])), KN_LINK_ITEM_FILE, link_inputs[i]);
+    for (int i = 0; i < cfg->link_item_count && extra_count < (int)(sizeof(extra_items) / sizeof(extra_items[0])); i++)
+        link_item_add(extra_items, &extra_count, (int)(sizeof(extra_items) / sizeof(extra_items[0])), cfg->link_items[i].kind, cfg->link_items[i].value);
+
+    if (cfg->show_link_search)
+        dump_link_search_dirs(extra_items, extra_count);
+
+    if (target_is_windows(cfg->target_triple) &&
+        cfg->artifact_kind == KN_ARTIFACT_EXE &&
+        cfg->linker_kind == KN_LINKER_LLD)
+    {
+        int direct_rc = link_intermediate_windows_lld(cfg, link_inputs[0], extra_items, extra_count);
+        if (direct_rc == 0)
+        {
+            if (!cfg->keep_temps)
+            {
+                for (int i = 0; i < temp_count; i++)
+                    try_delete_file(temp_objs[i]);
+            }
+            return 0;
+        }
+        if (direct_rc != -1)
+        {
+            kn_write_str("link failed\n");
+            return -1;
+        }
+    }
+
+    KnLinkOptions link_opts;
+    compile_init_link_options(&link_opts, cfg, link_inputs[0], extra_items,
+                              extra_count, include_runtime, link_entry_symbol);
+    trace_log(cfg->trace, "compile:intermediate_link");
+    if (cfg->trace)
+    {
+        kn_write_str("[Trace] intermediate obj: ");
+        kn_write_str(link_opts.obj_path ? link_opts.obj_path : "<null>");
+        kn_write_str("\n");
+        kn_write_str("[Trace] intermediate out: ");
+        kn_write_str(link_opts.out_path ? link_opts.out_path : "<null>");
+        kn_write_str("\n");
+    }
+    if (invoke_linker(&link_opts) != 0)
+    {
+        kn_write_str("link failed\n");
+        return -1;
+    }
+    if (!cfg->keep_temps)
+    {
+        for (int i = 0; i < temp_count; i++)
+            try_delete_file(temp_objs[i]);
+    }
+    return 0;
+}
+
 static int kn_compile(int in_count, const char **in_paths, const KnCompileConfig *cfg)
 {
     if (!cfg || !cfg->out_path || !cfg->target_triple)
@@ -359,7 +717,7 @@ static int kn_compile(int in_count, const char **in_paths, const KnCompileConfig
     // Keep the entry wrapper in executable intermediates as well so emitted
     // .ll/.s/.obj artifacts can be resumed and linked later without re-running
     // the frontend.
-    const int need_entry = (cfg->artifact_kind == KN_ARTIFACT_EXE) ? 1 : 0;
+    const int need_entry = (cfg->artifact_kind == KN_ARTIFACT_EXE && cfg->emit_mode != KN_EMIT_CHECK) ? 1 : 0;
     const int include_runtime = (cfg->env_kind == KN_ENV_HOSTED) ? 1 : 0;
     const char *entry_name = (cfg->entry_symbol && cfg->entry_symbol[0])
                                  ? cfg->entry_symbol
@@ -387,27 +745,8 @@ static int kn_compile(int in_count, const char **in_paths, const KnCompileConfig
         }
 
         KnLinkOptions link_opts;
-        kn_memset(&link_opts, 0, sizeof(link_opts));
-        link_opts.obj_path = in_paths[0];
-        link_opts.out_path = cfg->out_path;
-        link_opts.linker_path = cfg->linker_path;
-        link_opts.items = cfg->link_items;
-        link_opts.item_count = cfg->link_item_count;
-        link_opts.target_triple = cfg->target_triple;
-        link_opts.linker_kind = cfg->linker_kind;
-        link_opts.artifact_kind = cfg->artifact_kind;
-        link_opts.include_runtime = include_runtime;
-        link_opts.lto_mode = cfg->lto_mode;
-        link_opts.env_kind = cfg->env_kind;
-        link_opts.runtime_mode = cfg->runtime_mode;
-        link_opts.panic_mode = cfg->panic_mode;
-        link_opts.crt_mode = cfg->crt_mode;
-        link_opts.no_crt = cfg->no_crt;
-        link_opts.no_default_libs = cfg->no_default_libs;
-        link_opts.entry_symbol = link_entry_symbol;
-        link_opts.link_script = cfg->link_script;
-        link_opts.show_link = cfg->show_link;
-        link_opts.show_link_search = cfg->show_link_search;
+        compile_init_link_options(&link_opts, cfg, in_paths[0], cfg->link_items,
+                                  cfg->link_item_count, include_runtime, link_entry_symbol);
         if (invoke_linker(&link_opts) != 0)
         {
             kn_write_str("link failed\n");
@@ -457,181 +796,7 @@ static int kn_compile(int in_count, const char **in_paths, const KnCompileConfig
     if (kn_inputs.count == 0)
     {
         trace_log(trace, "compile:nonfx");
-        // Non-.fx pipeline: resume from intermediates.
-        if (cfg->emit_mode == KN_EMIT_OBJECT)
-        {
-            if (all_inputs.count != 1)
-            {
-                kn_write_str("object emit from non-.fx inputs requires exactly one input\n");
-                return -1;
-            }
-            if (compile_intermediate_to_obj(all_inputs.items[0], out_path, cfg->target_triple, cfg->lto_mode,
-                                            cfg->artifact_kind == KN_ARTIFACT_SHARED_LIB) != 0)
-            {
-                kn_write_str("failed to compile intermediate input to object\n");
-                return -1;
-            }
-            return 0;
-        }
-        if (cfg->emit_mode == KN_EMIT_ASSEMBLY)
-        {
-            if (all_inputs.count != 1 || classify_input(all_inputs.items[0]) != KN_INPUT_LL)
-            {
-                kn_write_str("assembly emit from non-.fx inputs currently supports only one .ll input\n");
-                return -1;
-            }
-            if (compile_ll_to_asm(all_inputs.items[0], out_path, cfg->target_triple) != 0)
-            {
-                kn_write_str("failed to compile .ll to assembly\n");
-                return -1;
-            }
-            return 0;
-        }
-        if (cfg->emit_mode == KN_EMIT_LLVM_IR)
-        {
-            if (all_inputs.count != 1 || classify_input(all_inputs.items[0]) != KN_INPUT_LL)
-            {
-                kn_write_str("llvm ir emit from non-.fx inputs currently supports only one .ll input\n");
-                return -1;
-            }
-            if (!copy_file_overwrite(all_inputs.items[0], out_path))
-            {
-                kn_write_str("failed to copy .ll output\n");
-                return -1;
-            }
-            return 0;
-        }
-
-        // Link mode from intermediates.
-        const char *link_inputs[256];
-        int link_inputs_count = 0;
-        char temp_objs[64][KN_MAX_PATH];
-        int temp_count = 0;
-        for (int i = 0; i < all_inputs.count; i++)
-        {
-            const char *p = all_inputs.items[i];
-            KnInputKind k = classify_input(p);
-            if (k == KN_INPUT_OBJ)
-            {
-                if (link_inputs_count < (int)(sizeof(link_inputs) / sizeof(link_inputs[0])))
-                    link_inputs[link_inputs_count++] = p;
-                continue;
-            }
-            if (k == KN_INPUT_ASM || k == KN_INPUT_LL)
-            {
-                if (temp_count >= (int)(sizeof(temp_objs) / sizeof(temp_objs[0])))
-                {
-                    kn_write_str("too many intermediate inputs\n");
-                    return -1;
-                }
-                int use_bc = (k == KN_INPUT_LL && cfg->lto_mode != KN_LTO_OFF && cfg->linker_kind == KN_LINKER_LLD);
-                if (use_bc)
-                {
-                    if (!derive_temp_bc_input_path(out_path, temp_count + 1, temp_objs[temp_count], sizeof(temp_objs[temp_count])))
-                        return -1;
-                    if (compile_ir_to_bc(p, temp_objs[temp_count]) != 0)
-                    {
-                        kn_write_str("failed to compile intermediate llvm ir to bitcode\n");
-                        return -1;
-                    }
-                }
-                else
-                {
-                    if (!derive_temp_obj_path(out_path, cfg->target_triple, temp_count + 1, temp_objs[temp_count], sizeof(temp_objs[temp_count])))
-                        return -1;
-                    if (compile_intermediate_to_obj(p, temp_objs[temp_count], cfg->target_triple, cfg->lto_mode,
-                                                    cfg->artifact_kind == KN_ARTIFACT_SHARED_LIB) != 0)
-                    {
-                        kn_write_str("failed to compile intermediate input to object\n");
-                        return -1;
-                    }
-                }
-                if (link_inputs_count < (int)(sizeof(link_inputs) / sizeof(link_inputs[0])))
-                    link_inputs[link_inputs_count++] = temp_objs[temp_count];
-                temp_count++;
-            }
-        }
-
-        if (link_inputs_count == 0)
-        {
-            kn_write_str("no object-like inputs available for linking\n");
-            return -1;
-        }
-        KnLinkItem extra_items[512];
-        int extra_count = 0;
-        for (int i = 1; i < link_inputs_count && extra_count < (int)(sizeof(extra_items) / sizeof(extra_items[0])); i++)
-            link_item_add(extra_items, &extra_count, (int)(sizeof(extra_items) / sizeof(extra_items[0])), KN_LINK_ITEM_FILE, link_inputs[i]);
-        for (int i = 0; i < cfg_link_item_count && extra_count < (int)(sizeof(extra_items) / sizeof(extra_items[0])); i++)
-            link_item_add(extra_items, &extra_count, (int)(sizeof(extra_items) / sizeof(extra_items[0])), cfg_link_items[i].kind, cfg_link_items[i].value);
-
-        if (cfg->show_link_search)
-            dump_link_search_dirs(extra_items, extra_count);
-
-        if (target_is_windows(cfg->target_triple) &&
-            cfg->artifact_kind == KN_ARTIFACT_EXE &&
-            cfg->linker_kind == KN_LINKER_LLD)
-        {
-            int direct_rc = link_intermediate_windows_lld(cfg, link_inputs[0], extra_items, extra_count);
-            if (direct_rc == 0)
-            {
-                if (!cfg->keep_temps)
-                {
-                    for (int ti = 0; ti < temp_count; ti++)
-                        try_delete_file(temp_objs[ti]);
-                }
-                return 0;
-            }
-            if (direct_rc != -1)
-            {
-                kn_write_str("link failed\n");
-                return -1;
-            }
-        }
-
-        KnLinkOptions link_opts;
-        kn_memset(&link_opts, 0, sizeof(link_opts));
-        link_opts.obj_path = link_inputs[0];
-        link_opts.out_path = out_path;
-        link_opts.linker_path = cfg->linker_path;
-        link_opts.items = extra_items;
-        link_opts.item_count = extra_count;
-        link_opts.target_triple = cfg->target_triple;
-        link_opts.linker_kind = cfg->linker_kind;
-        link_opts.artifact_kind = cfg->artifact_kind;
-        link_opts.include_runtime = include_runtime;
-        link_opts.lto_mode = cfg->lto_mode;
-        link_opts.env_kind = cfg->env_kind;
-        link_opts.runtime_mode = cfg->runtime_mode;
-        link_opts.panic_mode = cfg->panic_mode;
-        link_opts.crt_mode = cfg->crt_mode;
-        link_opts.no_crt = cfg->no_crt;
-        link_opts.no_default_libs = cfg->no_default_libs;
-        link_opts.entry_symbol = link_entry_symbol;
-        link_opts.link_script = cfg->link_script;
-        link_opts.trace = trace;
-        link_opts.show_link = cfg->show_link;
-        link_opts.show_link_search = cfg->show_link_search;
-        trace_log(trace, "compile:intermediate_link");
-        if (trace)
-        {
-            kn_write_str("[Trace] intermediate obj: ");
-            kn_write_str(link_opts.obj_path ? link_opts.obj_path : "<null>");
-            kn_write_str("\n");
-            kn_write_str("[Trace] intermediate out: ");
-            kn_write_str(link_opts.out_path ? link_opts.out_path : "<null>");
-            kn_write_str("\n");
-        }
-        if (invoke_linker(&link_opts) != 0)
-        {
-            kn_write_str("link failed\n");
-            return -1;
-        }
-        if (!cfg->keep_temps)
-        {
-            for (int ti = 0; ti < temp_count; ti++)
-                try_delete_file(temp_objs[ti]);
-        }
-        return 0;
+        return compile_non_kinal_inputs(&all_inputs, cfg, include_runtime, link_entry_symbol);
     }
 
     if (cfg->emit_mode != KN_EMIT_LINK && intermediate_inputs.count > 0)
@@ -654,34 +819,84 @@ static int kn_compile(int in_count, const char **in_paths, const KnCompileConfig
         strlist_add(&inputs, kn_inputs.items[i]);
 
     ModuleMap modmap = {0};
+    ModuleMap local_modmap = {0};
+    ModuleMap dep_modmap = {0};
     StrList module_seen = {0};
+    const int project_source_mode = cfg->project_source_mode;
+    const int use_project_local_map = cfg->project_local_sources && cfg->project_local_source_count > 0;
     if (auto_link && kn_inputs.count == 1 && inputs.count > 0)
     {
-        char base_dir[KN_MAX_PATH];
-        path_dirname(inputs.items[0], base_dir, sizeof(base_dir));
-        scan_dir_modules(base_dir, base_dir, &modmap);
         g_pkg_error = 0;
-        if (!scan_package_roots_into_module_map(cfg->official_package_roots, cfg->official_package_root_count, &modmap, 1))
-            return -1;
-        if (!scan_package_roots_into_module_map(cfg->package_roots, cfg->package_root_count, &modmap, 0))
-            return -1;
-        if (cfg->official_package_root_count == 0 && cfg->package_root_count == 0)
-            scan_default_stdlib_modules(&modmap);
-
-        char *input_unit = read_unit_name_from_file(inputs.items[0]);
-        if (input_unit)
+        if (use_project_local_map)
         {
-            ModulePath *same_unit = modulemap_find(&modmap, input_unit);
-            if (same_unit)
+            for (int psi = 0; psi < cfg->project_local_source_count; psi++)
             {
-                for (int mp = 0; mp < same_unit->paths.count; mp++)
+                if (!register_module_file_path(cfg->project_local_sources[psi], &local_modmap))
+                    return -1;
+            }
+            if (!scan_package_roots_into_module_map(cfg->official_package_roots, cfg->official_package_root_count, &dep_modmap, 1))
+                return -1;
+            if (!scan_package_roots_into_module_map(cfg->package_roots, cfg->package_root_count, &dep_modmap, 0))
+                return -1;
+            if (cfg->official_package_root_count == 0 && cfg->package_root_count == 0)
+                scan_default_stdlib_modules(&dep_modmap);
+
+            if (project_source_mode == KN_PROJ_SOURCE_MODE_ALL_SOURCES)
+            {
+                for (int psi = 0; psi < cfg->project_local_source_count; psi++)
                 {
-                    const char *path2 = same_unit->paths.items[mp];
-                    if (path2 && !path_eq(inputs.items[0], path2) && !strlist_contains_path(&inputs, path2))
+                    const char *path2 = cfg->project_local_sources[psi];
+                    if (path2 && !strlist_contains_path(&inputs, path2))
                         strlist_add(&inputs, path2);
                 }
             }
-            kn_free(input_unit);
+            else if (project_source_mode == KN_PROJ_SOURCE_MODE_ENTRY_UNIT ||
+                     project_source_mode == KN_PROJ_SOURCE_MODE_REACHABLE_UNITS)
+            {
+                char *input_unit = read_unit_name_from_file(inputs.items[0]);
+                if (input_unit)
+                {
+                    ModulePath *same_unit = modulemap_find(&local_modmap, input_unit);
+                    if (same_unit)
+                    {
+                        for (int mp = 0; mp < same_unit->paths.count; mp++)
+                        {
+                            const char *path2 = same_unit->paths.items[mp];
+                            if (path2 && !path_eq(inputs.items[0], path2) && !strlist_contains_path(&inputs, path2))
+                                strlist_add(&inputs, path2);
+                        }
+                    }
+                    kn_free(input_unit);
+                }
+            }
+        }
+        else
+        {
+            char base_dir[KN_MAX_PATH];
+            path_dirname(inputs.items[0], base_dir, sizeof(base_dir));
+            scan_dir_modules(base_dir, base_dir, &modmap);
+            if (!scan_package_roots_into_module_map(cfg->official_package_roots, cfg->official_package_root_count, &modmap, 1))
+                return -1;
+            if (!scan_package_roots_into_module_map(cfg->package_roots, cfg->package_root_count, &modmap, 0))
+                return -1;
+            if (cfg->official_package_root_count == 0 && cfg->package_root_count == 0)
+                scan_default_stdlib_modules(&modmap);
+
+            char *input_unit = read_unit_name_from_file(inputs.items[0]);
+            if (input_unit)
+            {
+                ModulePath *same_unit = modulemap_find(&modmap, input_unit);
+                if (same_unit)
+                {
+                    for (int mp = 0; mp < same_unit->paths.count; mp++)
+                    {
+                        const char *path2 = same_unit->paths.items[mp];
+                        if (path2 && !path_eq(inputs.items[0], path2) && !strlist_contains_path(&inputs, path2))
+                            strlist_add(&inputs, path2);
+                    }
+                }
+                kn_free(input_unit);
+            }
         }
     }
 
@@ -696,6 +911,19 @@ static int kn_compile(int in_count, const char **in_paths, const KnCompileConfig
         if (!src)
         {
             kn_write_str("failed to read input\n");
+            return -1;
+        }
+        if (cfg->project_mode && source_has_unsafe_alias_prefix(src))
+        {
+            KnSource temp_src;
+            kn_memset(&temp_src, 0, sizeof(temp_src));
+            kn_source_init(&temp_src, path, src, sz);
+            kn_diag_report(&temp_src, KN_STAGE_PARSER, 1, 1, 1,
+                           "Unsafe Alias Project File",
+                           "Files that use Unsafe Alias cannot be built through kinal.knproj/project mode",
+                           0);
+            kn_source_free(&temp_src);
+            kn_free(src);
             return -1;
         }
         KnSource *fsrc = (KnSource *)kn_malloc(sizeof(KnSource));
@@ -719,7 +947,11 @@ static int kn_compile(int in_count, const char **in_paths, const KnCompileConfig
                 strlist_add(&module_seen, m->module);
                 if (kn_std_module_has(m->module))
                     continue;
-                ModulePath *mod = modulemap_find(&modmap, m->module);
+                ModulePath *mod = 0;
+                if (use_project_local_map && project_source_mode == KN_PROJ_SOURCE_MODE_REACHABLE_UNITS)
+                    mod = modulemap_find(&local_modmap, m->module);
+                if (!mod)
+                    mod = use_project_local_map ? modulemap_find(&dep_modmap, m->module) : modulemap_find(&modmap, m->module);
                 if (!mod) continue;
                 for (int mp = 0; mp < mod->paths.count; mp++)
                 {
@@ -743,37 +975,29 @@ static int kn_compile(int in_count, const char **in_paths, const KnCompileConfig
     uint64_t t_sema = now_ms();
     const KnSource *first_src = sources.count > 0 ? sources.items[0] : 0;
     KnSemaOptions sema_opts;
-    kn_memset(&sema_opts, 0, sizeof(sema_opts));
-    sema_opts.require_entry = need_entry;
-    sema_opts.env_kind = cfg->env_kind;
-    sema_opts.entry_name = entry_name;
-    sema_opts.target_os = sema_info_os_from_triple(cfg->target_triple);
-    sema_opts.target_arch = sema_info_arch_from_triple(cfg->target_triple);
-    sema_opts.target_env = sema_info_env_from_cfg(cfg->env_kind);
-    sema_opts.target_pointer_bits = sema_info_pointer_bits_from_triple(cfg->target_triple);
-    sema_opts.target_path_separator = sema_info_path_separator_from_triple(cfg->target_triple);
-    sema_opts.target_new_line = sema_info_new_line_from_triple(cfg->target_triple);
-    sema_opts.target_exe_suffix = sema_info_exe_suffix_from_triple(cfg->target_triple);
-    sema_opts.target_object_suffix = sema_info_object_suffix_from_triple(cfg->target_triple);
-    sema_opts.target_dynamic_library_suffix = sema_info_dynamic_library_suffix_from_triple(cfg->target_triple);
-    sema_opts.target_static_library_suffix = sema_info_static_library_suffix_from_triple(cfg->target_triple);
-    sema_opts.host_os = sema_info_host_os();
-    sema_opts.host_arch = sema_info_host_arch();
-    sema_opts.host_env = KN_INFO_ENV_HOSTED;
-    sema_opts.host_pointer_bits = sema_info_host_pointer_bits();
-    sema_opts.host_path_separator = sema_info_host_path_separator();
-    sema_opts.host_new_line = sema_info_host_new_line();
-    sema_opts.host_exe_suffix = sema_info_host_exe_suffix();
-    sema_opts.host_object_suffix = sema_info_host_object_suffix();
-    sema_opts.host_dynamic_library_suffix = sema_info_host_dynamic_library_suffix();
-    sema_opts.host_static_library_suffix = sema_info_host_static_library_suffix();
-    sema_opts.runtime_backend = sema_info_runtime_backend_from_cfg(cfg);
+    compile_init_sema_options(&sema_opts, cfg, need_entry, entry_name);
     if (kn_sema_check(first_src, &metas, &funcs, &imports, &classes, &interfaces, &structs, &enums, &globals, &sema_opts) != 0)
         return -1;
     if (kn_diag_error_count() > 0)
         return -1;
     p_sema = now_ms() - t_sema;
     trace_log(trace, "sema:ok");
+
+    if (cfg->emit_mode == KN_EMIT_CHECK)
+    {
+        if (compile_write_sema_summary(out_path, cfg, &sources, &metas, &funcs, &imports,
+                                       &classes, &interfaces, &structs, &enums, &globals) != 0)
+        {
+            kn_write_str("failed to write semantic summary\n");
+            return -1;
+        }
+        compile_free_sources(&sources);
+        trace_log(trace, "compile:checked");
+        profile_phase(profile, "parse", p_parse);
+        profile_phase(profile, "sema", p_sema);
+        profile_phase(profile, "total", now_ms() - t_all);
+        return 0;
+    }
 
     if (cfg->emit_mode == KN_EMIT_KNC)
     {
@@ -844,17 +1068,9 @@ static int kn_compile(int in_count, const char **in_paths, const KnCompileConfig
     trace_log(trace, "codegen:start");
     uint64_t t_codegen = now_ms();
     KnCodegenOptions cg_opts;
-    kn_memset(&cg_opts, 0, sizeof(cg_opts));
-    cg_opts.target_triple = cfg->target_triple;
-    cg_opts.emit_kind = emit_kind;
     // Emit entry wrapper for executable artifacts so .ll/.s/.obj intermediates
     // can be resumed and linked later without re-running frontend.
-    cg_opts.emit_entry = need_entry;
-    cg_opts.emit_pic = emit_pic;
-    cg_opts.env_kind = cfg->env_kind;
-    cg_opts.runtime_mode = cfg->runtime_mode;
-    cg_opts.panic_mode = cfg->panic_mode;
-    cg_opts.entry_name = entry_name;
+    compile_init_codegen_options(&cg_opts, cfg, emit_kind, need_entry, emit_pic, entry_name);
     if (kn_codegen(cg_out, &metas, &funcs, &imports, &classes, &interfaces, &structs, &enums, &globals, &cg_opts) != 0)
         return -1;
     p_codegen = now_ms() - t_codegen;
@@ -959,30 +1175,10 @@ static int kn_compile(int in_count, const char **in_paths, const KnCompileConfig
         trace_log(trace, "link:start");
         uint64_t t_link = now_ms();
         KnLinkOptions link_opts;
-        kn_memset(&link_opts, 0, sizeof(link_opts));
-        link_opts.obj_path = primary_obj;
-        link_opts.out_path = out_path;
-        link_opts.linker_path = cfg->linker_path;
-        link_opts.items = extra_items;
-        link_opts.item_count = extra_count;
-        link_opts.target_triple = cfg->target_triple;
-        link_opts.linker_kind = cfg->linker_kind;
-        link_opts.artifact_kind = cfg->artifact_kind;
-        link_opts.include_runtime = include_runtime;
-        link_opts.lto_mode = cfg->lto_mode;
+        compile_init_link_options(&link_opts, cfg, primary_obj, extra_items,
+                                  extra_count, include_runtime, link_entry_symbol);
         link_opts.exports = exports;
         link_opts.export_count = export_count;
-        link_opts.env_kind = cfg->env_kind;
-        link_opts.runtime_mode = cfg->runtime_mode;
-        link_opts.panic_mode = cfg->panic_mode;
-        link_opts.crt_mode = cfg->crt_mode;
-        link_opts.no_crt = cfg->no_crt;
-        link_opts.no_default_libs = cfg->no_default_libs;
-        link_opts.entry_symbol = link_entry_symbol;
-        link_opts.link_script = cfg->link_script;
-        link_opts.trace = trace;
-        link_opts.show_link = cfg->show_link;
-        link_opts.show_link_search = cfg->show_link_search;
         if (invoke_linker(&link_opts) != 0)
         {
             kn_write_str("link failed\n");
@@ -1006,14 +1202,7 @@ static int kn_compile(int in_count, const char **in_paths, const KnCompileConfig
         trace_log(trace, "link:ok");
     }
 
-    for (int i = 0; i < sources.count; i++)
-    {
-        KnSource *s = sources.items[i];
-        kn_source_free(s);
-        if (s->text)
-            kn_free((void *)s->text);
-        kn_free(s);
-    }
+    compile_free_sources(&sources);
     trace_log(trace, "compile:done");
     profile_phase(profile, "parse", p_parse);
     profile_phase(profile, "sema", p_sema);

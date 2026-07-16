@@ -1,0 +1,45 @@
+Unit Tests.OverloadMethods;
+
+Get Console By IO.Console;
+
+Class Formatter
+{
+    [Overload]
+    [SymbolName("MakeFromInt")]
+    Public Static Function string Make(int value)
+    {
+        Return "int";
+    }
+
+    [Overload]
+    [SymbolName("MakeFromText")]
+    Public Static Function string Make(string value)
+    {
+        Return "string";
+    }
+
+    [Overload]
+    [SymbolName("SizeText")]
+    Public Function int Size(string value)
+    {
+        Return value.Length();
+    }
+
+    [Overload]
+    [SymbolName("SizeArray")]
+    Public Function int Size(int[] value)
+    {
+        Return value.Length();
+    }
+}
+
+Static Function int Main()
+{
+    Formatter formatter = New Formatter();
+    int[] values = {1, 2, 3, 4};
+    Console.PrintLine(Formatter.Make(1));
+    Console.PrintLine(Formatter.Make("hi"));
+    Console.PrintLine(formatter.Size("abc"));
+    Console.PrintLine(formatter.Size(values));
+    Return 0;
+}

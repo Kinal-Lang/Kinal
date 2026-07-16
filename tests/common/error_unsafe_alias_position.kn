@@ -1,0 +1,9 @@
+Get IO.Console;
+
+Unsafe Alias fn By Function;
+
+Static Function int Main()
+{
+    IO.Console.PrintLine("x");
+    Return 0;
+}

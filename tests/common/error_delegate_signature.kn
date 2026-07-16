@@ -1,0 +1,14 @@
+Unit Tests.ErrorDelegateSignature;
+
+Delegate Function int operation(int value) By C;
+
+Function int Add(int left, int right)
+{
+    Return left + right;
+}
+
+Unsafe Static Function int Main()
+{
+    operation = Add;
+    Return 0;
+}

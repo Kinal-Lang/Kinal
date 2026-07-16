@@ -1,0 +1,6 @@
+Unit Tests.ProjectModes.IgnoredBroken;
+
+Static Function int AlsoBroken(
+{
+    Return 0;
+}

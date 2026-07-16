@@ -33,16 +33,7 @@ static Type cg_func_logical_ret_type(const Func *f)
 
 static Type type_from_elem(Type t)
 {
-    if (t.kind == TY_PTR && t.ptr_depth > 1)
-    {
-        Type e = type_ptr(t.elem);
-        e.ptr_depth = t.ptr_depth - 1;
-        e.name = t.name;
-        return e;
-    }
-    Type e = type_make(t.elem);
-    e.name = t.name;
-    return e;
+    return type_immediate_elem(t);
 }
 
 static EnumDecl *enum_find(Codegen *g, const char *name)
@@ -124,9 +115,19 @@ static LLVMTypeRef llvm_type(Codegen *g, Type t)
     }
     case TY_ARRAY:
     {
-        Type elem = type_make(t.elem);
-        elem.name = t.name;
+        Type elem = type_immediate_elem(t);
         return llvm_array_type(g, elem);
+    }
+    case TY_PACKAGE:
+    {
+        if (t.package_count <= 0)
+            return g->i8;
+        LLVMTypeRef *fields = (LLVMTypeRef *)kn_malloc(sizeof(LLVMTypeRef) * (size_t)t.package_count);
+        if (!fields)
+            kn_die("out of memory");
+        for (int i = 0; i < t.package_count; i++)
+            fields[i] = llvm_type(g, t.package_elems[i]);
+        return LLVMStructTypeInContext(g->ctx, fields, (unsigned)t.package_count, 0);
     }
     case TY_PTR:
     {
@@ -146,13 +147,179 @@ static LLVMTypeRef llvm_type(Codegen *g, Type t)
     }
 }
 
+static bool cg_func_uses_c_abi(const Func *f)
+{
+    if (!f) return false;
+    if (f->is_extern)
+        return true;
+    return f->is_delegate && f->delegate_abi == KN_DELEGATE_ABI_C;
+}
+
+static Type cg_ffi_resolved_type(Codegen *g, Type type)
+{
+    if (type.kind == TY_ENUM)
+    {
+        EnumDecl *en = enum_find(g, type.name);
+        if (en)
+            return en->underlying;
+    }
+    return type;
+}
+
+static KnFfiAbiType cg_ffi_abi_type(Codegen *g, Type type)
+{
+    return kn_ffi_abi_type(cg_ffi_resolved_type(g, type), g ? g->target_pointer_bits : 64);
+}
+
+static LLVMTypeRef llvm_ffi_type(Codegen *g, Type type)
+{
+    Type resolved = cg_ffi_resolved_type(g, type);
+    KnFfiAbiType abi = kn_ffi_abi_type(resolved, g->target_pointer_bits);
+    switch (abi.kind)
+    {
+    case KN_FFI_ABI_VOID:
+        return g->voidt;
+    case KN_FFI_ABI_INTEGER:
+        switch (abi.bits)
+        {
+        case 8: return g->i8;
+        case 16: return g->i16;
+        case 32: return g->i32;
+        case 64: return g->i64;
+        default: break;
+        }
+        break;
+    case KN_FFI_ABI_FLOAT:
+        if (abi.bits == 32) return g->f32;
+        if (abi.bits == 64) return g->f64;
+        break;
+    case KN_FFI_ABI_POINTER:
+        return g->i8ptr;
+    default:
+        break;
+    }
+    return llvm_type(g, resolved);
+}
+
+static LLVMValueRef cg_to_ffi_value(Codegen *g, LLVMValueRef value, Type type)
+{
+    KnFfiAbiType abi = cg_ffi_abi_type(g, type);
+    LLVMTypeRef dst = llvm_ffi_type(g, type);
+    LLVMTypeRef src = LLVMTypeOf(value);
+    if (src == dst)
+        return value;
+    if (abi.kind == KN_FFI_ABI_INTEGER)
+    {
+        unsigned src_bits = LLVMGetIntTypeWidth(src);
+        unsigned dst_bits = LLVMGetIntTypeWidth(dst);
+        if (src_bits > dst_bits)
+            return LLVMBuildTrunc(g->builder, value, dst, "ffi.arg.trunc");
+        if (src_bits < dst_bits)
+            return abi.is_signed
+                ? LLVMBuildSExt(g->builder, value, dst, "ffi.arg.sext")
+                : LLVMBuildZExt(g->builder, value, dst, "ffi.arg.zext");
+    }
+    if (abi.kind == KN_FFI_ABI_FLOAT)
+    {
+        if (abi.bits == 32)
+            return LLVMBuildFPTrunc(g->builder, value, dst, "ffi.arg.fptrunc");
+        return LLVMBuildFPExt(g->builder, value, dst, "ffi.arg.fpext");
+    }
+    if (abi.kind == KN_FFI_ABI_POINTER)
+        return LLVMBuildBitCast(g->builder, value, dst, "ffi.arg.ptr");
+    return value;
+}
+
+static LLVMValueRef cg_from_ffi_value(Codegen *g, LLVMValueRef value, Type type)
+{
+    Type resolved = cg_ffi_resolved_type(g, type);
+    KnFfiAbiType abi = kn_ffi_abi_type(resolved, g->target_pointer_bits);
+    LLVMTypeRef dst = llvm_type(g, resolved);
+    LLVMTypeRef src = LLVMTypeOf(value);
+    if (abi.is_bool)
+        return LLVMBuildICmp(g->builder, LLVMIntNE, value, LLVMConstNull(src), "ffi.ret.bool");
+    if (src == dst)
+        return value;
+    if (abi.kind == KN_FFI_ABI_INTEGER)
+    {
+        unsigned src_bits = LLVMGetIntTypeWidth(src);
+        unsigned dst_bits = LLVMGetIntTypeWidth(dst);
+        if (src_bits > dst_bits)
+            return LLVMBuildTrunc(g->builder, value, dst, "ffi.ret.trunc");
+        if (src_bits < dst_bits)
+            return abi.is_signed
+                ? LLVMBuildSExt(g->builder, value, dst, "ffi.ret.sext")
+                : LLVMBuildZExt(g->builder, value, dst, "ffi.ret.zext");
+    }
+    if (abi.kind == KN_FFI_ABI_FLOAT)
+    {
+        if (LLVMGetTypeKind(src) == LLVMFloatTypeKind && LLVMGetTypeKind(dst) == LLVMDoubleTypeKind)
+            return LLVMBuildFPExt(g->builder, value, dst, "ffi.ret.fpext");
+        return LLVMBuildFPTrunc(g->builder, value, dst, "ffi.ret.fptrunc");
+    }
+    if (abi.kind == KN_FFI_ABI_POINTER)
+        return LLVMBuildBitCast(g->builder, value, dst, "ffi.ret.ptr");
+    return value;
+}
+
+// Runtime helpers implemented in C use the explicit C ABI (`int` for truth
+// values and Kinal `int` results). Freestanding IR helpers may already expose
+// Kinal-native i1/i64 values, so normalize according to the actual LLVM type.
+static LLVMValueRef cg_from_runtime_bool(Codegen *g, LLVMValueRef value, const char *name)
+{
+    LLVMTypeRef type = LLVMTypeOf(value);
+    if (LLVMGetTypeKind(type) == LLVMIntegerTypeKind && LLVMGetIntTypeWidth(type) == 1)
+        return value;
+    return LLVMBuildICmp(g->builder, LLVMIntNE, value, LLVMConstNull(type), name);
+}
+
+static LLVMValueRef cg_from_runtime_int(Codegen *g, LLVMValueRef value, const char *name)
+{
+    LLVMTypeRef type = LLVMTypeOf(value);
+    if (type == g->i64)
+        return value;
+    if (LLVMGetTypeKind(type) == LLVMIntegerTypeKind)
+        return LLVMBuildSExtOrBitCast(g->builder, value, g->i64, name);
+    return value;
+}
+
+static LLVMValueRef cg_build_func_call(Codegen *g,
+                                       FuncSymbol *fs,
+                                       LLVMValueRef callee,
+                                       LLVMValueRef *args,
+                                       int argc,
+                                       const char *name)
+{
+    if (!g || !fs || !fs->func || !callee)
+        return 0;
+    LLVMValueRef *call_args = args;
+    bool c_abi = cg_func_uses_c_abi(fs->func);
+    if (c_abi && argc > 0)
+    {
+        call_args = (LLVMValueRef *)kn_malloc(sizeof(LLVMValueRef) * (size_t)argc);
+        if (!call_args)
+            kn_die("out of memory");
+        for (int i = 0; i < argc; i++)
+            call_args[i] = cg_to_ffi_value(g, args[i], fs->func->params.items[i].type);
+    }
+
+    LLVMValueRef call = LLVMBuildCall2(g->builder, fs->fn_ty, callee, call_args, (unsigned)argc, name ? name : "");
+    if (fs->func->is_extern && fs->func->extern_abi == KN_EXTERN_ABI_SYSTEM &&
+        g->target_is_windows && g->target_is_x86)
+        LLVMSetInstructionCallConv(call, LLVMX86StdcallCallConv);
+    if (call_args != args)
+        kn_free(call_args);
+    if (c_abi && fs->func->ret_type.kind != TY_VOID)
+        return cg_from_ffi_value(g, call, fs->func->ret_type);
+    return call;
+}
+
 static LLVMValueRef build_zeroed_global_initializer(Codegen *g, Type ty)
 {
     LLVMTypeRef llvm_ty = llvm_type(g, ty);
     if (ty.kind == TY_ARRAY && ty.array_len > 0)
     {
-        Type elem = type_make(ty.elem);
-        elem.name = ty.name;
+        Type elem = type_immediate_elem(ty);
         LLVMTypeRef elem_ty = llvm_type(g, elem);
         LLVMTypeRef storage_ty = LLVMArrayType(elem_ty, (unsigned)ty.array_len);
         LLVMValueRef storage = LLVMAddGlobal(g->mod, storage_ty, "");
@@ -174,10 +341,16 @@ static bool type_equal(Type a, Type b)
     if (a.kind != b.kind) return false;
     if (a.kind == TY_ARRAY)
     {
-        if (a.elem != b.elem || a.array_len != b.array_len) return false;
-        if ((a.elem == TY_CLASS || a.elem == TY_STRUCT || a.elem == TY_ENUM) && a.name && b.name)
-            return kn_strcmp(a.name, b.name) == 0;
-        return a.elem == b.elem;
+        if (a.array_len != b.array_len) return false;
+        return type_equal(type_immediate_elem(a), type_immediate_elem(b));
+    }
+    if (a.kind == TY_PACKAGE)
+    {
+        if (a.package_count != b.package_count) return false;
+        for (int i = 0; i < a.package_count; i++)
+            if (!type_equal(a.package_elems[i], b.package_elems[i]))
+                return false;
+        return true;
     }
     if (a.kind == TY_PTR)
     {
@@ -190,6 +363,24 @@ static bool type_equal(Type a, Type b)
     if (a.kind == TY_CLASS || a.kind == TY_STRUCT || a.kind == TY_ENUM)
         return a.name && b.name && kn_strcmp(a.name, b.name) == 0;
     return true;
+}
+
+static bool type_runtime_compatible(Type a, Type b)
+{
+    if (a.kind != b.kind)
+        return false;
+    if (a.kind == TY_ARRAY)
+        return type_runtime_compatible(type_immediate_elem(a), type_immediate_elem(b));
+    if (a.kind == TY_PACKAGE)
+    {
+        if (a.package_count != b.package_count)
+            return false;
+        for (int i = 0; i < a.package_count; i++)
+            if (!type_runtime_compatible(a.package_elems[i], b.package_elems[i]))
+                return false;
+        return true;
+    }
+    return type_equal(a, b);
 }
 
 static bool is_integer_kind(TypeKind k)
@@ -242,6 +433,7 @@ static bool is_gc_root_type(Type t)
     case TY_ANY:
     case TY_PTR:
     case TY_STRUCT:
+    case TY_PACKAGE:
         return true;
     default:
         return false;
@@ -327,6 +519,7 @@ static const char *cg_base_type_name(TypeKind k)
     case TY_STRING: return "string";
     case TY_ANY: return "any";
     case TY_NULL: return "null";
+    case TY_PACKAGE: return "Package";
     default: return "unknown";
     }
 }
@@ -351,11 +544,21 @@ static const char *cg_type_name(Type t)
     }
     else if (t.kind == TY_ARRAY)
     {
-        if ((t.elem == TY_CLASS || t.elem == TY_STRUCT || t.elem == TY_ENUM) && t.name)
-            kn_append(buf, sizeof(buf), &off, t.name);
-        else
-            kn_append(buf, sizeof(buf), &off, cg_base_type_name(t.elem));
+        Type elem = type_immediate_elem(t);
+        const char *elem_name = cg_type_name(elem);
+        kn_append(buf, sizeof(buf), &off, elem_name);
         kn_append(buf, sizeof(buf), &off, "[]");
+    }
+    else if (t.kind == TY_PACKAGE)
+    {
+        kn_append(buf, sizeof(buf), &off, "<");
+        for (int i = 0; i < t.package_count; i++)
+        {
+            if (i > 0)
+                kn_append(buf, sizeof(buf), &off, ",");
+            kn_append(buf, sizeof(buf), &off, cg_type_name(t.package_elems[i]));
+        }
+        kn_append(buf, sizeof(buf), &off, ">");
     }
     else
     {
@@ -542,6 +745,27 @@ static LLVMValueRef cast_value(Codegen *g, CGValue v, Type dst)
         return any_to_type(g, v.value, dst);
     if (type_equal(v.type, dst))
         return v.value;
+    if (v.type.kind == TY_ARRAY && dst.kind == TY_ARRAY && type_runtime_compatible(v.type, dst))
+    {
+        LLVMValueRef data = LLVMBuildExtractValue(g->builder, v.value, 0, "arr.cast.data");
+        LLVMValueRef len = LLVMBuildExtractValue(g->builder, v.value, 1, "arr.cast.len");
+        LLVMValueRef out = LLVMGetUndef(llvm_type(g, dst));
+        out = LLVMBuildInsertValue(g->builder, out, data, 0, "");
+        out = LLVMBuildInsertValue(g->builder, out, len, 1, "");
+        return out;
+    }
+    if (v.type.kind == TY_PACKAGE && dst.kind == TY_PACKAGE && v.type.package_count == dst.package_count)
+    {
+        LLVMValueRef out = LLVMGetUndef(llvm_type(g, dst));
+        for (int i = 0; i < dst.package_count; i++)
+        {
+            CGValue item;
+            item.type = v.type.package_elems[i];
+            item.value = LLVMBuildExtractValue(g->builder, v.value, (unsigned)i, "pkg.cast.item");
+            out = LLVMBuildInsertValue(g->builder, out, cast_value(g, item, dst.package_elems[i]), (unsigned)i, "pkg.cast.ins");
+        }
+        return out;
+    }
 
     LLVMTypeRef dst_ty = llvm_type(g, dst);
     LLVMTypeRef src_ty = LLVMTypeOf(v.value);

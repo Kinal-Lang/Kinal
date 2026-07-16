@@ -107,6 +107,12 @@ kinal build [选项] <文件.kn> [文件2.kn ...]
 | `obj` | 生成目标文件（`.o` / `.obj`） |
 | `asm` | 生成汇编代码 |
 | `ir` | 生成 LLVM IR（`.ll`） |
+| `check` | 在语义分析后停止并写出确定性的 `.kcheck` 摘要；不运行后端或链接器 |
+
+`check` 用于编辑器/CI 的快速验证，以及 stage0/stage1 差分测试。摘要以
+`format=kinal-sema-v1` 开头，记录目标信息和顶层声明数量。成功的检查还会写出
+`hir_format=kinal-call-hir-v1`、typed expression 数量，以及 Native/KNC 共用的
+已解析调用目标计数。
 
 ### 目标平台
 

@@ -1,0 +1,76 @@
+Unit Tests.StdlibMathComplete;
+
+Get Console By IO.Console;
+Get IO.Math;
+
+Trusted Function bool Near(f64 actual, f64 expected)
+{
+    Return IO.Math.FAbs(actual - expected) < [f64](0.0001);
+}
+
+Trusted Function bool NearF(f32 actual, f32 expected)
+{
+    Return IO.Math.FAbsF(actual - expected) < [f32](0.001);
+}
+
+Trusted Static Function int Main()
+{
+    Console.PrintLine(Near(IO.Math.Sin([f64](0)), [f64](0)));
+    Console.PrintLine(Near(IO.Math.Cos([f64](0)), [f64](1)));
+    Console.PrintLine(Near(IO.Math.Tan([f64](0)), [f64](0)));
+    Console.PrintLine(Near(IO.Math.Asin([f64](0)), [f64](0)));
+    Console.PrintLine(Near(IO.Math.Acos([f64](1)), [f64](0)));
+    Console.PrintLine(Near(IO.Math.Atan([f64](0)), [f64](0)));
+    Console.PrintLine(Near(IO.Math.Atan2([f64](0), [f64](1)), [f64](0)));
+    Console.PrintLine(Near(IO.Math.Sinh([f64](0)), [f64](0)));
+    Console.PrintLine(Near(IO.Math.Cosh([f64](0)), [f64](1)));
+    Console.PrintLine(Near(IO.Math.Tanh([f64](0)), [f64](0)));
+    Console.PrintLine(Near(IO.Math.Sqrt([f64](9)), [f64](3)));
+    Console.PrintLine(Near(IO.Math.Cbrt([f64](27)), [f64](3)));
+    Console.PrintLine(Near(IO.Math.Pow([f64](2), [f64](3)), [f64](8)));
+    Console.PrintLine(Near(IO.Math.Exp([f64](0)), [f64](1)));
+    Console.PrintLine(Near(IO.Math.Log([f64](1)), [f64](0)));
+    Console.PrintLine(Near(IO.Math.Log2([f64](8)), [f64](3)));
+    Console.PrintLine(Near(IO.Math.Log10([f64](100)), [f64](2)));
+    Console.PrintLine(Near(IO.Math.Floor([f64](2.75)), [f64](2)));
+    Console.PrintLine(Near(IO.Math.Ceil([f64](2.25)), [f64](3)));
+    Console.PrintLine(Near(IO.Math.Round([f64](2.6)), [f64](3)));
+    Console.PrintLine(Near(IO.Math.Trunc([f64](-2.75)), [f64](-2)));
+    Console.PrintLine(Near(IO.Math.FAbs([f64](-4.5)), [f64](4.5)));
+    Console.PrintLine(Near(IO.Math.FMod([f64](7), [f64](4)), [f64](3)));
+    Console.PrintLine(Near(IO.Math.FMin([f64](3), [f64](5)), [f64](3)));
+    Console.PrintLine(Near(IO.Math.FMax([f64](3), [f64](5)), [f64](5)));
+    Console.PrintLine(Near(IO.Math.CopySign([f64](2), [f64](-1)), [f64](-2)));
+    Console.PrintLine(IO.Math.IsInf(IO.Math.Exp([f64](1000))));
+    Console.PrintLine(IO.Math.IsNaN(IO.Math.Sqrt([f64](-1))));
+
+    Console.PrintLine(NearF(IO.Math.SinF([f32](0)), [f32](0)));
+    Console.PrintLine(NearF(IO.Math.CosF([f32](0)), [f32](1)));
+    Console.PrintLine(NearF(IO.Math.TanF([f32](0)), [f32](0)));
+    Console.PrintLine(NearF(IO.Math.SqrtF([f32](9)), [f32](3)));
+    Console.PrintLine(NearF(IO.Math.PowF([f32](2), [f32](3)), [f32](8)));
+    Console.PrintLine(NearF(IO.Math.FloorF([f32](2.75)), [f32](2)));
+    Console.PrintLine(NearF(IO.Math.CeilF([f32](2.25)), [f32](3)));
+    Console.PrintLine(NearF(IO.Math.RoundF([f32](2.6)), [f32](3)));
+    Console.PrintLine(NearF(IO.Math.FAbsF([f32](-4.5)), [f32](4.5)));
+    Console.PrintLine(NearF(IO.Math.Atan2F([f32](0), [f32](1)), [f32](0)));
+
+    Console.PrintLine(IO.Math.Abs(-7) == 7);
+    Console.PrintLine(IO.Math.Min(3, 5) == 3);
+    Console.PrintLine(IO.Math.Max(3, 5) == 5);
+    Console.PrintLine(IO.Math.Clamp(20, 0, 10) == 10);
+    Console.PrintLine(IO.Math.Sign(-5) == -1);
+    Console.PrintLine(Near(IO.Math.Lerp([f64](2), [f64](6), [f64](0.5)), [f64](4)));
+    Console.PrintLine(NearF(IO.Math.LerpF([f32](2), [f32](6), [f32](0.5)), [f32](4)));
+    Console.PrintLine(Near(IO.Math.ClampF64([f64](20), [f64](0), [f64](10)), [f64](10)));
+    Console.PrintLine(NearF(IO.Math.ClampF32([f32](-2), [f32](0), [f32](10)), [f32](0)));
+    Console.PrintLine(Near(IO.Math.Radians([f64](180)), PI));
+    Console.PrintLine(Near(IO.Math.Degrees(PI), [f64](180)));
+    Console.PrintLine(NearF(IO.Math.RadiansF([f32](180)), [f32](PI)));
+    Console.PrintLine(NearF(IO.Math.DegreesF([f32](PI)), [f32](180)));
+
+    Console.PrintLine(Near(TAU, PI * [f64](2)));
+    Console.PrintLine(Near(E, IO.Math.Exp([f64](1))));
+    Console.PrintLine(Near(DEG2RAD * RAD2DEG, [f64](1)));
+    Return 0;
+}

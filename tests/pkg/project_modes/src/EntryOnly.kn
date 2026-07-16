@@ -1,0 +1,9 @@
+Unit Tests.ProjectModes.EntryOnly;
+
+Get Console By IO.Console;
+
+Static Function int Main()
+{
+    Console.PrintLine(EntryOnlyText());
+    Return 0;
+}

@@ -1,0 +1,16 @@
+Unsafe Alias 0000 By true;
+Unsafe Alias 0001 By Static;
+Unsafe Alias 0010 By Function;
+Unsafe Alias 0011 By int;
+Unsafe Alias 0100 By Return;
+Unsafe Alias 1111 By By;
+
+Unsafe Unsafe Unsafe Alias 0101 By 0;
+Unsafe Unsafe Unsafe Alias 0110 By ==;
+Unsafe Unsafe Unsafe Alias 0111 By {;
+Unsafe Unsafe Unsafe Alias 1000 By };
+Unsafe Unsafe Unsafe Alias 1001 By (;
+Unsafe Unsafe Unsafe Alias 1010 By );
+Unsafe Unsafe Unsafe Alias 1011 By ;;
+
+Get _ 1111 IO.Console.PrintLine 1011 0001 0010 0011 Main 1001 1010 0111 _ 1001 "Hello World" 1010 1011 0100 0101 1011 1000

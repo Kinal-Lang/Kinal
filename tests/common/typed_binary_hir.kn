@@ -1,0 +1,27 @@
+Unit Tests.TypedBinaryHir;
+
+Enum BinaryMarker By u8
+{
+    First= 0, Second= 1
+}
+
+Trusted Function int PointerPlans(int values[])
+{
+    int*lhs= &values[0];
+    int*next= lhs+ 1;
+    int*same= 0+ lhs;
+    Return *next+ *same;
+}
+
+Static Function int Main()
+{
+    int sum= 1+ 2* 3;
+    int bits= (sum<< 1)& 15;
+    string label= "sum="+ sum;
+    bool stringEqual= label!= "";
+    bool referenceEqual= label!= null;
+    bool numericCompare= bits>= 0;
+    bool valueEqual= BinaryMarker.First!= BinaryMarker.Second;
+    bool logical= stringEqual&& referenceEqual&& numericCompare&& valueEqual;
+    Return logical== true ? 0 : 1;
+}

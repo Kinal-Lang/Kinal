@@ -38,9 +38,12 @@ set(KN_FRONTEND_SOURCES
     "${KN_COMPILER_DIR}/src/kn_source.c"
     "${KN_COMPILER_DIR}/src/kn_diag.c"
     "${KN_COMPILER_DIR}/src/kn_diag_registry.c"
+    "${KN_COMPILER_DIR}/src/kn_session.c"
     "${KN_COMPILER_DIR}/src/kn_lexer.c"
     "${KN_COMPILER_DIR}/src/kn_ast.c"
+    "${KN_COMPILER_DIR}/src/kn_hir.c"
     "${KN_COMPILER_DIR}/src/kn_builtins.c"
+    "${KN_COMPILER_DIR}/src/kn_ffi_abi.c"
     "${KN_COMPILER_DIR}/src/kn_parser.c"
     "${KN_COMPILER_DIR}/src/kn_sema.c"
     "${KN_COMPILER_DIR}/src/kn_std.c"
@@ -71,6 +74,7 @@ target_link_libraries(kinal-lsp-server PRIVATE kinal-frontend)
 
 if (WIN32)
     target_link_libraries(kinal-lsp-server PRIVATE kernel32 user32)
+    target_link_options(kinal-lsp-server PRIVATE "LINKER:/stack:16777216")
 elseif (UNIX)
     target_link_libraries(kinal-lsp-server PRIVATE dl)
 endif()

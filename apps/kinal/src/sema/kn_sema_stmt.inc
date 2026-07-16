@@ -77,6 +77,10 @@ static bool expr_contains_unsafe_block(Expr *e)
         for (int i = 0; i < e->v.array.items.count; i++)
             if (expr_contains_unsafe_block(e->v.array.items.items[i])) return true;
         return false;
+    case EXPR_PACKAGE:
+        for (int i = 0; i < e->v.package.items.count; i++)
+            if (expr_contains_unsafe_block(e->v.package.items.items[i])) return true;
+        return false;
     case EXPR_DICT:
         for (int i = 0; i < e->v.dict.keys.count; i++)
         {
@@ -228,19 +232,28 @@ static void sema_stmt_impl(Sema *s, Stmt *st)
             if (!st->v.var.init || st->v.var.init->kind != EXPR_ARRAY)
                 sema_error(s, st->line, st->col, 1, "Type Inference Failed", "Array element type requires initializer");
             Type it = sema_array_literal(s, st->v.var.init, type_make(TY_UNKNOWN), false);
-            t.elem = it.elem;
-            t.name = it.name;
+            type_set_array_elem(&t, type_immediate_elem(it));
             if (t.elem == TY_UNKNOWN)
                 sema_error(s, st->line, st->col, 1, "Type Inference Failed", "Cannot infer element type from empty array");
         }
+        else if (type_is_package_placeholder(t))
+        {
+            if (!st->v.var.init)
+                sema_error(s, st->line, st->col, 1, "Type Inference Failed", "Object.Package requires initializer");
+            Type it = sema_expr(s, st->v.var.init);
+            if (it.kind != TY_PACKAGE)
+                sema_error(s, st->line, st->col, 1, "Type Inference Failed", "Object.Package initializer must be a Package value");
+            else
+                t = it;
+        }
         validate_type_ref(s, &t, st->line, st->col, 0);
+        validate_package_field_aliases(s, &st->v.var.package_fields, t, st->line, st->col);
 
         if (st->v.var.init)
         {
             if (st->v.var.init->kind == EXPR_ARRAY && t.kind == TY_ARRAY)
             {
-                Type elem = type_make(t.elem);
-                elem.name = t.name;
+                Type elem = type_immediate_elem(t);
                 Type lit = sema_array_literal(s, st->v.var.init, elem, true);
                 if (t.array_len >= 0 && lit.array_len > t.array_len)
                     sema_error(s, st->line, st->col, 1, "Array Length", "Initializer has too many elements");
@@ -267,7 +280,7 @@ static void sema_stmt_impl(Sema *s, Stmt *st)
         }
         int nline = st->v.var.name_line > 0 ? st->v.var.name_line : st->line;
         int ncol = st->v.var.name_col > 0 ? st->v.var.name_col : st->col;
-        scope_add(s, s->scope, st->v.var.name, t, st->v.var.is_const, nline, ncol, origin);
+        scope_add_package(s, s->scope, st->v.var.name, t, st->v.var.is_const, nline, ncol, origin, &st->v.var.package_fields);
         return;
     }
     case ST_ASSIGN:
@@ -482,13 +495,26 @@ static void validate_imports(Sema *s)
     for (int i = 0; i < s->imports->count; i++)
     {
         ImportMap *m = &s->imports->items[i];
-        if (!kn_std_module_has(m->module))
+        const char *prev_unit = s->current_unit;
+        s->current_unit = m->unit;
+        if (m->kind == IMPORT_LOCAL_ALIAS)
+        {
+            if (!alias_target_is_visible(s, m->remote))
+                sema_error(s, m->line, m->col, 1, "Invalid Alias Target", "Alias target is not visible in this file");
+            s->current_unit = prev_unit;
             continue;
+        }
+        if (!kn_std_module_has(m->module))
+        {
+            s->current_unit = prev_unit;
+            continue;
+        }
         if (m->kind == IMPORT_SYMBOL)
         {
             if (!kn_std_find(m->module, m->remote))
                 sema_error(s, m->line, m->col, 1, "Unknown Symbol", "Symbol not found in module");
         }
+        s->current_unit = prev_unit;
     }
 }
 
@@ -671,6 +697,36 @@ int kn_sema_check(const KnSource *src, MetaList *metas, FuncList *funcs, ImportL
     for (int i = 0; i < funcs->count; i++)
     {
         Func *f = &funcs->items[i];
+        f->is_overload = attr_list_has_named(&f->attrs, "Overload") ? 1 : 0;
+        if (!f->symbol_name)
+            f->symbol_name = attr_list_string_value(&f->attrs, "SymbolName");
+        if (f->is_overload && f->symbol_name && f->symbol_name[0])
+            f->qname = qualify_text_name(f->unit, f->symbol_name);
+        for (int j = 0; j < i; j++)
+        {
+            Func *prev = &funcs->items[j];
+            prev->is_overload = attr_list_has_named(&prev->attrs, "Overload") ? 1 : 0;
+            if (!prev->symbol_name)
+                prev->symbol_name = attr_list_string_value(&prev->attrs, "SymbolName");
+            if (!funcs_share_visible_name(prev, f))
+                continue;
+            if (!funcs_can_overload(prev, f))
+            {
+                sema_error(&s, f->line > 0 ? f->line : 1, f->col > 0 ? f->col : 1, 1,
+                           "Duplicate Function", "Function already defined");
+                continue;
+            }
+            if (params_equal(&prev->params, &f->params))
+                sema_error(&s, f->line > 0 ? f->line : 1, f->col > 0 ? f->col : 1, 1,
+                           "Duplicate Function", "Overload with the same parameter types already defined");
+            {
+                const char *prev_symbol = func_symbol_identity(prev);
+                const char *cur_symbol = func_symbol_identity(f);
+                if (prev_symbol && cur_symbol && kn_strcmp(prev_symbol, cur_symbol) == 0)
+                    sema_error(&s, f->line > 0 ? f->line : 1, f->col > 0 ? f->col : 1, 1,
+                               "Duplicate Function", "Overloaded functions must use unique SymbolName values");
+            }
+        }
         if (f->qname && functable_find(&s.funcs, f->qname))
             sema_error(&s, f->body ? f->body->line : 1, f->body ? f->body->col : 1, 1, "Duplicate Function", "Function already defined");
         FuncSym sym;
@@ -777,6 +833,7 @@ int kn_sema_check(const KnSource *src, MetaList *metas, FuncList *funcs, ImportL
             sema_error(&s, f->line > 0 ? f->line : 1, f->col > 0 ? f->col : 1, 1, "Invalid Async Function", "Delegate function cannot be Async");
         validate_type_ref(&s, &f->ret_type, f->line > 0 ? f->line : 1, f->col > 0 ? f->col : 1, 1);
         validate_param_defaults(&s, &f->params, f->line > 0 ? f->line : 1, f->col > 0 ? f->col : 1);
+        validate_ffi_signature(&s, f);
     }
 
     Scope global_scope;
@@ -883,6 +940,11 @@ int kn_sema_check(const KnSource *src, MetaList *metas, FuncList *funcs, ImportL
     }
 
     warn_unused_scope(&s, &global_scope);
+
+    // Freeze call resolution into the backend-independent Typed HIR slice.
+    // Native and KNC must consume this record rather than infer targets again.
+    if (kn_diag_error_count() == 0)
+        kn_hir_lower_calls(funcs, classes, interfaces, globals);
 
     return 0;
 }

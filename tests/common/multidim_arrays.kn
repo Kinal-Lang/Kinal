@@ -1,0 +1,71 @@
+Unit Tests.MultiDimArrays;
+
+Get Console By IO.Console;
+
+Static Function int Main()
+{
+    Var auto = {
+        {
+            1, 2
+        },
+        {
+            3
+        }
+    };
+
+    int[][] numbers = {
+        {
+            4, 5
+        },
+        {
+        },
+        {
+            6
+        }
+    };
+
+    string[][][] words = {
+        {
+            {
+                "a", "b"
+            },
+            {
+                "c"
+            }
+        },
+        {
+            {
+                "d"
+            }
+        }
+    };
+
+    any[][][] items = {
+        {
+            {
+                1, "two"
+            },
+            {
+                true
+            }
+        },
+        {
+            {
+                null
+            }
+        }
+    };
+
+    Console.PrintLine(auto[0][1]);
+    Console.PrintLine(auto[1][0]);
+    Console.PrintLine(numbers.Length());
+    Console.PrintLine(numbers[1].Length());
+    Console.PrintLine(numbers[2][0]);
+    Console.PrintLine(words[0][1][0]);
+    Console.PrintLine(words[1][0][0]);
+    Console.PrintLine(items[0][0][0] Is int);
+    Console.PrintLine(items[0][0][1] Is string);
+    Console.PrintLine(items[0][1][0] Is bool);
+    Console.PrintLine(items[1][0][0] Is any);
+    Return 0;
+}

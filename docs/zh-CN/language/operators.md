@@ -23,6 +23,9 @@ float y = 3.0;
 float result = x / y;  // 3.333...
 ```
 
+最终整数类型为无符号类型时，`/` 与 `%` 在 Native 和 VM 构建中都使用无符号
+除法与取余语义。
+
 ### 字符串拼接
 
 `+` 运算符可用于字符串拼接：
@@ -72,6 +75,13 @@ string s2 = "hello";
 bool same = s1 == s2;  // true
 ```
 
+aggregate 值（包括数组、结构体和 Package）以及 `any` 不支持直接使用
+`==` 或 `!=`。应显式比较所需的字段/元素，或者先把 `any` 转换/解包为可比较的具体
+类型。不受支持的相等比较在 Native 和 VM 构建中都会产生编译期错误。
+
+数值转换后的整数比较类型为无符号类型时，`<`、`<=`、`>`、`>=` 在两个后端中
+都使用无符号排序语义。
+
 ## 逻辑运算符
 
 | 运算符 | 含义 | 说明 |
@@ -112,6 +122,9 @@ int shl = a << 1;   // 1010 = 10（左移）
 int shr = a >> 1;   // 0010 = 2（右移）
 int inv = ~a;       // 按位取反（结果依平台）
 ```
+
+最终整数类型为无符号类型时，`>>` 是逻辑右移，高位补零；有符号整数右移会保留
+符号位。
 
 位运算复合赋值暂不支持（需展开写：`n = n & mask`）。
 
@@ -163,6 +176,37 @@ Dog none = [Dog](null);      // null 仍然是 null
 - 受检对象转换失败会抛出 `IO.Error`。
 - Hosted native 与 bootstrap VM/KNC 后端在这里保持同样的受检转换语义。
 - 如果你希望走分支而不是异常，优先用 `Is`。
+
+类也可以声明多个自定义转换入口 `[Cast]`：
+
+```kinal
+Class User
+{
+    Public string Name;
+
+    [Cast]
+    Public Static Function User From(dict value)
+    {
+        User user = New User();
+        user.Name = [string](value.TryFetch("name", ""));
+        Return user;
+    }
+}
+
+dict data = IO.Json.Parse("{\"name\":\"kinal\"}");
+User user = [User](data);
+```
+
+自定义转换规则：
+
+- `[Cast]` 写在类方法上，不是写在类声明上。
+- 一个类可以声明多个 `[Cast]` 方法。
+- 该方法必须是 `Public Static`。
+- 该方法的返回类型必须是它所属的类。
+- 该方法必须正好接收一个参数。
+- `[Target](value)` 会选择那个“参数类型可以接收源值”的唯一 `[Cast]` 方法。
+- 如果同一个源值同时匹配多个 `[Cast]` 方法，编译器会报 `Ambiguous Cast`。
+- 如果本来就是类 / 接口层级内的受检转换，编译器仍然优先走原有的层级 cast 语义。
 
 ## Is 类型检查运算符
 

@@ -1,0 +1,10 @@
+Unit Tests.ErrorIndexMissingArg;
+
+Static Function int Main()
+{
+    string text = "x";
+    char ch = text.Index();
+    int[] values = { 1 };
+    int value = values.Index();
+    Return [int](ch) + value;
+}
