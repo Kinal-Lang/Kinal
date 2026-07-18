@@ -28,6 +28,17 @@ def normalized_output(process: subprocess.CompletedProcess[str]) -> str:
     return process.stdout.replace("\r\n", "\n").strip()
 
 
+def pe_stack_reserve(path: Path) -> int:
+    data = path.read_bytes()
+    require(data[:2] == b"MZ", f"not a PE executable: {path}")
+    pe_offset = int.from_bytes(data[0x3C:0x40], "little")
+    require(data[pe_offset:pe_offset + 4] == b"PE\0\0", f"invalid PE signature: {path}")
+    optional = pe_offset + 24
+    magic = int.from_bytes(data[optional:optional + 2], "little")
+    require(magic == 0x20B, f"expected PE32+ executable: {path}")
+    return int.from_bytes(data[optional + 72:optional + 80], "little")
+
+
 def copy_stage_support(source: Path, target: Path) -> None:
     for directory in ("bridge", "linker", "llvm", "runtime"):
         candidate = source / directory
@@ -80,6 +91,19 @@ def main() -> int:
         destination = out / f"stage{stage}" / f"kinal-selfhost{suffix}"
         build_next_stage(stages[stage - 1], destination, project, root)
         stages[stage] = destination
+
+    if suffix == ".exe":
+        for stage in range(2, args.max_stage + 1):
+            reserve = pe_stack_reserve(stages[stage])
+            require(
+                reserve >= 16 * 1024 * 1024,
+                f"stage{stage} PE stack reserve is too small: {reserve}",
+            )
+
+    large_parser_input = root / "apps" / "kinalvm" / "src" / "IO" / "Kinal" / "VM" / "VM.kn"
+    for stage in range(2, args.max_stage + 1):
+        process = run([str(stages[stage]), "parse", str(large_parser_input)], cwd=root)
+        require(process.returncode == 0, f"stage{stage} failed the large parser input", process)
 
     comparisons: dict[str, str] = {}
     commands = {

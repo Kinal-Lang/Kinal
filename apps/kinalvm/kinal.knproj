@@ -1,0 +1,40 @@
+Project KinalVM
+{
+    DefaultProfile = "release";
+
+    Workspace
+    {
+        Ignore = ["../../out/**"];
+    }
+
+    SourceSet "vm"
+    {
+        Roots = ["src"];
+        Include = ["**/*.kn"];
+        RequireUnit = true;
+    }
+
+    Profile "release"
+    {
+        Source
+        {
+            Entry = "src/Main.kn";
+            Sets = ["vm"];
+            Mode = ReachableUnits;
+        }
+
+        Build
+        {
+            Backend = Native;
+            Environment = Hosted;
+            Output = "../../out/kinalvm/kinalvm.exe";
+        }
+    }
+
+    Lsp
+    {
+        Profile = "release";
+        ExtraSets = ["vm"];
+        StrictProjectScope = true;
+    }
+}

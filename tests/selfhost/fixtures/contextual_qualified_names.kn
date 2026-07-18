@@ -1,0 +1,8 @@
+Unit Tests.Selfhost.ContextualQualifiedNames;
+
+Get IO.Type.string;
+
+Static Function int Main()
+{
+    Return 0;
+}

@@ -76,14 +76,34 @@ Safe Function bool Expect(ParseCursor cursor, list diagnostics, SourceFile sourc
     Return false;
 }
 
+Safe Function bool IsNameToken(int kind)
+{
+    // Stage0 treats keywords as contextual names where the grammar already
+    // requires a qualified-name segment, for example IO.Type.string.
+    Return kind == [int](TokenKind.Identifier) ||
+           (kind >= [int](TokenKind.KwUnit) && kind <= [int](TokenKind.TypeAny));
+}
+
+Safe Function bool ExpectName(ParseCursor cursor, list diagnostics, SourceFile source,
+                              string detail)
+{
+    If (IsNameToken(CurrentKind(cursor)))
+    {
+        Advance(cursor);
+        Return true;
+    }
+    Report(cursor, diagnostics, source, "Expected identifier", detail);
+    Return false;
+}
+
 Safe Function bool ParseQualifiedName(ParseCursor cursor, list diagnostics, SourceFile source)
 {
-    If (!Expect(cursor, diagnostics, source, [int](TokenKind.Identifier),
-                "Expected identifier", "qualified name must start with an identifier")) Return false;
+    If (!ExpectName(cursor, diagnostics, source,
+                    "qualified name must start with an identifier")) Return false;
     While (Match(cursor, [int](TokenKind.Dot)))
     {
-        If (!Expect(cursor, diagnostics, source, [int](TokenKind.Identifier),
-                    "Expected identifier", "missing identifier after '.'")) Return false;
+        If (!ExpectName(cursor, diagnostics, source,
+                        "missing identifier after '.'")) Return false;
     }
     Return true;
 }

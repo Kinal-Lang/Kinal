@@ -55,6 +55,41 @@ def main() -> int:
         require(expected in normalized, f"stage1 lexer output missing {expected!r}", lex)
     results.append({"name": "lex_fixture", "ok": True, "tokens": len(normalized.splitlines())})
 
+    contextual_fixture = (
+        root / "tests" / "selfhost" / "fixtures" / "contextual_qualified_names.kn"
+    )
+    contextual_parse = run([str(compiler), "parse", str(contextual_fixture)], cwd=root)
+    require(
+        contextual_parse.returncode == 0,
+        "stage1 rejected a contextual keyword in a qualified name",
+        contextual_parse,
+    )
+    contextual_stage0_path = out_dir / "contextual-stage0.kast"
+    contextual_stage0 = run(
+        [
+            str(stage0),
+            "build",
+            "--no-module-discovery",
+            "--color",
+            "never",
+            "--emit",
+            "ast",
+            str(contextual_fixture),
+            "-o",
+            str(contextual_stage0_path),
+        ],
+        cwd=root,
+    )
+    require(contextual_stage0.returncode == 0, "stage0 contextual-name fixture failed", contextual_stage0)
+    contextual_stage1 = run([str(compiler), "ast", str(contextual_fixture)], cwd=root)
+    require(contextual_stage1.returncode == 0, "stage1 contextual-name AST failed", contextual_stage1)
+    require(
+        contextual_stage0_path.read_text(encoding="utf-8").replace("\r\n", "\n").strip()
+        == contextual_stage1.stdout.replace("\r\n", "\n").strip(),
+        "stage0/stage1 contextual-name syntax mismatch",
+    )
+    results.append({"name": "contextual_qualified_names", "ok": True})
+
     source_root = root / "apps" / "kinal-selfhost" / "src"
     source_files = sorted(source_root.rglob("*.kn"))
     project_file = root / "apps" / "kinal-selfhost" / "kinal.knproj"

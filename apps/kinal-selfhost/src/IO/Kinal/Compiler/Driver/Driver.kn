@@ -38,7 +38,7 @@ Trusted Function int LinkExecutable(string outputPath, string objectPath)
         Return 1;
     }
     string commandLine = QuoteArgument(linker) +
-        " /nologo /timestamp:0 /machine:x64 /subsystem:console /entry:mainCRTStartup /out:" + QuoteArgument(outputPath) +
+        " /nologo /timestamp:0 /machine:x64 /subsystem:console /stack:16777216 /entry:mainCRTStartup /out:" + QuoteArgument(outputPath) +
         " " + QuoteArgument(objectPath) +
         " " + QuoteArgument(IO.Path.Combine(runtime, "kn_runtime.obj")) +
         " " + QuoteArgument(IO.Path.Combine(runtime, "kn_math.obj")) +
