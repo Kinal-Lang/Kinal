@@ -14,6 +14,12 @@
 #define KN_TLS __thread
 #endif
 
+#if defined(__clang__) || defined(__GNUC__)
+#define KN_NO_ADDRESS_SANITIZE __attribute__((no_sanitize("address")))
+#else
+#define KN_NO_ADDRESS_SANITIZE
+#endif
+
 typedef struct KnGcBlock KnGcBlock;
 typedef struct KnGcFrame KnGcFrame;
 typedef struct KnGcRoot KnGcRoot;
@@ -44,6 +50,7 @@ void __kn_gc_collect(void);
 
 static KnGcBlock *g_gc_blocks = 0;
 static KN_TLS KnGcFrame *g_gc_frame = 0;
+static KN_TLS uintptr_t g_gc_stack_base = 0;
 static KnGcRoot *g_gc_global_roots = 0;
 static int g_gc_global_root_count = 0;
 static int g_gc_global_root_cap = 0;
@@ -178,6 +185,7 @@ const char *__kn_exc_trace(void);
 static void rt_memcpy(void *dst, const void *src, size_t n);
 static uint64_t rt_strlen(const char *s);
 static char *rt_strdup_gc(const char *s);
+static int rt_is_path_sep(char c);
 static void rt_meta_register_main_module(const KnMetaExportModule *module);
 static void rt_meta_register_loaded_module(void *handle, const KnMetaExportModule *module);
 static void rt_meta_unregister_handle(void *handle);
@@ -684,6 +692,7 @@ int __kn_sys_close_library(void *handle)
 #include <unistd.h>
 #include <time.h>
 #include <fcntl.h>
+#include <dirent.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -2402,25 +2411,110 @@ const char *__kn_path_normalize(const char *p)
 {
     if (!p) return "";
     uint64_t n = rt_strlen(p);
-    char *out = (char *)__kn_gc_alloc(n + 1);
-    if (!out) return "";
+    char *out = (char *)__kn_gc_alloc(n + 2u);
+    uint64_t *segment_starts = (uint64_t *)rt_alloc(sizeof(uint64_t) * (size_t)(n + 1u));
+    uint64_t i = 0;
     uint64_t w = 0;
-    char prev = 0;
-    for (uint64_t i = 0; i < n; i++)
+    uint64_t segment_count = 0;
+    uint64_t protected_segments = 0;
+    int absolute = 0;
+    int drive_relative = 0;
+    int unc = 0;
+    const char separator = KN_PATH_SEP;
+    if (!out || !segment_starts)
     {
-        char c = p[i];
-#if defined(_WIN32) || defined(_WIN64)
-        if (c == '/') c = '\\';
-        if (c == '\\' && prev == '\\')
-#else
-        if (c == '\\') c = '/';
-        if (c == '/' && prev == '/')
-#endif
-            continue;
-        out[w++] = c;
-        prev = c;
+        rt_free(segment_starts);
+        return "";
     }
+
+#if defined(_WIN32) || defined(_WIN64)
+    if (n >= 2u && ((p[0] >= 'A' && p[0] <= 'Z') || (p[0] >= 'a' && p[0] <= 'z')) && p[1] == ':')
+    {
+        out[w++] = p[0];
+        out[w++] = ':';
+        i = 2;
+        if (i < n && rt_is_path_sep(p[i]))
+        {
+            out[w++] = separator;
+            absolute = 1;
+            while (i < n && rt_is_path_sep(p[i])) i++;
+        }
+        else
+            drive_relative = 1;
+    }
+    else if (n >= 2u && rt_is_path_sep(p[0]) && rt_is_path_sep(p[1]))
+    {
+        out[w++] = separator;
+        out[w++] = separator;
+        i = 2;
+        absolute = 1;
+        unc = 1;
+        while (i < n && rt_is_path_sep(p[i])) i++;
+    }
+    else if (n > 0 && rt_is_path_sep(p[0]))
+    {
+        out[w++] = separator;
+        i = 1;
+        absolute = 1;
+        while (i < n && rt_is_path_sep(p[i])) i++;
+    }
+#else
+    if (n > 0 && rt_is_path_sep(p[0]))
+    {
+        out[w++] = separator;
+        i = 1;
+        absolute = 1;
+        while (i < n && rt_is_path_sep(p[i])) i++;
+    }
+#endif
+
+    while (i < n)
+    {
+        uint64_t begin = 0;
+        uint64_t length = 0;
+        uint64_t output_start = 0;
+        int previous_is_parent = 0;
+        while (i < n && rt_is_path_sep(p[i])) i++;
+        if (i >= n) break;
+        begin = i;
+        while (i < n && !rt_is_path_sep(p[i])) i++;
+        length = i - begin;
+        if (length == 1u && p[begin] == '.')
+            continue;
+        if (length == 2u && p[begin] == '.' && p[begin + 1u] == '.')
+        {
+            if (segment_count > protected_segments)
+            {
+                uint64_t previous_start = segment_starts[segment_count - 1u];
+                uint64_t text_start = previous_start;
+                if (text_start < w && out[text_start] == separator) text_start++;
+                previous_is_parent = w - text_start == 2u &&
+                                     out[text_start] == '.' && out[text_start + 1u] == '.';
+                if (!previous_is_parent)
+                {
+                    w = previous_start;
+                    segment_count--;
+                    continue;
+                }
+            }
+            if (absolute)
+                continue;
+        }
+
+        output_start = w;
+        if (w > 0 && out[w - 1u] != separator && !(drive_relative && w == 2u))
+            out[w++] = separator;
+        segment_starts[segment_count++] = output_start;
+        rt_memcpy(out + w, p + begin, (size_t)length);
+        w += length;
+        if (unc && protected_segments < 2u)
+            protected_segments++;
+    }
+
+    if (w == 0 && n > 0)
+        out[w++] = '.';
     out[w] = 0;
+    rt_free(segment_starts);
     return out;
 }
 
@@ -2631,19 +2725,47 @@ const char *__kn_text_replace(const char *s, const char *from, const char *to)
     uint64_t sn = rt_strlen(s);
     uint64_t fn = rt_strlen(from);
     uint64_t tn = rt_strlen(to);
+    uint64_t matches = 0;
+    uint64_t scan = 0;
+    uint64_t out_len = 0;
+    uint64_t write = 0;
+    char *out = 0;
     if (fn == 0) return rt_strdup_gc(s);
 
-    int64_t idx = rt_str_index_of(s, from);
-    if (idx < 0) return rt_strdup_gc(s);
-
-    uint64_t i = (uint64_t)idx;
-    uint64_t out_len = i + tn + (sn - i - fn);
-    char *out = (char *)__kn_gc_alloc(out_len + 1);
+    while (scan + fn <= sn)
+    {
+        if (rt_memcmp(s + scan, from, (size_t)fn) == 0)
+        {
+            matches++;
+            scan += fn;
+        }
+        else
+            scan++;
+    }
+    if (matches == 0) return rt_strdup_gc(s);
+    if (tn >= fn)
+    {
+        uint64_t growth = tn - fn;
+        if (growth != 0 && matches > (UINT64_MAX - sn) / growth) return "";
+        out_len = sn + matches * growth;
+    }
+    else
+        out_len = sn - matches * (fn - tn);
+    out = (char *)__kn_gc_alloc(out_len + 1u);
     if (!out) return "";
-    if (i) rt_memcpy(out, s, (size_t)i);
-    if (tn) rt_memcpy(out + i, to, (size_t)tn);
-    if (sn - i - fn) rt_memcpy(out + i + tn, s + i + fn, (size_t)(sn - i - fn));
-    out[out_len] = 0;
+    scan = 0;
+    while (scan < sn)
+    {
+        if (scan + fn <= sn && rt_memcmp(s + scan, from, (size_t)fn) == 0)
+        {
+            if (tn) rt_memcpy(out + write, to, (size_t)tn);
+            write += tn;
+            scan += fn;
+        }
+        else
+            out[write++] = s[scan++];
+    }
+    out[write] = 0;
     return out;
 }
 
@@ -2990,6 +3112,225 @@ int __kn_dir_delete_if_exists(const char *path)
     return __kn_dir_delete(path);
 }
 
+typedef struct
+{
+    char **items;
+    uint64_t count;
+    uint64_t cap;
+} KnNativePathList;
+
+static char *rt_path_join_alloc(const char *dir, const char *name)
+{
+    uint64_t dn = rt_strlen(dir);
+    uint64_t nn = rt_strlen(name);
+    int needs_sep = dn > 0 && !rt_is_path_sep(dir[dn - 1]);
+    char *out = (char *)rt_alloc((size_t)(dn + nn + (needs_sep ? 2u : 1u)));
+    uint64_t offset = 0;
+    if (!out) return 0;
+    if (dn)
+    {
+        rt_memcpy(out, dir, (size_t)dn);
+        offset = dn;
+    }
+    if (needs_sep)
+        out[offset++] = KN_PATH_SEP;
+    if (nn)
+    {
+        rt_memcpy(out + offset, name, (size_t)nn);
+        offset += nn;
+    }
+    out[offset] = 0;
+    return out;
+}
+
+static int rt_path_compare(const char *a, const char *b)
+{
+    uint64_t i = 0;
+    if (a == b) return 0;
+    if (!a) return -1;
+    if (!b) return 1;
+    while (a[i] && b[i])
+    {
+        unsigned char ac = (unsigned char)a[i];
+        unsigned char bc = (unsigned char)b[i];
+        if (ac != bc) return ac < bc ? -1 : 1;
+        i++;
+    }
+    if (a[i] == b[i]) return 0;
+    return a[i] ? 1 : -1;
+}
+
+static void rt_path_list_dispose(KnNativePathList *paths)
+{
+    uint64_t i = 0;
+    if (!paths) return;
+    for (i = 0; i < paths->count; i++)
+        rt_free(paths->items[i]);
+    rt_free(paths->items);
+    paths->items = 0;
+    paths->count = 0;
+    paths->cap = 0;
+}
+
+static int rt_path_list_push(KnNativePathList *paths, char *path)
+{
+    if (!paths || !path) return 0;
+    if (paths->count == paths->cap)
+    {
+        uint64_t next_cap = paths->cap ? paths->cap << 1u : 32u;
+        char **next = 0;
+        if (next_cap < paths->cap || next_cap > (uint64_t)(SIZE_MAX / sizeof(char *)))
+            return 0;
+        next = (char **)rt_alloc(sizeof(char *) * (size_t)next_cap);
+        if (!next) return 0;
+        if (paths->count)
+            rt_memcpy(next, paths->items, sizeof(char *) * (size_t)paths->count);
+        rt_free(paths->items);
+        paths->items = next;
+        paths->cap = next_cap;
+    }
+    paths->items[paths->count++] = path;
+    return 1;
+}
+
+static void rt_path_list_sift_down(KnNativePathList *paths, uint64_t root, uint64_t count)
+{
+    for (;;)
+    {
+        uint64_t child = root * 2u + 1u;
+        uint64_t largest = root;
+        char *tmp = 0;
+        if (child >= count) return;
+        if (rt_path_compare(paths->items[largest], paths->items[child]) < 0)
+            largest = child;
+        if (child + 1u < count && rt_path_compare(paths->items[largest], paths->items[child + 1u]) < 0)
+            largest = child + 1u;
+        if (largest == root) return;
+        tmp = paths->items[root];
+        paths->items[root] = paths->items[largest];
+        paths->items[largest] = tmp;
+        root = largest;
+    }
+}
+
+static void rt_path_list_sort(KnNativePathList *paths)
+{
+    uint64_t start = 0;
+    uint64_t end = 0;
+    if (!paths || paths->count < 2) return;
+    start = paths->count / 2u;
+    while (start > 0)
+    {
+        start--;
+        rt_path_list_sift_down(paths, start, paths->count);
+    }
+    end = paths->count;
+    while (end > 1)
+    {
+        char *tmp = paths->items[0];
+        paths->items[0] = paths->items[end - 1u];
+        paths->items[end - 1u] = tmp;
+        end--;
+        rt_path_list_sift_down(paths, 0, end);
+    }
+}
+
+static void rt_collect_files(const char *directory, int recursive, KnNativePathList *paths)
+{
+#if defined(_WIN32) || defined(_WIN64)
+    char *pattern = rt_path_join_alloc(directory, "*");
+    KN_WIN32_FIND_DATAA data;
+    KN_HANDLE handle = KN_INVALID_HANDLE_VALUE;
+    if (!pattern) return;
+    handle = FindFirstFileA(pattern, &data);
+    rt_free(pattern);
+    if (handle == KN_INVALID_HANDLE_VALUE) return;
+    do
+    {
+        const char *name = data.cFileName;
+        char *full = 0;
+        int is_directory = 0;
+        if (rt_streq(name, ".") || rt_streq(name, ".."))
+            continue;
+        full = rt_path_join_alloc(directory, name);
+        if (!full) continue;
+        is_directory = (data.dwFileAttributes & KN_FILE_ATTRIBUTE_DIRECTORY) != 0;
+        if (is_directory)
+        {
+            if (recursive && (data.dwFileAttributes & KN_FILE_ATTRIBUTE_REPARSE_POINT) == 0)
+                rt_collect_files(full, recursive, paths);
+            rt_free(full);
+        }
+        else if (!rt_path_list_push(paths, full))
+            rt_free(full);
+    } while (FindNextFileA(handle, &data));
+    FindClose(handle);
+#else
+    DIR *dir = opendir(directory);
+    struct dirent *entry = 0;
+    if (!dir) return;
+    while ((entry = readdir(dir)) != 0)
+    {
+        const char *name = entry->d_name;
+        char *full = 0;
+        struct stat st;
+        if (rt_streq(name, ".") || rt_streq(name, ".."))
+            continue;
+        full = rt_path_join_alloc(directory, name);
+        if (!full) continue;
+        if (lstat(full, &st) != 0)
+        {
+            rt_free(full);
+            continue;
+        }
+        if (S_ISDIR(st.st_mode))
+        {
+            if (recursive)
+                rt_collect_files(full, recursive, paths);
+            rt_free(full);
+        }
+        else if (S_ISREG(st.st_mode))
+        {
+            if (!rt_path_list_push(paths, full))
+                rt_free(full);
+        }
+        else
+            rt_free(full);
+    }
+    closedir(dir);
+#endif
+}
+
+void *__kn_dir_files(const char *path, int recursive)
+{
+    KnNativePathList paths = { 0 };
+    char *root = rt_norm_path_alloc(path);
+    void *result = __kn_list_new();
+    uint64_t i = 0;
+    if (!result)
+    {
+        rt_free(root);
+        return 0;
+    }
+    if (!root || !root[0])
+    {
+        rt_free(root);
+        return result;
+    }
+
+    rt_collect_files(root, recursive != 0, &paths);
+    rt_path_list_sort(&paths);
+    for (i = 0; i < paths.count; i++)
+    {
+        char *item = rt_strdup_gc(paths.items[i]);
+        if (item)
+            __kn_list_add(result, KN_ANY_TAG_STRING, (uint64_t)(uintptr_t)item);
+    }
+    rt_path_list_dispose(&paths);
+    rt_free(root);
+    return result;
+}
+
 int __kn_file_create(const char *path)
 {
     if (!path || !path[0]) return 0;
@@ -3312,7 +3653,11 @@ int __kn_file_replace_text(const char *path, const char *from, const char *to)
 
 void __kn_gc_init(void)
 {
-    // nothing yet; reserved for future extensions
+    uintptr_t marker = 0;
+    // Generated Kinal frames register typed roots explicitly. The runtime and
+    // FFI bridges are C code, so retain their in-flight GC pointers by scanning
+    // the used native-stack range from this stable entry marker.
+    g_gc_stack_base = (uintptr_t)&marker;
 }
 
 KnGcFrame *__kn_gc_push_frame(void)
@@ -3385,6 +3730,9 @@ void __kn_gc_pop_frame(KnGcFrame *f)
 
 void *__kn_gc_alloc(uint64_t size)
 {
+    uintptr_t marker = 0;
+    if (!g_gc_stack_base)
+        g_gc_stack_base = (uintptr_t)&marker;
     if (size == 0) size = 1;
     rt_spin_lock(&g_gc_lock);
     if (!g_gc_collecting && rt_atomic_load_i32(&g_async_live_tasks) == 0 && g_gc_bytes > g_gc_threshold)
@@ -3416,38 +3764,107 @@ void *__kn_gc_alloc(uint64_t size)
     return mem;
 }
 
-static KnGcBlock *gc_find_block(void *p)
+static void gc_index_sift_down(KnGcBlock **items, int count, int root)
 {
-    if (!p) return 0;
-    uint8_t *pv = (uint8_t *)p;
-    for (KnGcBlock *b = g_gc_blocks; b; b = b->next)
+    for (;;)
     {
-        uint8_t *start = (uint8_t *)b->ptr;
-        uint8_t *end = start + b->size;
-        if (pv >= start && pv < end)
-            return b;
+        int child = root * 2 + 1;
+        if (child >= count)
+            return;
+        if (child + 1 < count &&
+            (uintptr_t)items[child]->ptr < (uintptr_t)items[child + 1]->ptr)
+            child++;
+        if ((uintptr_t)items[root]->ptr >= (uintptr_t)items[child]->ptr)
+            return;
+        KnGcBlock *swap = items[root];
+        items[root] = items[child];
+        items[child] = swap;
+        root = child;
     }
+}
+
+static void gc_index_sort(KnGcBlock **items, int count)
+{
+    if (!items || count < 2)
+        return;
+    for (int i = count / 2; i > 0; i--)
+        gc_index_sift_down(items, count, i - 1);
+    for (int end = count - 1; end > 0; end--)
+    {
+        KnGcBlock *swap = items[0];
+        items[0] = items[end];
+        items[end] = swap;
+        gc_index_sift_down(items, end, 0);
+    }
+}
+
+static KnGcBlock *gc_find_indexed_block(void *p, KnGcBlock **index, int count)
+{
+    if (!p || !index || count <= 0)
+        return 0;
+    uintptr_t value = (uintptr_t)p;
+    int low = 0;
+    int high = count;
+    // Find the first block whose start is greater than the candidate pointer.
+    while (low < high)
+    {
+        int middle = low + (high - low) / 2;
+        if ((uintptr_t)index[middle]->ptr <= value)
+            low = middle + 1;
+        else
+            high = middle;
+    }
+    if (low == 0)
+        return 0;
+    KnGcBlock *candidate = index[low - 1];
+    uintptr_t start = (uintptr_t)candidate->ptr;
+    if (value >= start && value - start < candidate->size)
+        return candidate;
     return 0;
 }
 
-static void gc_mark_ptr(void *p, KnGcBlock **stack, int *sp, int cap)
+static void gc_mark_ptr(void *p, KnGcBlock **index, int index_count,
+                        KnGcBlock **stack, int *sp, int cap)
 {
-    KnGcBlock *b = gc_find_block(p);
+    KnGcBlock *b = gc_find_indexed_block(p, index, index_count);
     if (!b || b->marked) return;
     b->marked = 1;
     if (*sp < cap)
         stack[(*sp)++] = b;
 }
 
-static void gc_scan_region(void *addr, uint64_t size, KnGcBlock **stack, int *sp, int cap)
+static void gc_scan_region(void *addr, uint64_t size, KnGcBlock **index, int index_count,
+                           KnGcBlock **stack, int *sp, int cap)
 {
     if (!addr || size == 0) return;
     uintptr_t *cur = (uintptr_t *)addr;
     uintptr_t *end = (uintptr_t *)((uint8_t *)addr + size);
     while (cur < end)
     {
-        gc_mark_ptr((void *)(*cur), stack, sp, cap);
+        gc_mark_ptr((void *)(*cur), index, index_count, stack, sp, cap);
         cur++;
+    }
+}
+
+// Conservative native-stack scanning intentionally crosses compiler-created
+// stack redzones. Disable ASan instrumentation for this narrow collector hook;
+// heap/object scans remain fully instrumented.
+static KN_NO_ADDRESS_SANITIZE void gc_scan_native_stack(uintptr_t base,
+                                                        KnGcBlock **index, int index_count,
+                                                        KnGcBlock **stack, int *sp, int cap)
+{
+    uintptr_t marker = 0;
+    uintptr_t current = (uintptr_t)&marker;
+    uintptr_t low = current < base ? current : base;
+    uintptr_t high = current < base ? base : current;
+    if (!base || high < low || high - low > 128ULL * 1024ULL * 1024ULL)
+        return;
+    uintptr_t *cursor = (uintptr_t *)low;
+    uintptr_t *end = (uintptr_t *)(high + sizeof(uintptr_t));
+    while (cursor < end)
+    {
+        gc_mark_ptr((void *)(*cursor), index, index_count, stack, sp, cap);
+        cursor++;
     }
 }
 
@@ -3473,7 +3890,20 @@ void __kn_gc_collect(void)
         return;
     }
 
+    KnGcBlock **index = (KnGcBlock **)rt_alloc(sizeof(KnGcBlock *) * (size_t)block_count);
     KnGcBlock **stack = (KnGcBlock **)rt_alloc(sizeof(KnGcBlock *) * (size_t)block_count);
+    if (!index || !stack)
+    {
+        if (index) rt_free(index);
+        if (stack) rt_free(stack);
+        g_gc_collecting = 0;
+        rt_spin_unlock(&g_gc_lock);
+        return;
+    }
+    int index_count = 0;
+    for (KnGcBlock *b = g_gc_blocks; b; b = b->next)
+        index[index_count++] = b;
+    gc_index_sort(index, index_count);
     int sp = 0;
 
     // clear marks
@@ -3481,28 +3911,32 @@ void __kn_gc_collect(void)
         b->marked = 0;
 
     // roots
+    gc_scan_native_stack(g_gc_stack_base, index, index_count, stack, &sp, block_count);
+
     for (KnGcFrame *f = g_gc_frame; f; f = f->prev)
     {
         for (int i = 0; i < f->count; i++)
-            gc_scan_region(f->roots[i].addr, f->roots[i].size, stack, &sp, block_count);
+            gc_scan_region(f->roots[i].addr, f->roots[i].size,
+                           index, index_count, stack, &sp, block_count);
     }
 
     for (int i = 0; i < g_gc_global_root_count; i++)
-        gc_scan_region(g_gc_global_roots[i].addr, g_gc_global_roots[i].size, stack, &sp, block_count);
+        gc_scan_region(g_gc_global_roots[i].addr, g_gc_global_roots[i].size,
+                       index, index_count, stack, &sp, block_count);
 
     // Pending/last exception objects live in runtime globals, not stack frames.
     // Keep them alive so uncaught exceptions do not become dangling pointers
     // before the entry point reports them or before a catch block inspects them.
     if (g_exc_current)
-        gc_mark_ptr(g_exc_current, stack, &sp, block_count);
+        gc_mark_ptr(g_exc_current, index, index_count, stack, &sp, block_count);
     if (g_exc_last)
-        gc_mark_ptr(g_exc_last, stack, &sp, block_count);
+        gc_mark_ptr(g_exc_last, index, index_count, stack, &sp, block_count);
 
     // traverse heap graph
     while (sp > 0)
     {
         KnGcBlock *b = stack[--sp];
-        gc_scan_region(b->ptr, b->size, stack, &sp, block_count);
+        gc_scan_region(b->ptr, b->size, index, index_count, stack, &sp, block_count);
     }
 
     // sweep
@@ -3529,8 +3963,8 @@ void __kn_gc_collect(void)
         cur = next;
     }
 
-    if (stack)
-        rt_free(stack);
+    rt_free(index);
+    rt_free(stack);
 
     g_gc_threshold = g_gc_bytes * 2;
     if (g_gc_threshold < 8ULL * 1024ULL * 1024ULL)

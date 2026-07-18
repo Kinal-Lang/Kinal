@@ -1,0 +1,127 @@
+Unit IO.Kinal.Compiler.Sema.Symbols;
+
+Get IO.Kinal.Compiler.Syntax.SyntaxTree;
+Get IO.Kinal.Compiler.Types.TypeSymbol;
+
+Class ParameterSymbol
+{
+    Public string Name;
+    Public TypeSymbol Type;
+    Public ValueSymbol Value;
+    Public ParameterSymbol Next;
+
+    Public Safe Constructor(string name, TypeSymbol type)
+    {
+        This.Name = name;
+        This.Type = type;
+        This.Value = null;
+        This.Next = null;
+    }
+}
+
+Class FunctionSymbol
+{
+    Public string UnitName;
+    Public TypeSymbol OwnerType;
+    Public string Name;
+    Public TypeSymbol ReturnType;
+    Public ParameterSymbol FirstParameter;
+    Public FunctionDecl Declaration;
+    Public ValueSymbol Receiver;
+    Public FunctionSymbol Next;
+
+    Public Safe Constructor(string unitName, TypeSymbol ownerType, FunctionDecl declaration)
+    {
+        This.UnitName = unitName;
+        This.OwnerType = ownerType;
+        This.Name = declaration.Name;
+        This.ReturnType = null;
+        This.FirstParameter = null;
+        This.Declaration = declaration;
+        This.Receiver = null;
+        This.Next = null;
+    }
+
+    Public Safe Function void AddParameter(ParameterSymbol parameter)
+    {
+        If (This.FirstParameter == null)
+        {
+            This.FirstParameter = parameter;
+            Return;
+        }
+        ParameterSymbol current = This.FirstParameter;
+        While (current.Next != null) current = current.Next;
+        current.Next = parameter;
+    }
+
+    Public Safe Function int ParameterCount()
+    {
+        int count = 0;
+        ParameterSymbol current = This.FirstParameter;
+        While (current != null)
+        {
+            count = count + 1;
+            current = current.Next;
+        }
+        Return count;
+    }
+
+    Public Safe Function string QualifiedName()
+    {
+        If (This.OwnerType != null)
+        {
+            Return This.OwnerType.QualifiedName() + "." + This.Name;
+        }
+        Return This.UnitName + "." + This.Name;
+    }
+}
+
+Class ValueSymbol
+{
+    Public string Name;
+    Public TypeSymbol Type;
+    Public bool IsParameter;
+    Public ValueSymbol Next;
+
+    Public Safe Constructor(string name, TypeSymbol type, bool isParameter)
+    {
+        This.Name = name;
+        This.Type = type;
+        This.IsParameter = isParameter;
+        This.Next = null;
+    }
+}
+
+Class BindingScope
+{
+    Public BindingScope Parent;
+    Public ValueSymbol FirstValue;
+
+    Public Safe Constructor(BindingScope parent)
+    {
+        This.Parent = parent;
+        This.FirstValue = null;
+    }
+
+    Public Safe Function void Add(ValueSymbol value)
+    {
+        value.Next = This.FirstValue;
+        This.FirstValue = value;
+    }
+
+    Public Safe Function ValueSymbol Find(string name)
+    {
+        BindingScope scope = This;
+        While (scope != null)
+        {
+            ValueSymbol current = scope.FirstValue;
+            While (current != null)
+            {
+                If (current.Name == name) Return current;
+                current = current.Next;
+            }
+            scope = scope.Parent;
+        }
+        Return null;
+    }
+}

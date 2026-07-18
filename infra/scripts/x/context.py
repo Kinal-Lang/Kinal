@@ -33,9 +33,9 @@ CHKSTK_SRC = RUNTIME_DIR / "src" / "kn_chkstk.c"
 MATH_SRC = RUNTIME_DIR / "src" / "kn_math.c"
 RUNTIME_INCLUDE = RUNTIME_DIR / "include"
 
-SELFHOST_SUPPORT_DIR = ROOT / "libs" / "selfhost" / "support"
-SELFHOST_UTIL_HOSTLIB_SRC = SELFHOST_SUPPORT_DIR / "kn_util_hostlib.c"
-SELFHOST_APP_DIR = ROOT / "libs" / "selfhost"
+SELFHOST_APP_DIR = ROOT / "apps" / "kinal-selfhost"
+SELFHOST_SUPPORT_DIR = SELFHOST_APP_DIR / "bridge"
+SELFHOST_UTIL_HOSTLIB_SRC = SELFHOST_SUPPORT_DIR / "src" / "kn_selfhost_runtime.c"
 
 CIVETWEB_DIR = THIRD_PARTY_ROOT / "civetweb"
 CIVETWEB_INCLUDE = CIVETWEB_DIR / "include"

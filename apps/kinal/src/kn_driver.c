@@ -67,7 +67,9 @@ typedef enum
     KN_EMIT_LLVM_IR = 3,
     KN_EMIT_KNC = 4,
     KN_EMIT_KNC_EXE = 5,
-    KN_EMIT_CHECK = 6
+    KN_EMIT_CHECK = 6,
+    KN_EMIT_TOKENS = 7,
+    KN_EMIT_AST = 8
 } KnEmitMode;
 
 typedef struct

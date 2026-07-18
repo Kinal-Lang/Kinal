@@ -10,6 +10,21 @@
     "expected": "ok\n"
   },
   {
+    "name": "elseif",
+    "file": "tests/common/elseif.kn",
+    "expected": "two\n"
+  },
+  {
+    "name": "contextual_member_names",
+    "file": "tests/common/contextual_member_names.kn",
+    "expected": "31\n"
+  },
+  {
+    "name": "gc_many_live_objects",
+    "file": "tests/common/gc_many_live_objects.kn",
+    "expected": "100000\n"
+  },
+  {
     "name": "class_null_compare",
     "file": "tests/windows/class_null_compare.kn",
     "expected": "256\n",
@@ -257,7 +272,7 @@
   {
     "name": "stdlib_text_roundtrip",
     "file": "tests/common/stdlib_text_roundtrip.kn",
-    "expected": "Hello, Kinal!\ntrue\ntrue\n7\n4\n2\nHELLO\nworld\na-bc\nKinal\n3\na|b|c\n2\nline2\n",
+    "expected": "Hello, Kinal!\ntrue\ntrue\n7\n4\n2\nHELLO\nworld\na-bc\na-b-c\nKinal\n3\na|b|c\n2\nline2\n",
     "auto_link": true
   },
   {
@@ -375,7 +390,7 @@
   {
     "name": "path_helpers",
     "file": "tests/common/path_helpers.kn",
-    "expected": "true\nindex.html\nindex\ntrue\ntrue\ntrue\ntrue\narchive.tar\narchive.tar.txt\ntrue\ntrue\n",
+    "expected": "true\nindex.html\nindex\ntrue\ntrue\ntrue\ntrue\narchive.tar\narchive.tar.txt\ntrue\ntrue\ntrue\n",
     "auto_link": true
   },
   {
@@ -423,7 +438,7 @@
   {
     "name": "stdlib_directory_more",
     "file": "tests/common/stdlib_directory_more.kn",
-    "expected": "true\ntrue\ntrue\nfalse\ntrue\ntrue\nfalse\ntrue\ntrue\ntrue\ntrue\ntrue\n",
+    "expected": "true\ntrue\ntrue\nfalse\ntrue\ntrue\nfalse\ntrue\ntrue\n1\nz.kn\n2\na.kn\nz.kn\ntrue\ntrue\ntrue\n0\n",
     "auto_link": true
   },
   {

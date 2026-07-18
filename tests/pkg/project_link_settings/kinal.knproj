@@ -1,0 +1,33 @@
+Project ProjectLinkSettings
+{
+    DefaultProfile = "test";
+
+    SourceSet "app"
+    {
+        Files = ["src/Main.kn"];
+        RequireUnit = true;
+    }
+
+    Profile "test"
+    {
+        Source
+        {
+            Entry = "src/Main.kn";
+            Sets = ["app"];
+            Mode = FileOnly;
+        }
+
+        Build
+        {
+            Backend = Native;
+            Environment = Hosted;
+        }
+
+        Link
+        {
+            LibDirs = ["native"];
+            Libs = ["project_settings_probe"];
+            LinkFiles = ["native/probe-object.o"];
+        }
+    }
+}

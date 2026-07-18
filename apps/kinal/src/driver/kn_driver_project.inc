@@ -1149,6 +1149,23 @@ static void append_project_package_roots(StrList *roots, const KnProjectConfig *
     }
 }
 
+static int append_project_link_item_copy(KnLinkItem *items, int *item_count, int item_cap,
+                                         int kind, const char *value)
+{
+    char *owned = 0;
+    if (!value || !value[0])
+        return 1;
+    owned = dup_str(value);
+    if (!owned)
+        return 0;
+    if (!link_item_add(items, item_count, item_cap, kind, owned))
+    {
+        kn_free(owned);
+        return 0;
+    }
+    return 1;
+}
+
 static int append_project_link_items(const KnProjectConfig *cfg, const KnProjProfile *profile,
                                      KnLinkItem *items, int *item_count, int item_cap)
 {
@@ -1160,31 +1177,31 @@ static int append_project_link_items(const KnProjectConfig *cfg, const KnProjPro
     {
         if (!knproj_resolve_path(cfg, profile->lib_dirs[i], resolved, sizeof(resolved)))
             return 0;
-        if (!link_item_add(items, item_count, item_cap, KN_LINK_ITEM_LIB_DIR, resolved))
+        if (!append_project_link_item_copy(items, item_count, item_cap, KN_LINK_ITEM_LIB_DIR, resolved))
             return 0;
     }
     for (i = 0; i < profile->lib_count; i++)
     {
-        if (!link_item_add(items, item_count, item_cap, KN_LINK_ITEM_LIB_NAME, profile->libs[i]))
+        if (!append_project_link_item_copy(items, item_count, item_cap, KN_LINK_ITEM_LIB_NAME, profile->libs[i]))
             return 0;
     }
     for (i = 0; i < profile->link_file_count; i++)
     {
         if (!knproj_resolve_path(cfg, profile->link_files[i], resolved, sizeof(resolved)))
             return 0;
-        if (!link_item_add(items, item_count, item_cap, KN_LINK_ITEM_FILE, resolved))
+        if (!append_project_link_item_copy(items, item_count, item_cap, KN_LINK_ITEM_FILE, resolved))
             return 0;
     }
     for (i = 0; i < profile->link_arg_count; i++)
     {
-        if (!link_item_add(items, item_count, item_cap, KN_LINK_ITEM_ARG, profile->link_args[i]))
+        if (!append_project_link_item_copy(items, item_count, item_cap, KN_LINK_ITEM_ARG, profile->link_args[i]))
             return 0;
     }
     for (i = 0; i < profile->link_root_count; i++)
     {
         if (!knproj_resolve_path(cfg, profile->link_roots[i], resolved, sizeof(resolved)))
             return 0;
-        if (!link_item_add(items, item_count, item_cap, KN_CLI_LINK_ROOT, resolved))
+        if (!append_project_link_item_copy(items, item_count, item_cap, KN_CLI_LINK_ROOT, resolved))
             return 0;
     }
     return 1;

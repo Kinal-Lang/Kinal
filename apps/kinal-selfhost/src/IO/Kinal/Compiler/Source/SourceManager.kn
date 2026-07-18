@@ -1,0 +1,65 @@
+Unit IO.Kinal.Compiler.Source.SourceManager;
+
+Get IO.Path;
+Get IO.Kinal.Compiler.Source.SourceFile;
+
+Class SourceEntry
+{
+    Public string Path;
+    Public SourceFile Source;
+    Public SourceEntry Next;
+
+    Public Safe Constructor(string path, SourceFile source)
+    {
+        This.Path = path;
+        This.Source = source;
+        This.Next = null;
+    }
+}
+
+Class SourceManager
+{
+    Public SourceEntry First;
+
+    Public Safe Constructor()
+    {
+        This.First = null;
+    }
+
+    Public Safe Function SourceFile Load(string path)
+    {
+        string normalized = IO.Path.Normalize(path);
+        SourceEntry current = This.First;
+        While (current != null)
+        {
+            If (current.Path == normalized) Return current.Source;
+            current = current.Next;
+        }
+
+        SourceFile source = IO.Kinal.Compiler.Source.SourceFile.Load(normalized);
+        SourceEntry entry = New SourceEntry(normalized, source);
+        If (This.First == null)
+        {
+            This.First = entry;
+        }
+        Else
+        {
+            current = This.First;
+            While (current.Next != null) current = current.Next;
+            current.Next = entry;
+        }
+        Return source;
+    }
+
+    Public Safe Function int Count()
+    {
+        int count = 0;
+        SourceEntry current = This.First;
+        While (current != null)
+        {
+            count = count + 1;
+            current = current.Next;
+        }
+        Return count;
+    }
+}

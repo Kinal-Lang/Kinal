@@ -65,6 +65,7 @@ from infra.scripts.x.runtime_build import (
 )
 from infra.scripts.x.stress_ops import run_stress_suite
 from infra.scripts.x.selfhost_ops import (
+    build_selfhost_stage1,
     default_staged_compiler,
     prepare_selfhost_stage0,
     run_selfhost_bootstrap,
@@ -495,20 +496,26 @@ def cmd_selfhost(args: argparse.Namespace) -> int:
     ensure_build_prereqs()
     stage0 = prepare_selfhost_stage0(clean_first=args.clean, cmd_dist=cmd_dist)
     print(f"[OK] selfhost stage0: {stage0}")
+    stage1 = build_selfhost_stage1(stage0)
+    print(f"[OK] selfhost stage1: {stage1}")
     if args.test:
-        out_dir = run_selfhost_tests(stage0)
+        out_dir = run_selfhost_tests(stage0, stage1)
         print(f"[OK] selfhost tests: {out_dir}")
     return 0
 
 
 def cmd_selfhost_bootstrap(args: argparse.Namespace) -> int:
     ensure_build_prereqs()
+    stage0 = prepare_selfhost_stage0(clean_first=args.clean, cmd_dist=cmd_dist)
+    stage1 = build_selfhost_stage1(stage0)
+    print(f"[OK] selfhost stage0: {stage0}")
+    print(f"[OK] selfhost stage1: {stage1}")
     run_selfhost_bootstrap(
         target=args.target,
         max_stage=args.max_stage,
         bootstrap_backend=args.bootstrap_backend,
         metric_backend=args.metric_backend,
-        clean=args.clean,
+        clean=False,
     )
     return 0
 
@@ -583,14 +590,14 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("gui", help="launch the Tk build dashboard")
     sub.add_parser("open-artifacts", help="open the artifacts directory in the host file explorer")
 
-    selfhost = sub.add_parser("selfhost", help="build selfhost stage0 and optionally run selfhost regressions")
+    selfhost = sub.add_parser("selfhost", help="freeze C stage0, build Kinal stage1, and optionally run regressions")
     selfhost.add_argument("--clean", action="store_true", help="rebuild the release bundle before preparing stage0")
-    selfhost.add_argument("--test", action="store_true", help="run selfhost regression tests after building stage0")
+    selfhost.add_argument("--test", action="store_true", help="run selfhost regression tests after building stage1")
 
     selfhost_bootstrap = sub.add_parser("selfhost-bootstrap", help="build stage0 and advance bootstrap stages")
-    selfhost_bootstrap.add_argument("--target", type=float, default=98.0, help="target completion percentage")
+    selfhost_bootstrap.add_argument("--target", type=float, default=100.0, help="target completion percentage")
     selfhost_bootstrap.add_argument("--max-stage", type=int, default=3, help="maximum stage to build")
-    selfhost_bootstrap.add_argument("--bootstrap-backend", choices=["host", "self"], default="host", help="backend used for next-stage compiler builds")
+    selfhost_bootstrap.add_argument("--bootstrap-backend", choices=["host", "self"], default="self", help="backend used for next-stage compiler builds")
     selfhost_bootstrap.add_argument("--metric-backend", choices=["host", "self"], default="self", help="backend used for completion measurement")
     selfhost_bootstrap.add_argument("--clean", action="store_true", help="rebuild stage0 and wipe bootstrap output first")
 

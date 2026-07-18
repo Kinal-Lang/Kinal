@@ -1,0 +1,375 @@
+Unit IO.Kinal.Compiler.Syntax.SyntaxTree;
+
+Get IO.Kinal.Compiler.Source.SourceFile;
+Get IO.Kinal.Compiler.Syntax.Nodes;
+
+Class ImportDecl
+{
+    Public string Name;
+    Public string Target;
+    Public int Line;
+    Public int Column;
+    Public ImportDecl Next;
+
+    Public Safe Constructor(string name, string target, int line, int column)
+    {
+        This.Name = name;
+        This.Target = target;
+        This.Line = line;
+        This.Column = column;
+        This.Next = null;
+    }
+}
+
+Class ParameterDecl
+{
+    Public string Name;
+    Public string TypeName;
+    Public ParameterDecl Next;
+
+    Public Safe Constructor(string name, string typeName)
+    {
+        This.Name = name;
+        This.TypeName = typeName;
+        This.Next = null;
+    }
+}
+
+Class SyntaxAttribute
+{
+    Public string Name;
+    Public ExpressionNode FirstArgument;
+    Public SyntaxAttribute Next;
+
+    Public Safe Constructor(string name)
+    {
+        This.Name = name;
+        This.FirstArgument = null;
+        This.Next = null;
+    }
+
+    Public Safe Function void AddArgument(ExpressionNode argument)
+    {
+        If (This.FirstArgument == null)
+        {
+            This.FirstArgument = argument;
+            Return;
+        }
+        ExpressionNode current = This.FirstArgument;
+        While (current.Next != null) current = current.Next;
+        current.Next = argument;
+    }
+}
+
+Class FieldDecl
+{
+    Public string Name;
+    Public string TypeName;
+    Public int Access;
+    Public bool IsStatic;
+    Public int Line;
+    Public int Column;
+    Public ExpressionNode Initializer;
+    Public SyntaxAttribute FirstAttribute;
+    Public FieldDecl Next;
+
+    Public Safe Constructor(string name, string typeName, int line, int column)
+    {
+        This.Name = name;
+        This.TypeName = typeName;
+        This.Access = 0;
+        This.IsStatic = false;
+        This.Line = line;
+        This.Column = column;
+        This.Initializer = null;
+        This.FirstAttribute = null;
+        This.Next = null;
+    }
+}
+
+Class FunctionDecl
+{
+    Public string Name;
+    Public string ReturnType;
+    Public int Safety;
+    Public bool IsStatic;
+    Public bool IsAsync;
+    Public bool IsExtern;
+    Public bool IsConstructor;
+    Public int Line;
+    Public int Column;
+    Public ParameterDecl FirstParameter;
+    Public StatementNode Body;
+    Public SyntaxAttribute FirstAttribute;
+    Public FunctionDecl Next;
+
+    Public Safe Constructor(string name, string returnType, int line, int column)
+    {
+        This.Name = name;
+        This.ReturnType = returnType;
+        This.Safety = 0;
+        This.IsStatic = false;
+        This.IsAsync = false;
+        This.IsExtern = false;
+        This.IsConstructor = false;
+        This.Line = line;
+        This.Column = column;
+        This.FirstParameter = null;
+        This.Body = null;
+        This.FirstAttribute = null;
+        This.Next = null;
+    }
+
+    Public Safe Function void AddParameter(ParameterDecl parameter)
+    {
+        If (This.FirstParameter == null)
+        {
+            This.FirstParameter = parameter;
+            Return;
+        }
+        ParameterDecl current = This.FirstParameter;
+        While (current.Next != null) current = current.Next;
+        current.Next = parameter;
+    }
+
+    Public Safe Function int ParameterCount()
+    {
+        int count = 0;
+        ParameterDecl current = This.FirstParameter;
+        While (current != null)
+        {
+            count = count + 1;
+            current = current.Next;
+        }
+        Return count;
+    }
+}
+
+Class EnumMemberDecl
+{
+    Public string Name;
+    Public int Ordinal;
+    Public ExpressionNode Value;
+    Public EnumMemberDecl Next;
+
+    Public Safe Constructor(string name, int ordinal)
+    {
+        This.Name = name;
+        This.Ordinal = ordinal;
+        This.Value = null;
+        This.Next = null;
+    }
+}
+
+Class TypeDecl
+{
+    Public int Kind;
+    Public string Name;
+    Public int Line;
+    Public int Column;
+    Public FieldDecl FirstField;
+    Public FunctionDecl FirstMethod;
+    Public SyntaxAttribute FirstAttribute;
+    Public EnumMemberDecl FirstEnumMember;
+    Public TypeDecl Next;
+
+    Public Safe Constructor(int kind, string name, int line, int column)
+    {
+        This.Kind = kind;
+        This.Name = name;
+        This.Line = line;
+        This.Column = column;
+        This.FirstField = null;
+        This.FirstMethod = null;
+        This.FirstAttribute = null;
+        This.FirstEnumMember = null;
+        This.Next = null;
+    }
+
+    Public Safe Function void AddField(FieldDecl value)
+    {
+        If (This.FirstField == null)
+        {
+            This.FirstField = value;
+            Return;
+        }
+        FieldDecl current = This.FirstField;
+        While (current.Next != null) current = current.Next;
+        current.Next = value;
+    }
+
+    Public Safe Function void AddMethod(FunctionDecl value)
+    {
+        If (This.FirstMethod == null)
+        {
+            This.FirstMethod = value;
+            Return;
+        }
+        FunctionDecl current = This.FirstMethod;
+        While (current.Next != null) current = current.Next;
+        current.Next = value;
+    }
+
+    Public Safe Function void AddEnumMember(EnumMemberDecl value)
+    {
+        If (This.FirstEnumMember == null)
+        {
+            This.FirstEnumMember = value;
+            Return;
+        }
+        EnumMemberDecl current = This.FirstEnumMember;
+        While (current.Next != null) current = current.Next;
+        current.Next = value;
+    }
+
+    Public Safe Function int FieldCount()
+    {
+        int count = 0;
+        FieldDecl current = This.FirstField;
+        While (current != null)
+        {
+            count = count + 1;
+            current = current.Next;
+        }
+        Return count;
+    }
+
+    Public Safe Function int MethodCount()
+    {
+        int count = 0;
+        FunctionDecl current = This.FirstMethod;
+        While (current != null)
+        {
+            count = count + 1;
+            current = current.Next;
+        }
+        Return count;
+    }
+}
+
+Class SyntaxTree
+{
+    Public SourceFile Source;
+    Public string UnitName;
+    Public ImportDecl FirstImport;
+    Public FunctionDecl FirstFunction;
+    Public TypeDecl FirstType;
+
+    Public Safe Constructor(SourceFile source, string unitName)
+    {
+        This.Source = source;
+        This.UnitName = unitName;
+        This.FirstImport = null;
+        This.FirstFunction = null;
+        This.FirstType = null;
+    }
+
+    Public Safe Function void AddImport(ImportDecl value)
+    {
+        If (This.FirstImport == null)
+        {
+            This.FirstImport = value;
+            Return;
+        }
+        ImportDecl current = This.FirstImport;
+        While (current.Next != null) current = current.Next;
+        current.Next = value;
+    }
+
+    Public Safe Function void AddFunction(FunctionDecl value)
+    {
+        If (This.FirstFunction == null)
+        {
+            This.FirstFunction = value;
+            Return;
+        }
+        FunctionDecl current = This.FirstFunction;
+        While (current.Next != null) current = current.Next;
+        current.Next = value;
+    }
+
+    Public Safe Function void AddType(TypeDecl value)
+    {
+        If (This.FirstType == null)
+        {
+            This.FirstType = value;
+            Return;
+        }
+        TypeDecl current = This.FirstType;
+        While (current.Next != null) current = current.Next;
+        current.Next = value;
+    }
+
+    Public Safe Function int ImportCount()
+    {
+        int count = 0;
+        ImportDecl current = This.FirstImport;
+        While (current != null)
+        {
+            count = count + 1;
+            current = current.Next;
+        }
+        Return count;
+    }
+
+    Public Safe Function int FunctionCount()
+    {
+        int count = 0;
+        FunctionDecl current = This.FirstFunction;
+        While (current != null)
+        {
+            count = count + 1;
+            current = current.Next;
+        }
+        Return count;
+    }
+
+    Public Safe Function int TypeCount()
+    {
+        int count = 0;
+        TypeDecl current = This.FirstType;
+        While (current != null)
+        {
+            count = count + 1;
+            current = current.Next;
+        }
+        Return count;
+    }
+
+    Public Safe Function int FieldCount()
+    {
+        int count = 0;
+        TypeDecl current = This.FirstType;
+        While (current != null)
+        {
+            count = count + current.FieldCount();
+            current = current.Next;
+        }
+        Return count;
+    }
+
+    Public Safe Function int MethodCount()
+    {
+        int count = 0;
+        TypeDecl current = This.FirstType;
+        While (current != null)
+        {
+            count = count + current.MethodCount();
+            current = current.Next;
+        }
+        Return count;
+    }
+
+    Public Safe Function string Summary()
+    {
+        Return "format=kinal-syntax-v1\n" +
+               "sources=1\n" +
+               "unit=" + This.UnitName + "\n" +
+               "imports=" + [string](This.ImportCount()) + "\n" +
+               "functions=" + [string](This.FunctionCount()) + "\n" +
+               "types=" + [string](This.TypeCount()) + "\n" +
+               "fields=" + [string](This.FieldCount()) + "\n" +
+               "methods=" + [string](This.MethodCount()) + "\n" +
+               "globals=0";
+    }
+}

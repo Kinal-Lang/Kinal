@@ -33,7 +33,7 @@ static void print_help(void)
         "Build quick reference:\n"
         "Output:\n"
         "  -o, --output <file>  Output file path\n"
-        "  --emit <bin|obj|asm|ir|check>  Output kind (default: bin)\n"
+        "  --emit <bin|obj|asm|ir|check|tokens|ast>  Output kind (default: bin)\n"
         "  --kind <exe|static|shared>  Output artifact kind (link mode only)\n"
         "\n"
         "Target:\n"
@@ -127,7 +127,7 @@ static void print_build_help(void)
         "\n"
         "Output:\n"
         "  -o, --output <file>  Output file path\n"
-        "  --emit <bin|obj|asm|ir|check>  Output kind (default: bin)\n"
+        "  --emit <bin|obj|asm|ir|check|tokens|ast>  Output kind (default: bin)\n"
         "  --kind <exe|static|shared>  Output artifact kind (link mode only)\n"
         "\n"
         "Target:\n"
@@ -292,6 +292,16 @@ static int parse_emit_mode(const char *text, int *out)
     if (str_eq_ci(text, "check") || str_eq_ci(text, "sema") || str_eq_ci(text, "sema-summary"))
     {
         *out = KN_EMIT_CHECK;
+        return 1;
+    }
+    if (str_eq_ci(text, "tokens") || str_eq_ci(text, "token") || str_eq_ci(text, "lex"))
+    {
+        *out = KN_EMIT_TOKENS;
+        return 1;
+    }
+    if (str_eq_ci(text, "ast") || str_eq_ci(text, "syntax") || str_eq_ci(text, "syntax-summary"))
+    {
+        *out = KN_EMIT_AST;
         return 1;
     }
     if (str_eq_ci(text, "vm-exe") || str_eq_ci(text, "vm-bundle") || str_eq_ci(text, "standalone") ||
@@ -464,6 +474,18 @@ static void make_default_output(char *out, size_t cap, int emit_mode, int artifa
     {
         kn_append(out, cap, &off, stem);
         kn_append(out, cap, &off, ".kcheck");
+        return;
+    }
+    if (emit_mode == KN_EMIT_TOKENS)
+    {
+        kn_append(out, cap, &off, stem);
+        kn_append(out, cap, &off, ".ktokens");
+        return;
+    }
+    if (emit_mode == KN_EMIT_AST)
+    {
+        kn_append(out, cap, &off, stem);
+        kn_append(out, cap, &off, ".kast");
         return;
     }
 

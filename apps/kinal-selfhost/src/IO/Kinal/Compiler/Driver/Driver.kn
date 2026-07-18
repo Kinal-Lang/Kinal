@@ -1,0 +1,262 @@
+Unit IO.Kinal.Compiler.Driver;
+
+Get IO.Console;
+Get IO.File;
+Get IO.Path;
+Get IO.Text;
+Get IO.Kinal.Compiler.Core.Diagnostics;
+Get IO.Kinal.Compiler.Core.CompileSession;
+Get IO.Kinal.Compiler.Source.SourceFile;
+Get IO.Kinal.Compiler.Lex.Lexer;
+Get IO.Kinal.Compiler.Lex.Token;
+Get IO.Kinal.Compiler.Syntax.Parser;
+Get IO.Kinal.Compiler.Syntax.SyntaxTree;
+Get IO.Kinal.Compiler.Project.ProjectConfig;
+Get IO.Kinal.Compiler.Project.ProjectLoader;
+Get IO.Kinal.Compiler.Sema.SemanticCompilation;
+Get IO.Kinal.Compiler.Backend.LlvmBridge;
+Get IO.Kinal.Compiler.Backend.NativeBackend;
+
+Safe Function string QuoteArgument(string value)
+{
+    If (IO.Text.Contains(value, "\"")) Return "";
+    Return "\"" + value + "\"";
+}
+
+Trusted Function int LinkExecutable(string outputPath, string objectPath)
+{
+    string root = IO.Path.Directory(IO.Kinal.Compiler.Backend.LlvmBridge.ExecutablePath());
+    string linker = IO.Path.Combine(root, "linker/lld-link.exe");
+    string runtime = IO.Path.Combine(root, "runtime/win-x64");
+    string llvm = IO.Path.Combine(root, "llvm/lib");
+    string bridge = IO.Path.Combine(root, "bridge");
+    If (!IO.File.Exists(linker) ||
+        !IO.File.Exists(IO.Path.Combine(runtime, "kn_runtime.obj")) ||
+        !IO.File.Exists(IO.Path.Combine(bridge, "kn_selfhost_llvm.o")))
+    {
+        IO.Console.PrintLine("selfhost toolchain is incomplete beside " + root);
+        Return 1;
+    }
+    string commandLine = QuoteArgument(linker) +
+        " /nologo /timestamp:0 /machine:x64 /subsystem:console /entry:mainCRTStartup /out:" + QuoteArgument(outputPath) +
+        " " + QuoteArgument(objectPath) +
+        " " + QuoteArgument(IO.Path.Combine(runtime, "kn_runtime.obj")) +
+        " " + QuoteArgument(IO.Path.Combine(runtime, "kn_math.obj")) +
+        " " + QuoteArgument(IO.Path.Combine(bridge, "kn_selfhost_llvm.o")) +
+        " " + QuoteArgument(IO.Path.Combine(bridge, "kn_selfhost_runtime.o")) +
+        " /libpath:" + QuoteArgument(llvm) +
+        " /libpath:" + QuoteArgument(runtime) +
+        " LLVM-C.lib kernel32.lib user32.lib gdi32.lib oldnames.lib msvcrt.lib vcruntime.lib ucrt.lib";
+    Return IO.Kinal.Compiler.Backend.LlvmBridge.Execute(commandLine);
+}
+
+Safe Function void PrintHelp()
+{
+    IO.Console.PrintLine("Kinal self-hosting compiler");
+    IO.Console.PrintLine("usage: kinal-selfhost <command> [options]");
+    IO.Console.PrintLine("");
+    IO.Console.PrintLine("commands:");
+    IO.Console.PrintLine("  version    print the stage1 compiler version");
+    IO.Console.PrintLine("  lex <file> tokenize one Kinal source file");
+    IO.Console.PrintLine("  tokens <file> dump stable machine-readable tokens");
+    IO.Console.PrintLine("  parse <file> validate Selfhost.Core syntax");
+    IO.Console.PrintLine("  ast <file>   build and summarize the syntax tree");
+    IO.Console.PrintLine("  project <manifest> [profile]      load a kinal.knproj");
+    IO.Console.PrintLine("  project-ast <manifest> [profile]  parse every project source");
+    IO.Console.PrintLine("  check <manifest> [profile]        resolve declarations and types");
+    IO.Console.PrintLine("  symbols <manifest> [profile]      dump resolved function symbols");
+    IO.Console.PrintLine("  build-object <manifest> <output> [profile]  emit a native object");
+    IO.Console.PrintLine("  build-ir <manifest> <output> [profile]      emit LLVM IR");
+    IO.Console.PrintLine("  build <manifest> <output> [profile]         emit and link an executable");
+    IO.Console.PrintLine("  llvm-probe <object>               verify the LLVM bridge");
+    IO.Console.PrintLine("  help       show this help");
+}
+
+Safe Function int Run(string[] args)
+{
+    If (args.Length() == 0)
+    {
+        PrintHelp();
+        Return 0;
+    }
+
+    string command = args[0];
+    If (command == "version" || command == "--version" || command == "-V")
+    {
+        IO.Console.PrintLine("Kinal selfhost stage1 0.1.0");
+        Return 0;
+    }
+
+    If (command == "help" || command == "--help" || command == "-h")
+    {
+        PrintHelp();
+        Return 0;
+    }
+
+    If (command == "llvm-probe")
+    {
+        If (args.Length() < 2)
+        {
+            IO.Console.PrintLine("llvm-probe requires an object output path");
+            Return 2;
+        }
+        LlvmModule module = New LlvmModule("kinal.selfhost.probe");
+        If (!module.IsValid())
+        {
+            IO.Console.PrintLine("LLVM module creation failed: " +
+                IO.Kinal.Compiler.Backend.LlvmBridge.LastError());
+            Return 1;
+        }
+        If (!module.BuildProbe("kn_selfhost_probe", 42))
+        {
+            IO.Console.PrintLine("LLVM probe construction failed: " +
+                IO.Kinal.Compiler.Backend.LlvmBridge.LastError());
+            module.Dispose();
+            Return 1;
+        }
+        If (!module.EmitObject("", args[1]))
+        {
+            IO.Console.PrintLine("LLVM object emission failed: " +
+                IO.Kinal.Compiler.Backend.LlvmBridge.LastError());
+            module.Dispose();
+            Return 1;
+        }
+        IO.Console.PrintLine("format=kinal-selfhost-llvm-v1");
+        IO.Console.PrintLine("llvm_major=" +
+            [string](IO.Kinal.Compiler.Backend.LlvmBridge.VersionMajor()));
+        IO.Console.PrintLine("output=" + args[1]);
+        module.Dispose();
+        Return 0;
+    }
+
+    If (command == "build-object" || command == "build-ir" || command == "build")
+    {
+        If (args.Length() < 3)
+        {
+            IO.Console.PrintLine(command + " requires a kinal.knproj path and output path");
+            Return 2;
+        }
+        string manifest = args[1];
+        If (!IO.File.Exists(manifest))
+        {
+            IO.Console.PrintLine("project file not found: " + manifest);
+            Return 2;
+        }
+        CompileSession session = New CompileSession();
+        string profileName = args.Length() >= 4 ? args[3] : "";
+        session.LoadProject(manifest, profileName);
+        If (!session.HasErrors()) session.ParseProject();
+        SemanticCompilation semantics = null;
+        If (!session.HasErrors())
+        {
+            semantics = New SemanticCompilation(session);
+            semantics.Analyze();
+        }
+        IO.Kinal.Compiler.Core.Diagnostics.PrintAll(session.Diagnostics);
+        If (session.HasErrors()) Return 1;
+        NativeBackend backend = New NativeBackend(semantics);
+        bool emitted = false;
+        string backendOutput = command == "build" ? IO.Path.ChangeExtension(args[2], ".obj") : args[2];
+        If (command == "build-object" || command == "build") emitted = backend.EmitObject(backendOutput);
+        ElseIf (backend.GenerateModule()) emitted = IO.File.WriteAllText(args[2], backend.Module.Ir());
+        If (!emitted) IO.Console.PrintLine("native backend failed: " + backend.Error);
+        backend.Dispose();
+        If (!emitted) Return 1;
+        If (command == "build" && LinkExecutable(args[2], backendOutput) != 0)
+        {
+            IO.Console.PrintLine("native link failed");
+            Return 1;
+        }
+        IO.Console.PrintLine(command == "build-object" ? "format=kinal-selfhost-object-v1" :
+            (command == "build-ir" ? "format=kinal-selfhost-ir-v1" : "format=kinal-selfhost-executable-v1"));
+        IO.Console.PrintLine("output=" + args[2]);
+        Return 0;
+    }
+
+    If (command == "project" || command == "project-ast" || command == "check" || command == "symbols")
+    {
+        If (args.Length() < 2)
+        {
+            IO.Console.PrintLine("project requires a kinal.knproj path");
+            Return 2;
+        }
+        string manifest = args[1];
+        If (!IO.File.Exists(manifest))
+        {
+            IO.Console.PrintLine("project file not found: " + manifest);
+            Return 2;
+        }
+        CompileSession session = New CompileSession();
+        string profileName = args.Length() >= 3 ? args[2] : "";
+        session.LoadProject(manifest, profileName);
+        IO.Kinal.Compiler.Core.Diagnostics.PrintAll(session.Diagnostics);
+        If (session.HasErrors()) Return 1;
+        ProjectConfig project = session.Project;
+        ProjectProfileConfig profile = session.Profile;
+        list sources = session.SourcePaths;
+        If (command == "project-ast" || command == "check" || command == "symbols")
+        {
+            session.ParseProject();
+            IO.Kinal.Compiler.Core.Diagnostics.PrintAll(session.Diagnostics);
+            If (session.HasErrors()) Return 1;
+            If (command == "check" || command == "symbols")
+            {
+                SemanticCompilation semantics = New SemanticCompilation(session);
+                semantics.Analyze();
+                IO.Kinal.Compiler.Core.Diagnostics.PrintAll(session.Diagnostics);
+                If (session.HasErrors()) Return 1;
+                IO.Console.PrintLine(command == "symbols" ? semantics.FunctionSummary() : semantics.Summary());
+                Return 0;
+            }
+            IO.Console.PrintLine(session.SyntaxSummary());
+            Return 0;
+        }
+        IO.Console.PrintLine("format=kinal-project-v1");
+        IO.Console.PrintLine("name=" + project.Name);
+        IO.Console.PrintLine("profile=" + profile.Name);
+        IO.Console.PrintLine("sources=" + [string](sources.Count()));
+        IO.Console.PrintLine("entry=" + project.ResolvePath(profile.Entry));
+        IO.Console.PrintLine("output=" + project.ResolvePath(profile.Output));
+        Return 0;
+    }
+
+    If (command == "lex" || command == "tokens" || command == "parse" || command == "ast")
+    {
+        If (args.Length() < 2)
+        {
+            IO.Console.PrintLine(command + " requires an input file");
+            Return 2;
+        }
+        string input = args[1];
+        If (!IO.File.Exists(input))
+        {
+            IO.Console.PrintLine("input file not found: " + input);
+            Return 2;
+        }
+        SourceFile source = IO.Kinal.Compiler.Source.SourceFile.Load(input);
+        list diagnostics = list.Create();
+        list tokens = IO.Kinal.Compiler.Lex.Lexer.Tokenize(source, diagnostics);
+        int i = 0;
+        While (i < tokens.Count())
+        {
+            string token = [string](tokens.Fetch(i));
+            If (command == "lex") IO.Console.PrintLine(IO.Kinal.Compiler.Lex.Token.Dump(token));
+            If (command == "tokens") IO.Console.PrintLine(IO.Kinal.Compiler.Lex.Token.MachineDump(token));
+            i = i + 1;
+        }
+        If (diagnostics.Count() == 0 && command == "parse")
+        {
+            IO.Kinal.Compiler.Syntax.Parser.Validate(source, tokens, diagnostics);
+        }
+        If (diagnostics.Count() == 0 && command == "ast")
+        {
+            SyntaxTree tree = IO.Kinal.Compiler.Syntax.Parser.Build(source, tokens, diagnostics);
+            If (tree != null) IO.Console.PrintLine(tree.Summary());
+        }
+        IO.Kinal.Compiler.Core.Diagnostics.PrintAll(diagnostics);
+        Return diagnostics.Count() == 0 ? 0 : 1;
+    }
+
+    IO.Console.PrintLine("unknown command: " + command);
+    Return 2;
+}

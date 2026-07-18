@@ -99,6 +99,38 @@ IO.File.DeleteIfExists("temp.tmp");
 
 ---
 
+## IO.Directory
+
+`IO.Directory` 提供目录生命周期操作以及确定性的文件发现。
+
+| 函数 | 签名 | 说明 |
+|------|------|------|
+| `Exists(path)` | `string → bool` | 目录是否存在 |
+| `Create(path)` | `string → bool` | 创建一级目录 |
+| `Ensure(path)` | `string → bool` | 创建目录及缺失的父目录 |
+| `Delete(path)` | `string → bool` | 删除空目录 |
+| `DeleteIfExists(path)` | `string → bool` | 目录存在时删除空目录 |
+| `Files(path, recursive)` | `string, bool → list` | 按稳定的序数顺序返回普通文件路径 |
+
+目录无法打开时，`Files` 返回空列表。`recursive = false` 时只返回 `path` 的直接文件；为 `true` 时递归普通子目录。不会跟随目录符号链接或 Windows 重解析点。
+
+```kinal
+Get IO.Console;
+Get IO.Directory;
+Get IO.Path;
+
+list files = IO.Directory.Files("src", true);
+int i = 0;
+While (i < files.Count())
+{
+    string file = [string](files.Fetch(i));
+    IO.Console.PrintLine(IO.Path.FileName(file));
+    i = i + 1;
+}
+```
+
+---
+
 ## 完整示例
 
 ### 读取并处理 CSV

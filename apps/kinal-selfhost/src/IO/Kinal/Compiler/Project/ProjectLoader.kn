@@ -1,0 +1,296 @@
+Unit IO.Kinal.Compiler.Project.ProjectLoader;
+
+Get IO.Text;
+Get IO.Kinal.Compiler.Core.Diagnostics;
+Get IO.Kinal.Compiler.Source.SourceFile;
+Get IO.Kinal.Compiler.Lex.Lexer;
+Get IO.Kinal.Compiler.Lex.Token;
+Get IO.Kinal.Compiler.Lex.TokenKind;
+Get IO.Kinal.Compiler.Project.ProjectConfig;
+
+Class ProjectReader
+{
+    Public SourceFile Source;
+    Public list Tokens;
+    Public list Diagnostics;
+    Public int Position;
+
+    Public Safe Constructor(string manifestPath, list diagnostics)
+    {
+        This.Source = IO.Kinal.Compiler.Source.SourceFile.Load(manifestPath);
+        This.Diagnostics = diagnostics;
+        This.Tokens = IO.Kinal.Compiler.Lex.Lexer.Tokenize(This.Source, diagnostics);
+        This.Position = 0;
+    }
+
+    Public Safe Function string RawToken()
+    {
+        If (This.Position < 0 || This.Position >= This.Tokens.Count()) Return "";
+        Return [string](This.Tokens.Fetch(This.Position));
+    }
+
+    Public Safe Function int Kind()
+    {
+        Return IO.Kinal.Compiler.Lex.Token.Kind(This.RawToken());
+    }
+
+    Public Safe Function string Text()
+    {
+        Return IO.Kinal.Compiler.Lex.Token.Text(This.RawToken());
+    }
+
+    Public Safe Function bool AtEnd()
+    {
+        Return This.Kind() == [int](TokenKind.Eof);
+    }
+
+    Public Safe Function void Advance()
+    {
+        If (This.Position < This.Tokens.Count()) This.Position = This.Position + 1;
+    }
+
+    Public Safe Function bool MatchKind(int kind)
+    {
+        If (This.Kind() != kind) Return false;
+        This.Advance();
+        Return true;
+    }
+
+    Public Safe Function bool MatchText(string text)
+    {
+        If (This.Text() != text) Return false;
+        This.Advance();
+        Return true;
+    }
+
+    Public Safe Function void Report(string title, string detail)
+    {
+        string token = This.RawToken();
+        int length = IO.Text.Length(This.Text());
+        If (length < 1) length = 1;
+        IO.Kinal.Compiler.Core.Diagnostics.Add(This.Diagnostics, This.Source, "Project", title, detail,
+            IO.Kinal.Compiler.Lex.Token.Line(token), IO.Kinal.Compiler.Lex.Token.Column(token), length);
+    }
+
+    Public Safe Function bool ExpectKind(int kind, string title, string detail)
+    {
+        If (This.MatchKind(kind)) Return true;
+        This.Report(title, detail);
+        Return false;
+    }
+
+    Public Safe Function bool ExpectText(string text, string title, string detail)
+    {
+        If (This.MatchText(text)) Return true;
+        This.Report(title, detail);
+        Return false;
+    }
+
+    Public Safe Function string DecodeString(string raw)
+    {
+        char[] chars = raw.ToChars();
+        If (chars.Length() < 2 || [int](chars[0]) != 34) Return raw;
+        string result = "";
+        int i = 1;
+        While (i < chars.Length() - 1)
+        {
+            char value = chars[i];
+            If ([int](value) == 92 && i + 1 < chars.Length() - 1)
+            {
+                i = i + 1;
+                value = chars[i];
+                If ([int](value) == 110) value = [char](10);
+                ElseIf ([int](value) == 114) value = [char](13);
+                ElseIf ([int](value) == 116) value = [char](9);
+            }
+            result = result + [string](value);
+            i = i + 1;
+        }
+        Return result;
+    }
+
+    Public Safe Function string ReadScalar()
+    {
+        string value = This.Text();
+        If (This.Kind() == [int](TokenKind.String)) value = This.DecodeString(value);
+        This.Advance();
+        Return value;
+    }
+
+    Public Safe Function list ReadList()
+    {
+        list values = list.Create();
+        If (!This.ExpectKind([int](TokenKind.LeftBracket), "Expected '['", "list value must start with '['"))
+        {
+            Return values;
+        }
+        While (!This.AtEnd() && This.Kind() != [int](TokenKind.RightBracket))
+        {
+            values.Add(This.ReadScalar());
+            If (!This.MatchKind([int](TokenKind.Comma))) Break;
+        }
+        This.ExpectKind([int](TokenKind.RightBracket), "Expected ']'", "list value is not closed");
+        Return values;
+    }
+
+    Public Safe Function void CopyList(list destination, list source)
+    {
+        int i = 0;
+        While (i < source.Count())
+        {
+            destination.Add(source.Fetch(i));
+            i = i + 1;
+        }
+    }
+
+    Public Safe Function string ReadScalarAssignment()
+    {
+        If (!This.ExpectKind([int](TokenKind.Assign), "Expected '='", "field requires an assignment")) Return "";
+        string value = This.ReadScalar();
+        This.ExpectKind([int](TokenKind.Semicolon), "Expected ';'", "field assignment must end with ';'");
+        Return value;
+    }
+
+    Public Safe Function list ReadListAssignment()
+    {
+        If (!This.ExpectKind([int](TokenKind.Assign), "Expected '='", "field requires an assignment"))
+        {
+            Return list.Create();
+        }
+        list value = This.ReadList();
+        This.ExpectKind([int](TokenKind.Semicolon), "Expected ';'", "field assignment must end with ';'");
+        Return value;
+    }
+
+    Public Safe Function void SkipBlock()
+    {
+        If (!This.MatchKind([int](TokenKind.LeftBrace))) Return;
+        int depth = 1;
+        While (!This.AtEnd() && depth > 0)
+        {
+            If (This.Kind() == [int](TokenKind.LeftBrace)) depth = depth + 1;
+            ElseIf (This.Kind() == [int](TokenKind.RightBrace)) depth = depth - 1;
+            This.Advance();
+        }
+    }
+
+    Public Safe Function void SkipUnknownField()
+    {
+        If (This.Kind() == [int](TokenKind.LeftBrace))
+        {
+            This.SkipBlock();
+            Return;
+        }
+        If (!This.MatchKind([int](TokenKind.Assign)))
+        {
+            This.Advance();
+            Return;
+        }
+        If (This.Kind() == [int](TokenKind.LeftBracket))
+        {
+            This.ReadList();
+        }
+        Else
+        {
+            This.Advance();
+        }
+        This.MatchKind([int](TokenKind.Semicolon));
+    }
+
+    Public Safe Function SourceSetConfig ReadSourceSet()
+    {
+        string name = This.ReadScalar();
+        SourceSetConfig sourceSet = New SourceSetConfig(name);
+        If (!This.ExpectKind([int](TokenKind.LeftBrace), "Expected '{'", "SourceSet body is missing")) Return sourceSet;
+        While (!This.AtEnd() && This.Kind() != [int](TokenKind.RightBrace))
+        {
+            string field = This.Text();
+            This.Advance();
+            If (field == "Roots") This.CopyList(sourceSet.Roots, This.ReadListAssignment());
+            ElseIf (field == "Files") This.CopyList(sourceSet.Files, This.ReadListAssignment());
+            ElseIf (field == "Include") This.CopyList(sourceSet.Includes, This.ReadListAssignment());
+            ElseIf (field == "Exclude") This.CopyList(sourceSet.Excludes, This.ReadListAssignment());
+            ElseIf (field == "RequireUnit") sourceSet.RequireUnit = This.ReadScalarAssignment() == "true";
+            Else This.SkipUnknownField();
+        }
+        This.ExpectKind([int](TokenKind.RightBrace), "Expected '}'", "SourceSet body is not closed");
+        Return sourceSet;
+    }
+
+    Public Safe Function void ReadProfileSource(ProjectProfileConfig profile)
+    {
+        If (!This.ExpectKind([int](TokenKind.LeftBrace), "Expected '{'", "Source body is missing")) Return;
+        While (!This.AtEnd() && This.Kind() != [int](TokenKind.RightBrace))
+        {
+            string field = This.Text();
+            This.Advance();
+            If (field == "Entry") profile.Entry = This.ReadScalarAssignment();
+            ElseIf (field == "Sets") This.CopyList(profile.Sets, This.ReadListAssignment());
+            ElseIf (field == "Mode") profile.Mode = This.ReadScalarAssignment();
+            ElseIf (field == "AutoDiscovery") profile.AutoDiscovery = This.ReadScalarAssignment() == "true";
+            Else This.SkipUnknownField();
+        }
+        This.ExpectKind([int](TokenKind.RightBrace), "Expected '}'", "Source body is not closed");
+    }
+
+    Public Safe Function void ReadProfileBuild(ProjectProfileConfig profile)
+    {
+        If (!This.ExpectKind([int](TokenKind.LeftBrace), "Expected '{'", "Build body is missing")) Return;
+        While (!This.AtEnd() && This.Kind() != [int](TokenKind.RightBrace))
+        {
+            string field = This.Text();
+            This.Advance();
+            If (field == "Backend") profile.Backend = This.ReadScalarAssignment();
+            ElseIf (field == "Environment") profile.Environment = This.ReadScalarAssignment();
+            ElseIf (field == "Runtime") profile.Runtime = This.ReadScalarAssignment();
+            ElseIf (field == "Panic") profile.Panic = This.ReadScalarAssignment();
+            ElseIf (field == "Target") profile.Target = This.ReadScalarAssignment();
+            ElseIf (field == "Output") profile.Output = This.ReadScalarAssignment();
+            Else This.SkipUnknownField();
+        }
+        This.ExpectKind([int](TokenKind.RightBrace), "Expected '}'", "Build body is not closed");
+    }
+
+    Public Safe Function ProjectProfileConfig ReadProfile()
+    {
+        ProjectProfileConfig profile = New ProjectProfileConfig(This.ReadScalar());
+        If (!This.ExpectKind([int](TokenKind.LeftBrace), "Expected '{'", "Profile body is missing")) Return profile;
+        While (!This.AtEnd() && This.Kind() != [int](TokenKind.RightBrace))
+        {
+            string section = This.Text();
+            This.Advance();
+            If (section == "Source") This.ReadProfileSource(profile);
+            ElseIf (section == "Build") This.ReadProfileBuild(profile);
+            Else This.SkipUnknownField();
+        }
+        This.ExpectKind([int](TokenKind.RightBrace), "Expected '}'", "Profile body is not closed");
+        Return profile;
+    }
+
+    Public Safe Function ProjectConfig Read()
+    {
+        ProjectConfig project = New ProjectConfig(This.Source.Path);
+        If (This.Diagnostics.Count() > 0) Return project;
+        If (!This.ExpectText("Project", "Expected Project", "manifest must start with Project")) Return project;
+        project.Name = This.ReadScalar();
+        If (!This.ExpectKind([int](TokenKind.LeftBrace), "Expected '{'", "Project body is missing")) Return project;
+
+        While (!This.AtEnd() && This.Kind() != [int](TokenKind.RightBrace))
+        {
+            string field = This.Text();
+            This.Advance();
+            If (field == "DefaultProfile") project.DefaultProfile = This.ReadScalarAssignment();
+            ElseIf (field == "SourceSet") project.AddSourceSet(This.ReadSourceSet());
+            ElseIf (field == "Profile") project.AddProfile(This.ReadProfile());
+            Else This.SkipUnknownField();
+        }
+        This.ExpectKind([int](TokenKind.RightBrace), "Expected '}'", "Project body is not closed");
+        Return project;
+    }
+}
+
+Safe Function ProjectConfig Load(string manifestPath, list diagnostics)
+{
+    ProjectReader reader = New ProjectReader(manifestPath, diagnostics);
+    Return reader.Read();
+}

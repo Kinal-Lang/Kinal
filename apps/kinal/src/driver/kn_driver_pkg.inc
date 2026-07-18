@@ -293,37 +293,6 @@ static bool path_relative_file(const char *root, const char *full, char *out, si
     return true;
 }
 
-static bool ensure_dir_recursive(const char *path)
-{
-    char tmp[KN_MAX_PATH];
-    size_t n = 0;
-    if (!path || !path[0])
-        return false;
-    copy_str(tmp, sizeof(tmp), path);
-    n = kn_strlen(tmp);
-    if (n == 0)
-        return false;
-    for (size_t i = 0; i < n; i++)
-    {
-        if (!is_path_sep(tmp[i]))
-            continue;
-        if (i == 0)
-            continue;
-        if (i == 2 && tmp[1] == ':')
-            continue;
-        {
-            char hold = tmp[i];
-            tmp[i] = 0;
-            if (tmp[0] && !dir_exists(tmp))
-                CreateDirectoryA(tmp, 0);
-            tmp[i] = hold;
-        }
-    }
-    if (!dir_exists(tmp))
-        CreateDirectoryA(tmp, 0);
-    return dir_exists(path);
-}
-
 static bool write_binary_file(const char *path, const void *data, size_t size)
 {
     KN_HANDLE h;

@@ -1,0 +1,936 @@
+Unit IO.Kinal.Compiler.Sema.SemanticCompilation;
+
+Get IO.Text;
+Get IO.Kinal.Compiler.Core.Diagnostics;
+Get IO.Kinal.Compiler.Core.CompileSession;
+Get IO.Kinal.Compiler.Syntax.Nodes;
+Get IO.Kinal.Compiler.Syntax.SyntaxTree;
+Get IO.Kinal.Compiler.Types.TypeSymbol;
+Get IO.Kinal.Compiler.Sema.Symbols;
+Get IO.Kinal.Compiler.Hir.HirModel;
+Get IO.Kinal.Compiler.Lex.TokenKind;
+
+Class UnitSymbol
+{
+    Public string Name;
+    Public SyntaxTree Syntax;
+    Public UnitSymbol Next;
+
+    Public Safe Constructor(string name, SyntaxTree syntax)
+    {
+        This.Name = name;
+        This.Syntax = syntax;
+        This.Next = null;
+    }
+}
+
+Class SemanticCompilation
+{
+    Public CompileSession Session;
+    Public UnitSymbol FirstUnit;
+    Public TypeSymbol FirstType;
+    Public FunctionSymbol FirstFunction;
+    Public HirModule FirstHirModule;
+    Public int ImportCount;
+    Public int FunctionCount;
+    Public int DeclarationTypeCount;
+    Public int UnresolvedImportCount;
+    Public int UnresolvedTypeCount;
+    Public int BoundExpressionCount;
+    Public int UnresolvedExpressionCount;
+
+    Public Safe Constructor(CompileSession session)
+    {
+        This.Session = session;
+        This.FirstUnit = null;
+        This.FirstType = null;
+        This.FirstFunction = null;
+        This.FirstHirModule = null;
+        This.ImportCount = 0;
+        This.FunctionCount = 0;
+        This.DeclarationTypeCount = 0;
+        This.UnresolvedImportCount = 0;
+        This.UnresolvedTypeCount = 0;
+        This.BoundExpressionCount = 0;
+        This.UnresolvedExpressionCount = 0;
+        This.RegisterBuiltinTypes();
+    }
+
+    Public Safe Function string CanonicalTypeName(string name)
+    {
+        Return IO.Text.Replace(name, " ", "");
+    }
+
+    Public Safe Function void AddType(TypeSymbol type)
+    {
+        If (This.FirstType == null)
+        {
+            This.FirstType = type;
+            Return;
+        }
+        TypeSymbol current = This.FirstType;
+        While (current.Next != null) current = current.Next;
+        current.Next = type;
+    }
+
+    Public Safe Function void AddBuiltin(string name, int kind)
+    {
+        This.AddType(New TypeSymbol(kind, name));
+    }
+
+    Public Safe Function void RegisterBuiltinTypes()
+    {
+        This.AddBuiltin("void", [int](TypeKind.VoidType));
+        This.AddBuiltin("bool", [int](TypeKind.BoolType));
+        This.AddBuiltin("byte", [int](TypeKind.IntegerType));
+        This.AddBuiltin("char", [int](TypeKind.IntegerType));
+        This.AddBuiltin("int", [int](TypeKind.IntegerType));
+        This.AddBuiltin("i8", [int](TypeKind.IntegerType));
+        This.AddBuiltin("i16", [int](TypeKind.IntegerType));
+        This.AddBuiltin("i32", [int](TypeKind.IntegerType));
+        This.AddBuiltin("i64", [int](TypeKind.IntegerType));
+        This.AddBuiltin("u8", [int](TypeKind.IntegerType));
+        This.AddBuiltin("u16", [int](TypeKind.IntegerType));
+        This.AddBuiltin("u32", [int](TypeKind.IntegerType));
+        This.AddBuiltin("u64", [int](TypeKind.IntegerType));
+        This.AddBuiltin("isize", [int](TypeKind.IntegerType));
+        This.AddBuiltin("usize", [int](TypeKind.IntegerType));
+        This.AddBuiltin("float", [int](TypeKind.FloatType));
+        This.AddBuiltin("f16", [int](TypeKind.FloatType));
+        This.AddBuiltin("f32", [int](TypeKind.FloatType));
+        This.AddBuiltin("f64", [int](TypeKind.FloatType));
+        This.AddBuiltin("f128", [int](TypeKind.FloatType));
+        This.AddBuiltin("string", [int](TypeKind.StringType));
+        This.AddBuiltin("any", [int](TypeKind.AnyType));
+        This.AddBuiltin("list", [int](TypeKind.ListType));
+        This.AddBuiltin("dict", [int](TypeKind.DictType));
+        This.AddBuiltin("set", [int](TypeKind.SetType));
+    }
+
+    Public Safe Function void AddUnit(UnitSymbol unit)
+    {
+        If (This.FirstUnit == null)
+        {
+            This.FirstUnit = unit;
+            Return;
+        }
+        UnitSymbol current = This.FirstUnit;
+        While (current.Next != null) current = current.Next;
+        current.Next = unit;
+    }
+
+    Public Safe Function UnitSymbol FindUnit(string name)
+    {
+        UnitSymbol current = This.FirstUnit;
+        While (current != null)
+        {
+            If (current.Name == name) Return current;
+            current = current.Next;
+        }
+        Return null;
+    }
+
+    Public Safe Function bool IsRuntimeUnit(string name)
+    {
+        Return name == "IO.Console" || name == "IO.File" || name == "IO.Directory" ||
+               name == "IO.Path" || name == "IO.Text" || name == "IO.Collection" ||
+               name == "IO.Error" || name == "IO.GC" || name == "IO.System" ||
+               name == "IO.Type";
+    }
+
+    Public Safe Function void Report(SyntaxTree syntax, string title, string detail, int line, int column)
+    {
+        IO.Kinal.Compiler.Core.Diagnostics.Add(This.Session.Diagnostics, syntax.Source,
+            "Sema", title, detail, line, column, 1);
+    }
+
+    Public Safe Function void IndexDeclarations()
+    {
+        CompilationUnit compilationUnit = This.Session.FirstUnit;
+        While (compilationUnit != null)
+        {
+            SyntaxTree syntax = compilationUnit.Syntax;
+            If (This.FindUnit(syntax.UnitName) != null)
+            {
+                This.Report(syntax, "Duplicate unit", syntax.UnitName, 1, 1);
+            }
+            Else
+            {
+                This.AddUnit(New UnitSymbol(syntax.UnitName, syntax));
+            }
+
+            TypeDecl declaration = syntax.FirstType;
+            While (declaration != null)
+            {
+                TypeSymbol type = New TypeSymbol([int](TypeKind.NamedType), declaration.Name);
+                type.UnitName = syntax.UnitName;
+                type.Declaration = declaration;
+                If (This.FindExactType(type.QualifiedName()) != null)
+                {
+                    This.Report(syntax, "Duplicate type", type.QualifiedName(), declaration.Line, declaration.Column);
+                }
+                Else
+                {
+                    This.AddType(type);
+                }
+                declaration = declaration.Next;
+            }
+            compilationUnit = compilationUnit.Next;
+        }
+    }
+
+    Public Safe Function TypeSymbol FindExactType(string name)
+    {
+        TypeSymbol current = This.FirstType;
+        While (current != null)
+        {
+            If (current.Name == name || current.QualifiedName() == name) Return current;
+            current = current.Next;
+        }
+        Return null;
+    }
+
+    Public Safe Function TypeSymbol ResolveType(SyntaxTree syntax, string rawName)
+    {
+        string name = This.CanonicalTypeName(rawName);
+        If (IO.Text.EndsWith(name, "*"))
+        {
+            TypeSymbol element = This.ResolveType(syntax,
+                IO.Text.Slice(name, 0, IO.Text.Length(name) - 1));
+            If (element == null) Return null;
+            TypeSymbol pointerType = New TypeSymbol([int](TypeKind.PointerType), element.Name + "*");
+            pointerType.ElementType = element;
+            Return pointerType;
+        }
+        If (IO.Text.EndsWith(name, "[]"))
+        {
+            TypeSymbol element = This.ResolveType(syntax,
+                IO.Text.Slice(name, 0, IO.Text.Length(name) - 2));
+            If (element == null) Return null;
+            TypeSymbol arrayType = New TypeSymbol([int](TypeKind.ArrayType), element.Name + "[]");
+            arrayType.ElementType = element;
+            Return arrayType;
+        }
+
+        TypeSymbol direct = This.FindExactType(name);
+        If (direct != null && direct.UnitName == "") Return direct;
+        direct = This.FindExactType(syntax.UnitName + "." + name);
+        If (direct != null) Return direct;
+
+        ImportDecl import = syntax.FirstImport;
+        While (import != null)
+        {
+            TypeSymbol current = This.FirstType;
+            While (current != null)
+            {
+                If (current.UnitName == import.Target && current.Name == name) Return current;
+                current = current.Next;
+            }
+            import = import.Next;
+        }
+        If (IO.Text.Contains(name, ".")) Return This.FindExactType(name);
+        Return null;
+    }
+
+    Public Safe Function void CheckType(SyntaxTree syntax, string name, int line, int column)
+    {
+        This.DeclarationTypeCount = This.DeclarationTypeCount + 1;
+        If (This.ResolveType(syntax, name) != null) Return;
+        This.UnresolvedTypeCount = This.UnresolvedTypeCount + 1;
+        This.Report(syntax, "Unknown type", This.CanonicalTypeName(name), line, column);
+    }
+
+    Public Safe Function void CheckExpression(SyntaxTree syntax, ExpressionNode expression)
+    {
+        If (expression == null) Return;
+        If (expression.Kind == [int](ExpressionKind.Cast) ||
+            expression.Kind == [int](ExpressionKind.NewObject))
+        {
+            This.CheckType(syntax, expression.Text, expression.Line, expression.Column);
+        }
+        This.CheckExpression(syntax, expression.Left);
+        This.CheckExpression(syntax, expression.Right);
+        This.CheckExpression(syntax, expression.Third);
+        ExpressionNode argument = expression.FirstArgument;
+        While (argument != null)
+        {
+            This.CheckExpression(syntax, argument);
+            argument = argument.Next;
+        }
+    }
+
+    Public Safe Function void CheckStatement(SyntaxTree syntax, StatementNode statement)
+    {
+        While (statement != null)
+        {
+            If (statement.Kind == [int](StatementKind.Variable))
+            {
+                This.CheckType(syntax, statement.TypeName, statement.Line, statement.Column);
+            }
+            This.CheckExpression(syntax, statement.Expression);
+            This.CheckStatement(syntax, statement.FirstChild);
+            This.CheckStatement(syntax, statement.ElseBranch);
+            statement = statement.Next;
+        }
+    }
+
+    Public Safe Function void CheckFunction(SyntaxTree syntax, FunctionDecl function)
+    {
+        This.CheckStatement(syntax, function.Body);
+    }
+
+    Public Safe Function void AddFunctionSymbol(FunctionSymbol function)
+    {
+        If (This.FirstFunction == null)
+        {
+            This.FirstFunction = function;
+            Return;
+        }
+        FunctionSymbol current = This.FirstFunction;
+        While (current.Next != null) current = current.Next;
+        current.Next = function;
+    }
+
+    Public Safe Function void IndexFunction(UnitSymbol unit, TypeSymbol owner, FunctionDecl declaration)
+    {
+        FunctionSymbol function = New FunctionSymbol(unit.Name, owner, declaration);
+        This.FunctionCount = This.FunctionCount + 1;
+        This.CheckType(unit.Syntax, declaration.ReturnType, declaration.Line, declaration.Column);
+        function.ReturnType = This.ResolveType(unit.Syntax, declaration.ReturnType);
+        ParameterDecl parameter = declaration.FirstParameter;
+        While (parameter != null)
+        {
+            This.CheckType(unit.Syntax, parameter.TypeName, declaration.Line, declaration.Column);
+            function.AddParameter(New ParameterSymbol(parameter.Name,
+                This.ResolveType(unit.Syntax, parameter.TypeName)));
+            parameter = parameter.Next;
+        }
+        This.AddFunctionSymbol(function);
+    }
+
+    Public Safe Function void IndexFunctions()
+    {
+        UnitSymbol unit = This.FirstUnit;
+        While (unit != null)
+        {
+            FunctionDecl function = unit.Syntax.FirstFunction;
+            While (function != null)
+            {
+                This.IndexFunction(unit, null, function);
+                function = function.Next;
+            }
+            TypeDecl declaration = unit.Syntax.FirstType;
+            While (declaration != null)
+            {
+                TypeSymbol owner = This.FindExactType(unit.Name + "." + declaration.Name);
+                function = declaration.FirstMethod;
+                While (function != null)
+                {
+                    This.IndexFunction(unit, owner, function);
+                    function = function.Next;
+                }
+                declaration = declaration.Next;
+            }
+            unit = unit.Next;
+        }
+    }
+
+    Public Safe Function void CheckUnit(UnitSymbol unit)
+    {
+        SyntaxTree syntax = unit.Syntax;
+        ImportDecl import = syntax.FirstImport;
+        While (import != null)
+        {
+            This.ImportCount = This.ImportCount + 1;
+            If (This.FindUnit(import.Target) == null && !This.IsRuntimeUnit(import.Target))
+            {
+                This.UnresolvedImportCount = This.UnresolvedImportCount + 1;
+                This.Report(syntax, "Unknown imported unit", import.Target, import.Line, import.Column);
+            }
+            import = import.Next;
+        }
+
+        FunctionDecl function = syntax.FirstFunction;
+        While (function != null)
+        {
+            This.CheckFunction(syntax, function);
+            function = function.Next;
+        }
+        TypeDecl type = syntax.FirstType;
+        While (type != null)
+        {
+            FieldDecl field = type.FirstField;
+            While (field != null)
+            {
+                This.CheckType(syntax, field.TypeName, field.Line, field.Column);
+                This.CheckExpression(syntax, field.Initializer);
+                field = field.Next;
+            }
+            function = type.FirstMethod;
+            While (function != null)
+            {
+                This.CheckFunction(syntax, function);
+                function = function.Next;
+            }
+            type = type.Next;
+        }
+    }
+
+    Public Safe Function TypeSymbol Primitive(string name)
+    {
+        Return This.FindExactType(name);
+    }
+
+    Public Safe Function TypeSymbol MakeArrayType(TypeSymbol element)
+    {
+        TypeSymbol arrayType = New TypeSymbol([int](TypeKind.ArrayType), element.Name + "[]");
+        arrayType.ElementType = element;
+        Return arrayType;
+    }
+
+    Public Safe Function FunctionSymbol FindQualifiedFunction(string name, int parameterCount)
+    {
+        FunctionSymbol current = This.FirstFunction;
+        While (current != null)
+        {
+            If (current.QualifiedName() == name && current.ParameterCount() == parameterCount) Return current;
+            current = current.Next;
+        }
+        Return null;
+    }
+
+    Public Safe Function FunctionSymbol FindMethod(TypeSymbol owner, string name, int parameterCount)
+    {
+        If (owner == null) Return null;
+        FunctionSymbol current = This.FirstFunction;
+        While (current != null)
+        {
+            If (current.OwnerType == owner && current.Name == name &&
+                current.ParameterCount() == parameterCount) Return current;
+            current = current.Next;
+        }
+        Return null;
+    }
+
+    Public Safe Function FunctionSymbol FindVisibleFunction(SyntaxTree syntax, TypeSymbol owner,
+                                                             string name, int parameterCount)
+    {
+        FunctionSymbol method = This.FindMethod(owner, name, parameterCount);
+        If (method != null) Return method;
+        FunctionSymbol current = This.FirstFunction;
+        While (current != null)
+        {
+            If (current.OwnerType == null && current.UnitName == syntax.UnitName &&
+                current.Name == name && current.ParameterCount() == parameterCount) Return current;
+            current = current.Next;
+        }
+        ImportDecl import = syntax.FirstImport;
+        While (import != null)
+        {
+            current = This.FirstFunction;
+            While (current != null)
+            {
+                If (current.OwnerType == null && current.UnitName == import.Target &&
+                    current.Name == name && current.ParameterCount() == parameterCount) Return current;
+                current = current.Next;
+            }
+            import = import.Next;
+        }
+        Return null;
+    }
+
+    Public Safe Function string ExpressionPath(ExpressionNode expression)
+    {
+        If (expression == null) Return "";
+        If (expression.Kind == [int](ExpressionKind.Name)) Return expression.Text;
+        If (expression.Kind != [int](ExpressionKind.Member)) Return "";
+        string parent = This.ExpressionPath(expression.Left);
+        If (IO.Text.IsEmpty(parent)) Return "";
+        Return parent + "." + expression.Text;
+    }
+
+    Public Safe Function int ArgumentCount(ExpressionNode call)
+    {
+        int count = 0;
+        ExpressionNode argument = call.FirstArgument;
+        While (argument != null)
+        {
+            count = count + 1;
+            argument = argument.Next;
+        }
+        Return count;
+    }
+
+    Public Safe Function bool IsNamespacePrefix(string name)
+    {
+        If (name == "IO" || name == "IO.Kinal" || name == "IO.Kinal.Compiler") Return true;
+        UnitSymbol unit = This.FirstUnit;
+        While (unit != null)
+        {
+            If (unit.Name == name || IO.Text.StartsWith(unit.Name, name + ".")) Return true;
+            unit = unit.Next;
+        }
+        Return false;
+    }
+
+    Public Safe Function TypeSymbol RuntimeCallType(string target, TypeSymbol receiver)
+    {
+        string name = target;
+        int receiverKind = receiver == null ? [int](TypeKind.Unknown) : receiver.Kind;
+        If (target == "IO.Console.PrintLine" || target == "IO.Console.Print") Return This.Primitive("void");
+        If (target == "IO.File.Exists" || target == "IO.File.WriteAllText" ||
+            target == "IO.File.Delete" || target == "IO.File.DeleteIfExists") Return This.Primitive("bool");
+        If (target == "IO.File.ReadAllText") Return This.Primitive("string");
+        If (target == "IO.Directory.Files") Return This.Primitive("list");
+        If (target == "IO.Directory.Exists") Return This.Primitive("bool");
+        If (IO.Text.StartsWith(target, "IO.Path."))
+        {
+            name = IO.Text.Slice(target, 8, IO.Text.Length(target) - 8);
+            If (name == "IsAbsolute" || name == "IsRelative" || name == "HasExtension")
+                Return This.Primitive("bool");
+            Return This.Primitive("string");
+        }
+        If (IO.Text.StartsWith(target, "IO.Text."))
+        {
+            name = IO.Text.Slice(target, 8, IO.Text.Length(target) - 8);
+            If (name == "Length" || name == "Count" || name == "IndexOf" || name == "LastIndexOf")
+                Return This.Primitive("int");
+            If (name == "IsEmpty" || name == "Contains" || name == "StartsWith" || name == "EndsWith")
+                Return This.Primitive("bool");
+            If (name == "Split" || name == "Lines") Return This.Primitive("list");
+            Return This.Primitive("string");
+        }
+        If (target == "list.Create") Return This.Primitive("list");
+        If (target == "dict.Create") Return This.Primitive("dict");
+        If (target == "set.Create") Return This.Primitive("set");
+        If (receiverKind == [int](TypeKind.ListType))
+        {
+            If (target == "Count") Return This.Primitive("int");
+            If (target == "Fetch" || target == "Peek" || target == "Pop") Return This.Primitive("any");
+            If (target == "Contains" || target == "IsEmpty") Return This.Primitive("bool");
+            If (target == "Add" || target == "Insert" || target == "Clear") Return This.Primitive("void");
+        }
+        If (receiverKind == [int](TypeKind.StringType))
+        {
+            If (target == "ToChars") Return This.MakeArrayType(This.Primitive("char"));
+            If (target == "Length") Return This.Primitive("int");
+        }
+        If (receiverKind == [int](TypeKind.ArrayType) && target == "Length") Return This.Primitive("int");
+        Return null;
+    }
+
+    Public Safe Function TypeSymbol FindFieldType(SyntaxTree syntax, TypeSymbol owner, string name)
+    {
+        If (owner == null || owner.Declaration == null) Return null;
+        UnitSymbol ownerUnit = This.FindUnit(owner.UnitName);
+        SyntaxTree definingSyntax = ownerUnit == null ? syntax : ownerUnit.Syntax;
+        FieldDecl field = owner.Declaration.FirstField;
+        While (field != null)
+        {
+            If (field.Name == name) Return This.ResolveType(definingSyntax, field.TypeName);
+            field = field.Next;
+        }
+        Return null;
+    }
+
+    Public Safe Function HirExpression InvalidExpression(SyntaxTree syntax, ExpressionNode expression,
+                                                          string title, string detail)
+    {
+        This.UnresolvedExpressionCount = This.UnresolvedExpressionCount + 1;
+        This.Report(syntax, title, detail, expression.Line, expression.Column);
+        Return New HirExpression([int](HirExpressionKind.Invalid), expression, This.Primitive("any"));
+    }
+
+    Public Safe Function HirExpression BindCall(SyntaxTree syntax, FunctionSymbol function,
+                                                 BindingScope scope, ExpressionNode expression)
+    {
+        int argumentCount = This.ArgumentCount(expression);
+        ExpressionNode targetSyntax = expression.Left;
+        string path = This.ExpressionPath(targetSyntax);
+        FunctionSymbol targetFunction = IO.Text.IsEmpty(path) ? null :
+            This.FindQualifiedFunction(path, argumentCount);
+        TypeSymbol returnType = null;
+        int callKind = [int](HirCallKind.None);
+        HirExpression receiver = null;
+        string targetName = path;
+
+        If (targetFunction != null)
+        {
+            returnType = targetFunction.ReturnType;
+            callKind = [int](HirCallKind.UnitFunction);
+            targetName = targetFunction.QualifiedName();
+        }
+        Else
+        {
+            returnType = This.RuntimeCallType(path, null);
+            If (returnType != null) callKind = [int](HirCallKind.RuntimeBuiltin);
+        }
+
+        If (returnType == null && targetSyntax != null &&
+            targetSyntax.Kind == [int](ExpressionKind.Member))
+        {
+            receiver = This.BindExpression(syntax, function, scope, targetSyntax.Left);
+            string memberName = targetSyntax.Text;
+            If (receiver.Kind != [int](HirExpressionKind.Invalid))
+            {
+                targetFunction = This.FindMethod(receiver.Type, memberName, argumentCount);
+                If (targetFunction != null)
+                {
+                    returnType = targetFunction.ReturnType;
+                    callKind = [int](HirCallKind.InstanceMethod);
+                    targetName = targetFunction.QualifiedName();
+                }
+                Else
+                {
+                    returnType = This.RuntimeCallType(memberName, receiver.Type);
+                    If (returnType != null)
+                    {
+                        callKind = [int](HirCallKind.RuntimeBuiltin);
+                        targetName = memberName;
+                    }
+                }
+            }
+        }
+
+        If (returnType == null && targetSyntax != null &&
+            targetSyntax.Kind == [int](ExpressionKind.Name))
+        {
+            targetFunction = This.FindVisibleFunction(syntax, function.OwnerType,
+                targetSyntax.Text, argumentCount);
+            If (targetFunction != null)
+            {
+                returnType = targetFunction.ReturnType;
+                callKind = targetFunction.OwnerType == null ?
+                    [int](HirCallKind.UnitFunction) : [int](HirCallKind.InstanceMethod);
+                targetName = targetFunction.QualifiedName();
+            }
+        }
+
+        If (returnType == null)
+        {
+            Return This.InvalidExpression(syntax, expression, "Unresolved call",
+                IO.Text.IsEmpty(path) ? targetSyntax.Text : path);
+        }
+
+        HirExpression bound = New HirExpression([int](HirExpressionKind.Call), expression, returnType);
+        bound.CallKind = callKind;
+        bound.Target = targetName;
+        bound.Left = receiver;
+        ExpressionNode argument = expression.FirstArgument;
+        While (argument != null)
+        {
+            bound.AddArgument(This.BindExpression(syntax, function, scope, argument));
+            argument = argument.Next;
+        }
+        Return bound;
+    }
+
+    Public Safe Function HirExpression BindMember(SyntaxTree syntax, FunctionSymbol function,
+                                                   BindingScope scope, ExpressionNode expression)
+    {
+        HirExpression receiver = This.BindExpression(syntax, function, scope, expression.Left);
+        If (receiver.Kind == [int](HirExpressionKind.Invalid)) Return receiver;
+        If (receiver.Type.Kind == [int](TypeKind.NamespaceType))
+        {
+            string combined = receiver.Target + "." + expression.Text;
+            TypeSymbol named = This.ResolveType(syntax, combined);
+            If (named != null)
+            {
+                HirExpression result = New HirExpression([int](HirExpressionKind.Namespace), expression, named);
+                result.Target = combined;
+                Return result;
+            }
+            TypeSymbol namespaceType = New TypeSymbol([int](TypeKind.NamespaceType), combined);
+            HirExpression result = New HirExpression([int](HirExpressionKind.Namespace), expression, namespaceType);
+            result.Target = combined;
+            Return result;
+        }
+
+        TypeSymbol fieldType = This.FindFieldType(syntax, receiver.Type, expression.Text);
+        If (fieldType != null)
+        {
+            HirExpression result = New HirExpression([int](HirExpressionKind.Field), expression, fieldType);
+            result.Left = receiver;
+            result.Target = expression.Text;
+            Return result;
+        }
+        If (receiver.Type.Kind == [int](TypeKind.NamedType) && receiver.Type.Declaration != null &&
+            receiver.Type.Declaration.FirstField == null && receiver.Type.Declaration.FirstMethod == null)
+        {
+            HirExpression result = New HirExpression([int](HirExpressionKind.Constant), expression, receiver.Type);
+            result.Target = receiver.Type.QualifiedName() + "." + expression.Text;
+            Return result;
+        }
+        Return This.InvalidExpression(syntax, expression, "Unknown member", expression.Text);
+    }
+
+    Public Safe Function HirExpression BindExpression(SyntaxTree syntax, FunctionSymbol function,
+                                                       BindingScope scope, ExpressionNode expression)
+    {
+        If (expression == null) Return null;
+        This.BoundExpressionCount = This.BoundExpressionCount + 1;
+        If (expression.Kind == [int](ExpressionKind.Number))
+            Return New HirExpression([int](HirExpressionKind.Constant), expression, This.Primitive("int"));
+        If (expression.Kind == [int](ExpressionKind.String))
+            Return New HirExpression([int](HirExpressionKind.Constant), expression, This.Primitive("string"));
+        If (expression.Kind == [int](ExpressionKind.Character))
+            Return New HirExpression([int](HirExpressionKind.Constant), expression, This.Primitive("char"));
+        If (expression.Kind == [int](ExpressionKind.Boolean))
+            Return New HirExpression([int](HirExpressionKind.Constant), expression, This.Primitive("bool"));
+        If (expression.Kind == [int](ExpressionKind.Null))
+            Return New HirExpression([int](HirExpressionKind.Constant), expression,
+                New TypeSymbol([int](TypeKind.NullType), "null"));
+        If (expression.Kind == [int](ExpressionKind.Name))
+        {
+            ValueSymbol value = scope.Find(expression.Text);
+            If (value != null)
+            {
+                HirExpression local = New HirExpression([int](HirExpressionKind.Local), expression, value.Type);
+                local.Target = value.Name;
+                local.Symbol = value;
+                Return local;
+            }
+            If (expression.Text == "This" && function.OwnerType != null)
+            {
+                HirExpression thisValue = New HirExpression([int](HirExpressionKind.Local), expression, function.OwnerType);
+                thisValue.Target = "This";
+                thisValue.Symbol = function.Receiver;
+                Return thisValue;
+            }
+            TypeSymbol type = This.ResolveType(syntax, expression.Text);
+            If (type != null)
+            {
+                HirExpression named = New HirExpression([int](HirExpressionKind.Namespace), expression, type);
+                named.Target = type.QualifiedName();
+                Return named;
+            }
+            If (This.IsNamespacePrefix(expression.Text))
+            {
+                TypeSymbol namespaceType = New TypeSymbol([int](TypeKind.NamespaceType), expression.Text);
+                HirExpression named = New HirExpression([int](HirExpressionKind.Namespace), expression, namespaceType);
+                named.Target = expression.Text;
+                Return named;
+            }
+            Return This.InvalidExpression(syntax, expression, "Unknown name", expression.Text);
+        }
+        If (expression.Kind == [int](ExpressionKind.Member))
+            Return This.BindMember(syntax, function, scope, expression);
+        If (expression.Kind == [int](ExpressionKind.Call))
+            Return This.BindCall(syntax, function, scope, expression);
+        If (expression.Kind == [int](ExpressionKind.NewObject))
+        {
+            TypeSymbol type = This.ResolveType(syntax, expression.Text);
+            If (type == null) Return This.InvalidExpression(syntax, expression, "Unknown constructed type", expression.Text);
+            HirExpression result = New HirExpression([int](HirExpressionKind.NewObject), expression, type);
+            result.CallKind = [int](HirCallKind.Constructor);
+            result.Target = type.QualifiedName() + ".Constructor";
+            ExpressionNode argument = expression.FirstArgument;
+            While (argument != null)
+            {
+                result.AddArgument(This.BindExpression(syntax, function, scope, argument));
+                argument = argument.Next;
+            }
+            Return result;
+        }
+        If (expression.Kind == [int](ExpressionKind.Cast))
+        {
+            TypeSymbol type = This.ResolveType(syntax, expression.Text);
+            If (type == null) Return This.InvalidExpression(syntax, expression, "Unknown cast type", expression.Text);
+            HirExpression result = New HirExpression([int](HirExpressionKind.Cast), expression, type);
+            result.Left = This.BindExpression(syntax, function, scope, expression.Left);
+            Return result;
+        }
+        If (expression.Kind == [int](ExpressionKind.Index))
+        {
+            HirExpression receiver = This.BindExpression(syntax, function, scope, expression.Left);
+            TypeSymbol type = receiver.Type.Kind == [int](TypeKind.ArrayType) ?
+                receiver.Type.ElementType : This.Primitive("any");
+            HirExpression result = New HirExpression([int](HirExpressionKind.Index), expression, type);
+            result.Left = receiver;
+            result.Right = This.BindExpression(syntax, function, scope, expression.Right);
+            Return result;
+        }
+        If (expression.Kind == [int](ExpressionKind.Unary))
+        {
+            HirExpression operand = This.BindExpression(syntax, function, scope, expression.Left);
+            TypeSymbol type = expression.Operator == [int](TokenKind.Not) ? This.Primitive("bool") : operand.Type;
+            HirExpression result = New HirExpression([int](HirExpressionKind.Unary), expression, type);
+            result.Left = operand;
+            Return result;
+        }
+        If (expression.Kind == [int](ExpressionKind.Binary))
+        {
+            HirExpression left = This.BindExpression(syntax, function, scope, expression.Left);
+            HirExpression right = This.BindExpression(syntax, function, scope, expression.Right);
+            bool comparison = expression.Operator == [int](TokenKind.Equal) ||
+                expression.Operator == [int](TokenKind.NotEqual) ||
+                expression.Operator == [int](TokenKind.Less) || expression.Operator == [int](TokenKind.LessEqual) ||
+                expression.Operator == [int](TokenKind.Greater) || expression.Operator == [int](TokenKind.GreaterEqual) ||
+                expression.Operator == [int](TokenKind.AndAnd) || expression.Operator == [int](TokenKind.OrOr) ||
+                expression.Operator == [int](TokenKind.KwIs) || expression.Operator == [int](TokenKind.KwIn);
+            bool assignment = expression.Operator == [int](TokenKind.Assign) ||
+                expression.Operator == [int](TokenKind.PlusAssign) ||
+                expression.Operator == [int](TokenKind.MinusAssign) ||
+                expression.Operator == [int](TokenKind.StarAssign) ||
+                expression.Operator == [int](TokenKind.SlashAssign) ||
+                expression.Operator == [int](TokenKind.PercentAssign);
+            TypeSymbol type = comparison ? This.Primitive("bool") : left.Type;
+            If (!assignment && expression.Operator == [int](TokenKind.Plus) &&
+                (left.Type.Kind == [int](TypeKind.StringType) || right.Type.Kind == [int](TypeKind.StringType)))
+                type = This.Primitive("string");
+            HirExpression result = New HirExpression([int](HirExpressionKind.Binary), expression, type);
+            result.Left = left;
+            result.Right = right;
+            Return result;
+        }
+        If (expression.Kind == [int](ExpressionKind.Conditional))
+        {
+            HirExpression condition = This.BindExpression(syntax, function, scope, expression.Left);
+            HirExpression whenTrue = This.BindExpression(syntax, function, scope, expression.Right);
+            HirExpression whenFalse = This.BindExpression(syntax, function, scope, expression.Third);
+            TypeSymbol resultType = whenTrue.Type.Kind == [int](TypeKind.NullType) ?
+                whenFalse.Type : whenTrue.Type;
+            If (whenFalse.Type.Kind == [int](TypeKind.NullType)) resultType = whenTrue.Type;
+            HirExpression result = New HirExpression([int](HirExpressionKind.Conditional), expression, resultType);
+            result.Left = condition;
+            result.Right = whenTrue;
+            result.Third = whenFalse;
+            Return result;
+        }
+        Return This.InvalidExpression(syntax, expression, "Unsupported expression", expression.Text);
+    }
+
+    Public Safe Function HirStatement BindStatement(SyntaxTree syntax, FunctionSymbol function,
+                                                     BindingScope scope, StatementNode statement)
+    {
+        If (statement == null) Return null;
+        HirStatement result = New HirStatement(statement.Kind);
+        result.Name = statement.Name;
+        If (statement.Kind == [int](StatementKind.Variable))
+        {
+            result.DeclaredType = This.ResolveType(syntax, statement.TypeName);
+            result.Expression = This.BindExpression(syntax, function, scope, statement.Expression);
+            result.DeclaredSymbol = New ValueSymbol(statement.Name, result.DeclaredType, false);
+            scope.Add(result.DeclaredSymbol);
+        }
+        Else
+        {
+            result.Expression = This.BindExpression(syntax, function, scope, statement.Expression);
+        }
+        If (statement.FirstChild != null)
+        {
+            BindingScope childScope = New BindingScope(scope);
+            result.FirstChild = This.BindStatement(syntax, function, childScope, statement.FirstChild);
+        }
+        If (statement.ElseBranch != null)
+        {
+            BindingScope elseScope = New BindingScope(scope);
+            result.ElseBranch = This.BindStatement(syntax, function, elseScope, statement.ElseBranch);
+        }
+        result.Next = This.BindStatement(syntax, function, scope, statement.Next);
+        Return result;
+    }
+
+    Public Safe Function void AddHirModule(HirModule module)
+    {
+        If (This.FirstHirModule == null)
+        {
+            This.FirstHirModule = module;
+            Return;
+        }
+        HirModule current = This.FirstHirModule;
+        While (current.Next != null) current = current.Next;
+        current.Next = module;
+    }
+
+    Public Safe Function void BindBodies()
+    {
+        UnitSymbol unit = This.FirstUnit;
+        While (unit != null)
+        {
+            HirModule module = New HirModule(unit.Name);
+            FunctionSymbol function = This.FirstFunction;
+            While (function != null)
+            {
+                If (function.UnitName == unit.Name)
+                {
+                    BindingScope scope = New BindingScope(null);
+                    If (function.OwnerType != null &&
+                        (!function.Declaration.IsStatic || function.Declaration.IsConstructor))
+                    {
+                        function.Receiver = New ValueSymbol("This", function.OwnerType, true);
+                        scope.Add(function.Receiver);
+                    }
+                    ParameterSymbol parameter = function.FirstParameter;
+                    While (parameter != null)
+                    {
+                        parameter.Value = New ValueSymbol(parameter.Name, parameter.Type, true);
+                        scope.Add(parameter.Value);
+                        parameter = parameter.Next;
+                    }
+                    HirFunction hirFunction = New HirFunction(function);
+                    hirFunction.Body = This.BindStatement(unit.Syntax, function, scope, function.Declaration.Body);
+                    module.AddFunction(hirFunction);
+                }
+                function = function.Next;
+            }
+            This.AddHirModule(module);
+            unit = unit.Next;
+        }
+    }
+
+    Public Safe Function bool Analyze()
+    {
+        This.IndexDeclarations();
+        This.IndexFunctions();
+        UnitSymbol unit = This.FirstUnit;
+        While (unit != null)
+        {
+            This.CheckUnit(unit);
+            unit = unit.Next;
+        }
+        If (!This.Session.HasErrors()) This.BindBodies();
+        Return !This.Session.HasErrors();
+    }
+
+    Public Safe Function string FunctionSummary()
+    {
+        string result = "format=kinal-selfhost-functions-v1";
+        FunctionSymbol function = This.FirstFunction;
+        While (function != null)
+        {
+            result = result + "\nfunction=" + function.QualifiedName() +
+                "|parameters=" + [string](function.ParameterCount()) +
+                "|static=" + [string](function.Declaration.IsStatic ? 1 : 0) +
+                "|constructor=" + [string](function.Declaration.IsConstructor ? 1 : 0);
+            function = function.Next;
+        }
+        Return result;
+    }
+
+    Public Safe Function int NamedTypeCount()
+    {
+        int count = 0;
+        TypeSymbol current = This.FirstType;
+        While (current != null)
+        {
+            If (current.UnitName != "") count = count + 1;
+            current = current.Next;
+        }
+        Return count;
+    }
+
+    Public Safe Function string Summary()
+    {
+        Return "format=kinal-selfhost-sema-v1\n" +
+               "units=" + [string](This.Session.UnitCount()) + "\n" +
+               "imports=" + [string](This.ImportCount) + "\n" +
+               "types=" + [string](This.NamedTypeCount()) + "\n" +
+               "functions=" + [string](This.FunctionCount) + "\n" +
+               "declaration_types=" + [string](This.DeclarationTypeCount) + "\n" +
+               "unresolved_imports=" + [string](This.UnresolvedImportCount) + "\n" +
+               "unresolved_types=" + [string](This.UnresolvedTypeCount) + "\n" +
+               "bound_expressions=" + [string](This.BoundExpressionCount) + "\n" +
+               "unresolved_expressions=" + [string](This.UnresolvedExpressionCount);
+    }
+}

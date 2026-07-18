@@ -1,25 +1,45 @@
 Unit Tests.StdlibDirectoryMore;
 
-Get Console By IO.Console;
+Get IO.Console;
 Get IO.Directory;
+Get IO.File;
+Get IO.Path;
 
 Static Function int Main()
 {
     string base= "out/test/stdlib_dir_more";
     string child= "out/test/stdlib_dir_more/a";
     string nested= "out/test/stdlib_dir_more/a/b";
+    string rootFile= "out/test/stdlib_dir_more/z.kn";
+    string nestedFile= "out/test/stdlib_dir_more/a/b/a.kn";
 
-    Console.PrintLine(IO.Directory.DeleteIfExists(nested));
-    Console.PrintLine(IO.Directory.DeleteIfExists(child));
-    Console.PrintLine(IO.Directory.DeleteIfExists(base));
-    Console.PrintLine(IO.Directory.Exists(base));
-    Console.PrintLine(IO.Directory.Create(base));
-    Console.PrintLine(IO.Directory.Exists(base));
-    Console.PrintLine(IO.Directory.Create(base));
-    Console.PrintLine(IO.Directory.Ensure(nested));
-    Console.PrintLine(IO.Directory.Exists(nested));
-    Console.PrintLine(IO.Directory.Delete(nested));
-    Console.PrintLine(IO.Directory.DeleteIfExists(child));
-    Console.PrintLine(IO.Directory.DeleteIfExists(base));
+    IO.File.DeleteIfExists(rootFile);
+    IO.File.DeleteIfExists(nestedFile);
+    IO.Console.PrintLine(IO.Directory.DeleteIfExists(nested));
+    IO.Console.PrintLine(IO.Directory.DeleteIfExists(child));
+    IO.Console.PrintLine(IO.Directory.DeleteIfExists(base));
+    IO.Console.PrintLine(IO.Directory.Exists(base));
+    IO.Console.PrintLine(IO.Directory.Create(base));
+    IO.Console.PrintLine(IO.Directory.Exists(base));
+    IO.Console.PrintLine(IO.Directory.Create(base));
+    IO.Console.PrintLine(IO.Directory.Ensure(nested));
+    IO.Console.PrintLine(IO.Directory.Exists(nested));
+
+    IO.File.WriteAllText(rootFile, "root");
+    IO.File.WriteAllText(nestedFile, "nested");
+    list direct= IO.Directory.Files(base, false);
+    IO.Console.PrintLine(direct.Count());
+    IO.Console.PrintLine(IO.Path.FileName([string](direct.Fetch(0))));
+    list recursive= IO.Directory.Files(base, true);
+    IO.Console.PrintLine(recursive.Count());
+    IO.Console.PrintLine(IO.Path.FileName([string](recursive.Fetch(0))));
+    IO.Console.PrintLine(IO.Path.FileName([string](recursive.Fetch(1))));
+
+    IO.File.Delete(rootFile);
+    IO.File.Delete(nestedFile);
+    IO.Console.PrintLine(IO.Directory.Delete(nested));
+    IO.Console.PrintLine(IO.Directory.DeleteIfExists(child));
+    IO.Console.PrintLine(IO.Directory.DeleteIfExists(base));
+    IO.Console.PrintLine(IO.Directory.Files(base, true).Count());
     Return 0;
 }

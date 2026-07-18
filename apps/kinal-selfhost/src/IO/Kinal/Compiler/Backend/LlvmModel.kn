@@ -1,0 +1,134 @@
+Unit IO.Kinal.Compiler.Backend.LlvmModel;
+
+Get IO.Kinal.Compiler.Types.TypeSymbol;
+Get IO.Kinal.Compiler.Sema.Symbols;
+
+Class LlvmValue
+{
+    Public byte* Handle;
+    Public TypeSymbol Type;
+    Public byte* Address;
+
+    Public Safe Constructor(byte* handle, TypeSymbol type)
+    {
+        This.Handle = handle;
+        This.Type = type;
+        This.Address = null;
+    }
+}
+
+Class LlvmTypeBinding
+{
+    Public TypeSymbol Symbol;
+    Public byte* Handle;
+    Public byte* StructHandle;
+    Public LlvmTypeBinding Next;
+
+    Public Safe Constructor(TypeSymbol symbol, byte* handle, byte* structHandle)
+    {
+        This.Symbol = symbol;
+        This.Handle = handle;
+        This.StructHandle = structHandle;
+        This.Next = null;
+    }
+}
+
+Class LlvmFunctionBinding
+{
+    Public FunctionSymbol Symbol;
+    Public byte* FunctionType;
+    Public byte* Function;
+    Public bool UsesCAbi;
+    Public LlvmFunctionBinding Next;
+
+    Public Safe Constructor(FunctionSymbol symbol, byte* functionType, byte* function, bool usesCAbi)
+    {
+        This.Symbol = symbol;
+        This.FunctionType = functionType;
+        This.Function = function;
+        This.UsesCAbi = usesCAbi;
+        This.Next = null;
+    }
+}
+
+Class LlvmRuntimeFunction
+{
+    Public string Name;
+    Public byte* FunctionType;
+    Public byte* Function;
+    Public LlvmRuntimeFunction Next;
+
+    Public Safe Constructor(string name, byte* functionType, byte* function)
+    {
+        This.Name = name;
+        This.FunctionType = functionType;
+        This.Function = function;
+        This.Next = null;
+    }
+}
+
+Class LlvmVariable
+{
+    Public string Name;
+    Public ValueSymbol Symbol;
+    Public TypeSymbol Type;
+    Public byte* Address;
+    Public LlvmVariable Next;
+
+    Public Safe Constructor(string name, ValueSymbol symbol, TypeSymbol type, byte* address)
+    {
+        This.Name = name;
+        This.Symbol = symbol;
+        This.Type = type;
+        This.Address = address;
+        This.Next = null;
+    }
+}
+
+Class LlvmFunctionContext
+{
+    Public LlvmFunctionBinding Binding;
+    Public LlvmVariable FirstVariable;
+    Public byte* BreakTarget;
+    Public byte* ContinueTarget;
+    Public byte* GcFrame;
+
+    Public Safe Constructor(LlvmFunctionBinding binding)
+    {
+        This.Binding = binding;
+        This.FirstVariable = null;
+        This.BreakTarget = null;
+        This.ContinueTarget = null;
+        This.GcFrame = null;
+    }
+
+    Public Safe Function void AddVariable(LlvmVariable variable)
+    {
+        variable.Next = This.FirstVariable;
+        This.FirstVariable = variable;
+    }
+
+    Public Safe Function LlvmVariable FindVariable(ValueSymbol symbol, string name)
+    {
+        LlvmVariable current = This.FirstVariable;
+        While (current != null)
+        {
+            If ((symbol != null && current.Symbol == symbol) || current.Name == name) Return current;
+            current = current.Next;
+        }
+        Return null;
+    }
+
+    Public Safe Function string VariableNames()
+    {
+        string result = "";
+        LlvmVariable current = This.FirstVariable;
+        While (current != null)
+        {
+            If (result != "") result = result + ",";
+            result = result + current.Name;
+            current = current.Next;
+        }
+        Return result;
+    }
+}

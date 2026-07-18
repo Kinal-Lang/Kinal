@@ -1,0 +1,60 @@
+Unit IO.Kinal.Compiler.Project.Glob;
+
+Get IO.Text;
+
+Safe Function bool MatchAt(char[] pattern, int patternIndex, char[] path, int pathIndex)
+{
+    If (patternIndex >= pattern.Length()) Return pathIndex >= path.Length();
+
+    int current = [int](pattern[patternIndex]);
+    If (current == 42)
+    {
+        int afterStars = patternIndex + 1;
+        While (afterStars < pattern.Length() && [int](pattern[afterStars]) == 42)
+        {
+            afterStars = afterStars + 1;
+        }
+
+        bool recursive = afterStars > patternIndex + 1;
+        If (recursive)
+        {
+            // A **/ prefix also matches zero directory levels.
+            If (afterStars < pattern.Length() && [int](pattern[afterStars]) == 47 &&
+                MatchAt(pattern, afterStars + 1, path, pathIndex)) Return true;
+
+            int scan = pathIndex;
+            While (scan <= path.Length())
+            {
+                If (MatchAt(pattern, afterStars, path, scan)) Return true;
+                scan = scan + 1;
+            }
+            Return false;
+        }
+
+        If (MatchAt(pattern, afterStars, path, pathIndex)) Return true;
+        int scan = pathIndex;
+        While (scan < path.Length() && [int](path[scan]) != 47)
+        {
+            scan = scan + 1;
+            If (MatchAt(pattern, afterStars, path, scan)) Return true;
+        }
+        Return false;
+    }
+
+    If (pathIndex >= path.Length()) Return false;
+    If (current == 63)
+    {
+        Return [int](path[pathIndex]) != 47 &&
+               MatchAt(pattern, patternIndex + 1, path, pathIndex + 1);
+    }
+    Return current == [int](path[pathIndex]) &&
+           MatchAt(pattern, patternIndex + 1, path, pathIndex + 1);
+}
+
+Safe Function bool Match(string pattern, string path)
+{
+    string separator = [string]([char](92));
+    string normalizedPattern = IO.Text.Replace(pattern, separator, "/");
+    string normalizedPath = IO.Text.Replace(path, separator, "/");
+    Return MatchAt(normalizedPattern.ToChars(), 0, normalizedPath.ToChars(), 0);
+}

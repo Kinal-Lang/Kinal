@@ -1,0 +1,50 @@
+Project KinalSelfhost
+{
+    DefaultProfile = "stage1";
+
+    Workspace
+    {
+        Ignore = ["../../out/**"];
+    }
+
+    SourceSet "compiler"
+    {
+        Roots = ["src"];
+        Include = ["**/*.kn"];
+        RequireUnit = true;
+    }
+
+    Profile "stage1"
+    {
+        Source
+        {
+            Entry = "src/Main.kn";
+            Sets = ["compiler"];
+            Mode = ReachableUnits;
+        }
+
+        Build
+        {
+            Backend = Native;
+            Environment = Hosted;
+            Output = "../../out/selfhost/stage1/kinal-selfhost.exe";
+        }
+
+        Link
+        {
+            LibDirs = ["../../out/selfhost/stage0-host/llvm/lib"];
+            Libs = ["LLVM-C"];
+            LinkFiles = [
+                "../../out/selfhost/bridge/kn_selfhost_llvm.o",
+                "../../out/selfhost/bridge/kn_selfhost_runtime.o"
+            ];
+        }
+    }
+
+    Lsp
+    {
+        Profile = "stage1";
+        ExtraSets = ["compiler"];
+        StrictProjectScope = true;
+    }
+}

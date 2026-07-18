@@ -1,0 +1,169 @@
+Unit IO.Kinal.Compiler.Core.CompileSession;
+
+Get IO.File;
+Get IO.Text;
+Get IO.Kinal.Compiler.Core.Diagnostics;
+Get IO.Kinal.Compiler.Source.SourceFile;
+Get IO.Kinal.Compiler.Source.SourceManager;
+Get IO.Kinal.Compiler.Lex.Lexer;
+Get IO.Kinal.Compiler.Syntax.Parser;
+Get IO.Kinal.Compiler.Syntax.SyntaxTree;
+Get IO.Kinal.Compiler.Project.ProjectConfig;
+Get IO.Kinal.Compiler.Project.ProjectLoader;
+
+Class CompilationUnit
+{
+    Public SourceFile Source;
+    Public list Tokens;
+    Public SyntaxTree Syntax;
+    Public CompilationUnit Next;
+
+    Public Safe Constructor(SourceFile source, list tokens, SyntaxTree syntax)
+    {
+        This.Source = source;
+        This.Tokens = tokens;
+        This.Syntax = syntax;
+        This.Next = null;
+    }
+}
+
+Class CompileSession
+{
+    Public list Diagnostics;
+    Public SourceManager Sources;
+    Public ProjectConfig Project;
+    Public ProjectProfileConfig Profile;
+    Public list SourcePaths;
+    Public CompilationUnit FirstUnit;
+    Public string EntryUnitName;
+
+    Public Safe Constructor()
+    {
+        This.Diagnostics = list.Create();
+        This.Sources = New SourceManager();
+        This.Project = null;
+        This.Profile = null;
+        This.SourcePaths = list.Create();
+        This.FirstUnit = null;
+        This.EntryUnitName = "";
+    }
+
+    Public Safe Function bool HasErrors()
+    {
+        Return This.Diagnostics.Count() > 0;
+    }
+
+    Public Safe Function void ReportProject(string title, string detail)
+    {
+        SourceFile source = This.Sources.Load(This.Project.ManifestPath);
+        IO.Kinal.Compiler.Core.Diagnostics.Add(This.Diagnostics, source, "Project", title, detail, 1, 1, 1);
+    }
+
+    Public Safe Function bool LoadProject(string manifestPath, string profileName)
+    {
+        This.Project = IO.Kinal.Compiler.Project.ProjectLoader.Load(manifestPath, This.Diagnostics);
+        If (This.HasErrors()) Return false;
+        This.Profile = This.Project.FindProfile(profileName);
+        If (This.Profile == null)
+        {
+            This.ReportProject("Unknown profile", IO.Text.IsEmpty(profileName) ?
+                This.Project.DefaultProfile : profileName);
+            Return false;
+        }
+        This.SourcePaths = This.Project.DiscoverSources(This.Profile.Name);
+        If (This.SourcePaths.Count() == 0)
+        {
+            This.ReportProject("No source files", "selected profile did not discover any Kinal sources");
+            Return false;
+        }
+        Return true;
+    }
+
+    Public Safe Function void AddUnit(CompilationUnit unit)
+    {
+        If (This.FirstUnit == null)
+        {
+            This.FirstUnit = unit;
+            Return;
+        }
+        CompilationUnit current = This.FirstUnit;
+        While (current.Next != null) current = current.Next;
+        current.Next = unit;
+    }
+
+    Public Safe Function CompilationUnit ParseFile(string path)
+    {
+        SourceFile source = This.Sources.Load(path);
+        If (!IO.File.Exists(source.Path))
+        {
+            IO.Kinal.Compiler.Core.Diagnostics.Add(This.Diagnostics, source, "Source",
+                "Source file not found", source.Path, 1, 1, 1);
+            Return null;
+        }
+        list tokens = IO.Kinal.Compiler.Lex.Lexer.Tokenize(source, This.Diagnostics);
+        If (This.HasErrors()) Return null;
+        SyntaxTree syntax = IO.Kinal.Compiler.Syntax.Parser.Build(source, tokens, This.Diagnostics);
+        If (syntax == null) Return null;
+        CompilationUnit unit = New CompilationUnit(source, tokens, syntax);
+        This.AddUnit(unit);
+        Return unit;
+    }
+
+    Public Safe Function bool ParseProject()
+    {
+        If (This.Project == null || This.Profile == null) Return false;
+        string entryPath = This.Project.ResolvePath(This.Profile.Entry);
+        int i = 0;
+        While (i < This.SourcePaths.Count())
+        {
+            CompilationUnit unit = This.ParseFile([string](This.SourcePaths.Fetch(i)));
+            If (unit != null && unit.Source.Path == entryPath) This.EntryUnitName = unit.Syntax.UnitName;
+            i = i + 1;
+        }
+        If (IO.Text.IsEmpty(This.EntryUnitName))
+        {
+            This.ReportProject("Entry source not found", entryPath);
+        }
+        Return !This.HasErrors();
+    }
+
+    Public Safe Function int UnitCount()
+    {
+        int count = 0;
+        CompilationUnit current = This.FirstUnit;
+        While (current != null)
+        {
+            count = count + 1;
+            current = current.Next;
+        }
+        Return count;
+    }
+
+    Public Safe Function string SyntaxSummary()
+    {
+        int imports = 0;
+        int functions = 0;
+        int types = 0;
+        int fields = 0;
+        int methods = 0;
+        CompilationUnit current = This.FirstUnit;
+        While (current != null)
+        {
+            imports = imports + current.Syntax.ImportCount();
+            functions = functions + current.Syntax.FunctionCount();
+            types = types + current.Syntax.TypeCount();
+            fields = fields + current.Syntax.FieldCount();
+            methods = methods + current.Syntax.MethodCount();
+            current = current.Next;
+        }
+        Return "format=kinal-syntax-v1\n" +
+               "sources=" + [string](This.UnitCount()) + "\n" +
+               "unit=" + This.EntryUnitName + "\n" +
+               "imports=" + [string](imports) + "\n" +
+               "functions=" + [string](functions) + "\n" +
+               "types=" + [string](types) + "\n" +
+               "fields=" + [string](fields) + "\n" +
+               "methods=" + [string](methods) + "\n" +
+               "globals=0";
+    }
+}

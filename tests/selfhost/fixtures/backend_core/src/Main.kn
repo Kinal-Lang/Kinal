@@ -1,0 +1,68 @@
+Unit Tests.Selfhost.BackendCore;
+
+Get IO.Console;
+Get IO.Text;
+
+Class Canonicalizer
+{
+    Public Safe Constructor()
+    {
+    }
+
+    Public Safe Function string Canonical(string value)
+    {
+        Return IO.Text.Replace(value, " ", "");
+    }
+}
+
+Class Node
+{
+    Public string Name;
+    Public Node Next;
+
+    Public Safe Constructor(string name)
+    {
+        This.Name = name;
+        This.Next = null;
+    }
+}
+
+Class NodeContext
+{
+    Public Node First;
+
+    Public Safe Constructor()
+    {
+        This.First = null;
+    }
+
+    Public Safe Function void Add(Node node)
+    {
+        node.Next = This.First;
+        This.First = node;
+    }
+
+    Public Safe Function Node Find(string name)
+    {
+        Node current = This.First;
+        While (current != null)
+        {
+            If (current.Name == name) Return current;
+            current = current.Next;
+        }
+        Return null;
+    }
+}
+
+Trusted Static Function int Main()
+{
+    string canonical = IO.Text.Replace("string[ ]", " ", "");
+    Canonicalizer canonicalizer = New Canonicalizer();
+    string memberCanonical = canonicalizer.Canonical("char[ ]");
+    NodeContext context = New NodeContext();
+    context.Add(New Node("value"));
+    Node found = context.Find("value");
+    IO.Console.PrintLine(canonical);
+    IO.Console.PrintLine(memberCanonical);
+    Return canonical == "string[]" && memberCanonical == "char[]" && found != null ? 0 : 1;
+}

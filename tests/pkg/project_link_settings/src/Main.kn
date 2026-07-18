@@ -1,0 +1,9 @@
+Unit Tests.ProjectLinkSettings;
+
+Get IO.Console;
+
+Safe Static Function int Main(string[] args)
+{
+    IO.Console.PrintLine("project-link-settings");
+    Return 0;
+}

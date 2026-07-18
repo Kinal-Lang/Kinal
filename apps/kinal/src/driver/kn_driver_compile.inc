@@ -458,6 +458,228 @@ static void compile_append_summary_count(char *buf, size_t cap, size_t *off,
     kn_append(buf, cap, off, "\n");
 }
 
+typedef struct
+{
+    char *data;
+    size_t length;
+    size_t capacity;
+    int failed;
+} CompileTextBuffer;
+
+static int compile_text_reserve(CompileTextBuffer *buf, size_t extra)
+{
+    if (!buf || buf->failed)
+        return 0;
+    size_t required = buf->length + extra + 1;
+    if (required <= buf->capacity)
+        return 1;
+    size_t capacity = buf->capacity ? buf->capacity : 4096;
+    while (capacity < required)
+    {
+        if (capacity > ((size_t)-1) / 2)
+        {
+            buf->failed = 1;
+            return 0;
+        }
+        capacity *= 2;
+    }
+    char *next = (char *)kn_malloc(capacity);
+    if (!next)
+    {
+        buf->failed = 1;
+        return 0;
+    }
+    if (buf->data && buf->length)
+        kn_memcpy(next, buf->data, buf->length);
+    if (buf->data)
+        kn_free(buf->data);
+    buf->data = next;
+    buf->capacity = capacity;
+    buf->data[buf->length] = 0;
+    return 1;
+}
+
+static void compile_text_append_n(CompileTextBuffer *buf, const char *text, size_t length)
+{
+    if (!text || !length || !compile_text_reserve(buf, length))
+        return;
+    kn_memcpy(buf->data + buf->length, text, length);
+    buf->length += length;
+    buf->data[buf->length] = 0;
+}
+
+static void compile_text_append(CompileTextBuffer *buf, const char *text)
+{
+    if (text)
+        compile_text_append_n(buf, text, kn_strlen(text));
+}
+
+static void compile_text_append_uint(CompileTextBuffer *buf, unsigned value)
+{
+    char digits[16];
+    int count = 0;
+    do
+    {
+        digits[count++] = (char)('0' + (value % 10u));
+        value /= 10u;
+    } while (value && count < (int)sizeof(digits));
+    while (count > 0)
+        compile_text_append_n(buf, &digits[--count], 1);
+}
+
+static void compile_text_append_hex(CompileTextBuffer *buf, const char *text, size_t length)
+{
+    static const char hex[] = "0123456789ABCDEF";
+    if (!compile_text_reserve(buf, length * 2))
+        return;
+    for (size_t i = 0; i < length; i++)
+    {
+        unsigned value = (unsigned)(unsigned char)text[i];
+        buf->data[buf->length++] = hex[(value >> 4) & 15u];
+        buf->data[buf->length++] = hex[value & 15u];
+    }
+    buf->data[buf->length] = 0;
+}
+
+static int compile_write_token_summary(const char *out_path, const StrList *inputs)
+{
+    CompileTextBuffer output;
+    kn_memset(&output, 0, sizeof(output));
+    compile_text_append(&output, "format=kinal-tokens-v1\n");
+    compile_text_append(&output, "sources=");
+    compile_text_append_uint(&output, (unsigned)(inputs ? inputs->count : 0));
+    compile_text_append(&output, "\n");
+
+    for (int i = 0; inputs && i < inputs->count && !output.failed; i++)
+    {
+        size_t source_size = 0;
+        char *source = kn_read_file(inputs->items[i], &source_size);
+        if (!source)
+        {
+            output.failed = 1;
+            break;
+        }
+        compile_text_append(&output, "source=");
+        compile_text_append_uint(&output, (unsigned)i);
+        compile_text_append(&output, "\n");
+
+        Lexer lexer;
+        lex_init(&lexer, source);
+        for (;;)
+        {
+            Token token = lex_next(&lexer);
+            compile_text_append_uint(&output, (unsigned)token.type);
+            compile_text_append(&output, "\t");
+            compile_text_append_uint(&output, (unsigned)token.line);
+            compile_text_append(&output, "\t");
+            compile_text_append_uint(&output, (unsigned)token.col);
+            compile_text_append(&output, "\t");
+            compile_text_append_hex(&output, token.start, token.length);
+            compile_text_append(&output, "\n");
+            if (token.type == TOK_EOF)
+                break;
+        }
+        kn_free(source);
+    }
+
+    int result = -1;
+    if (!output.failed)
+    {
+        KN_HANDLE handle = CreateFileA(out_path, KN_GENERIC_WRITE, 0, 0,
+                                       KN_CREATE_ALWAYS, KN_FILE_ATTRIBUTE_NORMAL, 0);
+        if (handle && handle != KN_INVALID_HANDLE_VALUE)
+        {
+            KN_DWORD written = 0;
+            int ok = WriteFile(handle, output.data, (KN_DWORD)output.length, &written, 0) &&
+                     written == (KN_DWORD)output.length;
+            CloseHandle(handle);
+            result = ok ? 0 : -1;
+        }
+    }
+    if (output.data)
+        kn_free(output.data);
+    return result;
+}
+
+static const char *compile_syntax_unit(const FuncList *funcs,
+                                       const ImportList *imports,
+                                       const ClassList *classes,
+                                       const InterfaceList *interfaces,
+                                       const StructList *structs,
+                                       const EnumList *enums,
+                                       const StmtList *globals)
+{
+    if (funcs && funcs->count > 0) return funcs->items[0].unit;
+    if (imports && imports->count > 0) return imports->items[0].unit;
+    if (classes && classes->count > 0) return classes->items[0].unit;
+    if (interfaces && interfaces->count > 0) return interfaces->items[0].unit;
+    if (structs && structs->count > 0) return structs->items[0].unit;
+    if (enums && enums->count > 0) return enums->items[0].unit;
+    if (globals && globals->count > 0 && globals->items[0] && globals->items[0]->kind == ST_VAR)
+        return globals->items[0]->v.var.unit;
+    return "";
+}
+
+static int compile_write_syntax_summary(const char *out_path,
+                                        const SourceList *sources,
+                                        const FuncList *funcs,
+                                        const ImportList *imports,
+                                        const ClassList *classes,
+                                        const InterfaceList *interfaces,
+                                        const StructList *structs,
+                                        const EnumList *enums,
+                                        const StmtList *globals)
+{
+    char text[1024];
+    size_t off = 0;
+    text[0] = 0;
+    kn_append(text, sizeof(text), &off, "format=kinal-syntax-v1\n");
+    compile_append_summary_count(text, sizeof(text), &off, "sources", sources ? sources->count : 0);
+    kn_append(text, sizeof(text), &off, "unit=");
+    kn_append(text, sizeof(text), &off,
+              compile_syntax_unit(funcs, imports, classes, interfaces, structs, enums, globals));
+    kn_append(text, sizeof(text), &off, "\n");
+    compile_append_summary_count(text, sizeof(text), &off, "imports", imports ? imports->count : 0);
+    compile_append_summary_count(text, sizeof(text), &off, "functions", funcs ? funcs->count : 0);
+    compile_append_summary_count(text, sizeof(text), &off, "types",
+                                 (classes ? classes->count : 0) +
+                                 (interfaces ? interfaces->count : 0) +
+                                 (structs ? structs->count : 0) +
+                                 (enums ? enums->count : 0));
+    int field_count = 0;
+    int method_count = 0;
+    if (classes)
+    {
+        for (int i = 0; i < classes->count; i++)
+        {
+            field_count += classes->items[i].fields.count;
+            method_count += classes->items[i].methods.count;
+        }
+    }
+    if (interfaces)
+    {
+        for (int i = 0; i < interfaces->count; i++)
+            method_count += interfaces->items[i].methods.count;
+    }
+    if (structs)
+    {
+        for (int i = 0; i < structs->count; i++)
+            field_count += structs->items[i].fields.count;
+    }
+    compile_append_summary_count(text, sizeof(text), &off, "fields", field_count);
+    compile_append_summary_count(text, sizeof(text), &off, "methods", method_count);
+    compile_append_summary_count(text, sizeof(text), &off, "globals", globals ? globals->count : 0);
+
+    KN_HANDLE handle = CreateFileA(out_path, KN_GENERIC_WRITE, 0, 0,
+                                   KN_CREATE_ALWAYS, KN_FILE_ATTRIBUTE_NORMAL, 0);
+    if (!handle || handle == KN_INVALID_HANDLE_VALUE)
+        return -1;
+    KN_DWORD written = 0;
+    int ok = WriteFile(handle, text, (KN_DWORD)off, &written, 0) && written == (KN_DWORD)off;
+    CloseHandle(handle);
+    return ok ? 0 : -1;
+}
+
 static int compile_write_sema_summary(const char *out_path,
                                       const KnCompileConfig *cfg,
                                       const SourceList *sources,
@@ -550,9 +772,10 @@ static int compile_non_kinal_inputs(const StrList *inputs,
                                     const char *link_entry_symbol)
 {
     const char *out_path = cfg->out_path;
-    if (cfg->emit_mode == KN_EMIT_CHECK)
+    if (cfg->emit_mode == KN_EMIT_CHECK || cfg->emit_mode == KN_EMIT_TOKENS ||
+        cfg->emit_mode == KN_EMIT_AST)
     {
-        kn_write_str("check emit requires at least one Kinal source input\n");
+        kn_write_str("frontend emit requires at least one Kinal source input\n");
         return -1;
     }
     if (cfg->emit_mode == KN_EMIT_OBJECT)
@@ -713,11 +936,21 @@ static int kn_compile(int in_count, const char **in_paths, const KnCompileConfig
 {
     if (!cfg || !cfg->out_path || !cfg->target_triple)
         return -1;
+    if (!ensure_output_parent(cfg->out_path))
+    {
+        kn_write_str("failed to create output directory for: ");
+        kn_write_str(cfg->out_path);
+        kn_write_str("\n");
+        return -1;
+    }
 
     // Keep the entry wrapper in executable intermediates as well so emitted
     // .ll/.s/.obj artifacts can be resumed and linked later without re-running
     // the frontend.
-    const int need_entry = (cfg->artifact_kind == KN_ARTIFACT_EXE && cfg->emit_mode != KN_EMIT_CHECK) ? 1 : 0;
+    const int need_entry = (cfg->artifact_kind == KN_ARTIFACT_EXE &&
+                            cfg->emit_mode != KN_EMIT_CHECK &&
+                            cfg->emit_mode != KN_EMIT_TOKENS &&
+                            cfg->emit_mode != KN_EMIT_AST) ? 1 : 0;
     const int include_runtime = (cfg->env_kind == KN_ENV_HOSTED) ? 1 : 0;
     const char *entry_name = (cfg->entry_symbol && cfg->entry_symbol[0])
                                  ? cfg->entry_symbol
@@ -900,6 +1133,18 @@ static int kn_compile(int in_count, const char **in_paths, const KnCompileConfig
         }
     }
 
+    if (cfg->emit_mode == KN_EMIT_TOKENS)
+    {
+        if (compile_write_token_summary(out_path, &inputs) != 0)
+        {
+            kn_write_str("failed to write token summary\n");
+            return -1;
+        }
+        trace_log(trace, "compile:tokens");
+        profile_phase(profile, "total", now_ms() - t_all);
+        return 0;
+    }
+
     SourceList sources = {0};
     uint64_t t_parse = now_ms();
     for (int i = 0; i < inputs.count; i++)
@@ -967,6 +1212,21 @@ static int kn_compile(int in_count, const char **in_paths, const KnCompileConfig
     {
         trace_log(trace, "sema:skipped_parser_errors");
         return -1;
+    }
+
+    if (cfg->emit_mode == KN_EMIT_AST)
+    {
+        if (compile_write_syntax_summary(out_path, &sources, &funcs, &imports,
+                                         &classes, &interfaces, &structs, &enums, &globals) != 0)
+        {
+            kn_write_str("failed to write syntax summary\n");
+            return -1;
+        }
+        compile_free_sources(&sources);
+        trace_log(trace, "compile:syntax");
+        profile_phase(profile, "parse", p_parse);
+        profile_phase(profile, "total", now_ms() - t_all);
+        return 0;
     }
 
     kn_inject_builtins(&classes);

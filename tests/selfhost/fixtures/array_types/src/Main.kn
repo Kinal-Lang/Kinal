@@ -1,0 +1,7 @@
+Unit Tests.Selfhost.ArrayTypes;
+
+Trusted Static Function int Main(string[] args)
+{
+    char[] chars = "ok".ToChars();
+    Return args.Length() + chars.Length() >= 0 ? 0 : 1;
+}

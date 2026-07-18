@@ -1,0 +1,29 @@
+Unit Tests.ContextualMemberNames;
+
+Get IO.Console;
+
+Enum Flow By int
+{
+    Return = 1,
+    If = 2,
+    While = 4,
+    Block = 8
+}
+
+Class KeywordMembers
+{
+    Public int Function;
+
+    Public Safe Constructor(int value)
+    {
+        This.Function = value;
+    }
+}
+
+Static Function int Main()
+{
+    KeywordMembers members = New KeywordMembers(16);
+    int value = [int](Flow.Return) + [int](Flow.If) + [int](Flow.While) + [int](Flow.Block) + members.Function;
+    IO.Console.PrintLine([string](value));
+    Return 0;
+}

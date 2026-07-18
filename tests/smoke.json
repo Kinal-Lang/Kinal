@@ -10,6 +10,16 @@
     "expected": "ok\n"
   },
   {
+    "name": "elseif",
+    "file": "tests/common/elseif.kn",
+    "expected": "two\n"
+  },
+  {
+    "name": "contextual_member_names",
+    "file": "tests/common/contextual_member_names.kn",
+    "expected": "31\n"
+  },
+  {
     "name": "class_null_compare",
     "file": "tests/windows/class_null_compare.kn",
     "expected": "256\n",
@@ -57,7 +67,7 @@
   {
     "name": "stdlib_text_roundtrip",
     "file": "tests/common/stdlib_text_roundtrip.kn",
-    "expected": "Hello, Kinal!\ntrue\ntrue\n7\n4\n2\nHELLO\nworld\na-bc\nKinal\n3\na|b|c\n2\nline2\n",
+    "expected": "Hello, Kinal!\ntrue\ntrue\n7\n4\n2\nHELLO\nworld\na-bc\na-b-c\nKinal\n3\na|b|c\n2\nline2\n",
     "auto_link": true
   },
   {

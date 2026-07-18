@@ -933,7 +933,7 @@ def run_driver_integration_tests(compiler: Path, out_dir: Path) -> int:
         or "VM / package quick reference:" not in help_text
         or "Project:" not in help_text
         or "Link:" not in help_text
-        or "--emit <bin|obj|asm|ir|check>" not in help_text
+        or "--emit <bin|obj|asm|ir|check|tokens|ast>" not in help_text
         or "kinal vm run <file.kn|file.knc> [-- program-args...]" not in help_text
         or "kinal pkg build --manifest <file|dir> -o <file.klib>" not in help_text
         or "--project <file|dir>" not in help_text
@@ -1411,6 +1411,61 @@ def run_package_integration_tests(compiler: Path, out_dir: Path) -> int:
         print(project_modes_all_text)
         return 1
     print("[OK] project_modes_all_sources")
+
+    project_nested_dir = ROOT / "tests" / "pkg" / "project_modes" / "out"
+    shutil.rmtree(project_nested_dir, ignore_errors=True)
+    project_nested_exe = project_nested_dir / "generated" / "nested" / "project-output.exe"
+    project_nested_proc = run(
+        [
+            str(compiler),
+            "build",
+            "--project",
+            str(ROOT / "tests" / "pkg" / "project_modes"),
+            "--profile",
+            "nestedoutput",
+        ],
+        cwd=ROOT,
+        capture=True,
+    )
+    assert isinstance(project_nested_proc, subprocess.CompletedProcess)
+    if project_nested_proc.returncode != 0 or not project_nested_exe.exists():
+        print("[FAIL] project_nested_output_build")
+        print((project_nested_proc.stdout or "") + (project_nested_proc.stderr or ""))
+        return 1
+    project_nested_run = run([str(project_nested_exe)], cwd=ROOT, capture=True)
+    if (project_nested_run.stdout or "").replace("\r\n", "\n") != "entry-shared\nlocal-helper\ngreeter-020\n":
+        print("[FAIL] project_nested_output_runtime")
+        return 1
+    print("[OK] project_nested_output")
+
+    project_tokens = out_dir / "driver_project_modes_reachable.ktokens"
+    project_tokens_proc = run(
+        [
+            str(compiler),
+            "build",
+            "--project",
+            str(ROOT / "tests" / "pkg" / "project_modes"),
+            "--profile",
+            "reachable",
+            "--emit",
+            "tokens",
+            "-o",
+            str(project_tokens),
+        ],
+        cwd=ROOT,
+        capture=True,
+    )
+    assert isinstance(project_tokens_proc, subprocess.CompletedProcess)
+    if project_tokens_proc.returncode != 0 or not project_tokens.exists():
+        print("[FAIL] project_tokens_emit")
+        print((project_tokens_proc.stdout or "") + (project_tokens_proc.stderr or ""))
+        return 1
+    project_token_lines = project_tokens.read_text(encoding="utf-8").splitlines()
+    if project_token_lines[:2] != ["format=kinal-tokens-v1", "sources=2"]:
+        print("[FAIL] project_tokens_sources")
+        print(project_token_lines[:3])
+        return 1
+    print("[OK] project_tokens_emit")
 
     klib_path = out_dir / "Acme.Greeter.klib"
     klib_pack_proc = run(

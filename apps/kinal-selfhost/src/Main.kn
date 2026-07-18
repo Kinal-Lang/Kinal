@@ -1,0 +1,8 @@
+Unit IO.Kinal.Compiler.Main;
+
+Get IO.Kinal.Compiler.Driver;
+
+Trusted Static Function int Main(string[] args)
+{
+    Return IO.Kinal.Compiler.Driver.Run(args);
+}

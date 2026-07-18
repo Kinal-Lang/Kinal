@@ -983,8 +983,7 @@ static Field parse_field(Parser *p, Access access, int is_static)
     Token *t = cur(p);
     Type ty = parse_type(p);
     Token *name_tok = cur(p);
-    expect(p, TOK_ID, "Expected Identifier", "Expected field name");
-    const char *name = tok_text(name_tok);
+    const char *name = parse_name_token(p, "Expected Identifier", "Expected field name");
     (void)parse_legacy_array_suffix(p, &ty, name_tok);
     Expr *init = 0;
     if (match(p, TOK_ASSIGN))
@@ -1282,8 +1281,7 @@ static EnumDecl parse_enum(Parser *p)
     while (!match(p, TOK_RBRACE))
     {
         Token *it = cur(p);
-        expect(p, TOK_ID, "Expected Identifier", "Expected enum member");
-        const char *iname = tok_text(it);
+        const char *iname = parse_name_token(p, "Expected Identifier", "Expected enum member");
         int64_t val = next_val;
         if (match(p, TOK_ASSIGN))
         {

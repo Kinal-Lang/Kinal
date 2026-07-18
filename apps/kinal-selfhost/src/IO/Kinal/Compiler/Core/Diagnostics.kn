@@ -1,0 +1,54 @@
+Unit IO.Kinal.Compiler.Core.Diagnostics;
+
+Get IO.Console;
+Get IO.Text;
+Get IO.Kinal.Compiler.Source.SourceFile;
+
+Safe Function string Repeat(string text, int count)
+{
+    string result = "";
+    int i = 0;
+    While (i < count)
+    {
+        result = result + text;
+        i = i + 1;
+    }
+    Return result;
+}
+
+Safe Function void Add(list diagnostics, SourceFile source, string stage,
+                       string title, string detail, int line, int column, int length)
+{
+    int safeLine = line < 1 ? 1 : line;
+    int safeColumn = column < 1 ? 1 : column;
+    int safeLength = length < 1 ? 1 : length;
+    string lineText = source.GetLine(safeLine);
+    string lineNumber = [string](safeLine);
+    string prefix = Repeat(" ", IO.Text.Length(lineNumber) + 3 + safeColumn - 1);
+    string message = "[" + stage + "] " + title;
+    If (!IO.Text.IsEmpty(detail))
+    {
+        message = message + ": " + detail;
+    }
+    message = message + [string]([char](10)) +
+              "in <" + source.Path + "> at " + [string](safeLine) + ":" + [string](safeColumn) +
+              [string]([char](10)) + [string]([char](10)) +
+              lineNumber + " | " + lineText + [string]([char](10)) +
+              prefix + Repeat("^", safeLength);
+    diagnostics.Add(message);
+}
+
+Safe Function void PrintAll(list diagnostics)
+{
+    int i = 0;
+    While (i < diagnostics.Count())
+    {
+        IO.Console.PrintLine([string](diagnostics.Fetch(i)));
+        i = i + 1;
+    }
+}
+
+Safe Function bool HasAny(list diagnostics)
+{
+    Return diagnostics.Count() > 0;
+}

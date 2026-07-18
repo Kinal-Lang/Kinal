@@ -99,6 +99,38 @@ IO.File.DeleteIfExists("temp.tmp");
 
 ---
 
+## IO.Directory
+
+`IO.Directory` provides directory lifecycle operations and deterministic file discovery.
+
+| Function | Signature | Description |
+|----------|-----------|-------------|
+| `Exists(path)` | `string → bool` | Whether the directory exists |
+| `Create(path)` | `string → bool` | Create one directory level |
+| `Ensure(path)` | `string → bool` | Create the directory and missing parents |
+| `Delete(path)` | `string → bool` | Delete an empty directory |
+| `DeleteIfExists(path)` | `string → bool` | Delete an empty directory when present |
+| `Files(path, recursive)` | `string, bool → list` | Return regular file paths in stable ordinal order |
+
+`Files` returns an empty list when the directory cannot be opened. With `recursive = false`, it only includes files directly under `path`; with `true`, it descends into ordinary subdirectories. Directory links and Windows reparse points are not followed.
+
+```kinal
+Get IO.Console;
+Get IO.Directory;
+Get IO.Path;
+
+list files = IO.Directory.Files("src", true);
+int i = 0;
+While (i < files.Count())
+{
+    string file = [string](files.Fetch(i));
+    IO.Console.PrintLine(IO.Path.FileName(file));
+    i = i + 1;
+}
+```
+
+---
+
 ## Complete Examples
 
 ### Read and Process CSV

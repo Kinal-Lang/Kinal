@@ -1,0 +1,16 @@
+Unit SelfhostFixture.LexBasic;
+
+Get IO.Console;
+
+Static Function int Main()
+{
+    int value = 0x2A;
+    string text = "hello\\nworld";
+    char marker = 'K';
+    value += 1;
+    If (value >= 42 && text != "")
+    {
+        IO.Console.PrintLine(text + [string](marker));
+    }
+    Return value;
+}

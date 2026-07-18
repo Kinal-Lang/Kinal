@@ -1,0 +1,152 @@
+Unit IO.Kinal.Compiler.Hir.HirModel;
+
+Get IO.Kinal.Compiler.Syntax.Nodes;
+Get IO.Kinal.Compiler.Sema.Symbols;
+Get IO.Kinal.Compiler.Types.TypeSymbol;
+
+Enum HirExpressionKind By int
+{
+    Invalid = 0,
+    Constant,
+    Local,
+    Namespace,
+    Field,
+    Unary,
+    Binary,
+    Conditional,
+    Call,
+    Index,
+    NewObject,
+    Cast
+}
+
+Enum HirCallKind By int
+{
+    None = 0,
+    UnitFunction,
+    InstanceMethod,
+    RuntimeBuiltin,
+    Constructor
+}
+
+Class HirExpression
+{
+    Public int Kind;
+    Public int CallKind;
+    Public ExpressionNode Syntax;
+    Public TypeSymbol Type;
+    Public ValueSymbol Symbol;
+    Public string Name;
+    Public string Target;
+    Public int Operator;
+    Public HirExpression Left;
+    Public HirExpression Right;
+    Public HirExpression Third;
+    Public HirExpression FirstArgument;
+    Public HirExpression Next;
+
+    Public Safe Constructor(int kind, ExpressionNode syntax, TypeSymbol type)
+    {
+        This.Kind = kind;
+        This.CallKind = [int](HirCallKind.None);
+        This.Syntax = syntax;
+        This.Type = type;
+        This.Symbol = null;
+        This.Name = syntax == null ? "" : syntax.Text;
+        This.Target = "";
+        This.Operator = syntax == null ? 0 : syntax.Operator;
+        This.Left = null;
+        This.Right = null;
+        This.Third = null;
+        This.FirstArgument = null;
+        This.Next = null;
+    }
+
+    Public Safe Function void AddArgument(HirExpression argument)
+    {
+        If (This.FirstArgument == null)
+        {
+            This.FirstArgument = argument;
+            Return;
+        }
+        HirExpression current = This.FirstArgument;
+        While (current.Next != null) current = current.Next;
+        current.Next = argument;
+    }
+}
+
+Class HirStatement
+{
+    Public int Kind;
+    Public string Name;
+    Public TypeSymbol DeclaredType;
+    Public ValueSymbol DeclaredSymbol;
+    Public HirExpression Expression;
+    Public HirStatement FirstChild;
+    Public HirStatement ElseBranch;
+    Public HirStatement Next;
+
+    Public Safe Constructor(int kind)
+    {
+        This.Kind = kind;
+        This.Name = "";
+        This.DeclaredType = null;
+        This.DeclaredSymbol = null;
+        This.Expression = null;
+        This.FirstChild = null;
+        This.ElseBranch = null;
+        This.Next = null;
+    }
+
+    Public Safe Function void AddChild(HirStatement child)
+    {
+        If (This.FirstChild == null)
+        {
+            This.FirstChild = child;
+            Return;
+        }
+        HirStatement current = This.FirstChild;
+        While (current.Next != null) current = current.Next;
+        current.Next = child;
+    }
+}
+
+Class HirFunction
+{
+    Public FunctionSymbol Symbol;
+    Public HirStatement Body;
+    Public HirFunction Next;
+
+    Public Safe Constructor(FunctionSymbol symbol)
+    {
+        This.Symbol = symbol;
+        This.Body = null;
+        This.Next = null;
+    }
+}
+
+Class HirModule
+{
+    Public string UnitName;
+    Public HirFunction FirstFunction;
+    Public HirModule Next;
+
+    Public Safe Constructor(string unitName)
+    {
+        This.UnitName = unitName;
+        This.FirstFunction = null;
+        This.Next = null;
+    }
+
+    Public Safe Function void AddFunction(HirFunction function)
+    {
+        If (This.FirstFunction == null)
+        {
+            This.FirstFunction = function;
+            Return;
+        }
+        HirFunction current = This.FirstFunction;
+        While (current.Next != null) current = current.Next;
+        current.Next = function;
+    }
+}

@@ -240,6 +240,50 @@ static void copy_str(char *dst, size_t cap, const char *src)
     dst[n] = 0;
 }
 
+static bool ensure_dir_recursive(const char *path)
+{
+    char tmp[KN_MAX_PATH];
+    size_t n = 0;
+    if (!path || !path[0])
+        return false;
+    copy_str(tmp, sizeof(tmp), path);
+    n = kn_strlen(tmp);
+    if (n == 0)
+        return false;
+    for (size_t i = 0; i < n; i++)
+    {
+        if (!is_path_sep(tmp[i]))
+            continue;
+        if (i == 0)
+            continue;
+        if (i == 2 && tmp[1] == ':')
+            continue;
+        {
+            char hold = tmp[i];
+            tmp[i] = 0;
+            if (tmp[0] && !dir_exists(tmp))
+                CreateDirectoryA(tmp, 0);
+            tmp[i] = hold;
+        }
+    }
+    if (!dir_exists(tmp))
+        CreateDirectoryA(tmp, 0);
+    return dir_exists(path);
+}
+
+static bool ensure_output_parent(const char *path)
+{
+    char parent[KN_MAX_PATH];
+    if (!path || !path[0])
+        return false;
+    path_dirname(path, parent, sizeof(parent));
+    if (!parent[0])
+        return false;
+    if (dir_exists(parent))
+        return true;
+    return ensure_dir_recursive(parent);
+}
+
 static char lower_char(char c)
 {
     if (c >= 'A' && c <= 'Z') return (char)(c - 'A' + 'a');

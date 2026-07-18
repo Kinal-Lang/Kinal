@@ -47,6 +47,42 @@ def run_vm_build(compiler: Path, source: Path, output: Path) -> subprocess.Compl
     return subprocess.run(command, cwd=ROOT, text=True, capture_output=True, check=False)
 
 
+def run_tokens(compiler: Path, source: Path, output: Path) -> subprocess.CompletedProcess[str]:
+    if output.exists():
+        output.unlink()
+    command = [
+        str(compiler),
+        "build",
+        "--no-module-discovery",
+        "--color",
+        "never",
+        "--emit",
+        "tokens",
+        str(source),
+        "-o",
+        str(output),
+    ]
+    return subprocess.run(command, cwd=ROOT, text=True, capture_output=True, check=False)
+
+
+def run_syntax(compiler: Path, source: Path, output: Path) -> subprocess.CompletedProcess[str]:
+    if output.exists():
+        output.unlink()
+    command = [
+        str(compiler),
+        "build",
+        "--no-module-discovery",
+        "--color",
+        "never",
+        "--emit",
+        "ast",
+        str(source),
+        "-o",
+        str(output),
+    ]
+    return subprocess.run(command, cwd=ROOT, text=True, capture_output=True, check=False)
+
+
 def read_summary(path: Path) -> dict[str, str]:
     values: dict[str, str] = {}
     for line in path.read_text(encoding="utf-8").splitlines():
@@ -112,6 +148,78 @@ def main() -> int:
     if summary.get("hir_unresolved_binaries") != "0":
         raise AssertionError(f"unresolved binary plan escaped sema: {summary}")
     print("[OK] stage_sema_summary")
+
+    token_source = ROOT / "tests" / "selfhost" / "fixtures" / "lex_basic.kn"
+    first_tokens = out_dir / "lex-basic-first.ktokens"
+    second_tokens = out_dir / "lex-basic-second.ktokens"
+    first_token_result = run_tokens(compiler, token_source, first_tokens)
+    second_token_result = run_tokens(compiler, token_source, second_tokens)
+    if first_token_result.returncode != 0 or second_token_result.returncode != 0:
+        raise AssertionError(
+            "token emit failed:\n"
+            f"{first_token_result.stdout}{first_token_result.stderr}"
+            f"{second_token_result.stdout}{second_token_result.stderr}"
+        )
+    if first_tokens.read_bytes() != second_tokens.read_bytes():
+        raise AssertionError("token summaries are not deterministic")
+    token_lines = first_tokens.read_text(encoding="utf-8").splitlines()
+    if token_lines[:3] != ["format=kinal-tokens-v1", "sources=1", "source=0"]:
+        raise AssertionError(f"unexpected token summary header: {token_lines[:3]}")
+    if not token_lines[-1].startswith("0\t"):
+        raise AssertionError(f"token summary is missing EOF: {token_lines[-1:]}")
+    print("[OK] stage_token_summary")
+
+    syntax_output = out_dir / "lex-basic.kast"
+    syntax_result = run_syntax(compiler, token_source, syntax_output)
+    if syntax_result.returncode != 0:
+        raise AssertionError(f"syntax emit failed:\n{syntax_result.stdout}{syntax_result.stderr}")
+    syntax_summary = read_summary(syntax_output)
+    if syntax_summary != {
+        "format": "kinal-syntax-v1",
+        "sources": "1",
+        "unit": "SelfhostFixture.LexBasic",
+        "imports": "1",
+        "functions": "1",
+        "types": "0",
+        "fields": "0",
+        "methods": "0",
+        "globals": "0",
+    }:
+        raise AssertionError(f"unexpected syntax summary: {syntax_summary}")
+    print("[OK] stage_syntax_summary")
+
+    # Link fields are read from a short-lived project config. The command is
+    # expected to fail on intentionally missing inputs, but every resolved item
+    # must survive until linker command construction.
+    project_link_output = out_dir / "project-link-settings"
+    project_link = subprocess.run(
+        [
+            str(compiler),
+            "build",
+            "--project",
+            str(ROOT / "tests" / "pkg" / "project_link_settings"),
+            "--show-link",
+            "-o",
+            str(project_link_output),
+        ],
+        cwd=ROOT,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    project_link_text = (project_link.stdout + project_link.stderr).replace("\\", "/")
+    if project_link.returncode == 0:
+        raise AssertionError("project link-settings fixture unexpectedly linked")
+    for fragment in (
+        "project_link_settings/native",
+        "project_settings_probe",
+        "project_link_settings/native/probe-object.o",
+    ):
+        if fragment not in project_link_text:
+            raise AssertionError(
+                f"project link item did not survive config teardown ({fragment}):\n{project_link_text}"
+            )
+    print("[OK] stage_project_link_settings_lifetime")
 
     function_output = out_dir / "functions.kcheck"
     function_result = run(compiler, ROOT / "tests" / "common" / "functions.kn", function_output)

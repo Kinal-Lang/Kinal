@@ -1,0 +1,25 @@
+Unit Tests.ElseIfSyntax;
+
+Get IO.Console;
+
+Static Function int Main()
+{
+    int value = 2;
+    If (value == 1)
+    {
+        IO.Console.PrintLine("one");
+    }
+    ElseIf (value == 2)
+    {
+        IO.Console.PrintLine("two");
+    }
+    Else If (value == 3)
+    {
+        IO.Console.PrintLine("three");
+    }
+    Else
+    {
+        IO.Console.PrintLine("other");
+    }
+    Return 0;
+}

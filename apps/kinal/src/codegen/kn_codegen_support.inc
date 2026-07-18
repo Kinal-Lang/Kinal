@@ -273,6 +273,14 @@ static LLVMValueRef cg_from_runtime_bool(Codegen *g, LLVMValueRef value, const c
     return LLVMBuildICmp(g->builder, LLVMIntNE, value, LLVMConstNull(type), name);
 }
 
+static LLVMValueRef cg_to_runtime_bool(Codegen *g, LLVMValueRef value, const char *name)
+{
+    LLVMTypeRef type = LLVMTypeOf(value);
+    if (type == g->i32)
+        return value;
+    return LLVMBuildZExtOrBitCast(g->builder, value, g->i32, name);
+}
+
 static LLVMValueRef cg_from_runtime_int(Codegen *g, LLVMValueRef value, const char *name)
 {
     LLVMTypeRef type = LLVMTypeOf(value);

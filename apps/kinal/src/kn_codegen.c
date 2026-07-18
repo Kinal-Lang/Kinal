@@ -611,6 +611,8 @@ typedef struct
     LLVMTypeRef fn_dir_delete_ty;
     LLVMValueRef fn_dir_delete_if_exists;
     LLVMTypeRef fn_dir_delete_if_exists_ty;
+    LLVMValueRef fn_dir_files;
+    LLVMTypeRef fn_dir_files_ty;
     LLVMValueRef fn_path_combine;
     LLVMTypeRef fn_path_combine_ty;
     LLVMValueRef fn_path_join3;

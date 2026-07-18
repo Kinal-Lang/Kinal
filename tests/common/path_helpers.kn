@@ -22,6 +22,8 @@ Static Function int Main()
     Console.PrintLine(IO.Path.ChangeExtension("archive.tar.gz", "txt"));
     string normalized= IO.Path.Normalize("a//b///c");
     Console.PrintLine(IO.Path.FileName(normalized)== "c");
+    string dotted= IO.Path.Normalize("a/b/../c/./d");
+    Console.PrintLine(IO.Path.FileName(IO.Path.Parent(dotted))== "c");
     Console.PrintLine(IO.Path.FileName(p3)== "html");
     Return 0;
 }

@@ -43,7 +43,10 @@ static Stmt *parse_throw(Parser *p)
 static Stmt *parse_if(Parser *p)
 {
     Token *t = cur(p);
-    expect(p, TOK_IF, "Expected If", "Expected 'If' keyword");
+    if (t->type == TOK_IF || t->type == TOK_ELSEIF)
+        p->pos++;
+    else
+        expect(p, TOK_IF, "Expected If", "Expected 'If' or 'ElseIf' keyword");
     expect(p, TOK_LPAREN, "Expected '('", "Missing '('");
     Expr *cond = parse_expr(p);
     const char *pattern_name = 0;
@@ -62,6 +65,8 @@ static Stmt *parse_if(Parser *p)
     Stmt *else_s = 0;
     if (match(p, TOK_ELSE))
         else_s = parse_stmt(p);
+    else if (cur(p)->type == TOK_ELSEIF)
+        else_s = parse_if(p);
     Stmt *s = new_stmt(ST_IF, t->line, t->col);
     s->v.ifs.cond = cond;
     s->v.ifs.then_s = then_s;

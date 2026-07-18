@@ -4238,6 +4238,19 @@ static CGValue gen_builtin_filesystem(Codegen *g, KnBuiltinKind kind, ExprList *
         out.type = type_make(TY_BOOL);
         return out;
     }
+    case KN_BUILTIN_IO_DIRECTORY_FILES:
+    {
+        CGValue p = gen_expr(g, args->items[0]);
+        CGValue recursive = gen_expr(g, args->items[1]);
+        LLVMValueRef argv[2] = {
+            cast_value(g, p, type_make(TY_STRING)),
+            cg_to_runtime_bool(g, cast_value(g, recursive, type_make(TY_BOOL)), "dir.files.recursive")
+        };
+        LLVMValueRef raw = LLVMBuildCall2(g->builder, g->fn_dir_files_ty, g->fn_dir_files, argv, 2, "dir.files");
+        out.type = type_class("IO.Collection.list");
+        out.value = LLVMBuildBitCast(g->builder, raw, llvm_type(g, out.type), "dir.files.obj");
+        return out;
+    }
     default:
         break;
     }

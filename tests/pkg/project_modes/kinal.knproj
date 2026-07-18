@@ -84,6 +84,23 @@ Project PkgProjectModes
         }
     }
 
+    Profile "nestedoutput"
+    {
+        Source
+        {
+            Entry = "src/Main.kn";
+            Sets = ["app"];
+            Mode = ReachableUnits;
+        }
+
+        Build
+        {
+            Backend = Native;
+            Environment = Hosted;
+            Output = "out/generated/nested/project-output.exe";
+        }
+    }
+
     Lsp
     {
         Profile = "reachable";

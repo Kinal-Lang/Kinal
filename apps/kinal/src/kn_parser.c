@@ -574,22 +574,10 @@ static const char *type_token_name(TokenType t)
 static const char *parse_name_token(Parser *p, const char *title, const char *detail)
 {
     Token *t = cur(p);
-    if (t->type == TOK_ID || t->type == TOK_ALIAS)
-    {
-        p->pos++;
-        return tok_text(t);
-    }
-    if (is_type_tok(t->type))
-    {
-        p->pos++;
-        return type_token_name(t->type);
-    }
-    // Allow keyword segments in qualified names for builtin runtime types/modules,
-    // e.g. IO.Type.Object.Function / IO.Type.Object.Block / IO.Async.Task.
-    if (t->type == TOK_FUNCTION || t->type == TOK_BLOCK || t->type == TOK_CLASS ||
-        t->type == TOK_INTERFACE || t->type == TOK_JUMP || t->type == TOK_RECORD ||
-        t->type == TOK_ASYNC ||
-        t->type == TOK_GET || t->type == TOK_SET)
+    // A keyword is unambiguous after '.' or where a declaration grammar already
+    // requires a member name. This keeps keywords reserved in ordinary identifier
+    // positions while allowing names such as StatementKind.Return and IO.Type.Class.
+    if (t->type == TOK_ID || token_is_keyword_type(t->type))
     {
         p->pos++;
         return tok_text(t);

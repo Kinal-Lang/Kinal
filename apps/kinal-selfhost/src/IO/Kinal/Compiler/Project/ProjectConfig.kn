@@ -1,0 +1,235 @@
+Unit IO.Kinal.Compiler.Project.ProjectConfig;
+
+Get IO.Directory;
+Get IO.File;
+Get IO.Path;
+Get IO.Text;
+Get IO.Kinal.Compiler.Project.Glob;
+
+Class SourceSetConfig
+{
+    Public string Name;
+    Public list Roots;
+    Public list Files;
+    Public list Includes;
+    Public list Excludes;
+    Public bool RequireUnit;
+    Public SourceSetConfig Next;
+
+    Public Safe Constructor(string name)
+    {
+        This.Name = name;
+        This.Roots = list.Create();
+        This.Files = list.Create();
+        This.Includes = list.Create();
+        This.Excludes = list.Create();
+        This.RequireUnit = false;
+        This.Next = null;
+    }
+
+    Public Safe Function bool Matches(string relativePath)
+    {
+        bool included = This.Includes.Count() == 0;
+        int i = 0;
+        While (i < This.Includes.Count())
+        {
+            If (IO.Kinal.Compiler.Project.Glob.Match([string](This.Includes.Fetch(i)), relativePath))
+            {
+                included = true;
+                Break;
+            }
+            i = i + 1;
+        }
+        If (!included) Return false;
+
+        i = 0;
+        While (i < This.Excludes.Count())
+        {
+            If (IO.Kinal.Compiler.Project.Glob.Match([string](This.Excludes.Fetch(i)), relativePath))
+            {
+                Return false;
+            }
+            i = i + 1;
+        }
+        Return true;
+    }
+}
+
+Class ProjectProfileConfig
+{
+    Public string Name;
+    Public string Entry;
+    Public list Sets;
+    Public string Mode;
+    Public bool AutoDiscovery;
+    Public string Backend;
+    Public string Environment;
+    Public string Runtime;
+    Public string Panic;
+    Public string Target;
+    Public string Output;
+    Public ProjectProfileConfig Next;
+
+    Public Safe Constructor(string name)
+    {
+        This.Name = name;
+        This.Entry = "";
+        This.Sets = list.Create();
+        This.Mode = "ReachableUnits";
+        This.AutoDiscovery = true;
+        This.Backend = "Native";
+        This.Environment = "Hosted";
+        This.Runtime = "GC";
+        This.Panic = "Trap";
+        This.Target = "";
+        This.Output = "";
+        This.Next = null;
+    }
+}
+
+Class ProjectConfig
+{
+    Public string Name;
+    Public string ManifestPath;
+    Public string RootDirectory;
+    Public string DefaultProfile;
+    Public SourceSetConfig FirstSourceSet;
+    Public ProjectProfileConfig FirstProfile;
+
+    Public Safe Constructor(string manifestPath)
+    {
+        This.Name = "";
+        This.ManifestPath = IO.Path.Normalize(manifestPath);
+        This.RootDirectory = IO.Path.Directory(This.ManifestPath);
+        If (IO.Text.IsEmpty(This.RootDirectory)) This.RootDirectory = ".";
+        This.DefaultProfile = "";
+        This.FirstSourceSet = null;
+        This.FirstProfile = null;
+    }
+
+    Public Safe Function void AddSourceSet(SourceSetConfig sourceSet)
+    {
+        If (This.FirstSourceSet == null)
+        {
+            This.FirstSourceSet = sourceSet;
+            Return;
+        }
+        SourceSetConfig current = This.FirstSourceSet;
+        While (current.Next != null) current = current.Next;
+        current.Next = sourceSet;
+    }
+
+    Public Safe Function void AddProfile(ProjectProfileConfig profile)
+    {
+        If (This.FirstProfile == null)
+        {
+            This.FirstProfile = profile;
+            Return;
+        }
+        ProjectProfileConfig current = This.FirstProfile;
+        While (current.Next != null) current = current.Next;
+        current.Next = profile;
+    }
+
+    Public Safe Function SourceSetConfig FindSourceSet(string name)
+    {
+        SourceSetConfig current = This.FirstSourceSet;
+        While (current != null)
+        {
+            If (current.Name == name) Return current;
+            current = current.Next;
+        }
+        Return null;
+    }
+
+    Public Safe Function ProjectProfileConfig FindProfile(string name)
+    {
+        string selected = IO.Text.IsEmpty(name) ? This.DefaultProfile : name;
+        ProjectProfileConfig current = This.FirstProfile;
+        While (current != null)
+        {
+            If (current.Name == selected) Return current;
+            current = current.Next;
+        }
+        Return null;
+    }
+
+    Public Safe Function string ResolvePath(string path)
+    {
+        If (IO.Path.IsAbsolute(path)) Return IO.Path.Normalize(path);
+        Return IO.Path.Normalize(IO.Path.Combine(This.RootDirectory, path));
+    }
+
+    Public Safe Function void AddUniqueSource(list sources, string path)
+    {
+        string normalized = IO.Path.Normalize(path);
+        If (!sources.Contains(normalized)) sources.Add(normalized);
+    }
+
+    Public Safe Function void DiscoverSourceSet(list sources, SourceSetConfig sourceSet)
+    {
+        int i = 0;
+        While (i < sourceSet.Files.Count())
+        {
+            string explicitFile = This.ResolvePath([string](sourceSet.Files.Fetch(i)));
+            If (IO.File.Exists(explicitFile)) This.AddUniqueSource(sources, explicitFile);
+            i = i + 1;
+        }
+
+        i = 0;
+        While (i < sourceSet.Roots.Count())
+        {
+            string root = This.ResolvePath([string](sourceSet.Roots.Fetch(i)));
+            string rootPrefix = IO.Path.EnsureTrailingSeparator(root);
+            list discovered = IO.Directory.Files(root, true);
+            int fileIndex = 0;
+            While (fileIndex < discovered.Count())
+            {
+                string file = IO.Path.Normalize([string](discovered.Fetch(fileIndex)));
+                If (IO.Path.Extension(file) == "kn")
+                {
+                    string relative = file;
+                    If (IO.Text.StartsWith(file, rootPrefix))
+                    {
+                        relative = IO.Text.Slice(file, IO.Text.Length(rootPrefix),
+                                                 IO.Text.Length(file) - IO.Text.Length(rootPrefix));
+                    }
+                    If (sourceSet.Matches(relative)) This.AddUniqueSource(sources, file);
+                }
+                fileIndex = fileIndex + 1;
+            }
+            i = i + 1;
+        }
+    }
+
+    Public Safe Function list DiscoverSources(string profileName)
+    {
+        list sources = list.Create();
+        ProjectProfileConfig profile = This.FindProfile(profileName);
+        If (profile == null) Return sources;
+
+        If (profile.Sets.Count() == 0)
+        {
+            SourceSetConfig sourceSet = This.FirstSourceSet;
+            While (sourceSet != null)
+            {
+                This.DiscoverSourceSet(sources, sourceSet);
+                sourceSet = sourceSet.Next;
+            }
+        }
+        Else
+        {
+            int i = 0;
+            While (i < profile.Sets.Count())
+            {
+                SourceSetConfig sourceSet = This.FindSourceSet([string](profile.Sets.Fetch(i)));
+                If (sourceSet != null) This.DiscoverSourceSet(sources, sourceSet);
+                i = i + 1;
+            }
+        }
+
+        string entry = This.ResolvePath(profile.Entry);
+        If (!IO.Text.IsEmpty(profile.Entry) && IO.File.Exists(entry)) This.AddUniqueSource(sources, entry);
+        Return sources;
+    }
+}

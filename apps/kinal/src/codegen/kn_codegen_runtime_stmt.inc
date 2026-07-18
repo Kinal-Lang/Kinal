@@ -345,6 +345,7 @@ static void build_runtime_hosted_declarations(Codegen *g, HostedPlatformApi *pla
         LLVMTypeRef args_file1[1] = { t_i8ptr };
         LLVMTypeRef args_file2[2] = { t_i8ptr, t_i8ptr };
         LLVMTypeRef args_file3[3] = { t_i8ptr, t_i8ptr, t_i8ptr };
+        LLVMTypeRef args_dir_files[2] = { t_i8ptr, t_i32 };
         g->fn_file_create_ty = LLVMFunctionType(t_i32, args_file1, 1, 0);
         g->fn_file_create = LLVMAddFunction(g->mod, "__kn_file_create", g->fn_file_create_ty);
         g->fn_file_touch_ty = LLVMFunctionType(t_i32, args_file1, 1, 0);
@@ -387,6 +388,8 @@ static void build_runtime_hosted_declarations(Codegen *g, HostedPlatformApi *pla
         g->fn_dir_delete = LLVMAddFunction(g->mod, "__kn_dir_delete", g->fn_dir_delete_ty);
         g->fn_dir_delete_if_exists_ty = LLVMFunctionType(t_i32, args_file1, 1, 0);
         g->fn_dir_delete_if_exists = LLVMAddFunction(g->mod, "__kn_dir_delete_if_exists", g->fn_dir_delete_if_exists_ty);
+        g->fn_dir_files_ty = LLVMFunctionType(t_i8ptr, args_dir_files, 2, 0);
+        g->fn_dir_files = LLVMAddFunction(g->mod, "__kn_dir_files", g->fn_dir_files_ty);
     }
 
     g->fn_exc_set_ty = LLVMFunctionType(t_void, &t_i8ptr, 1, 0);

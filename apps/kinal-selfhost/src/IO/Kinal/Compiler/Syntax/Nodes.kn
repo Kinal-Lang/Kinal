@@ -1,0 +1,123 @@
+Unit IO.Kinal.Compiler.Syntax.Nodes;
+
+Enum ExpressionKind By int
+{
+    Missing = 0,
+    Name,
+    Number,
+    String,
+    Character,
+    Boolean,
+    Null,
+    Unary,
+    Binary,
+    Conditional,
+    Call,
+    Member,
+    Index,
+    NewObject,
+    Cast
+}
+
+Enum StatementKind By int
+{
+    Empty = 0,
+    Block,
+    Variable,
+    Expression,
+    Return,
+    If,
+    While,
+    Break,
+    Continue
+}
+
+Class ExpressionNode
+{
+    Public int Kind;
+    Public string Text;
+    Public int Operator;
+    Public int Line;
+    Public int Column;
+    Public ExpressionNode Left;
+    Public ExpressionNode Right;
+    Public ExpressionNode Third;
+    Public ExpressionNode FirstArgument;
+    Public ExpressionNode Next;
+
+    Public Safe Constructor(int kind, string text, int line, int column)
+    {
+        This.Kind = kind;
+        This.Text = text;
+        This.Operator = 0;
+        This.Line = line;
+        This.Column = column;
+        This.Left = null;
+        This.Right = null;
+        This.Third = null;
+        This.FirstArgument = null;
+        This.Next = null;
+    }
+
+    Public Safe Function void AddArgument(ExpressionNode value)
+    {
+        If (This.FirstArgument == null)
+        {
+            This.FirstArgument = value;
+            Return;
+        }
+        ExpressionNode current = This.FirstArgument;
+        While (current.Next != null) current = current.Next;
+        current.Next = value;
+    }
+
+    Public Safe Function int ArgumentCount()
+    {
+        int count = 0;
+        ExpressionNode current = This.FirstArgument;
+        While (current != null)
+        {
+            count = count + 1;
+            current = current.Next;
+        }
+        Return count;
+    }
+}
+
+Class StatementNode
+{
+    Public int Kind;
+    Public string Name;
+    Public string TypeName;
+    Public int Line;
+    Public int Column;
+    Public ExpressionNode Expression;
+    Public StatementNode FirstChild;
+    Public StatementNode ElseBranch;
+    Public StatementNode Next;
+
+    Public Safe Constructor(int kind, int line, int column)
+    {
+        This.Kind = kind;
+        This.Name = "";
+        This.TypeName = "";
+        This.Line = line;
+        This.Column = column;
+        This.Expression = null;
+        This.FirstChild = null;
+        This.ElseBranch = null;
+        This.Next = null;
+    }
+
+    Public Safe Function void AddChild(StatementNode value)
+    {
+        If (This.FirstChild == null)
+        {
+            This.FirstChild = value;
+            Return;
+        }
+        StatementNode current = This.FirstChild;
+        While (current.Next != null) current = current.Next;
+        current.Next = value;
+    }
+}

@@ -19,6 +19,7 @@ Static Function int Main()
     Console.PrintLine(IO.Text.ToUpper("hello"));
     Console.PrintLine(IO.Text.ToLower("WORLD"));
     Console.PrintLine(IO.Text.Replace("aXbc", "X", "-"));
+    Console.PrintLine(IO.Text.Replace("aXbXc", "X", "-"));
     Console.PrintLine(IO.Text.Slice(trimmed, 7, 5));
     Console.PrintLine(parts.Count());
     Console.PrintLine(IO.Text.Join(parts, "|"));

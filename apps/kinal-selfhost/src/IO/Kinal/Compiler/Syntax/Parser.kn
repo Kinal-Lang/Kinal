@@ -1,0 +1,966 @@
+Unit IO.Kinal.Compiler.Syntax.Parser;
+
+Get IO.Text;
+Get IO.Kinal.Compiler.Core.Diagnostics;
+Get IO.Kinal.Compiler.Source.SourceFile;
+Get IO.Kinal.Compiler.Lex.Token;
+Get IO.Kinal.Compiler.Lex.TokenKind;
+Get IO.Kinal.Compiler.Syntax.SyntaxTree;
+Get IO.Kinal.Compiler.Syntax.Nodes;
+
+Class ParseCursor
+{
+    Public list Tokens;
+    Public int Position;
+
+    Public Safe Constructor(list tokens)
+    {
+        This.Tokens = tokens;
+        This.Position = 0;
+    }
+}
+
+Safe Function string RawAt(ParseCursor cursor, int index)
+{
+    If (index < 0 || index >= cursor.Tokens.Count()) Return "";
+    Return [string](cursor.Tokens.Fetch(index));
+}
+
+Safe Function int KindAt(ParseCursor cursor, int index)
+{
+    Return IO.Kinal.Compiler.Lex.Token.Kind(RawAt(cursor, index));
+}
+
+Safe Function int CurrentKind(ParseCursor cursor)
+{
+    Return KindAt(cursor, cursor.Position);
+}
+
+Safe Function string CurrentToken(ParseCursor cursor)
+{
+    Return RawAt(cursor, cursor.Position);
+}
+
+Safe Function bool IsEnd(ParseCursor cursor)
+{
+    Return CurrentKind(cursor) == [int](TokenKind.Eof);
+}
+
+Safe Function void Advance(ParseCursor cursor)
+{
+    If (cursor.Position < cursor.Tokens.Count()) cursor.Position = cursor.Position + 1;
+}
+
+Safe Function bool Match(ParseCursor cursor, int kind)
+{
+    If (CurrentKind(cursor) != kind) Return false;
+    Advance(cursor);
+    Return true;
+}
+
+Safe Function void Report(ParseCursor cursor, list diagnostics, SourceFile source, string title, string detail)
+{
+    string token = CurrentToken(cursor);
+    string text = IO.Kinal.Compiler.Lex.Token.Text(token);
+    int length = IO.Text.Length(text);
+    If (length < 1) length = 1;
+    IO.Kinal.Compiler.Core.Diagnostics.Add(diagnostics, source, "Parser", title, detail,
+        IO.Kinal.Compiler.Lex.Token.Line(token), IO.Kinal.Compiler.Lex.Token.Column(token), length);
+}
+
+Safe Function bool Expect(ParseCursor cursor, list diagnostics, SourceFile source,
+                          int kind, string title, string detail)
+{
+    If (Match(cursor, kind)) Return true;
+    Report(cursor, diagnostics, source, title, detail);
+    Return false;
+}
+
+Safe Function bool ParseQualifiedName(ParseCursor cursor, list diagnostics, SourceFile source)
+{
+    If (!Expect(cursor, diagnostics, source, [int](TokenKind.Identifier),
+                "Expected identifier", "qualified name must start with an identifier")) Return false;
+    While (Match(cursor, [int](TokenKind.Dot)))
+    {
+        If (!Expect(cursor, diagnostics, source, [int](TokenKind.Identifier),
+                    "Expected identifier", "missing identifier after '.'")) Return false;
+    }
+    Return true;
+}
+
+Safe Function string ReadQualifiedName(ParseCursor cursor)
+{
+    string value = IO.Kinal.Compiler.Lex.Token.Text(CurrentToken(cursor));
+    Advance(cursor);
+    While (Match(cursor, [int](TokenKind.Dot)))
+    {
+        value = value + "." + IO.Kinal.Compiler.Lex.Token.Text(CurrentToken(cursor));
+        Advance(cursor);
+    }
+    Return value;
+}
+
+Safe Function bool SkipBalanced(ParseCursor cursor, list diagnostics, SourceFile source,
+                                int openKind, int closeKind, string title)
+{
+    If (!Expect(cursor, diagnostics, source, openKind, title, "missing opening delimiter")) Return false;
+    int depth = 1;
+    While (!IsEnd(cursor) && depth > 0)
+    {
+        int kind = CurrentKind(cursor);
+        If (kind == openKind) depth = depth + 1;
+        ElseIf (kind == closeKind) depth = depth - 1;
+        Advance(cursor);
+    }
+    If (depth != 0)
+    {
+        Report(cursor, diagnostics, source, title, "delimiter is not closed");
+        Return false;
+    }
+    Return true;
+}
+
+Safe Function bool SkipExpressionStatement(ParseCursor cursor, list diagnostics, SourceFile source)
+{
+    int parens = 0;
+    int brackets = 0;
+    int braces = 0;
+    While (!IsEnd(cursor))
+    {
+        int kind = CurrentKind(cursor);
+        If (kind == [int](TokenKind.Semicolon) && parens == 0 && brackets == 0 && braces == 0)
+        {
+            Advance(cursor);
+            Return true;
+        }
+        If (kind == [int](TokenKind.RightBrace) && parens == 0 && brackets == 0 && braces == 0) Break;
+        If (kind == [int](TokenKind.LeftParen)) parens = parens + 1;
+        ElseIf (kind == [int](TokenKind.RightParen) && parens > 0) parens = parens - 1;
+        ElseIf (kind == [int](TokenKind.LeftBracket)) brackets = brackets + 1;
+        ElseIf (kind == [int](TokenKind.RightBracket) && brackets > 0) brackets = brackets - 1;
+        ElseIf (kind == [int](TokenKind.LeftBrace)) braces = braces + 1;
+        ElseIf (kind == [int](TokenKind.RightBrace) && braces > 0) braces = braces - 1;
+        Advance(cursor);
+    }
+    Report(cursor, diagnostics, source, "Expected semicolon", "statement must end with ';'");
+    Return false;
+}
+
+Safe Function bool ParseBlock(ParseCursor cursor, list diagnostics, SourceFile source)
+{
+    If (!Expect(cursor, diagnostics, source, [int](TokenKind.LeftBrace),
+                "Expected left brace", "block must start with '{'")) Return false;
+    While (!IsEnd(cursor) && CurrentKind(cursor) != [int](TokenKind.RightBrace))
+    {
+        If (!ParseStatement(cursor, diagnostics, source)) Return false;
+    }
+    Return Expect(cursor, diagnostics, source, [int](TokenKind.RightBrace),
+                  "Expected right brace", "block is not closed");
+}
+
+Safe Function bool ParseIfTail(ParseCursor cursor, list diagnostics, SourceFile source)
+{
+    If (!SkipBalanced(cursor, diagnostics, source, [int](TokenKind.LeftParen),
+                      [int](TokenKind.RightParen), "Expected parentheses")) Return false;
+    If (!ParseStatement(cursor, diagnostics, source)) Return false;
+    If (Match(cursor, [int](TokenKind.KwElse)))
+    {
+        If (Match(cursor, [int](TokenKind.KwIf))) Return ParseIfTail(cursor, diagnostics, source);
+        Return ParseStatement(cursor, diagnostics, source);
+    }
+    If (Match(cursor, [int](TokenKind.KwElseIf))) Return ParseIfTail(cursor, diagnostics, source);
+    Return true;
+}
+
+Safe Function bool ParseStatement(ParseCursor cursor, list diagnostics, SourceFile source)
+{
+    int kind = CurrentKind(cursor);
+    If (kind == [int](TokenKind.LeftBrace)) Return ParseBlock(cursor, diagnostics, source);
+    If (kind == [int](TokenKind.KwIf) || kind == [int](TokenKind.KwElseIf))
+    {
+        Advance(cursor);
+        Return ParseIfTail(cursor, diagnostics, source);
+    }
+    If (kind == [int](TokenKind.KwWhile) || kind == [int](TokenKind.KwFor) ||
+        kind == [int](TokenKind.KwForeach) || kind == [int](TokenKind.KwSwitch))
+    {
+        Advance(cursor);
+        If (!SkipBalanced(cursor, diagnostics, source, [int](TokenKind.LeftParen),
+                          [int](TokenKind.RightParen), "Expected parentheses")) Return false;
+        Return ParseStatement(cursor, diagnostics, source);
+    }
+    If (kind == [int](TokenKind.KwTry))
+    {
+        Advance(cursor);
+        If (!ParseStatement(cursor, diagnostics, source)) Return false;
+        If (!Match(cursor, [int](TokenKind.KwCatch)))
+        {
+            Report(cursor, diagnostics, source, "Expected Catch", "Try requires Catch");
+            Return false;
+        }
+        If (CurrentKind(cursor) == [int](TokenKind.LeftParen) &&
+            !SkipBalanced(cursor, diagnostics, source, [int](TokenKind.LeftParen),
+                          [int](TokenKind.RightParen), "Expected parentheses")) Return false;
+        Return ParseStatement(cursor, diagnostics, source);
+    }
+    If (kind == [int](TokenKind.KwGet))
+    {
+        Report(cursor, diagnostics, source, "Invalid Get position", "Get is top-level only");
+        Return false;
+    }
+    Return SkipExpressionStatement(cursor, diagnostics, source);
+}
+
+Safe Function bool IsFunctionModifier(int kind)
+{
+    Return kind == [int](TokenKind.KwStatic) || kind == [int](TokenKind.KwSafe) ||
+           kind == [int](TokenKind.KwTrusted) || kind == [int](TokenKind.KwUnsafe) ||
+           kind == [int](TokenKind.KwAsync) || kind == [int](TokenKind.KwExtern);
+}
+
+Safe Function bool ParseFunction(ParseCursor cursor, list diagnostics, SourceFile source)
+{
+    bool external = false;
+    While (IsFunctionModifier(CurrentKind(cursor)))
+    {
+        If (CurrentKind(cursor) == [int](TokenKind.KwExtern)) external = true;
+        Advance(cursor);
+    }
+    If (!Expect(cursor, diagnostics, source, [int](TokenKind.KwFunction),
+                "Expected Function", "function declaration is missing Function")) Return false;
+
+    int namePosition = -1;
+    int scan = cursor.Position;
+    While (scan + 1 < cursor.Tokens.Count())
+    {
+        If (KindAt(cursor, scan) == [int](TokenKind.Identifier) &&
+            KindAt(cursor, scan + 1) == [int](TokenKind.LeftParen))
+        {
+            namePosition = scan;
+            Break;
+        }
+        int kind = KindAt(cursor, scan);
+        If (kind == [int](TokenKind.Semicolon) || kind == [int](TokenKind.LeftBrace) ||
+            kind == [int](TokenKind.Eof)) Break;
+        scan = scan + 1;
+    }
+    If (namePosition < 0)
+    {
+        Report(cursor, diagnostics, source, "Expected function name", "missing name before parameter list");
+        Return false;
+    }
+    cursor.Position = namePosition + 1;
+    If (!SkipBalanced(cursor, diagnostics, source, [int](TokenKind.LeftParen),
+                      [int](TokenKind.RightParen), "Expected parameter list")) Return false;
+    If (external)
+    {
+        If (Match(cursor, [int](TokenKind.KwBy)) && !ParseQualifiedName(cursor, diagnostics, source)) Return false;
+        Return Expect(cursor, diagnostics, source, [int](TokenKind.Semicolon),
+                      "Expected semicolon", "Extern function must end with ';'");
+    }
+    If (Match(cursor, [int](TokenKind.Semicolon))) Return true;
+    Return ParseBlock(cursor, diagnostics, source);
+}
+
+Safe Function bool ParseGet(ParseCursor cursor, list diagnostics, SourceFile source)
+{
+    Advance(cursor);
+    If (!ParseQualifiedName(cursor, diagnostics, source)) Return false;
+    If (Match(cursor, [int](TokenKind.KwBy)) && !ParseQualifiedName(cursor, diagnostics, source)) Return false;
+    Return Expect(cursor, diagnostics, source, [int](TokenKind.Semicolon),
+                  "Expected semicolon", "Get declaration must end with ';'");
+}
+
+Safe Function bool IsTypeStart(int kind)
+{
+    Return kind == [int](TokenKind.KwClass) || kind == [int](TokenKind.KwInterface) ||
+           kind == [int](TokenKind.KwStruct) || kind == [int](TokenKind.KwEnum) ||
+           kind == [int](TokenKind.KwPublic) || kind == [int](TokenKind.KwPrivate) ||
+           kind == [int](TokenKind.KwProtected) || kind == [int](TokenKind.KwInternal) ||
+           kind == [int](TokenKind.KwAbstract) || kind == [int](TokenKind.KwSealed);
+}
+
+Safe Function bool ParseType(ParseCursor cursor, list diagnostics, SourceFile source)
+{
+    While (!IsEnd(cursor) && CurrentKind(cursor) != [int](TokenKind.LeftBrace)) Advance(cursor);
+    Return SkipBalanced(cursor, diagnostics, source, [int](TokenKind.LeftBrace),
+                        [int](TokenKind.RightBrace), "Expected type body");
+}
+
+Safe Function bool Validate(SourceFile source, list tokens, list diagnostics)
+{
+    ParseCursor cursor = New ParseCursor(tokens);
+    If (!Expect(cursor, diagnostics, source, [int](TokenKind.KwUnit),
+                "Expected Unit", "source file must start with Unit")) Return false;
+    If (!ParseQualifiedName(cursor, diagnostics, source)) Return false;
+    If (!Expect(cursor, diagnostics, source, [int](TokenKind.Semicolon),
+                "Expected semicolon", "Unit declaration must end with ';'")) Return false;
+
+    While (!IsEnd(cursor))
+    {
+        While (CurrentKind(cursor) == [int](TokenKind.LeftBracket))
+        {
+            If (!SkipBalanced(cursor, diagnostics, source, [int](TokenKind.LeftBracket),
+                              [int](TokenKind.RightBracket), "Expected attribute")) Return false;
+        }
+        int kind = CurrentKind(cursor);
+        If (kind == [int](TokenKind.KwGet))
+        {
+            If (!ParseGet(cursor, diagnostics, source)) Return false;
+        }
+        ElseIf (kind == [int](TokenKind.KwFunction) || IsFunctionModifier(kind))
+        {
+            If (!ParseFunction(cursor, diagnostics, source)) Return false;
+        }
+        ElseIf (IsTypeStart(kind))
+        {
+            If (!ParseType(cursor, diagnostics, source)) Return false;
+        }
+        Else
+        {
+            Report(cursor, diagnostics, source, "Unexpected top-level token", "expected Get, Function, Class, Struct, Enum, or Interface");
+            Return false;
+        }
+    }
+    Return !IO.Kinal.Compiler.Core.Diagnostics.HasAny(diagnostics);
+}
+
+Safe Function string JoinTokenText(ParseCursor cursor, int first, int end)
+{
+    string result = "";
+    int index = first;
+    While (index < end)
+    {
+        string text = IO.Kinal.Compiler.Lex.Token.Text(RawAt(cursor, index));
+        If (!IO.Text.IsEmpty(result)) result = result + " ";
+        result = result + text;
+        index = index + 1;
+    }
+    Return result;
+}
+
+Safe Function void SkipBalancedUnchecked(ParseCursor cursor, int openKind, int closeKind)
+{
+    If (!Match(cursor, openKind)) Return;
+    int depth = 1;
+    While (!IsEnd(cursor) && depth > 0)
+    {
+        int kind = CurrentKind(cursor);
+        If (kind == openKind) depth = depth + 1;
+        ElseIf (kind == closeKind) depth = depth - 1;
+        Advance(cursor);
+    }
+}
+
+Safe Function int BinaryPrecedence(int kind)
+{
+    If (kind == [int](TokenKind.Assign) || kind == [int](TokenKind.PlusAssign) ||
+        kind == [int](TokenKind.MinusAssign) || kind == [int](TokenKind.StarAssign) ||
+        kind == [int](TokenKind.SlashAssign) || kind == [int](TokenKind.PercentAssign)) Return 1;
+    If (kind == [int](TokenKind.OrOr)) Return 3;
+    If (kind == [int](TokenKind.AndAnd)) Return 4;
+    If (kind == [int](TokenKind.BitOr)) Return 5;
+    If (kind == [int](TokenKind.Xor)) Return 6;
+    If (kind == [int](TokenKind.Ampersand)) Return 7;
+    If (kind == [int](TokenKind.Equal) || kind == [int](TokenKind.NotEqual)) Return 8;
+    If (kind == [int](TokenKind.Less) || kind == [int](TokenKind.LessEqual) ||
+        kind == [int](TokenKind.Greater) || kind == [int](TokenKind.GreaterEqual) ||
+        kind == [int](TokenKind.KwIs) || kind == [int](TokenKind.KwIn)) Return 9;
+    If (kind == [int](TokenKind.ShiftLeft) || kind == [int](TokenKind.ShiftRight)) Return 10;
+    If (kind == [int](TokenKind.Plus) || kind == [int](TokenKind.Minus)) Return 11;
+    If (kind == [int](TokenKind.Star) || kind == [int](TokenKind.Slash) ||
+        kind == [int](TokenKind.Percent)) Return 12;
+    Return 0;
+}
+
+Safe Function bool IsRightAssociative(int kind)
+{
+    Return kind == [int](TokenKind.Assign) || kind == [int](TokenKind.PlusAssign) ||
+           kind == [int](TokenKind.MinusAssign) || kind == [int](TokenKind.StarAssign) ||
+           kind == [int](TokenKind.SlashAssign) || kind == [int](TokenKind.PercentAssign);
+}
+
+Safe Function ExpressionNode NewExpression(int kind, string token)
+{
+    Return New ExpressionNode(kind, IO.Kinal.Compiler.Lex.Token.Text(token),
+        IO.Kinal.Compiler.Lex.Token.Line(token), IO.Kinal.Compiler.Lex.Token.Column(token));
+}
+
+Safe Function void ReadArguments(ParseCursor cursor, ExpressionNode call)
+{
+    If (!Match(cursor, [int](TokenKind.LeftParen))) Return;
+    While (!IsEnd(cursor) && CurrentKind(cursor) != [int](TokenKind.RightParen))
+    {
+        ExpressionNode argument = ParseExpression(cursor, 1);
+        call.AddArgument(argument);
+        If (!Match(cursor, [int](TokenKind.Comma))) Break;
+    }
+    Match(cursor, [int](TokenKind.RightParen));
+}
+
+Safe Function ExpressionNode ParsePrimary(ParseCursor cursor)
+{
+    string token = CurrentToken(cursor);
+    int kind = CurrentKind(cursor);
+    If (kind == [int](TokenKind.Number))
+    {
+        Advance(cursor);
+        Return NewExpression([int](ExpressionKind.Number), token);
+    }
+    If (kind == [int](TokenKind.String) || kind == [int](TokenKind.BadString))
+    {
+        Advance(cursor);
+        Return NewExpression([int](ExpressionKind.String), token);
+    }
+    If (kind == [int](TokenKind.Character) || kind == [int](TokenKind.BadCharacter))
+    {
+        Advance(cursor);
+        Return NewExpression([int](ExpressionKind.Character), token);
+    }
+    If (kind == [int](TokenKind.KwTrue) || kind == [int](TokenKind.KwFalse))
+    {
+        Advance(cursor);
+        Return NewExpression([int](ExpressionKind.Boolean), token);
+    }
+    If (kind == [int](TokenKind.KwNull) || kind == [int](TokenKind.KwDefault))
+    {
+        Advance(cursor);
+        Return NewExpression([int](ExpressionKind.Null), token);
+    }
+    If (kind == [int](TokenKind.Identifier) || kind == [int](TokenKind.KwThis) ||
+        kind == [int](TokenKind.KwBase))
+    {
+        Advance(cursor);
+        Return NewExpression([int](ExpressionKind.Name), token);
+    }
+    If (kind == [int](TokenKind.LeftParen))
+    {
+        Advance(cursor);
+        ExpressionNode nested = ParseExpression(cursor, 1);
+        Match(cursor, [int](TokenKind.RightParen));
+        Return nested;
+    }
+    If (kind == [int](TokenKind.LeftBracket))
+    {
+        Advance(cursor);
+        int typeStart = cursor.Position;
+        While (!IsEnd(cursor) && CurrentKind(cursor) != [int](TokenKind.RightBracket)) Advance(cursor);
+        string typeName = JoinTokenText(cursor, typeStart, cursor.Position);
+        Match(cursor, [int](TokenKind.RightBracket));
+        ExpressionNode cast = New ExpressionNode([int](ExpressionKind.Cast), typeName,
+            IO.Kinal.Compiler.Lex.Token.Line(token), IO.Kinal.Compiler.Lex.Token.Column(token));
+        If (Match(cursor, [int](TokenKind.LeftParen)))
+        {
+            cast.Left = ParseExpression(cursor, 1);
+            Match(cursor, [int](TokenKind.RightParen));
+        }
+        Return cast;
+    }
+    If (kind == [int](TokenKind.KwNew))
+    {
+        Advance(cursor);
+        int typeStart = cursor.Position;
+        While (!IsEnd(cursor) && CurrentKind(cursor) != [int](TokenKind.LeftParen)) Advance(cursor);
+        ExpressionNode value = New ExpressionNode([int](ExpressionKind.NewObject),
+            JoinTokenText(cursor, typeStart, cursor.Position),
+            IO.Kinal.Compiler.Lex.Token.Line(token), IO.Kinal.Compiler.Lex.Token.Column(token));
+        ReadArguments(cursor, value);
+        Return value;
+    }
+    Advance(cursor);
+    Return NewExpression([int](ExpressionKind.Missing), token);
+}
+
+Safe Function ExpressionNode ParsePostfix(ParseCursor cursor)
+{
+    ExpressionNode value = ParsePrimary(cursor);
+    While (!IsEnd(cursor))
+    {
+        string token = CurrentToken(cursor);
+        If (CurrentKind(cursor) == [int](TokenKind.LeftParen))
+        {
+            ExpressionNode call = New ExpressionNode([int](ExpressionKind.Call), "",
+                IO.Kinal.Compiler.Lex.Token.Line(token), IO.Kinal.Compiler.Lex.Token.Column(token));
+            call.Left = value;
+            ReadArguments(cursor, call);
+            value = call;
+            Continue;
+        }
+        If (Match(cursor, [int](TokenKind.Dot)))
+        {
+            string memberToken = CurrentToken(cursor);
+            Advance(cursor);
+            ExpressionNode member = NewExpression([int](ExpressionKind.Member), memberToken);
+            member.Left = value;
+            value = member;
+            Continue;
+        }
+        If (CurrentKind(cursor) == [int](TokenKind.LeftBracket))
+        {
+            Advance(cursor);
+            ExpressionNode index = New ExpressionNode([int](ExpressionKind.Index), "",
+                IO.Kinal.Compiler.Lex.Token.Line(token), IO.Kinal.Compiler.Lex.Token.Column(token));
+            index.Left = value;
+            index.Right = ParseExpression(cursor, 1);
+            Match(cursor, [int](TokenKind.RightBracket));
+            value = index;
+            Continue;
+        }
+        If (CurrentKind(cursor) == [int](TokenKind.PlusPlus) ||
+            CurrentKind(cursor) == [int](TokenKind.MinusMinus))
+        {
+            ExpressionNode unary = NewExpression([int](ExpressionKind.Unary), token);
+            unary.Operator = CurrentKind(cursor);
+            unary.Left = value;
+            Advance(cursor);
+            value = unary;
+            Continue;
+        }
+        Break;
+    }
+    Return value;
+}
+
+Safe Function ExpressionNode ParseUnary(ParseCursor cursor)
+{
+    int kind = CurrentKind(cursor);
+    If (kind == [int](TokenKind.Not) || kind == [int](TokenKind.Minus) ||
+        kind == [int](TokenKind.Plus) || kind == [int](TokenKind.Tilde) ||
+        kind == [int](TokenKind.Star) || kind == [int](TokenKind.Ampersand) ||
+        kind == [int](TokenKind.KwAwait))
+    {
+        string token = CurrentToken(cursor);
+        Advance(cursor);
+        ExpressionNode unary = NewExpression([int](ExpressionKind.Unary), token);
+        unary.Operator = kind;
+        unary.Left = ParseUnary(cursor);
+        Return unary;
+    }
+    Return ParsePostfix(cursor);
+}
+
+Safe Function ExpressionNode ParseExpression(ParseCursor cursor, int minimumPrecedence)
+{
+    ExpressionNode left = ParseUnary(cursor);
+    While (!IsEnd(cursor))
+    {
+        int operatorKind = CurrentKind(cursor);
+        int precedence = BinaryPrecedence(operatorKind);
+        If (precedence < minimumPrecedence || precedence == 0) Break;
+        string operatorToken = CurrentToken(cursor);
+        Advance(cursor);
+        ExpressionNode binary = NewExpression([int](ExpressionKind.Binary), operatorToken);
+        binary.Operator = operatorKind;
+        binary.Left = left;
+        int nextMinimum = IsRightAssociative(operatorKind) ? precedence : precedence + 1;
+        binary.Right = ParseExpression(cursor, nextMinimum);
+        left = binary;
+    }
+    If (minimumPrecedence <= 2 && Match(cursor, [int](TokenKind.Question)))
+    {
+        ExpressionNode conditional = New ExpressionNode([int](ExpressionKind.Conditional), "", left.Line, left.Column);
+        conditional.Left = left;
+        conditional.Right = ParseExpression(cursor, 1);
+        Match(cursor, [int](TokenKind.Colon));
+        conditional.Third = ParseExpression(cursor, 2);
+        left = conditional;
+    }
+    Return left;
+}
+
+Safe Function SyntaxAttribute ReadAttributes(ParseCursor cursor)
+{
+    SyntaxAttribute first = null;
+    SyntaxAttribute last = null;
+    While (Match(cursor, [int](TokenKind.LeftBracket)))
+    {
+        While (!IsEnd(cursor) && CurrentKind(cursor) != [int](TokenKind.RightBracket))
+        {
+            SyntaxAttribute attribute = New SyntaxAttribute(ReadQualifiedName(cursor));
+            If (Match(cursor, [int](TokenKind.LeftParen)))
+            {
+                While (!IsEnd(cursor) && CurrentKind(cursor) != [int](TokenKind.RightParen))
+                {
+                    attribute.AddArgument(ParseExpression(cursor, 1));
+                    If (!Match(cursor, [int](TokenKind.Comma))) Break;
+                }
+                Match(cursor, [int](TokenKind.RightParen));
+            }
+            If (first == null) first = attribute;
+            Else last.Next = attribute;
+            last = attribute;
+            If (!Match(cursor, [int](TokenKind.Comma))) Break;
+        }
+        Match(cursor, [int](TokenKind.RightBracket));
+    }
+    Return first;
+}
+
+Safe Function int FindDeclarationName(ParseCursor cursor, bool allowContextualName)
+{
+    int firstKind = CurrentKind(cursor);
+    bool validStart = firstKind == [int](TokenKind.Identifier) ||
+        (firstKind >= [int](TokenKind.TypeVoid) && firstKind <= [int](TokenKind.TypeAny));
+    If (!validStart) Return -1;
+    int index = cursor.Position + 1;
+    While (index < cursor.Tokens.Count())
+    {
+        int kind = KindAt(cursor, index);
+        bool contextualName = kind == [int](TokenKind.Identifier) ||
+            (allowContextualName && kind >= [int](TokenKind.KwUnit) && kind <= [int](TokenKind.TypeAny));
+        If (contextualName &&
+            (KindAt(cursor, index + 1) == [int](TokenKind.Assign) ||
+             KindAt(cursor, index + 1) == [int](TokenKind.Semicolon)) &&
+            KindAt(cursor, index - 1) != [int](TokenKind.Dot)) Return index;
+        bool typeSyntax = kind == [int](TokenKind.Identifier) ||
+            (kind >= [int](TokenKind.TypeVoid) && kind <= [int](TokenKind.TypeAny)) ||
+            kind == [int](TokenKind.Dot) || kind == [int](TokenKind.LeftBracket) ||
+            kind == [int](TokenKind.RightBracket) || kind == [int](TokenKind.Star);
+        If (!typeSyntax) Return -1;
+        index = index + 1;
+    }
+    Return -1;
+}
+
+Safe Function StatementNode ParseAstBlock(ParseCursor cursor)
+{
+    string token = CurrentToken(cursor);
+    Match(cursor, [int](TokenKind.LeftBrace));
+    StatementNode block = New StatementNode([int](StatementKind.Block),
+        IO.Kinal.Compiler.Lex.Token.Line(token), IO.Kinal.Compiler.Lex.Token.Column(token));
+    While (!IsEnd(cursor) && CurrentKind(cursor) != [int](TokenKind.RightBrace))
+        block.AddChild(ParseAstStatement(cursor));
+    Match(cursor, [int](TokenKind.RightBrace));
+    Return block;
+}
+
+Safe Function StatementNode ParseAstStatement(ParseCursor cursor)
+{
+    string token = CurrentToken(cursor);
+    int kind = CurrentKind(cursor);
+    int line = IO.Kinal.Compiler.Lex.Token.Line(token);
+    int column = IO.Kinal.Compiler.Lex.Token.Column(token);
+    If (kind == [int](TokenKind.LeftBrace)) Return ParseAstBlock(cursor);
+    If (kind == [int](TokenKind.KwReturn))
+    {
+        Advance(cursor);
+        StatementNode value = New StatementNode([int](StatementKind.Return), line, column);
+        If (CurrentKind(cursor) != [int](TokenKind.Semicolon)) value.Expression = ParseExpression(cursor, 1);
+        Match(cursor, [int](TokenKind.Semicolon));
+        Return value;
+    }
+    If (kind == [int](TokenKind.KwIf) || kind == [int](TokenKind.KwElseIf))
+    {
+        Advance(cursor);
+        StatementNode value = New StatementNode([int](StatementKind.If), line, column);
+        Match(cursor, [int](TokenKind.LeftParen));
+        value.Expression = ParseExpression(cursor, 1);
+        Match(cursor, [int](TokenKind.RightParen));
+        value.FirstChild = ParseAstStatement(cursor);
+        If (Match(cursor, [int](TokenKind.KwElse)))
+        {
+            value.ElseBranch = ParseAstStatement(cursor);
+        }
+        ElseIf (CurrentKind(cursor) == [int](TokenKind.KwElseIf)) value.ElseBranch = ParseAstStatement(cursor);
+        Return value;
+    }
+    If (kind == [int](TokenKind.KwWhile))
+    {
+        Advance(cursor);
+        StatementNode value = New StatementNode([int](StatementKind.While), line, column);
+        Match(cursor, [int](TokenKind.LeftParen));
+        value.Expression = ParseExpression(cursor, 1);
+        Match(cursor, [int](TokenKind.RightParen));
+        value.FirstChild = ParseAstStatement(cursor);
+        Return value;
+    }
+    If (kind == [int](TokenKind.KwBreak) || kind == [int](TokenKind.KwContinue))
+    {
+        Advance(cursor);
+        Match(cursor, [int](TokenKind.Semicolon));
+        Return New StatementNode(kind == [int](TokenKind.KwBreak) ?
+            [int](StatementKind.Break) : [int](StatementKind.Continue), line, column);
+    }
+    int declarationName = FindDeclarationName(cursor, false);
+    If (declarationName > cursor.Position)
+    {
+        StatementNode declaration = New StatementNode([int](StatementKind.Variable), line, column);
+        declaration.TypeName = JoinTokenText(cursor, cursor.Position, declarationName);
+        declaration.Name = IO.Kinal.Compiler.Lex.Token.Text(RawAt(cursor, declarationName));
+        cursor.Position = declarationName + 1;
+        If (Match(cursor, [int](TokenKind.Assign))) declaration.Expression = ParseExpression(cursor, 1);
+        Match(cursor, [int](TokenKind.Semicolon));
+        Return declaration;
+    }
+    StatementNode expression = New StatementNode([int](StatementKind.Expression), line, column);
+    expression.Expression = ParseExpression(cursor, 1);
+    Match(cursor, [int](TokenKind.Semicolon));
+    Return expression;
+}
+
+Safe Function int AccessFromModifier(int kind)
+{
+    If (kind == [int](TokenKind.KwPublic)) Return 1;
+    If (kind == [int](TokenKind.KwPrivate)) Return 2;
+    If (kind == [int](TokenKind.KwProtected)) Return 3;
+    If (kind == [int](TokenKind.KwInternal)) Return 4;
+    Return 0;
+}
+
+Safe Function FunctionDecl ReadFunctionNode(ParseCursor cursor, bool constructor,
+                                             bool isStatic, bool isAsync, bool isExtern, int safety)
+{
+    string declarationToken = CurrentToken(cursor);
+    If (constructor)
+    {
+        Advance(cursor);
+        FunctionDecl value = New FunctionDecl("Constructor", "void",
+            IO.Kinal.Compiler.Lex.Token.Line(declarationToken),
+            IO.Kinal.Compiler.Lex.Token.Column(declarationToken));
+        value.IsConstructor = true;
+        value.IsStatic = isStatic;
+        value.IsAsync = isAsync;
+        value.IsExtern = isExtern;
+        value.Safety = safety;
+        ReadParameters(cursor, value);
+        If (!Match(cursor, [int](TokenKind.Semicolon))) value.Body = ParseAstBlock(cursor);
+        Return value;
+    }
+
+    Advance(cursor);
+    int returnStart = cursor.Position;
+    int nameIndex = returnStart;
+    While (KindAt(cursor, nameIndex) != [int](TokenKind.Eof))
+    {
+        If (KindAt(cursor, nameIndex) == [int](TokenKind.Identifier) &&
+            KindAt(cursor, nameIndex + 1) == [int](TokenKind.LeftParen)) Break;
+        nameIndex = nameIndex + 1;
+    }
+    string nameToken = RawAt(cursor, nameIndex);
+    FunctionDecl value = New FunctionDecl(
+        IO.Kinal.Compiler.Lex.Token.Text(nameToken), JoinTokenText(cursor, returnStart, nameIndex),
+        IO.Kinal.Compiler.Lex.Token.Line(nameToken), IO.Kinal.Compiler.Lex.Token.Column(nameToken));
+    value.IsStatic = isStatic;
+    value.IsAsync = isAsync;
+    value.IsExtern = isExtern;
+    value.Safety = safety;
+    cursor.Position = nameIndex + 1;
+    ReadParameters(cursor, value);
+    If (Match(cursor, [int](TokenKind.KwBy))) ReadQualifiedName(cursor);
+    If (!Match(cursor, [int](TokenKind.Semicolon))) value.Body = ParseAstBlock(cursor);
+    Return value;
+}
+
+Safe Function void ReadTypeMembers(ParseCursor cursor, TypeDecl type)
+{
+    If (type.Kind == [int](TokenKind.KwEnum))
+    {
+        If (!Match(cursor, [int](TokenKind.LeftBrace))) Return;
+        int ordinal = 0;
+        While (!IsEnd(cursor) && CurrentKind(cursor) != [int](TokenKind.RightBrace))
+        {
+            string nameToken = CurrentToken(cursor);
+            Advance(cursor);
+            EnumMemberDecl member = New EnumMemberDecl(
+                IO.Kinal.Compiler.Lex.Token.Text(nameToken), ordinal);
+            If (Match(cursor, [int](TokenKind.Assign))) member.Value = ParseExpression(cursor, 1);
+            type.AddEnumMember(member);
+            ordinal = ordinal + 1;
+            If (!Match(cursor, [int](TokenKind.Comma))) Break;
+        }
+        Match(cursor, [int](TokenKind.RightBrace));
+        Return;
+    }
+    If (!Match(cursor, [int](TokenKind.LeftBrace))) Return;
+    While (!IsEnd(cursor) && CurrentKind(cursor) != [int](TokenKind.RightBrace))
+    {
+        SyntaxAttribute attributes = ReadAttributes(cursor);
+        int access = 0;
+        bool isStatic = false;
+        bool isAsync = false;
+        bool isExtern = false;
+        int safety = 0;
+        bool readingModifiers = true;
+        While (readingModifiers)
+        {
+            int modifier = CurrentKind(cursor);
+            int modifierAccess = AccessFromModifier(modifier);
+            If (modifierAccess != 0)
+            {
+                access = modifierAccess;
+                Advance(cursor);
+            }
+            ElseIf (modifier == [int](TokenKind.KwStatic))
+            {
+                isStatic = true;
+                Advance(cursor);
+            }
+            ElseIf (modifier == [int](TokenKind.KwAsync))
+            {
+                isAsync = true;
+                Advance(cursor);
+            }
+            ElseIf (modifier == [int](TokenKind.KwExtern))
+            {
+                isExtern = true;
+                Advance(cursor);
+            }
+            ElseIf (modifier == [int](TokenKind.KwSafe))
+            {
+                safety = 1;
+                Advance(cursor);
+            }
+            ElseIf (modifier == [int](TokenKind.KwTrusted))
+            {
+                safety = 2;
+                Advance(cursor);
+            }
+            ElseIf (modifier == [int](TokenKind.KwUnsafe))
+            {
+                safety = 3;
+                Advance(cursor);
+            }
+            Else
+            {
+                readingModifiers = false;
+            }
+        }
+
+        If (CurrentKind(cursor) == [int](TokenKind.KwConstructor))
+        {
+            FunctionDecl constructor = ReadFunctionNode(cursor, true, isStatic, isAsync, isExtern, safety);
+            constructor.FirstAttribute = attributes;
+            type.AddMethod(constructor);
+            Continue;
+        }
+        If (CurrentKind(cursor) == [int](TokenKind.KwFunction))
+        {
+            FunctionDecl method = ReadFunctionNode(cursor, false, isStatic, isAsync, isExtern, safety);
+            method.FirstAttribute = attributes;
+            type.AddMethod(method);
+            Continue;
+        }
+
+        int fieldStart = cursor.Position;
+        int fieldName = FindDeclarationName(cursor, true);
+        If (fieldName > fieldStart)
+        {
+            string nameToken = RawAt(cursor, fieldName);
+            FieldDecl field = New FieldDecl(IO.Kinal.Compiler.Lex.Token.Text(nameToken),
+                JoinTokenText(cursor, fieldStart, fieldName),
+                IO.Kinal.Compiler.Lex.Token.Line(nameToken), IO.Kinal.Compiler.Lex.Token.Column(nameToken));
+            field.Access = access;
+            field.IsStatic = isStatic;
+            field.FirstAttribute = attributes;
+            cursor.Position = fieldName + 1;
+            If (Match(cursor, [int](TokenKind.Assign))) field.Initializer = ParseExpression(cursor, 1);
+            Match(cursor, [int](TokenKind.Semicolon));
+            type.AddField(field);
+            Continue;
+        }
+
+        Advance(cursor);
+    }
+    Match(cursor, [int](TokenKind.RightBrace));
+}
+
+Safe Function void ReadParameters(ParseCursor cursor, FunctionDecl function)
+{
+    If (!Match(cursor, [int](TokenKind.LeftParen))) Return;
+    While (!IsEnd(cursor) && CurrentKind(cursor) != [int](TokenKind.RightParen))
+    {
+        int start = cursor.Position;
+        int comma = start;
+        While (KindAt(cursor, comma) != [int](TokenKind.Comma) &&
+               KindAt(cursor, comma) != [int](TokenKind.RightParen) &&
+               KindAt(cursor, comma) != [int](TokenKind.Eof)) comma = comma + 1;
+        int nameIndex = comma - 1;
+        If (nameIndex >= start)
+        {
+            string name = IO.Kinal.Compiler.Lex.Token.Text(RawAt(cursor, nameIndex));
+            string typeName = JoinTokenText(cursor, start, nameIndex);
+            function.AddParameter(New ParameterDecl(name, typeName));
+        }
+        cursor.Position = comma;
+        If (!Match(cursor, [int](TokenKind.Comma))) Break;
+    }
+    Match(cursor, [int](TokenKind.RightParen));
+}
+
+Safe Function SyntaxTree Build(SourceFile source, list tokens, list diagnostics)
+{
+    If (!Validate(source, tokens, diagnostics)) Return null;
+    ParseCursor cursor = New ParseCursor(tokens);
+    Advance(cursor);
+    string unitName = ReadQualifiedName(cursor);
+    Match(cursor, [int](TokenKind.Semicolon));
+    SyntaxTree tree = New SyntaxTree(source, unitName);
+
+    While (!IsEnd(cursor))
+    {
+        SyntaxAttribute attributes = ReadAttributes(cursor);
+        int kind = CurrentKind(cursor);
+        If (kind == [int](TokenKind.KwGet))
+        {
+            string location = CurrentToken(cursor);
+            Advance(cursor);
+            string name = ReadQualifiedName(cursor);
+            string target = name;
+            If (Match(cursor, [int](TokenKind.KwBy))) target = ReadQualifiedName(cursor);
+            Match(cursor, [int](TokenKind.Semicolon));
+            tree.AddImport(New ImportDecl(name, target,
+                IO.Kinal.Compiler.Lex.Token.Line(location), IO.Kinal.Compiler.Lex.Token.Column(location)));
+            Continue;
+        }
+
+        bool isStatic = false;
+        bool isAsync = false;
+        bool isExtern = false;
+        int safety = 0;
+        While (IsFunctionModifier(CurrentKind(cursor)))
+        {
+            int modifier = CurrentKind(cursor);
+            If (modifier == [int](TokenKind.KwStatic)) isStatic = true;
+            If (modifier == [int](TokenKind.KwAsync)) isAsync = true;
+            If (modifier == [int](TokenKind.KwExtern)) isExtern = true;
+            If (modifier == [int](TokenKind.KwSafe)) safety = 1;
+            If (modifier == [int](TokenKind.KwTrusted)) safety = 2;
+            If (modifier == [int](TokenKind.KwUnsafe)) safety = 3;
+            Advance(cursor);
+        }
+        If (CurrentKind(cursor) == [int](TokenKind.KwFunction))
+        {
+            FunctionDecl function = ReadFunctionNode(cursor, false, isStatic, isAsync, isExtern, safety);
+            function.FirstAttribute = attributes;
+            tree.AddFunction(function);
+            Continue;
+        }
+
+        If (!IsTypeStart(CurrentKind(cursor)))
+        {
+            // Validation already reported structural errors. Keep AST construction
+            // forward-progressing if an expression parser leaves a recovery token.
+            Advance(cursor);
+            Continue;
+        }
+
+        While (CurrentKind(cursor) == [int](TokenKind.KwPublic) ||
+               CurrentKind(cursor) == [int](TokenKind.KwPrivate) ||
+               CurrentKind(cursor) == [int](TokenKind.KwProtected) ||
+               CurrentKind(cursor) == [int](TokenKind.KwInternal) ||
+               CurrentKind(cursor) == [int](TokenKind.KwAbstract) ||
+               CurrentKind(cursor) == [int](TokenKind.KwSealed)) Advance(cursor);
+        int typeKind = CurrentKind(cursor);
+        Advance(cursor);
+        string typeNameToken = CurrentToken(cursor);
+        string typeName = IO.Kinal.Compiler.Lex.Token.Text(typeNameToken);
+        Advance(cursor);
+        While (!IsEnd(cursor) && CurrentKind(cursor) != [int](TokenKind.LeftBrace)) Advance(cursor);
+        TypeDecl type = New TypeDecl(typeKind, typeName,
+            IO.Kinal.Compiler.Lex.Token.Line(typeNameToken), IO.Kinal.Compiler.Lex.Token.Column(typeNameToken));
+        type.FirstAttribute = attributes;
+        ReadTypeMembers(cursor, type);
+        tree.AddType(type);
+    }
+    Return tree;
+}

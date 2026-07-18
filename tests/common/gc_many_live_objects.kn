@@ -1,0 +1,38 @@
+Unit Tests.GcManyLiveObjects;
+
+Get IO.Console;
+Get IO.GC;
+
+Class ChainNode
+{
+    Public ChainNode Next;
+    Public string Text;
+
+    Public Safe Constructor(ChainNode next, string text)
+    {
+        This.Next = next;
+        This.Text = text;
+    }
+}
+
+Static Function int Main()
+{
+    ChainNode head = null;
+    int i = 0;
+    While (i < 100000)
+    {
+        head = New ChainNode(head, "node-" + [string](i));
+        i = i + 1;
+    }
+    IO.GC.Collect();
+
+    int count = 0;
+    ChainNode current = head;
+    While (current != null)
+    {
+        count = count + 1;
+        current = current.Next;
+    }
+    IO.Console.PrintLine([string](count));
+    Return 0;
+}

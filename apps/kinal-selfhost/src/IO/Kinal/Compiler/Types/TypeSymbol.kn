@@ -1,0 +1,48 @@
+Unit IO.Kinal.Compiler.Types.TypeSymbol;
+
+Get IO.Kinal.Compiler.Syntax.SyntaxTree;
+
+Enum TypeKind By int
+{
+    Unknown = 0,
+    VoidType,
+    BoolType,
+    IntegerType,
+    FloatType,
+    StringType,
+    AnyType,
+    ListType,
+    DictType,
+    SetType,
+    ArrayType,
+    PointerType,
+    NamedType,
+    NamespaceType,
+    NullType
+}
+
+Class TypeSymbol
+{
+    Public int Kind;
+    Public string Name;
+    Public string UnitName;
+    Public TypeSymbol ElementType;
+    Public TypeDecl Declaration;
+    Public TypeSymbol Next;
+
+    Public Safe Constructor(int kind, string name)
+    {
+        This.Kind = kind;
+        This.Name = name;
+        This.UnitName = "";
+        This.ElementType = null;
+        This.Declaration = null;
+        This.Next = null;
+    }
+
+    Public Safe Function string QualifiedName()
+    {
+        If (This.UnitName == "") Return This.Name;
+        Return This.UnitName + "." + This.Name;
+    }
+}
