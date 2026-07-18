@@ -113,14 +113,19 @@ Class CompileSession
     {
         If (This.Project == null || This.Profile == null) Return false;
         string entryPath = This.Project.ResolvePath(This.Profile.Entry);
+        bool entryFound = false;
         int i = 0;
         While (i < This.SourcePaths.Count())
         {
             CompilationUnit unit = This.ParseFile([string](This.SourcePaths.Fetch(i)));
-            If (unit != null && unit.Source.Path == entryPath) This.EntryUnitName = unit.Syntax.UnitName;
+            If (unit != null && unit.Source.Path == entryPath)
+            {
+                This.EntryUnitName = unit.Syntax.UnitName;
+                entryFound = true;
+            }
             i = i + 1;
         }
-        If (IO.Text.IsEmpty(This.EntryUnitName))
+        If (!entryFound)
         {
             This.ReportProject("Entry source not found", entryPath);
         }

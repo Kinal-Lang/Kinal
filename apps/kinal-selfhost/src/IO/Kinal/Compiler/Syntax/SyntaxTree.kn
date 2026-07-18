@@ -71,6 +71,7 @@ Class FieldDecl
     Public string TypeName;
     Public int Access;
     Public bool IsStatic;
+    Public bool IsConst;
     Public int Line;
     Public int Column;
     Public ExpressionNode Initializer;
@@ -83,6 +84,7 @@ Class FieldDecl
         This.TypeName = typeName;
         This.Access = 0;
         This.IsStatic = false;
+        This.IsConst = false;
         This.Line = line;
         This.Column = column;
         This.Initializer = null;
@@ -219,6 +221,7 @@ Class TypeDecl
 {
     Public int Kind;
     Public string Name;
+    Public bool IsStatic;
     Public int Line;
     Public int Column;
     Public FieldDecl FirstField;
@@ -234,6 +237,7 @@ Class TypeDecl
     {
         This.Kind = kind;
         This.Name = name;
+        This.IsStatic = false;
         This.Line = line;
         This.Column = column;
         This.FirstField = null;
@@ -319,6 +323,8 @@ Class SyntaxTree
     Public string UnitName;
     Public ImportDecl FirstImport;
     Public ImportDecl LastImport;
+    Public FieldDecl FirstGlobal;
+    Public FieldDecl LastGlobal;
     Public FunctionDecl FirstFunction;
     Public FunctionDecl LastFunction;
     Public TypeDecl FirstType;
@@ -330,10 +336,26 @@ Class SyntaxTree
         This.UnitName = unitName;
         This.FirstImport = null;
         This.LastImport = null;
+        This.FirstGlobal = null;
+        This.LastGlobal = null;
         This.FirstFunction = null;
         This.LastFunction = null;
         This.FirstType = null;
         This.LastType = null;
+    }
+
+    Public Safe Function void AddGlobal(FieldDecl value)
+    {
+        If (This.FirstGlobal == null)
+        {
+            This.FirstGlobal = value;
+            This.LastGlobal = value;
+        }
+        Else
+        {
+            This.LastGlobal.Next = value;
+            This.LastGlobal = value;
+        }
     }
 
     Public Safe Function void AddImport(ImportDecl value)
@@ -402,6 +424,18 @@ Class SyntaxTree
         Return count;
     }
 
+    Public Safe Function int GlobalCount()
+    {
+        int count = 0;
+        FieldDecl current = This.FirstGlobal;
+        While (current != null)
+        {
+            count = count + 1;
+            current = current.Next;
+        }
+        Return count;
+    }
+
     Public Safe Function int TypeCount()
     {
         int count = 0;
@@ -448,6 +482,6 @@ Class SyntaxTree
                "types=" + [string](This.TypeCount()) + "\n" +
                "fields=" + [string](This.FieldCount()) + "\n" +
                "methods=" + [string](This.MethodCount()) + "\n" +
-               "globals=0";
+               "globals=" + [string](This.GlobalCount());
     }
 }

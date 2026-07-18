@@ -29,10 +29,12 @@ Class SemanticCompilation
     Public CompileSession Session;
     Public UnitSymbol FirstUnit;
     Public TypeSymbol FirstType;
+    Public GlobalSymbol FirstGlobal;
     Public FunctionSymbol FirstFunction;
     Public HirModule FirstHirModule;
     Public int ImportCount;
     Public int FunctionCount;
+    Public int GlobalCount;
     Public int GenericTemplateCount;
     Public int GenericInstanceCount;
     Public int DeclarationTypeCount;
@@ -46,10 +48,12 @@ Class SemanticCompilation
         This.Session = session;
         This.FirstUnit = null;
         This.FirstType = null;
+        This.FirstGlobal = null;
         This.FirstFunction = null;
         This.FirstHirModule = null;
         This.ImportCount = 0;
         This.FunctionCount = 0;
+        This.GlobalCount = 0;
         This.GenericTemplateCount = 0;
         This.GenericInstanceCount = 0;
         This.DeclarationTypeCount = 0;
@@ -144,6 +148,36 @@ Class SemanticCompilation
                name == "IO.Type" || name == "IO.Memory" || name == "IO.Volatile" ||
                name == "IO.Meta" || name == "IO.Time" ||
                IO.Text.StartsWith(name, "IO.Type.");
+    }
+
+    Public Safe Function bool IsRuntimeImport(string name)
+    {
+        If (This.IsRuntimeUnit(name)) Return true;
+        Return IO.Text.StartsWith(name, "IO.Console.") ||
+               IO.Text.StartsWith(name, "IO.File.") ||
+               IO.Text.StartsWith(name, "IO.Directory.") ||
+               IO.Text.StartsWith(name, "IO.Path.") ||
+               IO.Text.StartsWith(name, "IO.Text.") ||
+               IO.Text.StartsWith(name, "IO.Collection.") ||
+               IO.Text.StartsWith(name, "IO.Error.") ||
+               IO.Text.StartsWith(name, "IO.GC.") ||
+               IO.Text.StartsWith(name, "IO.System.") ||
+               IO.Text.StartsWith(name, "IO.Memory.") ||
+               IO.Text.StartsWith(name, "IO.Volatile.") ||
+               IO.Text.StartsWith(name, "IO.Meta.") ||
+               IO.Text.StartsWith(name, "IO.Time.");
+    }
+
+    Public Safe Function bool IsKnownImport(string name)
+    {
+        If (This.FindUnit(name) != null || This.IsRuntimeImport(name)) Return true;
+        UnitSymbol unit = This.FirstUnit;
+        While (unit != null)
+        {
+            If (IO.Text.StartsWith(name, unit.Name + ".")) Return true;
+            unit = unit.Next;
+        }
+        Return false;
     }
 
     Public Safe Function void Report(SyntaxTree syntax, string title, string detail, int line, int column)
@@ -415,6 +449,103 @@ Class SemanticCompilation
         }
     }
 
+    Public Safe Function void AddGlobalSymbol(GlobalSymbol global)
+    {
+        If (This.FirstGlobal == null)
+        {
+            This.FirstGlobal = global;
+            Return;
+        }
+        GlobalSymbol current = This.FirstGlobal;
+        While (current.Next != null) current = current.Next;
+        current.Next = global;
+    }
+
+    Public Safe Function GlobalSymbol FindGlobal(string unitName, string name)
+    {
+        GlobalSymbol current = This.FirstGlobal;
+        While (current != null)
+        {
+            If (current.UnitName == unitName && current.Declaration.Name == name) Return current;
+            current = current.Next;
+        }
+        Return null;
+    }
+
+    Public Safe Function GlobalSymbol FindStaticGlobal(TypeSymbol owner, string name)
+    {
+        If (owner == null) Return null;
+        Return This.FindGlobal(owner.QualifiedName(), name);
+    }
+
+    Public Safe Function void IndexGlobals()
+    {
+        UnitSymbol unit = This.FirstUnit;
+        While (unit != null)
+        {
+            FieldDecl declaration = unit.Syntax.FirstGlobal;
+            While (declaration != null)
+            {
+                If (This.FindGlobal(unit.Name, declaration.Name) != null)
+                {
+                    This.Report(unit.Syntax, "Duplicate global", declaration.Name,
+                        declaration.Line, declaration.Column);
+                }
+                Else
+                {
+                    This.DeclarationTypeCount = This.DeclarationTypeCount + 1;
+                    TypeSymbol type = This.ResolveType(unit.Syntax, declaration.TypeName);
+                    If (type == null)
+                    {
+                        This.UnresolvedTypeCount = This.UnresolvedTypeCount + 1;
+                        This.Report(unit.Syntax, "Unknown type", This.CanonicalTypeName(declaration.TypeName),
+                            declaration.Line, declaration.Column);
+                        type = This.Primitive("any");
+                    }
+                    This.AddGlobalSymbol(New GlobalSymbol(unit.Name, declaration, type));
+                    This.GlobalCount = This.GlobalCount + 1;
+                }
+                declaration = declaration.Next;
+            }
+            TypeDecl typeDeclaration = unit.Syntax.FirstType;
+            While (typeDeclaration != null)
+            {
+                TypeSymbol owner = This.FindExactType(unit.Name + "." + typeDeclaration.Name);
+                FieldDecl field = typeDeclaration.FirstField;
+                While (field != null)
+                {
+                    If (field.IsStatic)
+                    {
+                        string ownerName = owner == null ?
+                            unit.Name + "." + typeDeclaration.Name : owner.QualifiedName();
+                        If (This.FindGlobal(ownerName, field.Name) != null)
+                        {
+                            This.Report(unit.Syntax, "Duplicate static field", field.Name,
+                                field.Line, field.Column);
+                        }
+                        Else
+                        {
+                            This.DeclarationTypeCount = This.DeclarationTypeCount + 1;
+                            TypeSymbol fieldType = This.ResolveType(unit.Syntax, field.TypeName);
+                            If (fieldType == null)
+                            {
+                                This.UnresolvedTypeCount = This.UnresolvedTypeCount + 1;
+                                This.Report(unit.Syntax, "Unknown type", This.CanonicalTypeName(field.TypeName),
+                                    field.Line, field.Column);
+                                fieldType = This.Primitive("any");
+                            }
+                            This.AddGlobalSymbol(New GlobalSymbol(ownerName, field, fieldType));
+                            This.GlobalCount = This.GlobalCount + 1;
+                        }
+                    }
+                    field = field.Next;
+                }
+                typeDeclaration = typeDeclaration.Next;
+            }
+            unit = unit.Next;
+        }
+    }
+
     Public Safe Function void CheckUnit(UnitSymbol unit)
     {
         SyntaxTree syntax = unit.Syntax;
@@ -422,7 +553,7 @@ Class SemanticCompilation
         While (import != null)
         {
             This.ImportCount = This.ImportCount + 1;
-            If (This.FindUnit(import.Target) == null && !This.IsRuntimeUnit(import.Target))
+            If (!This.IsKnownImport(import.Target))
             {
                 This.UnresolvedImportCount = This.UnresolvedImportCount + 1;
                 This.Report(syntax, "Unknown imported unit", import.Target, import.Line, import.Column);
@@ -436,13 +567,19 @@ Class SemanticCompilation
             If (function.FirstTypeParameter == null) This.CheckFunction(syntax, function);
             function = function.Next;
         }
+        FieldDecl global = syntax.FirstGlobal;
+        While (global != null)
+        {
+            This.CheckExpression(syntax, global.Initializer);
+            global = global.Next;
+        }
         TypeDecl type = syntax.FirstType;
         While (type != null)
         {
             FieldDecl field = type.FirstField;
             While (field != null)
             {
-                This.CheckType(syntax, field.TypeName, field.Line, field.Column);
+                If (!field.IsStatic) This.CheckType(syntax, field.TypeName, field.Line, field.Column);
                 This.CheckExpression(syntax, field.Initializer);
                 field = field.Next;
             }
@@ -701,6 +838,28 @@ Class SemanticCompilation
             unit = unit.Next;
         }
         Return false;
+    }
+
+    Public Safe Function TypeSymbol FindEnumMemberType(string path)
+    {
+        TypeSymbol type = This.FirstType;
+        While (type != null)
+        {
+            If (type.Declaration != null && type.Declaration.Kind == [int](TokenKind.KwEnum) &&
+                IO.Text.StartsWith(path, type.QualifiedName() + "."))
+            {
+                string memberName = IO.Text.Slice(path, IO.Text.Length(type.QualifiedName()) + 1,
+                    IO.Text.Length(path) - IO.Text.Length(type.QualifiedName()) - 1);
+                EnumMemberDecl member = type.Declaration.FirstEnumMember;
+                While (member != null)
+                {
+                    If (member.Name == memberName) Return type;
+                    member = member.Next;
+                }
+            }
+            type = type.Next;
+        }
+        Return null;
     }
 
     Public Safe Function TypeSymbol RuntimeCallType(string target, TypeSymbol receiver)
@@ -1001,7 +1160,28 @@ Class SemanticCompilation
                 local.Symbol = value;
                 Return local;
             }
-            If (expression.Text == "This" && function.OwnerType != null)
+            GlobalSymbol global = This.FindGlobal(syntax.UnitName, expression.Text);
+            If (global != null)
+            {
+                HirExpression globalValue = New HirExpression(
+                    [int](HirExpressionKind.Global), expression, global.Value.Type);
+                globalValue.Target = global.QualifiedName();
+                globalValue.Symbol = global.Value;
+                Return globalValue;
+            }
+            If (function != null)
+            {
+                global = This.FindStaticGlobal(function.OwnerType, expression.Text);
+                If (global != null)
+                {
+                    HirExpression staticValue = New HirExpression(
+                        [int](HirExpressionKind.Global), expression, global.Value.Type);
+                    staticValue.Target = global.QualifiedName();
+                    staticValue.Symbol = global.Value;
+                    Return staticValue;
+                }
+            }
+            If (expression.Text == "This" && function != null && function.OwnerType != null)
             {
                 HirExpression thisValue = New HirExpression([int](HirExpressionKind.Local), expression, function.OwnerType);
                 thisValue.Target = "This";
@@ -1018,6 +1198,14 @@ Class SemanticCompilation
                         [int](HirExpressionKind.Namespace), expression, importedType);
                     imported.Target = importedPath;
                     Return imported;
+                }
+                importedType = This.FindEnumMemberType(importedPath);
+                If (importedType != null)
+                {
+                    HirExpression importedValue = New HirExpression(
+                        [int](HirExpressionKind.Constant), expression, importedType);
+                    importedValue.Target = importedPath;
+                    Return importedValue;
                 }
                 TypeSymbol importedNamespace = New TypeSymbol(
                     [int](TypeKind.NamespaceType), importedPath);
@@ -1303,6 +1491,7 @@ Class SemanticCompilation
     Public Safe Function bool Analyze()
     {
         This.IndexDeclarations();
+        This.IndexGlobals();
         This.IndexFunctions();
         UnitSymbol unit = This.FirstUnit;
         While (unit != null)
@@ -1348,6 +1537,7 @@ Class SemanticCompilation
         Return "format=kinal-selfhost-sema-v1\n" +
                "units=" + [string](This.Session.UnitCount()) + "\n" +
                "imports=" + [string](This.ImportCount) + "\n" +
+               "globals=" + [string](This.GlobalCount) + "\n" +
                "types=" + [string](This.NamedTypeCount()) + "\n" +
                "functions=" + [string](This.FunctionCount) + "\n" +
                "generic_templates=" + [string](This.GenericTemplateCount) + "\n" +

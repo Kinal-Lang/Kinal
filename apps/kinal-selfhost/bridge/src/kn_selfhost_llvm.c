@@ -475,6 +475,20 @@ void *kn_sh_llvm_const_undef(void *type)
     return type ? LLVMGetUndef((LLVMTypeRef)type) : 0;
 }
 
+void *kn_sh_llvm_add_global(void *module_handle, void *type, const char *name)
+{
+    KnShLlvmModule *state = module_state(module_handle);
+    return state && type ? LLVMAddGlobal(state->module, (LLVMTypeRef)type,
+        safe_name(name)) : 0;
+}
+
+int kn_sh_llvm_set_initializer(void *global, void *value)
+{
+    if (!global || !value) return 0;
+    LLVMSetInitializer((LLVMValueRef)global, (LLVMValueRef)value);
+    return 1;
+}
+
 void *kn_sh_llvm_build_global_string(void *module_handle, const char *text, const char *name)
 {
     KnShLlvmModule *state = module_state(module_handle);

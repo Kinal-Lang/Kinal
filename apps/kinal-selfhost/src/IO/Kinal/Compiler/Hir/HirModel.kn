@@ -9,6 +9,7 @@ Enum HirExpressionKind By int
     Invalid = 0,
     Constant,
     Local,
+    Global,
     Namespace,
     Field,
     Unary,

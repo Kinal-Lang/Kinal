@@ -1,0 +1,15 @@
+Unit Tests.Selfhost.SelectiveImports;
+
+Get IO.Console
+{
+    PrintLine, Print
+};
+Get Println By IO.Console.PrintLine;
+Get IO.Console.PrintLine;
+
+Safe Static Function int Main()
+{
+    IO.Console.Print("selective-");
+    Println("ok");
+    Return 0;
+}

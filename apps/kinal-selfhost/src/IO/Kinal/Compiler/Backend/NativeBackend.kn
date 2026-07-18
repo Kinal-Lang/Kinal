@@ -18,6 +18,7 @@ Class NativeBackend
     Public SemanticCompilation Semantics;
     Public LlvmModule Module;
     Public LlvmTypeBinding FirstType;
+    Public LlvmGlobalBinding FirstGlobal;
     Public LlvmFunctionBinding FirstFunction;
     Public LlvmRuntimeFunction FirstRuntime;
     Public byte* AnyType;
@@ -29,6 +30,7 @@ Class NativeBackend
         This.Semantics = semantics;
         This.Module = New LlvmModule("kinal.selfhost.output");
         This.FirstType = null;
+        This.FirstGlobal = null;
         This.FirstFunction = null;
         This.FirstRuntime = null;
         This.AnyType = null;
@@ -294,6 +296,75 @@ Class NativeBackend
     {
         binding.Next = This.FirstFunction;
         This.FirstFunction = binding;
+    }
+
+    Public Safe Function void AddGlobalBinding(LlvmGlobalBinding binding)
+    {
+        binding.Next = This.FirstGlobal;
+        This.FirstGlobal = binding;
+    }
+
+    Public Safe Function LlvmGlobalBinding FindGlobalBinding(ValueSymbol symbol)
+    {
+        LlvmGlobalBinding current = This.FirstGlobal;
+        While (current != null)
+        {
+            If (current.Symbol.Value == symbol) Return current;
+            current = current.Next;
+        }
+        Return null;
+    }
+
+    Public Trusted Function byte* ConstantGlobalInitializer(GlobalSymbol symbol)
+    {
+        ExpressionNode expression = symbol.Declaration.Initializer;
+        byte* type = This.TypeHandle(symbol.Value.Type);
+        If (expression == null || expression.Kind == [int](ExpressionKind.Null))
+            Return This.Module.ConstNull(type);
+        If (expression.Kind == [int](ExpressionKind.Number))
+        {
+            If (symbol.Value.Type.Kind == [int](TypeKind.FloatType))
+                Return This.Module.ConstFloat(type, [float](expression.Text));
+            Return This.Module.ConstI64(type, [i64]([int](expression.Text)), false);
+        }
+        If (expression.Kind == [int](ExpressionKind.Boolean))
+            Return This.Module.ConstInt(type,
+                expression.Text == "true" || expression.Text == "True" ? 1 : 0);
+        If (expression.Kind == [int](ExpressionKind.Character))
+            Return This.Module.ConstInt(type, This.DecodeCharacter(expression.Text));
+        If (expression.Kind == [int](ExpressionKind.String) ||
+            expression.Kind == [int](ExpressionKind.FormattedString))
+            Return This.Module.GlobalString(
+                expression.Kind == [int](ExpressionKind.FormattedString) ?
+                    This.ExpandFormattedString(expression.Text) : This.DecodeString(expression.Text),
+                This.Unique("global_text"));
+        If (expression.Kind == [int](ExpressionKind.Unary) &&
+            expression.Operator == [int](TokenKind.Minus) && expression.Left != null &&
+            expression.Left.Kind == [int](ExpressionKind.Number))
+        {
+            If (symbol.Value.Type.Kind == [int](TypeKind.FloatType))
+                Return This.Module.ConstFloat(type, -[float](expression.Left.Text));
+            Return This.Module.ConstI64(type, -[i64]([int](expression.Left.Text)), true);
+        }
+        Return null;
+    }
+
+    Public Trusted Function void DeclareGlobals()
+    {
+        GlobalSymbol symbol = This.Semantics.FirstGlobal;
+        While (symbol != null)
+        {
+            byte* type = This.TypeHandle(symbol.Value.Type);
+            byte* address = This.Module.AddGlobal(type,
+                "__kn_sh_global_" + This.Sanitize(symbol.QualifiedName()));
+            byte* initializer = This.ConstantGlobalInitializer(symbol);
+            If (initializer == null)
+                This.Fail("unsupported global initializer: " + symbol.QualifiedName());
+            ElseIf (address == null || !This.Module.SetInitializer(address, initializer))
+                This.Fail("failed to declare global: " + symbol.QualifiedName());
+            Else This.AddGlobalBinding(New LlvmGlobalBinding(symbol, address));
+            symbol = symbol.Next;
+        }
     }
 
     Public Safe Function LlvmFunctionBinding FindFunctionBinding(FunctionSymbol symbol)
@@ -807,6 +878,11 @@ Class NativeBackend
         {
             LlvmVariable variable = context.FindVariable(expression.Symbol, expression.Target);
             Return variable == null ? null : variable.Address;
+        }
+        If (expression.Kind == [int](HirExpressionKind.Global))
+        {
+            LlvmGlobalBinding global = This.FindGlobalBinding(expression.Symbol);
+            Return global == null ? null : global.Address;
         }
         If (expression.Kind == [int](HirExpressionKind.Field))
         {
@@ -2081,7 +2157,8 @@ Class NativeBackend
                     expression.Type);
             Return This.DefaultValue(expression.Type);
         }
-        If (expression.Kind == [int](HirExpressionKind.Local))
+        If (expression.Kind == [int](HirExpressionKind.Local) ||
+            expression.Kind == [int](HirExpressionKind.Global))
         {
             byte* address = This.EmitAddress(context, expression);
             If (address == null)
@@ -2513,6 +2590,7 @@ Class NativeBackend
         }
         This.PrepareTypes();
         This.DeclareRuntime();
+        This.DeclareGlobals();
         This.DeclareFunctions();
         This.EmitFunctions();
         This.EmitEntryPoint();

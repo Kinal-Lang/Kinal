@@ -1,0 +1,27 @@
+Unit Tests.Selfhost.SymbolAliases;
+
+Get IO.Console;
+
+Alias Print By IO.Console.PrintLine;
+Alias Say By Tests.Selfhost.SymbolAliases.Box.Say;
+Alias Ready By Tests.Selfhost.SymbolAliases.Mode.Ready;
+
+Enum Mode
+{
+    Ready = 7
+}
+
+Class Box
+{
+    Public Static Function string Say()
+    {
+        Return "method";
+    }
+}
+
+Safe Static Function int Main()
+{
+    Print(Say());
+    Print(Ready);
+    Return Ready == Mode.Ready ? 0 : 1;
+}

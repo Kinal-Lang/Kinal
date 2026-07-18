@@ -1,0 +1,13 @@
+Get IO.Console;
+
+Function int 合計(int 左, int 右)
+{
+    Return 左 + 右;
+}
+
+Safe Static Function int Main()
+{
+    int 値 = 合計(20, 22);
+    IO.Console.PrintLine(値);
+    Return 値 == 42 ? 0 : 1;
+}

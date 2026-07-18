@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import subprocess
+import sys
 from pathlib import Path
 
 
@@ -184,6 +185,135 @@ def main() -> int:
         backend_run,
     )
     results.append({"name": "native_backend_fixture", "ok": True})
+
+    globals_project = root / "tests" / "selfhost" / "fixtures" / "global_variables" / "kinal.knproj"
+    globals_executable = out_dir / f"global-variables{executable_suffix}"
+    globals_build = run(
+        [str(compiler), "build", str(globals_project), str(globals_executable), "test"],
+        cwd=root,
+    )
+    require(globals_build.returncode == 0, "stage1 global-variable fixture build failed", globals_build)
+    require(globals_executable.is_file(), "stage1 global-variable fixture executable is missing")
+    globals_run = run([str(globals_executable)], cwd=root)
+    require(globals_run.returncode == 0, "stage1 global-variable fixture execution failed", globals_run)
+    require(
+        globals_run.stdout.replace("\r\n", "\n").strip() == "9",
+        "stage1 global-variable fixture output differs",
+        globals_run,
+    )
+    globals_stage0_ast_path = out_dir / "globals-stage0.kast"
+    globals_stage0_ast = run(
+        [
+            str(stage0),
+            "build",
+            "--no-module-discovery",
+            "--color",
+            "never",
+            "--emit",
+            "ast",
+            str(globals_project.parent / "src" / "Main.kn"),
+            "-o",
+            str(globals_stage0_ast_path),
+        ],
+        cwd=root,
+    )
+    require(globals_stage0_ast.returncode == 0, "stage0 global-variable syntax emit failed", globals_stage0_ast)
+    globals_stage1_ast = run(
+        [str(compiler), "ast", str(globals_project.parent / "src" / "Main.kn")],
+        cwd=root,
+    )
+    require(globals_stage1_ast.returncode == 0, "stage1 global-variable syntax build failed", globals_stage1_ast)
+    require(
+        globals_stage0_ast_path.read_text(encoding="utf-8").replace("\r\n", "\n").strip()
+        == globals_stage1_ast.stdout.replace("\r\n", "\n").strip(),
+        "stage0/stage1 global-variable syntax mismatch",
+    )
+    results.append({"name": "global_variables", "ok": True})
+
+    imports_project = root / "tests" / "selfhost" / "fixtures" / "selective_imports" / "kinal.knproj"
+    imports_executable = out_dir / f"selective-imports{executable_suffix}"
+    imports_build = run(
+        [str(compiler), "build", str(imports_project), str(imports_executable), "test"],
+        cwd=root,
+    )
+    require(imports_build.returncode == 0, "stage1 selective-import fixture build failed", imports_build)
+    require(imports_executable.is_file(), "stage1 selective-import fixture executable is missing")
+    imports_run = run([str(imports_executable)], cwd=root)
+    require(imports_run.returncode == 0, "stage1 selective-import fixture execution failed", imports_run)
+    require(
+        imports_run.stdout.replace("\r\n", "\n").strip() == "selective-ok",
+        "stage1 selective-import fixture output differs",
+        imports_run,
+    )
+    results.append({"name": "selective_imports", "ok": True})
+
+    static_class_project = root / "tests" / "selfhost" / "fixtures" / "static_class" / "kinal.knproj"
+    static_class_executable = out_dir / f"static-class{executable_suffix}"
+    static_class_build = run(
+        [str(compiler), "build", str(static_class_project), str(static_class_executable), "test"],
+        cwd=root,
+    )
+    require(static_class_build.returncode == 0, "stage1 static-class fixture build failed", static_class_build)
+    require(static_class_executable.is_file(), "stage1 static-class fixture executable is missing")
+    static_class_run = run([str(static_class_executable)], cwd=root)
+    require(static_class_run.returncode == 0, "stage1 static-class fixture execution failed", static_class_run)
+    require(
+        static_class_run.stdout.replace("\r\n", "\n").strip() == "12",
+        "stage1 static-class fixture output differs",
+        static_class_run,
+    )
+    results.append({"name": "static_class", "ok": True})
+
+    switch_statement_project = root / "tests" / "selfhost" / "fixtures" / "switch_statement" / "kinal.knproj"
+    switch_statement_executable = out_dir / f"switch-statement{executable_suffix}"
+    switch_statement_build = run(
+        [str(compiler), "build", str(switch_statement_project), str(switch_statement_executable), "test"],
+        cwd=root,
+    )
+    require(switch_statement_build.returncode == 0, "stage1 switch-statement fixture build failed", switch_statement_build)
+    require(switch_statement_executable.is_file(), "stage1 switch-statement fixture executable is missing")
+    switch_statement_run = run([str(switch_statement_executable)], cwd=root)
+    require(switch_statement_run.returncode == 0, "stage1 switch-statement fixture execution failed", switch_statement_run)
+    require(
+        switch_statement_run.stdout.replace("\r\n", "\n").strip() == "two",
+        "stage1 switch-statement fixture output differs",
+        switch_statement_run,
+    )
+    results.append({"name": "switch_statement", "ok": True})
+
+    implicit_unit_project = root / "tests" / "selfhost" / "fixtures" / "implicit_unit" / "kinal.knproj"
+    implicit_unit_executable = out_dir / f"implicit-unit{executable_suffix}"
+    implicit_unit_build = run(
+        [str(compiler), "build", str(implicit_unit_project), str(implicit_unit_executable), "test"],
+        cwd=root,
+    )
+    require(implicit_unit_build.returncode == 0, "stage1 implicit-unit fixture build failed", implicit_unit_build)
+    require(implicit_unit_executable.is_file(), "stage1 implicit-unit fixture executable is missing")
+    implicit_unit_run = run([str(implicit_unit_executable)], cwd=root)
+    require(implicit_unit_run.returncode == 0, "stage1 implicit-unit fixture execution failed", implicit_unit_run)
+    require(
+        implicit_unit_run.stdout.replace("\r\n", "\n").strip() == "42",
+        "stage1 implicit-unit fixture output differs",
+        implicit_unit_run,
+    )
+    results.append({"name": "implicit_unit", "ok": True})
+
+    aliases_project = root / "tests" / "selfhost" / "fixtures" / "symbol_aliases" / "kinal.knproj"
+    aliases_executable = out_dir / f"symbol-aliases{executable_suffix}"
+    aliases_build = run(
+        [str(compiler), "build", str(aliases_project), str(aliases_executable), "test"],
+        cwd=root,
+    )
+    require(aliases_build.returncode == 0, "stage1 symbol-alias fixture build failed", aliases_build)
+    require(aliases_executable.is_file(), "stage1 symbol-alias fixture executable is missing")
+    aliases_run = run([str(aliases_executable)], cwd=root)
+    require(aliases_run.returncode == 0, "stage1 symbol-alias fixture execution failed", aliases_run)
+    require(
+        aliases_run.stdout.replace("\r\n", "\n").strip() == "method\n7",
+        "stage1 symbol-alias fixture output differs",
+        aliases_run,
+    )
+    results.append({"name": "symbol_aliases", "ok": True})
 
     array_project = root / "tests" / "selfhost" / "fixtures" / "array_types" / "kinal.knproj"
     array_executable = out_dir / f"array-types{executable_suffix}"
@@ -394,6 +524,32 @@ def main() -> int:
             f"stage0/stage1 syntax mismatch: {source}\nstage0={stage0_summary}\nstage1={stage1_summary}",
         )
     results.append({"name": "syntax_differential", "ok": True, "files": len(source_files)})
+
+    manifest_parser_report = out_dir / "manifest-parser.json"
+    manifest_parser = run(
+        [
+            sys.executable,
+            str(root / "tests" / "selfhost" / "audit_manifest_parser.py"),
+            "--compiler",
+            str(compiler),
+            "--root",
+            str(root),
+            "--baseline",
+            str(root / "tests" / "selfhost" / "manifest_parser_baseline.json"),
+            "--output",
+            str(manifest_parser_report),
+        ],
+        cwd=root,
+    )
+    require(manifest_parser.returncode == 0, "stage1 manifest parser audit failed", manifest_parser)
+    manifest_parser_data = json.loads(manifest_parser_report.read_text(encoding="utf-8"))
+    results.append({
+        "name": "manifest_parser_coverage",
+        "ok": True,
+        "sources": manifest_parser_data["sources"],
+        "passed": manifest_parser_data["passed"],
+        "coverage": manifest_parser_data["coverage"],
+    })
 
     (out_dir / "results.json").write_text(json.dumps(results, indent=2) + "\n", encoding="utf-8")
     print(f"[OK] selfhost tests: {len(results)} groups")

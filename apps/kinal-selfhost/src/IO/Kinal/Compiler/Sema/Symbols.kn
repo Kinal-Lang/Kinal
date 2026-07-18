@@ -144,6 +144,27 @@ Class ValueSymbol
     }
 }
 
+Class GlobalSymbol
+{
+    Public string UnitName;
+    Public FieldDecl Declaration;
+    Public ValueSymbol Value;
+    Public GlobalSymbol Next;
+
+    Public Safe Constructor(string unitName, FieldDecl declaration, TypeSymbol type)
+    {
+        This.UnitName = unitName;
+        This.Declaration = declaration;
+        This.Value = New ValueSymbol(declaration.Name, type, false);
+        This.Next = null;
+    }
+
+    Public Safe Function string QualifiedName()
+    {
+        Return This.UnitName + "." + This.Declaration.Name;
+    }
+}
+
 Class BindingScope
 {
     Public BindingScope Parent;

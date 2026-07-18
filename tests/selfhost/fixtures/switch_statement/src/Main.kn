@@ -1,0 +1,29 @@
+Unit Tests.Selfhost.SwitchStatement;
+
+Get IO.Console;
+
+Safe Static Function int Main()
+{
+    int value = 2;
+    Switch (value)
+    {
+        Case(1)
+        {
+            IO.Console.PrintLine("one");
+        }
+        Case(2)
+        {
+            IO.Console.PrintLine("two");
+        }
+        Case(default)
+        {
+            IO.Console.PrintLine("other");
+        }
+    }
+    Return Switch (value)
+    {
+        Case(1) { 1; }
+        Case(2) { 0; }
+        Case(default) { 2; }
+    };
+}

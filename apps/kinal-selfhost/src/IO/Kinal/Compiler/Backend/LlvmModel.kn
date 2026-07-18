@@ -56,6 +56,20 @@ Class LlvmFunctionBinding
     }
 }
 
+Class LlvmGlobalBinding
+{
+    Public GlobalSymbol Symbol;
+    Public byte* Address;
+    Public LlvmGlobalBinding Next;
+
+    Public Safe Constructor(GlobalSymbol symbol, byte* address)
+    {
+        This.Symbol = symbol;
+        This.Address = address;
+        This.Next = null;
+    }
+}
+
 Class LlvmRuntimeFunction
 {
     Public string Name;

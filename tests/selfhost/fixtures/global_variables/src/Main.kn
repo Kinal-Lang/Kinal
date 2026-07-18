@@ -1,0 +1,21 @@
+Unit Tests.Selfhost.GlobalVariables;
+
+Get IO.Console;
+
+int hits = 7;
+
+Function bool Touch(bool value)
+{
+    hits = hits + 1;
+    Return value;
+}
+
+Safe Static Function int Main()
+{
+    bool skipAnd = false && Touch(true);
+    bool skipOr = true || Touch(false);
+    bool runAnd = true && Touch(true);
+    bool runOr = false || Touch(true);
+    IO.Console.PrintLine(hits);
+    Return !skipAnd && skipOr && runAnd && runOr && hits == 9 ? 0 : 1;
+}
