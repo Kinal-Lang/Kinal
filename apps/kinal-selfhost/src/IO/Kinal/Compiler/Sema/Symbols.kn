@@ -25,6 +25,7 @@ Class FunctionSymbol
     Public TypeSymbol OwnerType;
     Public string Name;
     Public TypeSymbol ReturnType;
+    Public SyntaxTree Syntax;
     Public ParameterSymbol FirstParameter;
     Public FunctionDecl Declaration;
     Public ValueSymbol Receiver;
@@ -40,6 +41,7 @@ Class FunctionSymbol
         This.OwnerType = ownerType;
         This.Name = declaration.Name;
         This.ReturnType = null;
+        This.Syntax = null;
         This.FirstParameter = null;
         This.Declaration = declaration;
         This.Receiver = null;

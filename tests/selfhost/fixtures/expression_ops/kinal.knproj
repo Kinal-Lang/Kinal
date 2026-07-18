@@ -1,0 +1,25 @@
+Project SelfhostExpressionOps
+{
+    DefaultProfile = "test";
+    SourceSet "main"
+    {
+        Roots = ["src"];
+        Include = ["**/*.kn"];
+        RequireUnit = true;
+    }
+    Profile "test"
+    {
+        Source
+        {
+            Entry = "src/Main.kn";
+            Sets = ["main"];
+            Mode = ReachableUnits;
+        }
+        Build
+        {
+            Backend = Native;
+            Environment = Hosted;
+            Output = "../../../../out/selfhost/tests/expression-ops.exe";
+        }
+    }
+}

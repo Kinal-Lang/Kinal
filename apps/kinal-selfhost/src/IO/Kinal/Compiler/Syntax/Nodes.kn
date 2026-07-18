@@ -52,6 +52,7 @@ Class ExpressionNode
     Public int Kind;
     Public string Text;
     Public int Operator;
+    Public bool IsPostfix;
     Public int Line;
     Public int Column;
     Public ExpressionNode Left;
@@ -69,6 +70,7 @@ Class ExpressionNode
         This.Kind = kind;
         This.Text = text;
         This.Operator = 0;
+        This.IsPostfix = false;
         This.Line = line;
         This.Column = column;
         This.Left = null;

@@ -115,6 +115,16 @@ Class SemanticCompilation
         This.AddBuiltin("set", [int](TypeKind.SetType));
         This.AddBuiltin("IO.Type.Object.Function", [int](TypeKind.NamedType));
         This.AddBuiltin("Object.Function", [int](TypeKind.NamedType));
+        This.AddBuiltin("IO.Type.Object.Class", [int](TypeKind.NamedType));
+        This.AddBuiltin("Object.Class", [int](TypeKind.NamedType));
+        This.AddBuiltin("IO.Type.Object.Block", [int](TypeKind.NamedType));
+        This.AddBuiltin("Object.Block", [int](TypeKind.NamedType));
+        This.AddBuiltin("IO.Collection.list", [int](TypeKind.ListType));
+        This.AddBuiltin("IO.Collection.dict", [int](TypeKind.DictType));
+        This.AddBuiltin("IO.Collection.set", [int](TypeKind.SetType));
+        This.AddBuiltin("IO.Error", [int](TypeKind.NamedType));
+        This.AddBuiltin("IO.Time.DateTime", [int](TypeKind.NamedType));
+        This.AddBuiltin("IO.Async.Task", [int](TypeKind.NamedType));
     }
 
     Public Safe Function void AddUnit(UnitSymbol unit)
@@ -147,6 +157,9 @@ Class SemanticCompilation
                name == "IO.Error" || name == "IO.GC" || name == "IO.System" ||
                name == "IO.Type" || name == "IO.Memory" || name == "IO.Volatile" ||
                name == "IO.Meta" || name == "IO.Time" ||
+               name == "IO.Async" || name == "IO.Target" ||
+               name == "IO.Host" || name == "IO.Runtime" ||
+               name == "IO.Version" || name == "IO.Panic" ||
                IO.Text.StartsWith(name, "IO.Type.");
     }
 
@@ -165,7 +178,13 @@ Class SemanticCompilation
                IO.Text.StartsWith(name, "IO.Memory.") ||
                IO.Text.StartsWith(name, "IO.Volatile.") ||
                IO.Text.StartsWith(name, "IO.Meta.") ||
-               IO.Text.StartsWith(name, "IO.Time.");
+               IO.Text.StartsWith(name, "IO.Time.") ||
+               IO.Text.StartsWith(name, "IO.Async.") ||
+               IO.Text.StartsWith(name, "IO.Target.") ||
+               IO.Text.StartsWith(name, "IO.Host.") ||
+               IO.Text.StartsWith(name, "IO.Runtime.") ||
+               IO.Text.StartsWith(name, "IO.Version.") ||
+               IO.Text.StartsWith(name, "IO.Panic.");
     }
 
     Public Safe Function bool IsKnownImport(string name)
@@ -192,14 +211,9 @@ Class SemanticCompilation
         While (compilationUnit != null)
         {
             SyntaxTree syntax = compilationUnit.Syntax;
-            If (This.FindUnit(syntax.UnitName) != null)
-            {
-                This.Report(syntax, "Duplicate unit", syntax.UnitName, 1, 1);
-            }
-            Else
-            {
-                This.AddUnit(New UnitSymbol(syntax.UnitName, syntax));
-            }
+            // A unit is an open namespace: a project may contribute declarations
+            // to the same unit from several source files.
+            This.AddUnit(New UnitSymbol(syntax.UnitName, syntax));
 
             TypeDecl declaration = syntax.FirstType;
             While (declaration != null)
@@ -252,6 +266,17 @@ Class SemanticCompilation
             TypeSymbol arrayType = New TypeSymbol([int](TypeKind.ArrayType), element.Name + "[]");
             arrayType.ElementType = element;
             Return arrayType;
+        }
+
+        // IO.Type exposes the primitive type keywords as qualified type names.
+        If (IO.Text.StartsWith(name, "IO.Type."))
+        {
+            string primitiveName = IO.Text.Slice(name, 8, IO.Text.Length(name) - 8);
+            If (!IO.Text.Contains(primitiveName, "."))
+            {
+                TypeSymbol primitiveType = This.FindExactType(primitiveName);
+                If (primitiveType != null && primitiveType.UnitName == "") Return primitiveType;
+            }
         }
 
         TypeSymbol direct = This.FindExactType(name);
@@ -389,6 +414,7 @@ Class SemanticCompilation
     Public Safe Function void IndexFunction(UnitSymbol unit, TypeSymbol owner, FunctionDecl declaration)
     {
         FunctionSymbol function = New FunctionSymbol(unit.Name, owner, declaration);
+        function.Syntax = unit.Syntax;
         This.FunctionCount = This.FunctionCount + 1;
         TypeParameterDecl typeParameter = declaration.FirstTypeParameter;
         While (typeParameter != null)
@@ -751,6 +777,7 @@ Class SemanticCompilation
 
         FunctionSymbol instance = New FunctionSymbol(definition.UnitName,
             definition.OwnerType, definition.Declaration);
+        instance.Syntax = definition.Syntax;
         instance.IsGenericInstance = true;
         instance.GenericDefinition = definition;
         instance.GenericKey = key;
@@ -905,6 +932,26 @@ Class SemanticCompilation
         }
         If (target == "IO.Memory.Copy" || target == "IO.Memory.Zero" ||
             target == "IO.Time.Sleep") Return This.Primitive("void");
+        If (target == "IO.Memory.Set" || target == "IO.GC.Collect" ||
+            target == "IO.Error.Clear" || target == "IO.System.Exit" ||
+            target == "IO.Panic.Abort" || target == "IO.Panic.Halt")
+            Return This.Primitive("void");
+        If (target == "IO.Memory.Compare" || target == "IO.System.Exec" ||
+            target == "IO.Async.ExitCode") Return This.Primitive("int");
+        If (target == "IO.System.CommandLine" || target == "IO.System.LastError" ||
+            target == "IO.Error.LastTrace") Return This.Primitive("string");
+        If (target == "IO.System.LoadLibrary" || target == "IO.System.GetSymbol" ||
+            target == "IO.Async.Spawn") Return This.MakePointerType(This.Primitive("byte"));
+        If (target == "IO.System.FileExists" || target == "IO.System.CloseLibrary" ||
+            target == "IO.Async.IsCompleted" ||
+            target == "IO.Async.Wait" || target == "IO.Async.Close" ||
+            target == "IO.Error.HasException") Return This.Primitive("bool");
+        If (target == "IO.Time.Now") Return This.FindExactType("IO.Time.DateTime");
+        If (target == "IO.Time.Format") Return This.Primitive("string");
+        If (target == "IO.Async.Sleep" || target == "IO.Async.Yield")
+            Return This.FindExactType("IO.Async.Task");
+        If (target == "IO.Async.Run") Return This.Primitive("any");
+        If (target == "IO.Error.Current") Return This.FindExactType("IO.Error");
         If (target == "IO.Time.GetTick" || target == "IO.Time.GetNanoTick")
             Return This.Primitive("int");
         If (target == "IO.Meta.Query" || target == "IO.Meta.Of") Return This.Primitive("list");
@@ -913,7 +960,18 @@ Class SemanticCompilation
         If (IO.Text.StartsWith(target, "IO.Volatile.Read")) Return This.Primitive("int");
         If (IO.Text.StartsWith(target, "IO.Volatile.Write")) Return This.Primitive("void");
         If (target == "IO.Directory.Files") Return This.Primitive("list");
-        If (target == "IO.Directory.Exists") Return This.Primitive("bool");
+        If (target == "IO.Directory.Exists" || target == "IO.Directory.Create" ||
+            target == "IO.Directory.Ensure" || target == "IO.Directory.Delete" ||
+            target == "IO.Directory.DeleteIfExists") Return This.Primitive("bool");
+        If (IO.Text.StartsWith(target, "IO.Type."))
+        {
+            string convertedName = IO.Text.Slice(target, 8, IO.Text.Length(target) - 8);
+            If (!IO.Text.Contains(convertedName, "."))
+            {
+                TypeSymbol convertedType = This.Primitive(convertedName);
+                If (convertedType != null) Return convertedType;
+            }
+        }
         If (IO.Text.StartsWith(target, "IO.Path."))
         {
             name = IO.Text.Slice(target, 8, IO.Text.Length(target) - 8);
@@ -937,20 +995,35 @@ Class SemanticCompilation
         If (receiverKind == [int](TypeKind.ListType))
         {
             If (target == "Count") Return This.Primitive("int");
-            If (target == "Fetch" || target == "Peek" || target == "Pop") Return This.Primitive("any");
+            If (target == "Fetch" || target == "TryFetch" || target == "Peek" ||
+                target == "Pop" || target == "RemoveAt") Return This.Primitive("any");
             If (target == "Contains" || target == "IsEmpty") Return This.Primitive("bool");
-            If (target == "Add" || target == "Insert" || target == "Clear") Return This.Primitive("void");
+            If (target == "IndexOf") Return This.Primitive("int");
+            If (target == "Add" || target == "Set" || target == "Insert" || target == "Clear")
+                Return This.Primitive("void");
         }
         If (receiverKind == [int](TypeKind.StringType))
         {
             If (target == "ToChars") Return This.MakeArrayType(This.Primitive("char"));
             If (target == "Length") Return This.Primitive("int");
+            If (target == "Index") Return This.Primitive("char");
         }
         If (receiverKind == [int](TypeKind.DictType))
         {
             If (target == "Count") Return This.Primitive("int");
-            If (target == "Fetch") Return This.Primitive("any");
-            If (target == "Contains" || target == "IsEmpty") Return This.Primitive("bool");
+            If (target == "Fetch" || target == "TryFetch") Return This.Primitive("any");
+            If (target == "Contains" || target == "IsEmpty" || target == "Remove")
+                Return This.Primitive("bool");
+            If (target == "Set") Return This.Primitive("void");
+            If (target == "Keys" || target == "Values") Return This.Primitive("list");
+        }
+        If (receiverKind == [int](TypeKind.SetType))
+        {
+            If (target == "Count") Return This.Primitive("int");
+            If (target == "Contains" || target == "Remove" || target == "IsEmpty")
+                Return This.Primitive("bool");
+            If (target == "Add" || target == "Clear") Return This.Primitive("void");
+            If (target == "Values") Return This.Primitive("list");
         }
         If (receiverKind == [int](TypeKind.ArrayType))
         {
@@ -958,6 +1031,12 @@ Class SemanticCompilation
             If (target == "Index") Return receiver.ElementType;
             If (target == "Add") Return receiver;
         }
+        If (receiver != null && (target == "TypeOf" || target == "ToString" ||
+            target == "TypeName")) Return This.Primitive("string");
+        If (receiver != null && (target == "Equals" || target == "IsNull" ||
+            target == "IsNumber" || target == "IsPointer" || target == "IsInt" ||
+            target == "IsFloat" || target == "IsString" || target == "IsBool" ||
+            target == "IsChar" || target == "IsObject")) Return This.Primitive("bool");
         If (receiverKind == [int](TypeKind.NamedType) && receiver.Name == "block" && target == "Run")
             Return This.Primitive("void");
         Return null;
@@ -1156,6 +1235,28 @@ Class SemanticCompilation
         If (fieldType != null)
         {
             HirExpression result = New HirExpression([int](HirExpressionKind.Field), expression, fieldType);
+            result.Left = receiver;
+            result.Target = expression.Text;
+            Return result;
+        }
+        If (receiver.Type.Name == "IO.Error")
+        {
+            TypeSymbol errorMemberType = expression.Text == "Inner" ?
+                This.FindExactType("IO.Error") : This.Primitive("string");
+            If (expression.Text == "Title" || expression.Text == "Message" ||
+                expression.Text == "Trace" || expression.Text == "Inner")
+            {
+                HirExpression result = New HirExpression([int](HirExpressionKind.Field),
+                    expression, errorMemberType);
+                result.Left = receiver;
+                result.Target = expression.Text;
+                Return result;
+            }
+        }
+        If (receiver.Type.Name == "IO.Time.DateTime" && expression.Text == "Ticks")
+        {
+            HirExpression result = New HirExpression([int](HirExpressionKind.Field),
+                expression, This.Primitive("int"));
             result.Left = receiver;
             result.Target = expression.Text;
             Return result;
@@ -1444,6 +1545,24 @@ Class SemanticCompilation
             scope.Add(blockValue);
             result.DeclaredSymbol = blockValue;
         }
+        If (statement.Kind == [int](StatementKind.Try) && statement.TypeName != "")
+        {
+            TypeSymbol catchType = This.ResolveFunctionType(syntax, function, statement.TypeName);
+            If (catchType == null)
+            {
+                This.UnresolvedTypeCount = This.UnresolvedTypeCount + 1;
+                This.Report(syntax, "Unknown type", This.CanonicalTypeName(statement.TypeName),
+                    statement.Line, statement.Column);
+                catchType = This.Primitive("any");
+            }
+            BindingScope catchScope = New BindingScope(scope);
+            result.DeclaredType = catchType;
+            result.DeclaredSymbol = New ValueSymbol(statement.Name, catchType, false);
+            catchScope.Add(result.DeclaredSymbol);
+            result.FirstChild = This.BindStatement(syntax, function, catchScope, statement.FirstChild);
+            result.Next = This.BindStatement(syntax, function, scope, statement.Next);
+            Return result;
+        }
         If (statement.Kind == [int](StatementKind.For))
         {
             BindingScope loopScope = New BindingScope(scope);
@@ -1453,6 +1572,24 @@ Class SemanticCompilation
                 syntax, function, loopScope, statement.SecondExpression);
             result.ThirdExpression = This.BindExpression(
                 syntax, function, loopScope, statement.ThirdExpression);
+            result.FirstChild = This.BindStatement(syntax, function, loopScope, statement.FirstChild);
+            result.Next = This.BindStatement(syntax, function, scope, statement.Next);
+            Return result;
+        }
+        If (statement.Kind == [int](StatementKind.Foreach))
+        {
+            BindingScope loopScope = New BindingScope(scope);
+            result.Expression = This.BindExpression(syntax, function, scope, statement.Expression);
+            result.DeclaredType = This.ResolveFunctionType(syntax, function, statement.TypeName);
+            If (result.DeclaredType == null)
+            {
+                This.UnresolvedTypeCount = This.UnresolvedTypeCount + 1;
+                This.Report(syntax, "Unknown type", This.CanonicalTypeName(statement.TypeName),
+                    statement.Line, statement.Column);
+                result.DeclaredType = This.Primitive("any");
+            }
+            result.DeclaredSymbol = New ValueSymbol(statement.Name, result.DeclaredType, false);
+            loopScope.Add(result.DeclaredSymbol);
             result.FirstChild = This.BindStatement(syntax, function, loopScope, statement.FirstChild);
             result.Next = This.BindStatement(syntax, function, scope, statement.Next);
             Return result;
@@ -1486,6 +1623,16 @@ Class SemanticCompilation
         If (statement.FirstChild != null)
         {
             BindingScope childScope = New BindingScope(scope);
+            If (statement.Kind == [int](StatementKind.If) && statement.Expression != null &&
+                statement.Expression.Kind == [int](ExpressionKind.Binary) &&
+                statement.Expression.Operator == [int](TokenKind.KwIs) &&
+                statement.Expression.Third != null)
+            {
+                string patternTypeName = This.ExpressionPath(statement.Expression.Right);
+                TypeSymbol patternType = This.ResolveFunctionType(syntax, function, patternTypeName);
+                If (patternType != null)
+                    childScope.Add(New ValueSymbol(statement.Expression.Third.Text, patternType, false));
+            }
             result.FirstChild = This.BindStatement(syntax, function, childScope, statement.FirstChild);
         }
         If (statement.ElseBranch != null)
@@ -1525,7 +1672,8 @@ Class SemanticCompilation
         UnitSymbol unit = This.FirstUnit;
         While (unit != null)
         {
-            This.AddHirModule(New HirModule(unit.Name));
+            If (This.FindHirModule(unit.Name) == null)
+                This.AddHirModule(New HirModule(unit.Name));
             unit = unit.Next;
         }
 
@@ -1534,9 +1682,9 @@ Class SemanticCompilation
         {
             If (!function.IsGenericTemplate() && !function.Declaration.IsDelegate)
             {
-                unit = This.FindUnit(function.UnitName);
                 HirModule module = This.FindHirModule(function.UnitName);
-                If (unit != null && module != null)
+                SyntaxTree syntax = function.Syntax;
+                If (syntax != null && module != null)
                 {
                     BindingScope scope = New BindingScope(null);
                     If (function.OwnerType != null &&
@@ -1553,7 +1701,7 @@ Class SemanticCompilation
                         parameter = parameter.Next;
                     }
                     HirFunction hirFunction = New HirFunction(function);
-                    hirFunction.Body = This.BindStatement(unit.Syntax, function, scope, function.Declaration.Body);
+                    hirFunction.Body = This.BindStatement(syntax, function, scope, function.Declaration.Body);
                     module.AddFunction(hirFunction);
                 }
             }

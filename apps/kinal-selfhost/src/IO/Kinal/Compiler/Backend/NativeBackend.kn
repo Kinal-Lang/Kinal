@@ -1361,15 +1361,24 @@ Class NativeBackend
     {
         int count = This.ExpressionListCount(expression.FirstArgument);
         If (count == 0) Return This.DefaultValue(expression.Type);
-        TypeSymbol elementType = expression.Type.ElementType;
+        Return This.EmitArrayValue(context, expression.Type, expression.FirstArgument,
+            This.Module.ConstInt(This.Module.IntType(64), count));
+    }
+
+    Public Trusted Function LlvmValue EmitArrayValue(LlvmFunctionContext context,
+                                                       TypeSymbol arrayType,
+                                                       HirExpression firstItem,
+                                                       byte* length)
+    {
+        TypeSymbol elementType = arrayType.ElementType;
         byte* elementHandle = This.TypeHandle(elementType);
-        byte* length = This.Module.ConstInt(This.Module.IntType(64), count);
         byte* bytes = This.Module.Multiply(length, This.Module.SizeOf(elementHandle),
             This.Unique("array_bytes"));
         byte* memory = This.CallRuntime("__kn_gc_alloc", This.Types1(bytes), This.Unique("array_memory"));
+        This.CallRuntime("kn_sh_rt_memory_zero", This.Types2(memory, bytes), "");
         byte* data = This.Module.BitCast(memory, This.Module.PointerType(elementHandle),
             This.Unique("array_data"));
-        HirExpression item = expression.FirstArgument;
+        HirExpression item = firstItem;
         int index = 0;
         While (item != null)
         {
@@ -1380,10 +1389,10 @@ Class NativeBackend
             index = index + 1;
             item = item.Next;
         }
-        byte* value = This.Module.ConstUndef(This.TypeHandle(expression.Type));
+        byte* value = This.Module.ConstUndef(This.TypeHandle(arrayType));
         value = This.Module.InsertValue(value, data, 0, "");
         value = This.Module.InsertValue(value, length, 1, "");
-        Return New LlvmValue(value, expression.Type);
+        Return New LlvmValue(value, arrayType);
     }
 
     Public Trusted Function LlvmValue EmitArrayAdd(LlvmFunctionContext context, LlvmValue receiver,
@@ -1444,6 +1453,10 @@ Class NativeBackend
         }
         LlvmValue receiver = expression.Left == null ? null : This.EmitExpression(context, expression.Left);
         HirExpression first = expression.FirstArgument;
+
+        If (target == "TypeOf" && receiver != null)
+            Return New LlvmValue(This.Module.GlobalString(receiver.Type.Name,
+                This.Unique("type_name")), This.Semantics.Primitive("string"));
 
         If (target == "IO.Console.ReadLine")
             Return New LlvmValue(This.CallRuntime("kn_sh_rt_read_line", This.Types0(),
@@ -2125,7 +2138,8 @@ Class NativeBackend
                 This.Module.Add(operand.Handle, one, This.Unique("increment")) :
                 This.Module.Subtract(operand.Handle, one, This.Unique("decrement"));
             If (address != null) This.Module.Store(next, address);
-            Return operand;
+            If (expression.Syntax != null && expression.Syntax.IsPostfix) Return operand;
+            Return New LlvmValue(next, expression.Type);
         }
         Return operand;
     }
@@ -2583,7 +2597,20 @@ Class NativeBackend
                 statement.DeclaredType, address);
             context.AddVariable(variable);
             This.AddGcRoot(context, statement.DeclaredType, address);
-            LlvmValue value = statement.Expression == null ? This.DefaultValue(statement.DeclaredType) :
+            LlvmValue value = null;
+            If (statement.DeclaredType.Kind == [int](TypeKind.ArrayType) &&
+                statement.SecondExpression != null)
+            {
+                LlvmValue requestedLength = This.CastValue(
+                    This.EmitExpression(context, statement.SecondExpression),
+                    This.Semantics.Primitive("int"));
+                HirExpression firstItem = statement.Expression != null &&
+                    statement.Expression.Kind == [int](HirExpressionKind.ArrayLiteral) ?
+                    statement.Expression.FirstArgument : null;
+                value = This.EmitArrayValue(context, statement.DeclaredType, firstItem,
+                    requestedLength.Handle);
+            }
+            Else value = statement.Expression == null ? This.DefaultValue(statement.DeclaredType) :
                 This.CastValue(This.EmitExpression(context, statement.Expression), statement.DeclaredType);
             This.Module.Store(value.Handle, address);
             Return;

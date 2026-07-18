@@ -334,6 +334,23 @@ def main() -> int:
     )
     results.append({"name": "implicit_unit", "ok": True})
 
+    same_unit_project = root / "tests" / "selfhost" / "fixtures" / "same_unit" / "kinal.knproj"
+    same_unit_executable = out_dir / f"same-unit{executable_suffix}"
+    same_unit_build = run(
+        [str(compiler), "build", str(same_unit_project), str(same_unit_executable), "test"],
+        cwd=root,
+    )
+    require(same_unit_build.returncode == 0, "stage1 same-unit fixture build failed", same_unit_build)
+    require(same_unit_executable.is_file(), "stage1 same-unit fixture executable is missing")
+    same_unit_run = run([str(same_unit_executable)], cwd=root)
+    require(same_unit_run.returncode == 0, "stage1 same-unit fixture execution failed", same_unit_run)
+    require(
+        same_unit_run.stdout.replace("\r\n", "\n").strip() == "same-unit",
+        "stage1 same-unit fixture output differs",
+        same_unit_run,
+    )
+    results.append({"name": "same_unit", "ok": True})
+
     aliases_project = root / "tests" / "selfhost" / "fixtures" / "symbol_aliases" / "kinal.knproj"
     aliases_executable = out_dir / f"symbol-aliases{executable_suffix}"
     aliases_build = run(
@@ -436,6 +453,23 @@ def main() -> int:
     array_run = run([str(array_executable), "alpha", "beta"], cwd=root)
     require(array_run.returncode == 0, "stage1 array fixture execution failed", array_run)
     results.append({"name": "array_types_fixture", "ok": True})
+
+    expression_ops_project = root / "tests" / "selfhost" / "fixtures" / "expression_ops" / "kinal.knproj"
+    expression_ops_executable = out_dir / f"expression-ops{executable_suffix}"
+    expression_ops_build = run(
+        [str(compiler), "build", str(expression_ops_project), str(expression_ops_executable), "test"],
+        cwd=root,
+    )
+    require(expression_ops_build.returncode == 0, "stage1 expression-ops fixture build failed", expression_ops_build)
+    require(expression_ops_executable.is_file(), "stage1 expression-ops fixture executable is missing")
+    expression_ops_run = run([str(expression_ops_executable)], cwd=root)
+    require(expression_ops_run.returncode == 0, "stage1 expression-ops fixture execution failed", expression_ops_run)
+    require(
+        expression_ops_run.stdout.replace("\r\n", "\n").strip() == "1\n3\n9\n3\n1\n3\n10\n12",
+        "stage1 expression-ops fixture output differs",
+        expression_ops_run,
+    )
+    results.append({"name": "expression_ops", "ok": True})
 
     generic_project = root / "tests" / "selfhost" / "fixtures" / "generic_functions" / "kinal.knproj"
     generic_executable = out_dir / f"generic-functions{executable_suffix}"

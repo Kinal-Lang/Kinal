@@ -1,0 +1,9 @@
+Unit Tests.Selfhost.SameUnit;
+
+Get IO.Console;
+
+Static Function int Main()
+{
+    IO.Console.PrintLine(Tools.Message());
+    Return 0;
+}
