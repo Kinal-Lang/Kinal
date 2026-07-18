@@ -71,6 +71,8 @@ Extern Function byte* NativeCurrentBlock(byte* module) By C;
 Extern Function int NativeBlockIsTerminated(byte* block) By C;
 [LinkName("kn_sh_llvm_const_int")]
 Extern Function byte* NativeConstInt(byte* integerType, i64 value, int signExtend) By C;
+[LinkName("kn_sh_llvm_const_float")]
+Extern Function byte* NativeConstFloat(byte* floatType, float value) By C;
 [LinkName("kn_sh_llvm_const_null")]
 Extern Function byte* NativeConstNull(byte* type) By C;
 [LinkName("kn_sh_llvm_const_undef")]
@@ -105,6 +107,18 @@ Extern Function byte* NativeBuildMul(byte* module, byte* left, byte* right, stri
 Extern Function byte* NativeBuildSignedDivide(byte* module, byte* left, byte* right, string name) By C;
 [LinkName("kn_sh_llvm_build_srem")]
 Extern Function byte* NativeBuildSignedRemainder(byte* module, byte* left, byte* right, string name) By C;
+[LinkName("kn_sh_llvm_build_udiv")]
+Extern Function byte* NativeBuildUnsignedDivide(byte* module, byte* left, byte* right, string name) By C;
+[LinkName("kn_sh_llvm_build_urem")]
+Extern Function byte* NativeBuildUnsignedRemainder(byte* module, byte* left, byte* right, string name) By C;
+[LinkName("kn_sh_llvm_build_fadd")]
+Extern Function byte* NativeBuildFloatAdd(byte* module, byte* left, byte* right, string name) By C;
+[LinkName("kn_sh_llvm_build_fsub")]
+Extern Function byte* NativeBuildFloatSubtract(byte* module, byte* left, byte* right, string name) By C;
+[LinkName("kn_sh_llvm_build_fmul")]
+Extern Function byte* NativeBuildFloatMultiply(byte* module, byte* left, byte* right, string name) By C;
+[LinkName("kn_sh_llvm_build_fdiv")]
+Extern Function byte* NativeBuildFloatDivide(byte* module, byte* left, byte* right, string name) By C;
 [LinkName("kn_sh_llvm_build_and")]
 Extern Function byte* NativeBuildAnd(byte* module, byte* left, byte* right, string name) By C;
 [LinkName("kn_sh_llvm_build_or")]
@@ -115,12 +129,18 @@ Extern Function byte* NativeBuildXor(byte* module, byte* left, byte* right, stri
 Extern Function byte* NativeBuildShiftLeft(byte* module, byte* left, byte* right, string name) By C;
 [LinkName("kn_sh_llvm_build_ashr")]
 Extern Function byte* NativeBuildArithmeticShiftRight(byte* module, byte* left, byte* right, string name) By C;
+[LinkName("kn_sh_llvm_build_lshr")]
+Extern Function byte* NativeBuildLogicalShiftRight(byte* module, byte* left, byte* right, string name) By C;
 [LinkName("kn_sh_llvm_build_neg")]
 Extern Function byte* NativeBuildNegate(byte* module, byte* value, string name) By C;
+[LinkName("kn_sh_llvm_build_fneg")]
+Extern Function byte* NativeBuildFloatNegate(byte* module, byte* value, string name) By C;
 [LinkName("kn_sh_llvm_build_not")]
 Extern Function byte* NativeBuildNot(byte* module, byte* value, string name) By C;
 [LinkName("kn_sh_llvm_build_icmp")]
 Extern Function byte* NativeBuildIntegerCompare(byte* module, int predicate, byte* left, byte* right, string name) By C;
+[LinkName("kn_sh_llvm_build_fcmp")]
+Extern Function byte* NativeBuildFloatCompare(byte* module, int predicate, byte* left, byte* right, string name) By C;
 [LinkName("kn_sh_llvm_build_select")]
 Extern Function byte* NativeBuildSelect(byte* module, byte* condition, byte* whenTrue, byte* whenFalse, string name) By C;
 [LinkName("kn_sh_llvm_build_bitcast")]
@@ -135,6 +155,14 @@ Extern Function byte* NativeBuildTruncate(byte* module, byte* value, byte* type,
 Extern Function byte* NativeBuildPointerToInt(byte* module, byte* value, byte* type, string name) By C;
 [LinkName("kn_sh_llvm_build_int_to_ptr")]
 Extern Function byte* NativeBuildIntToPointer(byte* module, byte* value, byte* type, string name) By C;
+[LinkName("kn_sh_llvm_build_si_to_fp")]
+Extern Function byte* NativeBuildSignedIntToFloat(byte* module, byte* value, byte* type, string name) By C;
+[LinkName("kn_sh_llvm_build_ui_to_fp")]
+Extern Function byte* NativeBuildUnsignedIntToFloat(byte* module, byte* value, byte* type, string name) By C;
+[LinkName("kn_sh_llvm_build_fp_to_si")]
+Extern Function byte* NativeBuildFloatToSignedInt(byte* module, byte* value, byte* type, string name) By C;
+[LinkName("kn_sh_llvm_build_fp_to_ui")]
+Extern Function byte* NativeBuildFloatToUnsignedInt(byte* module, byte* value, byte* type, string name) By C;
 
 [LinkName("kn_sh_llvm_build_call")]
 Extern Function byte* NativeBuildCall(byte* module, byte* functionType, byte* function, byte* arguments, string name) By C;
@@ -165,6 +193,16 @@ Enum LlvmIntPredicate By int
     SignedGreaterEqual = 39,
     SignedLess = 40,
     SignedLessEqual = 41
+}
+
+Enum LlvmFloatPredicate By int
+{
+    OrderedEqual = 1,
+    OrderedGreater = 2,
+    OrderedGreaterEqual = 3,
+    OrderedLess = 4,
+    OrderedLessEqual = 5,
+    OrderedNotEqual = 6
 }
 
 Trusted Function int VersionMajor()
@@ -297,6 +335,7 @@ Class LlvmModule
     {
         Return NativeConstInt(type, value, signedValue ? 1 : 0);
     }
+    Public Trusted Function byte* ConstFloat(byte* type, float value) { Return NativeConstFloat(type, value); }
     Public Trusted Function byte* ConstNull(byte* type) { Return NativeConstNull(type); }
     Public Trusted Function byte* ConstUndef(byte* type) { Return NativeConstUndef(type); }
     Public Trusted Function byte* GlobalString(string text, string name)
@@ -330,16 +369,28 @@ Class LlvmModule
     Public Trusted Function byte* Multiply(byte* left, byte* right, string name) { Return NativeBuildMul(This.Handle, left, right, name); }
     Public Trusted Function byte* SignedDivide(byte* left, byte* right, string name) { Return NativeBuildSignedDivide(This.Handle, left, right, name); }
     Public Trusted Function byte* SignedRemainder(byte* left, byte* right, string name) { Return NativeBuildSignedRemainder(This.Handle, left, right, name); }
+    Public Trusted Function byte* UnsignedDivide(byte* left, byte* right, string name) { Return NativeBuildUnsignedDivide(This.Handle, left, right, name); }
+    Public Trusted Function byte* UnsignedRemainder(byte* left, byte* right, string name) { Return NativeBuildUnsignedRemainder(This.Handle, left, right, name); }
+    Public Trusted Function byte* FloatAdd(byte* left, byte* right, string name) { Return NativeBuildFloatAdd(This.Handle, left, right, name); }
+    Public Trusted Function byte* FloatSubtract(byte* left, byte* right, string name) { Return NativeBuildFloatSubtract(This.Handle, left, right, name); }
+    Public Trusted Function byte* FloatMultiply(byte* left, byte* right, string name) { Return NativeBuildFloatMultiply(This.Handle, left, right, name); }
+    Public Trusted Function byte* FloatDivide(byte* left, byte* right, string name) { Return NativeBuildFloatDivide(This.Handle, left, right, name); }
     Public Trusted Function byte* And(byte* left, byte* right, string name) { Return NativeBuildAnd(This.Handle, left, right, name); }
     Public Trusted Function byte* Or(byte* left, byte* right, string name) { Return NativeBuildOr(This.Handle, left, right, name); }
     Public Trusted Function byte* Xor(byte* left, byte* right, string name) { Return NativeBuildXor(This.Handle, left, right, name); }
     Public Trusted Function byte* ShiftLeft(byte* left, byte* right, string name) { Return NativeBuildShiftLeft(This.Handle, left, right, name); }
     Public Trusted Function byte* ShiftRight(byte* left, byte* right, string name) { Return NativeBuildArithmeticShiftRight(This.Handle, left, right, name); }
+    Public Trusted Function byte* LogicalShiftRight(byte* left, byte* right, string name) { Return NativeBuildLogicalShiftRight(This.Handle, left, right, name); }
     Public Trusted Function byte* Negate(byte* value, string name) { Return NativeBuildNegate(This.Handle, value, name); }
+    Public Trusted Function byte* FloatNegate(byte* value, string name) { Return NativeBuildFloatNegate(This.Handle, value, name); }
     Public Trusted Function byte* Not(byte* value, string name) { Return NativeBuildNot(This.Handle, value, name); }
     Public Trusted Function byte* Compare(int predicate, byte* left, byte* right, string name)
     {
         Return NativeBuildIntegerCompare(This.Handle, predicate, left, right, name);
+    }
+    Public Trusted Function byte* FloatCompare(int predicate, byte* left, byte* right, string name)
+    {
+        Return NativeBuildFloatCompare(This.Handle, predicate, left, right, name);
     }
     Public Trusted Function byte* Select(byte* condition, byte* whenTrue, byte* whenFalse, string name)
     {
@@ -351,6 +402,10 @@ Class LlvmModule
     Public Trusted Function byte* Truncate(byte* value, byte* type, string name) { Return NativeBuildTruncate(This.Handle, value, type, name); }
     Public Trusted Function byte* PointerToInt(byte* value, byte* type, string name) { Return NativeBuildPointerToInt(This.Handle, value, type, name); }
     Public Trusted Function byte* IntToPointer(byte* value, byte* type, string name) { Return NativeBuildIntToPointer(This.Handle, value, type, name); }
+    Public Trusted Function byte* SignedIntToFloat(byte* value, byte* type, string name) { Return NativeBuildSignedIntToFloat(This.Handle, value, type, name); }
+    Public Trusted Function byte* UnsignedIntToFloat(byte* value, byte* type, string name) { Return NativeBuildUnsignedIntToFloat(This.Handle, value, type, name); }
+    Public Trusted Function byte* FloatToSignedInt(byte* value, byte* type, string name) { Return NativeBuildFloatToSignedInt(This.Handle, value, type, name); }
+    Public Trusted Function byte* FloatToUnsignedInt(byte* value, byte* type, string name) { Return NativeBuildFloatToUnsignedInt(This.Handle, value, type, name); }
 
     Public Trusted Function byte* Call(byte* functionType, byte* function, LlvmHandles arguments, string name)
     {

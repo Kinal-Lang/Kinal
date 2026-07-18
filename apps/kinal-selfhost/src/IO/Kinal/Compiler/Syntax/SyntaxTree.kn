@@ -39,12 +39,14 @@ Class SyntaxAttribute
 {
     Public string Name;
     Public ExpressionNode FirstArgument;
+    Public ExpressionNode LastArgument;
     Public SyntaxAttribute Next;
 
     Public Safe Constructor(string name)
     {
         This.Name = name;
         This.FirstArgument = null;
+        This.LastArgument = null;
         This.Next = null;
     }
 
@@ -53,11 +55,13 @@ Class SyntaxAttribute
         If (This.FirstArgument == null)
         {
             This.FirstArgument = argument;
-            Return;
+            This.LastArgument = argument;
         }
-        ExpressionNode current = This.FirstArgument;
-        While (current.Next != null) current = current.Next;
-        current.Next = argument;
+        Else
+        {
+            This.LastArgument.Next = argument;
+            This.LastArgument = argument;
+        }
     }
 }
 
@@ -99,7 +103,9 @@ Class FunctionDecl
     Public int Line;
     Public int Column;
     Public ParameterDecl FirstParameter;
+    Public ParameterDecl LastParameter;
     Public TypeParameterDecl FirstTypeParameter;
+    Public TypeParameterDecl LastTypeParameter;
     Public StatementNode Body;
     Public SyntaxAttribute FirstAttribute;
     Public FunctionDecl Next;
@@ -116,7 +122,9 @@ Class FunctionDecl
         This.Line = line;
         This.Column = column;
         This.FirstParameter = null;
+        This.LastParameter = null;
         This.FirstTypeParameter = null;
+        This.LastTypeParameter = null;
         This.Body = null;
         This.FirstAttribute = null;
         This.Next = null;
@@ -127,11 +135,13 @@ Class FunctionDecl
         If (This.FirstParameter == null)
         {
             This.FirstParameter = parameter;
-            Return;
+            This.LastParameter = parameter;
         }
-        ParameterDecl current = This.FirstParameter;
-        While (current.Next != null) current = current.Next;
-        current.Next = parameter;
+        Else
+        {
+            This.LastParameter.Next = parameter;
+            This.LastParameter = parameter;
+        }
     }
 
     Public Safe Function int ParameterCount()
@@ -151,11 +161,13 @@ Class FunctionDecl
         If (This.FirstTypeParameter == null)
         {
             This.FirstTypeParameter = parameter;
-            Return;
+            This.LastTypeParameter = parameter;
         }
-        TypeParameterDecl current = This.FirstTypeParameter;
-        While (current.Next != null) current = current.Next;
-        current.Next = parameter;
+        Else
+        {
+            This.LastTypeParameter.Next = parameter;
+            This.LastTypeParameter = parameter;
+        }
     }
 
     Public Safe Function int TypeParameterCount()
@@ -210,9 +222,12 @@ Class TypeDecl
     Public int Line;
     Public int Column;
     Public FieldDecl FirstField;
+    Public FieldDecl LastField;
     Public FunctionDecl FirstMethod;
+    Public FunctionDecl LastMethod;
     Public SyntaxAttribute FirstAttribute;
     Public EnumMemberDecl FirstEnumMember;
+    Public EnumMemberDecl LastEnumMember;
     Public TypeDecl Next;
 
     Public Safe Constructor(int kind, string name, int line, int column)
@@ -222,9 +237,12 @@ Class TypeDecl
         This.Line = line;
         This.Column = column;
         This.FirstField = null;
+        This.LastField = null;
         This.FirstMethod = null;
+        This.LastMethod = null;
         This.FirstAttribute = null;
         This.FirstEnumMember = null;
+        This.LastEnumMember = null;
         This.Next = null;
     }
 
@@ -233,11 +251,13 @@ Class TypeDecl
         If (This.FirstField == null)
         {
             This.FirstField = value;
-            Return;
+            This.LastField = value;
         }
-        FieldDecl current = This.FirstField;
-        While (current.Next != null) current = current.Next;
-        current.Next = value;
+        Else
+        {
+            This.LastField.Next = value;
+            This.LastField = value;
+        }
     }
 
     Public Safe Function void AddMethod(FunctionDecl value)
@@ -245,11 +265,13 @@ Class TypeDecl
         If (This.FirstMethod == null)
         {
             This.FirstMethod = value;
-            Return;
+            This.LastMethod = value;
         }
-        FunctionDecl current = This.FirstMethod;
-        While (current.Next != null) current = current.Next;
-        current.Next = value;
+        Else
+        {
+            This.LastMethod.Next = value;
+            This.LastMethod = value;
+        }
     }
 
     Public Safe Function void AddEnumMember(EnumMemberDecl value)
@@ -257,11 +279,13 @@ Class TypeDecl
         If (This.FirstEnumMember == null)
         {
             This.FirstEnumMember = value;
-            Return;
+            This.LastEnumMember = value;
         }
-        EnumMemberDecl current = This.FirstEnumMember;
-        While (current.Next != null) current = current.Next;
-        current.Next = value;
+        Else
+        {
+            This.LastEnumMember.Next = value;
+            This.LastEnumMember = value;
+        }
     }
 
     Public Safe Function int FieldCount()
@@ -294,16 +318,22 @@ Class SyntaxTree
     Public SourceFile Source;
     Public string UnitName;
     Public ImportDecl FirstImport;
+    Public ImportDecl LastImport;
     Public FunctionDecl FirstFunction;
+    Public FunctionDecl LastFunction;
     Public TypeDecl FirstType;
+    Public TypeDecl LastType;
 
     Public Safe Constructor(SourceFile source, string unitName)
     {
         This.Source = source;
         This.UnitName = unitName;
         This.FirstImport = null;
+        This.LastImport = null;
         This.FirstFunction = null;
+        This.LastFunction = null;
         This.FirstType = null;
+        This.LastType = null;
     }
 
     Public Safe Function void AddImport(ImportDecl value)
@@ -311,11 +341,13 @@ Class SyntaxTree
         If (This.FirstImport == null)
         {
             This.FirstImport = value;
-            Return;
+            This.LastImport = value;
         }
-        ImportDecl current = This.FirstImport;
-        While (current.Next != null) current = current.Next;
-        current.Next = value;
+        Else
+        {
+            This.LastImport.Next = value;
+            This.LastImport = value;
+        }
     }
 
     Public Safe Function void AddFunction(FunctionDecl value)
@@ -323,11 +355,13 @@ Class SyntaxTree
         If (This.FirstFunction == null)
         {
             This.FirstFunction = value;
-            Return;
+            This.LastFunction = value;
         }
-        FunctionDecl current = This.FirstFunction;
-        While (current.Next != null) current = current.Next;
-        current.Next = value;
+        Else
+        {
+            This.LastFunction.Next = value;
+            This.LastFunction = value;
+        }
     }
 
     Public Safe Function void AddType(TypeDecl value)
@@ -335,11 +369,13 @@ Class SyntaxTree
         If (This.FirstType == null)
         {
             This.FirstType = value;
-            Return;
+            This.LastType = value;
         }
-        TypeDecl current = This.FirstType;
-        While (current.Next != null) current = current.Next;
-        current.Next = value;
+        Else
+        {
+            This.LastType.Next = value;
+            This.LastType = value;
+        }
     }
 
     Public Safe Function int ImportCount()

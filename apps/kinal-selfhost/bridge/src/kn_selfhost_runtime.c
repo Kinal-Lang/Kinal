@@ -1,5 +1,7 @@
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
 extern void *__kn_gc_alloc(uint64_t size);
 extern const char *__kn_sys_executable_path(void);
@@ -120,6 +122,26 @@ int64_t kn_sh_rt_string_to_i64(const char *text)
     return negative ? -(int64_t)value : (int64_t)value;
 }
 
+double kn_sh_rt_string_to_f64(const char *text)
+{
+    return text ? strtod(text, 0) : 0.0;
+}
+
+float kn_sh_rt_string_to_f32(const char *text)
+{
+    return text ? (float)strtod(text, 0) : 0.0f;
+}
+
+int kn_sh_rt_string_to_bool(const char *text)
+{
+    return text && (text[0] == 't' || text[0] == '1') ? 1 : 0;
+}
+
+uint8_t kn_sh_rt_string_to_char(const char *text)
+{
+    return text ? (uint8_t)text[0] : 0;
+}
+
 void kn_sh_rt_print(const char *text)
 {
     fputs(text ? text : "", stdout);
@@ -132,3 +154,59 @@ void kn_sh_rt_print_line(const char *text)
     fputc('\n', stdout);
     fflush(stdout);
 }
+
+const char *kn_sh_rt_read_line(void)
+{
+    uint64_t length = 0;
+    uint64_t capacity = 128;
+    char *temporary = (char *)malloc((size_t)capacity);
+    char *result;
+    int current;
+    if (!temporary) return "";
+    while ((current = fgetc(stdin)) != EOF && current != '\n')
+    {
+        if (current == '\r') continue;
+        if (length + 1 >= capacity)
+        {
+            uint64_t next_capacity = capacity * 2;
+            char *next = (char *)realloc(temporary, (size_t)next_capacity);
+            if (!next)
+            {
+                free(temporary);
+                return "";
+            }
+            temporary = next;
+            capacity = next_capacity;
+        }
+        temporary[length++] = (char)current;
+    }
+    result = (char *)__kn_gc_alloc(length + 1);
+    if (!result)
+    {
+        free(temporary);
+        return "";
+    }
+    for (uint64_t i = 0; i < length; i++) result[i] = temporary[i];
+    result[length] = 0;
+    free(temporary);
+    return result;
+}
+
+void kn_sh_rt_memory_copy(void *destination, const void *source, uint64_t count)
+{
+    if (destination && source && count) memcpy(destination, source, (size_t)count);
+}
+
+void kn_sh_rt_memory_zero(void *destination, uint64_t count)
+{
+    if (destination && count) memset(destination, 0, (size_t)count);
+}
+
+uint8_t kn_sh_rt_volatile_read8(const volatile uint8_t *address) { return address ? *address : 0; }
+uint16_t kn_sh_rt_volatile_read16(const volatile uint16_t *address) { return address ? *address : 0; }
+uint32_t kn_sh_rt_volatile_read32(const volatile uint32_t *address) { return address ? *address : 0; }
+uint64_t kn_sh_rt_volatile_read64(const volatile uint64_t *address) { return address ? *address : 0; }
+void kn_sh_rt_volatile_write8(volatile uint8_t *address, uint8_t value) { if (address) *address = value; }
+void kn_sh_rt_volatile_write16(volatile uint16_t *address, uint16_t value) { if (address) *address = value; }
+void kn_sh_rt_volatile_write32(volatile uint32_t *address, uint32_t value) { if (address) *address = value; }
+void kn_sh_rt_volatile_write64(volatile uint64_t *address, uint64_t value) { if (address) *address = value; }

@@ -56,6 +56,7 @@ void *kn_sh_llvm_current_block(void *module_handle);
 int kn_sh_llvm_block_is_terminated(void *block);
 void *kn_sh_llvm_const_int(void *integer_type, int64_t value,
                            int sign_extend);
+void *kn_sh_llvm_const_float(void *float_type, double value);
 void *kn_sh_llvm_const_null(void *type);
 void *kn_sh_llvm_const_undef(void *type);
 void *kn_sh_llvm_build_global_string(void *module_handle, const char *text,
@@ -89,6 +90,20 @@ void *kn_sh_llvm_build_sdiv(void *module_handle, void *left, void *right,
                             const char *name);
 void *kn_sh_llvm_build_srem(void *module_handle, void *left, void *right,
                             const char *name);
+void *kn_sh_llvm_build_udiv(void *module_handle, void *left, void *right,
+                            const char *name);
+void *kn_sh_llvm_build_urem(void *module_handle, void *left, void *right,
+                            const char *name);
+void *kn_sh_llvm_build_fadd(void *module_handle, void *left, void *right,
+                            const char *name);
+void *kn_sh_llvm_build_fsub(void *module_handle, void *left, void *right,
+                            const char *name);
+void *kn_sh_llvm_build_fmul(void *module_handle, void *left, void *right,
+                            const char *name);
+void *kn_sh_llvm_build_fdiv(void *module_handle, void *left, void *right,
+                            const char *name);
+void *kn_sh_llvm_build_fneg(void *module_handle, void *value,
+                            const char *name);
 void *kn_sh_llvm_build_and(void *module_handle, void *left, void *right,
                            const char *name);
 void *kn_sh_llvm_build_or(void *module_handle, void *left, void *right,
@@ -99,11 +114,15 @@ void *kn_sh_llvm_build_shl(void *module_handle, void *left, void *right,
                            const char *name);
 void *kn_sh_llvm_build_ashr(void *module_handle, void *left, void *right,
                             const char *name);
+void *kn_sh_llvm_build_lshr(void *module_handle, void *left, void *right,
+                            const char *name);
 void *kn_sh_llvm_build_neg(void *module_handle, void *value,
                            const char *name);
 void *kn_sh_llvm_build_not(void *module_handle, void *value,
                            const char *name);
 void *kn_sh_llvm_build_icmp(void *module_handle, int predicate, void *left,
+                            void *right, const char *name);
+void *kn_sh_llvm_build_fcmp(void *module_handle, int predicate, void *left,
                             void *right, const char *name);
 void *kn_sh_llvm_build_select(void *module_handle, void *condition,
                               void *when_true, void *when_false,
@@ -120,6 +139,14 @@ void *kn_sh_llvm_build_ptr_to_int(void *module_handle, void *value, void *type,
                                   const char *name);
 void *kn_sh_llvm_build_int_to_ptr(void *module_handle, void *value, void *type,
                                   const char *name);
+void *kn_sh_llvm_build_si_to_fp(void *module_handle, void *value, void *type,
+                               const char *name);
+void *kn_sh_llvm_build_ui_to_fp(void *module_handle, void *value, void *type,
+                               const char *name);
+void *kn_sh_llvm_build_fp_to_si(void *module_handle, void *value, void *type,
+                               const char *name);
+void *kn_sh_llvm_build_fp_to_ui(void *module_handle, void *value, void *type,
+                               const char *name);
 
 /* Calls and control flow. */
 void *kn_sh_llvm_build_call(void *module_handle, void *function_type,

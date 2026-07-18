@@ -17,7 +17,10 @@ Enum HirExpressionKind By int
     Call,
     Index,
     NewObject,
-    Cast
+    Cast,
+    ArrayLiteral,
+    Switch,
+    SwitchCase
 }
 
 Enum HirCallKind By int
@@ -26,7 +29,8 @@ Enum HirCallKind By int
     UnitFunction,
     InstanceMethod,
     RuntimeBuiltin,
-    Constructor
+    Constructor,
+    DynamicFunction
 }
 
 Class HirExpression
@@ -84,6 +88,9 @@ Class HirStatement
     Public TypeSymbol DeclaredType;
     Public ValueSymbol DeclaredSymbol;
     Public HirExpression Expression;
+    Public HirExpression SecondExpression;
+    Public HirExpression ThirdExpression;
+    Public HirStatement Initializer;
     Public HirStatement FirstChild;
     Public HirStatement ElseBranch;
     Public HirStatement Next;
@@ -95,6 +102,9 @@ Class HirStatement
         This.DeclaredType = null;
         This.DeclaredSymbol = null;
         This.Expression = null;
+        This.SecondExpression = null;
+        This.ThirdExpression = null;
+        This.Initializer = null;
         This.FirstChild = null;
         This.ElseBranch = null;
         This.Next = null;

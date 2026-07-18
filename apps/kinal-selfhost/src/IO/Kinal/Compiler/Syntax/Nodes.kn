@@ -6,6 +6,7 @@ Enum ExpressionKind By int
     Name,
     Number,
     String,
+    FormattedString,
     Character,
     Boolean,
     Null,
@@ -16,7 +17,10 @@ Enum ExpressionKind By int
     Member,
     Index,
     NewObject,
-    Cast
+    Cast,
+    ArrayLiteral,
+    Switch,
+    SwitchCase
 }
 
 Enum StatementKind By int
@@ -28,6 +32,15 @@ Enum StatementKind By int
     Return,
     If,
     While,
+    For,
+    Foreach,
+    Switch,
+    Case,
+    Throw,
+    Try,
+    UnsafeBlock,
+    Record,
+    Jump,
     Break,
     Continue
 }
@@ -43,7 +56,9 @@ Class ExpressionNode
     Public ExpressionNode Right;
     Public ExpressionNode Third;
     Public ExpressionNode FirstArgument;
+    Public ExpressionNode LastArgument;
     Public TypeArgumentNode FirstTypeArgument;
+    Public TypeArgumentNode LastTypeArgument;
     Public ExpressionNode Next;
 
     Public Safe Constructor(int kind, string text, int line, int column)
@@ -57,7 +72,9 @@ Class ExpressionNode
         This.Right = null;
         This.Third = null;
         This.FirstArgument = null;
+        This.LastArgument = null;
         This.FirstTypeArgument = null;
+        This.LastTypeArgument = null;
         This.Next = null;
     }
 
@@ -66,11 +83,13 @@ Class ExpressionNode
         If (This.FirstArgument == null)
         {
             This.FirstArgument = value;
-            Return;
+            This.LastArgument = value;
         }
-        ExpressionNode current = This.FirstArgument;
-        While (current.Next != null) current = current.Next;
-        current.Next = value;
+        Else
+        {
+            This.LastArgument.Next = value;
+            This.LastArgument = value;
+        }
     }
 
     Public Safe Function int ArgumentCount()
@@ -90,11 +109,13 @@ Class ExpressionNode
         If (This.FirstTypeArgument == null)
         {
             This.FirstTypeArgument = value;
-            Return;
+            This.LastTypeArgument = value;
         }
-        TypeArgumentNode current = This.FirstTypeArgument;
-        While (current.Next != null) current = current.Next;
-        current.Next = value;
+        Else
+        {
+            This.LastTypeArgument.Next = value;
+            This.LastTypeArgument = value;
+        }
     }
 
     Public Safe Function int TypeArgumentCount()
@@ -134,7 +155,11 @@ Class StatementNode
     Public int Line;
     Public int Column;
     Public ExpressionNode Expression;
+    Public ExpressionNode SecondExpression;
+    Public ExpressionNode ThirdExpression;
+    Public StatementNode Initializer;
     Public StatementNode FirstChild;
+    Public StatementNode LastChild;
     Public StatementNode ElseBranch;
     Public StatementNode Next;
 
@@ -146,7 +171,11 @@ Class StatementNode
         This.Line = line;
         This.Column = column;
         This.Expression = null;
+        This.SecondExpression = null;
+        This.ThirdExpression = null;
+        This.Initializer = null;
         This.FirstChild = null;
+        This.LastChild = null;
         This.ElseBranch = null;
         This.Next = null;
     }
@@ -156,10 +185,12 @@ Class StatementNode
         If (This.FirstChild == null)
         {
             This.FirstChild = value;
-            Return;
+            This.LastChild = value;
         }
-        StatementNode current = This.FirstChild;
-        While (current.Next != null) current = current.Next;
-        current.Next = value;
+        Else
+        {
+            This.LastChild.Next = value;
+            This.LastChild = value;
+        }
     }
 }

@@ -2,6 +2,7 @@ Unit IO.Kinal.Compiler.Backend.LlvmModel;
 
 Get IO.Kinal.Compiler.Types.TypeSymbol;
 Get IO.Kinal.Compiler.Sema.Symbols;
+Get IO.Kinal.Compiler.Hir.HirModel;
 
 Class LlvmValue
 {
@@ -38,6 +39,8 @@ Class LlvmFunctionBinding
     Public FunctionSymbol Symbol;
     Public byte* FunctionType;
     Public byte* Function;
+    Public byte* CallableWrapperType;
+    Public byte* CallableWrapper;
     Public bool UsesCAbi;
     Public LlvmFunctionBinding Next;
 
@@ -46,6 +49,8 @@ Class LlvmFunctionBinding
         This.Symbol = symbol;
         This.FunctionType = functionType;
         This.Function = function;
+        This.CallableWrapperType = null;
+        This.CallableWrapper = null;
         This.UsesCAbi = usesCAbi;
         This.Next = null;
     }
@@ -85,10 +90,77 @@ Class LlvmVariable
     }
 }
 
+Class LlvmRecordBinding
+{
+    Public string Name;
+    Public int Ordinal;
+    Public byte* Block;
+    Public LlvmRecordBinding Next;
+
+    Public Safe Constructor(string name, int ordinal)
+    {
+        This.Name = name;
+        This.Ordinal = ordinal;
+        This.Block = null;
+        This.Next = null;
+    }
+}
+
+Class LlvmBlockBinding
+{
+    Public string Name;
+    Public HirStatement Statement;
+    Public LlvmRecordBinding FirstRecord;
+    Public LlvmRecordBinding LastRecord;
+    Public byte* StartBlock;
+    Public byte* DoneBlock;
+    Public bool Emitted;
+    Public LlvmBlockBinding Next;
+
+    Public Safe Constructor(string name, HirStatement statement)
+    {
+        This.Name = name;
+        This.Statement = statement;
+        This.FirstRecord = null;
+        This.LastRecord = null;
+        This.StartBlock = null;
+        This.DoneBlock = null;
+        This.Emitted = false;
+        This.Next = null;
+    }
+
+    Public Safe Function void AddRecord(LlvmRecordBinding record)
+    {
+        If (This.FirstRecord == null)
+        {
+            This.FirstRecord = record;
+            This.LastRecord = record;
+        }
+        Else
+        {
+            This.LastRecord.Next = record;
+            This.LastRecord = record;
+        }
+    }
+
+    Public Safe Function LlvmRecordBinding FindRecord(string name)
+    {
+        LlvmRecordBinding current = This.FirstRecord;
+        While (current != null)
+        {
+            If (current.Name == name) Return current;
+            current = current.Next;
+        }
+        Return null;
+    }
+}
+
 Class LlvmFunctionContext
 {
     Public LlvmFunctionBinding Binding;
     Public LlvmVariable FirstVariable;
+    Public LlvmBlockBinding FirstBlock;
+    Public LlvmBlockBinding ActiveBlock;
     Public byte* BreakTarget;
     Public byte* ContinueTarget;
     Public byte* GcFrame;
@@ -97,6 +169,8 @@ Class LlvmFunctionContext
     {
         This.Binding = binding;
         This.FirstVariable = null;
+        This.FirstBlock = null;
+        This.ActiveBlock = null;
         This.BreakTarget = null;
         This.ContinueTarget = null;
         This.GcFrame = null;
@@ -114,6 +188,23 @@ Class LlvmFunctionContext
         While (current != null)
         {
             If ((symbol != null && current.Symbol == symbol) || current.Name == name) Return current;
+            current = current.Next;
+        }
+        Return null;
+    }
+
+    Public Safe Function void AddBlock(LlvmBlockBinding binding)
+    {
+        binding.Next = This.FirstBlock;
+        This.FirstBlock = binding;
+    }
+
+    Public Safe Function LlvmBlockBinding FindBlock(string name)
+    {
+        LlvmBlockBinding current = This.FirstBlock;
+        While (current != null)
+        {
+            If (current.Name == name) Return current;
             current = current.Next;
         }
         Return null;

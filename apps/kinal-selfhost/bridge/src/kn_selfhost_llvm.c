@@ -460,6 +460,11 @@ void *kn_sh_llvm_const_int(void *integer_type, int64_t value, int sign_extend)
         (unsigned long long)(uint64_t)value, sign_extend) : 0;
 }
 
+void *kn_sh_llvm_const_float(void *float_type, double value)
+{
+    return float_type ? LLVMConstReal((LLVMTypeRef)float_type, value) : 0;
+}
+
 void *kn_sh_llvm_const_null(void *type)
 {
     return type ? LLVMConstNull((LLVMTypeRef)type) : 0;
@@ -556,16 +561,29 @@ KN_SH_BUILD_BINARY(kn_sh_llvm_build_sub, LLVMBuildSub)
 KN_SH_BUILD_BINARY(kn_sh_llvm_build_mul, LLVMBuildMul)
 KN_SH_BUILD_BINARY(kn_sh_llvm_build_sdiv, LLVMBuildSDiv)
 KN_SH_BUILD_BINARY(kn_sh_llvm_build_srem, LLVMBuildSRem)
+KN_SH_BUILD_BINARY(kn_sh_llvm_build_udiv, LLVMBuildUDiv)
+KN_SH_BUILD_BINARY(kn_sh_llvm_build_urem, LLVMBuildURem)
+KN_SH_BUILD_BINARY(kn_sh_llvm_build_fadd, LLVMBuildFAdd)
+KN_SH_BUILD_BINARY(kn_sh_llvm_build_fsub, LLVMBuildFSub)
+KN_SH_BUILD_BINARY(kn_sh_llvm_build_fmul, LLVMBuildFMul)
+KN_SH_BUILD_BINARY(kn_sh_llvm_build_fdiv, LLVMBuildFDiv)
 KN_SH_BUILD_BINARY(kn_sh_llvm_build_and, LLVMBuildAnd)
 KN_SH_BUILD_BINARY(kn_sh_llvm_build_or, LLVMBuildOr)
 KN_SH_BUILD_BINARY(kn_sh_llvm_build_xor, LLVMBuildXor)
 KN_SH_BUILD_BINARY(kn_sh_llvm_build_shl, LLVMBuildShl)
 KN_SH_BUILD_BINARY(kn_sh_llvm_build_ashr, LLVMBuildAShr)
+KN_SH_BUILD_BINARY(kn_sh_llvm_build_lshr, LLVMBuildLShr)
 
 void *kn_sh_llvm_build_neg(void *module_handle, void *value, const char *name)
 {
     KnShLlvmModule *state = module_state(module_handle);
     return state && value ? LLVMBuildNeg(state->builder, (LLVMValueRef)value, safe_name(name)) : 0;
+}
+
+void *kn_sh_llvm_build_fneg(void *module_handle, void *value, const char *name)
+{
+    KnShLlvmModule *state = module_state(module_handle);
+    return state && value ? LLVMBuildFNeg(state->builder, (LLVMValueRef)value, safe_name(name)) : 0;
 }
 
 void *kn_sh_llvm_build_not(void *module_handle, void *value, const char *name)
@@ -580,6 +598,15 @@ void *kn_sh_llvm_build_icmp(void *module_handle, int predicate, void *left,
     KnShLlvmModule *state = module_state(module_handle);
     return state && left && right ? LLVMBuildICmp(state->builder,
         (LLVMIntPredicate)predicate, (LLVMValueRef)left, (LLVMValueRef)right,
+        safe_name(name)) : 0;
+}
+
+void *kn_sh_llvm_build_fcmp(void *module_handle, int predicate, void *left,
+                            void *right, const char *name)
+{
+    KnShLlvmModule *state = module_state(module_handle);
+    return state && left && right ? LLVMBuildFCmp(state->builder,
+        (LLVMRealPredicate)predicate, (LLVMValueRef)left, (LLVMValueRef)right,
         safe_name(name)) : 0;
 }
 
@@ -606,6 +633,10 @@ KN_SH_BUILD_CAST(kn_sh_llvm_build_sext, LLVMBuildSExt)
 KN_SH_BUILD_CAST(kn_sh_llvm_build_trunc, LLVMBuildTrunc)
 KN_SH_BUILD_CAST(kn_sh_llvm_build_ptr_to_int, LLVMBuildPtrToInt)
 KN_SH_BUILD_CAST(kn_sh_llvm_build_int_to_ptr, LLVMBuildIntToPtr)
+KN_SH_BUILD_CAST(kn_sh_llvm_build_si_to_fp, LLVMBuildSIToFP)
+KN_SH_BUILD_CAST(kn_sh_llvm_build_ui_to_fp, LLVMBuildUIToFP)
+KN_SH_BUILD_CAST(kn_sh_llvm_build_fp_to_si, LLVMBuildFPToSI)
+KN_SH_BUILD_CAST(kn_sh_llvm_build_fp_to_ui, LLVMBuildFPToUI)
 
 void *kn_sh_llvm_build_call(void *module_handle, void *function_type,
                             void *function, void *arguments, const char *name)

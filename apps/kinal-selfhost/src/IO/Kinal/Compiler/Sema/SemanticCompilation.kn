@@ -109,6 +109,8 @@ Class SemanticCompilation
         This.AddBuiltin("list", [int](TypeKind.ListType));
         This.AddBuiltin("dict", [int](TypeKind.DictType));
         This.AddBuiltin("set", [int](TypeKind.SetType));
+        This.AddBuiltin("IO.Type.Object.Function", [int](TypeKind.NamedType));
+        This.AddBuiltin("Object.Function", [int](TypeKind.NamedType));
     }
 
     Public Safe Function void AddUnit(UnitSymbol unit)
@@ -139,7 +141,9 @@ Class SemanticCompilation
         Return name == "IO.Console" || name == "IO.File" || name == "IO.Directory" ||
                name == "IO.Path" || name == "IO.Text" || name == "IO.Collection" ||
                name == "IO.Error" || name == "IO.GC" || name == "IO.System" ||
-               name == "IO.Type";
+               name == "IO.Type" || name == "IO.Memory" || name == "IO.Volatile" ||
+               name == "IO.Meta" || name == "IO.Time" ||
+               IO.Text.StartsWith(name, "IO.Type.");
     }
 
     Public Safe Function void Report(SyntaxTree syntax, string title, string detail, int line, int column)
@@ -224,6 +228,15 @@ Class SemanticCompilation
         ImportDecl import = syntax.FirstImport;
         While (import != null)
         {
+            string aliasPrefix = import.Name + ".";
+            If (IO.Text.StartsWith(name, aliasPrefix))
+            {
+                string importedName = import.Target + "." +
+                    IO.Text.Slice(name, IO.Text.Length(aliasPrefix),
+                        IO.Text.Length(name) - IO.Text.Length(aliasPrefix));
+                TypeSymbol imported = This.FindExactType(importedName);
+                If (imported != null) Return imported;
+            }
             TypeSymbol current = This.FirstType;
             While (current != null)
             {
@@ -312,6 +325,9 @@ Class SemanticCompilation
                 This.CheckType(syntax, statement.TypeName, statement.Line, statement.Column);
             }
             This.CheckExpression(syntax, statement.Expression);
+            This.CheckExpression(syntax, statement.SecondExpression);
+            This.CheckExpression(syntax, statement.ThirdExpression);
+            This.CheckStatement(syntax, statement.Initializer);
             This.CheckStatement(syntax, statement.FirstChild);
             This.CheckStatement(syntax, statement.ElseBranch);
             statement = statement.Next;
@@ -450,6 +466,13 @@ Class SemanticCompilation
         TypeSymbol arrayType = New TypeSymbol([int](TypeKind.ArrayType), element.Name + "[]");
         arrayType.ElementType = element;
         Return arrayType;
+    }
+
+    Public Safe Function TypeSymbol MakePointerType(TypeSymbol element)
+    {
+        TypeSymbol pointerType = New TypeSymbol([int](TypeKind.PointerType), element.Name + "*");
+        pointerType.ElementType = element;
+        Return pointerType;
     }
 
     Public Safe Function FunctionSymbol FindQualifiedFunction(string name, int parameterCount)
@@ -638,6 +661,24 @@ Class SemanticCompilation
         Return parent + "." + expression.Text;
     }
 
+    Public Safe Function string ExpandImportPath(SyntaxTree syntax, string path)
+    {
+        ImportDecl import = syntax.FirstImport;
+        While (import != null)
+        {
+            If (path == import.Name) Return import.Target;
+            string prefix = import.Name + ".";
+            If (IO.Text.StartsWith(path, prefix))
+            {
+                Return import.Target + "." +
+                    IO.Text.Slice(path, IO.Text.Length(prefix),
+                        IO.Text.Length(path) - IO.Text.Length(prefix));
+            }
+            import = import.Next;
+        }
+        Return path;
+    }
+
     Public Safe Function int ArgumentCount(ExpressionNode call)
     {
         int count = 0;
@@ -666,10 +707,26 @@ Class SemanticCompilation
     {
         string name = target;
         int receiverKind = receiver == null ? [int](TypeKind.Unknown) : receiver.Kind;
-        If (target == "IO.Console.PrintLine" || target == "IO.Console.Print") Return This.Primitive("void");
-        If (target == "IO.File.Exists" || target == "IO.File.WriteAllText" ||
-            target == "IO.File.Delete" || target == "IO.File.DeleteIfExists") Return This.Primitive("bool");
-        If (target == "IO.File.ReadAllText") Return This.Primitive("string");
+        If (target == "IO.Console.PrintLine" || target == "IO.Console.Print" ||
+            target == "IO.Console.Write" || target == "IO.Console.WriteLine") Return This.Primitive("void");
+        If (target == "IO.Console.ReadLine") Return This.Primitive("string");
+        If (IO.Text.StartsWith(target, "IO.File."))
+        {
+            name = IO.Text.Slice(target, 8, IO.Text.Length(target) - 8);
+            If (name == "ReadAllText" || name == "ReadFirstLine" || name == "ReadOrDefault" ||
+                name == "ReadIfExists" || name == "ReadOr") Return This.Primitive("string");
+            If (name == "Size") Return This.Primitive("int");
+            Return This.Primitive("bool");
+        }
+        If (target == "IO.Memory.Copy" || target == "IO.Memory.Zero" ||
+            target == "IO.Time.Sleep") Return This.Primitive("void");
+        If (target == "IO.Time.GetTick" || target == "IO.Time.GetNanoTick")
+            Return This.Primitive("int");
+        If (target == "IO.Meta.Query" || target == "IO.Meta.Of") Return This.Primitive("list");
+        If (target == "IO.Meta.Find") Return This.Primitive("dict");
+        If (target == "IO.Meta.Has") Return This.Primitive("bool");
+        If (IO.Text.StartsWith(target, "IO.Volatile.Read")) Return This.Primitive("int");
+        If (IO.Text.StartsWith(target, "IO.Volatile.Write")) Return This.Primitive("void");
         If (target == "IO.Directory.Files") Return This.Primitive("list");
         If (target == "IO.Directory.Exists") Return This.Primitive("bool");
         If (IO.Text.StartsWith(target, "IO.Path."))
@@ -704,7 +761,20 @@ Class SemanticCompilation
             If (target == "ToChars") Return This.MakeArrayType(This.Primitive("char"));
             If (target == "Length") Return This.Primitive("int");
         }
-        If (receiverKind == [int](TypeKind.ArrayType) && target == "Length") Return This.Primitive("int");
+        If (receiverKind == [int](TypeKind.DictType))
+        {
+            If (target == "Count") Return This.Primitive("int");
+            If (target == "Fetch") Return This.Primitive("any");
+            If (target == "Contains" || target == "IsEmpty") Return This.Primitive("bool");
+        }
+        If (receiverKind == [int](TypeKind.ArrayType))
+        {
+            If (target == "Length") Return This.Primitive("int");
+            If (target == "Index") Return receiver.ElementType;
+            If (target == "Add") Return receiver;
+        }
+        If (receiverKind == [int](TypeKind.NamedType) && receiver.Name == "block" && target == "Run")
+            Return This.Primitive("void");
         Return null;
     }
 
@@ -741,7 +811,7 @@ Class SemanticCompilation
     {
         int argumentCount = This.ArgumentCount(expression);
         ExpressionNode targetSyntax = expression.Left;
-        string path = This.ExpressionPath(targetSyntax);
+        string path = This.ExpandImportPath(syntax, This.ExpressionPath(targetSyntax));
         FunctionSymbol targetFunction = IO.Text.IsEmpty(path) ? null :
             This.FindQualifiedFunction(path, argumentCount);
         TypeSymbol returnType = null;
@@ -800,7 +870,10 @@ Class SemanticCompilation
                             Return This.FailedExpression(expression);
                         }
                         callKind = [int](HirCallKind.RuntimeBuiltin);
-                        targetName = memberName;
+                        targetName = receiver.Type.Kind == [int](TypeKind.NamedType) &&
+                            receiver.Type.Name == "block" ? receiver.Target + "." + memberName : memberName;
+                        If (receiver.Type.Kind == [int](TypeKind.NamedType) &&
+                            receiver.Type.Name == "block") receiver = null;
                     }
                 }
             }
@@ -819,6 +892,19 @@ Class SemanticCompilation
                 callKind = targetFunction.OwnerType == null ?
                     [int](HirCallKind.UnitFunction) : [int](HirCallKind.InstanceMethod);
                 targetName = targetFunction.QualifiedName();
+            }
+            Else
+            {
+                ValueSymbol dynamic = scope.Find(targetSyntax.Text);
+                If (dynamic != null &&
+                    (dynamic.Type.Name == "IO.Type.Object.Function" ||
+                     dynamic.Type.Name == "Object.Function"))
+                {
+                    receiver = This.BindExpression(syntax, function, scope, targetSyntax);
+                    returnType = This.Primitive("any");
+                    callKind = [int](HirCallKind.DynamicFunction);
+                    targetName = targetSyntax.Text;
+                }
             }
         }
 
@@ -878,6 +964,13 @@ Class SemanticCompilation
             result.Target = receiver.Type.QualifiedName() + "." + expression.Text;
             Return result;
         }
+        If (receiver.Type.Kind == [int](TypeKind.NamedType) && receiver.Type.Name == "block")
+        {
+            HirExpression result = New HirExpression([int](HirExpressionKind.Constant),
+                expression, This.Primitive("isize"));
+            result.Target = receiver.Target + "." + expression.Text;
+            Return result;
+        }
         Return This.InvalidExpression(syntax, expression, "Unknown member", expression.Text);
     }
 
@@ -888,7 +981,8 @@ Class SemanticCompilation
         This.BoundExpressionCount = This.BoundExpressionCount + 1;
         If (expression.Kind == [int](ExpressionKind.Number))
             Return New HirExpression([int](HirExpressionKind.Constant), expression, This.Primitive("int"));
-        If (expression.Kind == [int](ExpressionKind.String))
+        If (expression.Kind == [int](ExpressionKind.String) ||
+            expression.Kind == [int](ExpressionKind.FormattedString))
             Return New HirExpression([int](HirExpressionKind.Constant), expression, This.Primitive("string"));
         If (expression.Kind == [int](ExpressionKind.Character))
             Return New HirExpression([int](HirExpressionKind.Constant), expression, This.Primitive("char"));
@@ -913,6 +1007,24 @@ Class SemanticCompilation
                 thisValue.Target = "This";
                 thisValue.Symbol = function.Receiver;
                 Return thisValue;
+            }
+            string importedPath = This.ExpandImportPath(syntax, expression.Text);
+            If (importedPath != expression.Text)
+            {
+                TypeSymbol importedType = This.ResolveType(syntax, importedPath);
+                If (importedType != null)
+                {
+                    HirExpression imported = New HirExpression(
+                        [int](HirExpressionKind.Namespace), expression, importedType);
+                    imported.Target = importedPath;
+                    Return imported;
+                }
+                TypeSymbol importedNamespace = New TypeSymbol(
+                    [int](TypeKind.NamespaceType), importedPath);
+                HirExpression imported = New HirExpression(
+                    [int](HirExpressionKind.Namespace), expression, importedNamespace);
+                imported.Target = importedPath;
+                Return imported;
             }
             TypeSymbol type = This.ResolveType(syntax, expression.Text);
             If (type != null)
@@ -957,11 +1069,52 @@ Class SemanticCompilation
             result.Left = This.BindExpression(syntax, function, scope, expression.Left);
             Return result;
         }
+        If (expression.Kind == [int](ExpressionKind.ArrayLiteral))
+        {
+            TypeSymbol elementType = This.Primitive("any");
+            HirExpression result = New HirExpression([int](HirExpressionKind.ArrayLiteral),
+                expression, This.MakeArrayType(elementType));
+            ExpressionNode item = expression.FirstArgument;
+            While (item != null)
+            {
+                HirExpression boundItem = This.BindExpression(syntax, function, scope, item);
+                If (result.FirstArgument == null && boundItem != null) elementType = boundItem.Type;
+                result.AddArgument(boundItem);
+                item = item.Next;
+            }
+            result.Type = This.MakeArrayType(elementType);
+            Return result;
+        }
+        If (expression.Kind == [int](ExpressionKind.Switch))
+        {
+            HirExpression result = New HirExpression([int](HirExpressionKind.Switch),
+                expression, This.Primitive("any"));
+            result.Left = This.BindExpression(syntax, function, scope, expression.Left);
+            ExpressionNode item = expression.FirstArgument;
+            While (item != null)
+            {
+                HirExpression boundCase = New HirExpression([int](HirExpressionKind.SwitchCase),
+                    item, This.Primitive("any"));
+                boundCase.Name = item.Text;
+                boundCase.Left = This.BindExpression(syntax, function, scope, item.Left);
+                boundCase.Right = This.BindExpression(syntax, function, scope, item.Right);
+                If (boundCase.Right != null)
+                {
+                    boundCase.Type = boundCase.Right.Type;
+                    If (result.FirstArgument == null) result.Type = boundCase.Right.Type;
+                }
+                result.AddArgument(boundCase);
+                item = item.Next;
+            }
+            Return result;
+        }
         If (expression.Kind == [int](ExpressionKind.Index))
         {
             HirExpression receiver = This.BindExpression(syntax, function, scope, expression.Left);
-            TypeSymbol type = receiver.Type.Kind == [int](TypeKind.ArrayType) ?
+            TypeSymbol type = receiver.Type.Kind == [int](TypeKind.ArrayType) ||
+                receiver.Type.Kind == [int](TypeKind.PointerType) ?
                 receiver.Type.ElementType : This.Primitive("any");
+            If (receiver.Type.Kind == [int](TypeKind.StringType)) type = This.Primitive("char");
             HirExpression result = New HirExpression([int](HirExpressionKind.Index), expression, type);
             result.Left = receiver;
             result.Right = This.BindExpression(syntax, function, scope, expression.Right);
@@ -971,6 +1124,9 @@ Class SemanticCompilation
         {
             HirExpression operand = This.BindExpression(syntax, function, scope, expression.Left);
             TypeSymbol type = expression.Operator == [int](TokenKind.Not) ? This.Primitive("bool") : operand.Type;
+            If (expression.Operator == [int](TokenKind.Ampersand)) type = This.MakePointerType(operand.Type);
+            ElseIf (expression.Operator == [int](TokenKind.Star) &&
+                operand.Type.Kind == [int](TypeKind.PointerType)) type = operand.Type.ElementType;
             HirExpression result = New HirExpression([int](HirExpressionKind.Unary), expression, type);
             result.Left = operand;
             Return result;
@@ -1023,6 +1179,26 @@ Class SemanticCompilation
         If (statement == null) Return null;
         HirStatement result = New HirStatement(statement.Kind);
         result.Name = statement.Name;
+        If (statement.Kind == [int](StatementKind.UnsafeBlock))
+        {
+            TypeSymbol blockType = New TypeSymbol([int](TypeKind.NamedType), "block");
+            ValueSymbol blockValue = New ValueSymbol(statement.Name, blockType, false);
+            scope.Add(blockValue);
+            result.DeclaredSymbol = blockValue;
+        }
+        If (statement.Kind == [int](StatementKind.For))
+        {
+            BindingScope loopScope = New BindingScope(scope);
+            result.Initializer = This.BindStatement(syntax, function, loopScope, statement.Initializer);
+            result.Expression = This.BindExpression(syntax, function, loopScope, statement.Expression);
+            result.SecondExpression = This.BindExpression(
+                syntax, function, loopScope, statement.SecondExpression);
+            result.ThirdExpression = This.BindExpression(
+                syntax, function, loopScope, statement.ThirdExpression);
+            result.FirstChild = This.BindStatement(syntax, function, loopScope, statement.FirstChild);
+            result.Next = This.BindStatement(syntax, function, scope, statement.Next);
+            Return result;
+        }
         If (statement.Kind == [int](StatementKind.Variable))
         {
             result.DeclaredType = This.ResolveFunctionType(syntax, function, statement.TypeName);
@@ -1041,6 +1217,11 @@ Class SemanticCompilation
         {
             result.Expression = This.BindExpression(syntax, function, scope, statement.Expression);
         }
+        result.SecondExpression = This.BindExpression(
+            syntax, function, scope, statement.SecondExpression);
+        result.ThirdExpression = This.BindExpression(
+            syntax, function, scope, statement.ThirdExpression);
+        result.Initializer = This.BindStatement(syntax, function, scope, statement.Initializer);
         If (statement.FirstChild != null)
         {
             BindingScope childScope = New BindingScope(scope);
