@@ -10,6 +10,8 @@ Enum HirExpressionKind By int
     Constant,
     Local,
     Global,
+    Delegate,
+    FunctionReference,
     Namespace,
     Field,
     Unary,
@@ -31,7 +33,8 @@ Enum HirCallKind By int
     InstanceMethod,
     RuntimeBuiltin,
     Constructor,
-    DynamicFunction
+    DynamicFunction,
+    Delegate
 }
 
 Class HirExpression

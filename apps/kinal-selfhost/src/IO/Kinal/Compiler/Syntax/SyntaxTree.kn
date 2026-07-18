@@ -101,7 +101,9 @@ Class FunctionDecl
     Public bool IsStatic;
     Public bool IsAsync;
     Public bool IsExtern;
+    Public bool IsDelegate;
     Public bool IsConstructor;
+    Public string Abi;
     Public int Line;
     Public int Column;
     Public ParameterDecl FirstParameter;
@@ -120,7 +122,9 @@ Class FunctionDecl
         This.IsStatic = false;
         This.IsAsync = false;
         This.IsExtern = false;
+        This.IsDelegate = false;
         This.IsConstructor = false;
+        This.Abi = "Kinal";
         This.Line = line;
         This.Column = column;
         This.FirstParameter = null;

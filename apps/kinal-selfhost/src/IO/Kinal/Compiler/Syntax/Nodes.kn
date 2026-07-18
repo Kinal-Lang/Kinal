@@ -20,7 +20,9 @@ Enum ExpressionKind By int
     Cast,
     ArrayLiteral,
     Switch,
-    SwitchCase
+    SwitchCase,
+    FunctionLiteral,
+    BlockLiteral
 }
 
 Enum StatementKind By int
@@ -59,6 +61,7 @@ Class ExpressionNode
     Public ExpressionNode LastArgument;
     Public TypeArgumentNode FirstTypeArgument;
     Public TypeArgumentNode LastTypeArgument;
+    Public StatementNode Body;
     Public ExpressionNode Next;
 
     Public Safe Constructor(int kind, string text, int line, int column)
@@ -75,6 +78,7 @@ Class ExpressionNode
         This.LastArgument = null;
         This.FirstTypeArgument = null;
         This.LastTypeArgument = null;
+        This.Body = null;
         This.Next = null;
     }
 

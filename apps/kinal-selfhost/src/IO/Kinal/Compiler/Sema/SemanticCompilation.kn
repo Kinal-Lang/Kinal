@@ -356,7 +356,8 @@ Class SemanticCompilation
         {
             If (statement.Kind == [int](StatementKind.Variable))
             {
-                This.CheckType(syntax, statement.TypeName, statement.Line, statement.Column);
+                If (statement.TypeName != "Var")
+                    This.CheckType(syntax, statement.TypeName, statement.Line, statement.Column);
             }
             This.CheckExpression(syntax, statement.Expression);
             This.CheckExpression(syntax, statement.SecondExpression);
@@ -663,6 +664,31 @@ Class SemanticCompilation
         Return null;
     }
 
+    Public Safe Function FunctionSymbol FindVisibleCallable(SyntaxTree syntax, TypeSymbol owner,
+                                                              string name)
+    {
+        FunctionSymbol current = This.FirstFunction;
+        While (current != null)
+        {
+            If (current.OwnerType == owner && current.Name == name) Return current;
+            If (current.OwnerType == null && current.UnitName == syntax.UnitName &&
+                current.Name == name) Return current;
+            current = current.Next;
+        }
+        ImportDecl import = syntax.FirstImport;
+        While (import != null)
+        {
+            current = This.FirstFunction;
+            While (current != null)
+            {
+                If (current.QualifiedName() == import.Target && import.Name == name) Return current;
+                current = current.Next;
+            }
+            import = import.Next;
+        }
+        Return null;
+    }
+
     Public Safe Function string TypeIdentity(TypeSymbol type)
     {
         If (type == null) Return "?";
@@ -951,6 +977,22 @@ Class SemanticCompilation
         Return null;
     }
 
+    Public Safe Function TypeSymbol FindInstanceFieldType(SyntaxTree syntax,
+                                                           TypeSymbol owner, string name)
+    {
+        If (owner == null || owner.Declaration == null) Return null;
+        UnitSymbol ownerUnit = This.FindUnit(owner.UnitName);
+        SyntaxTree definingSyntax = ownerUnit == null ? syntax : ownerUnit.Syntax;
+        FieldDecl field = owner.Declaration.FirstField;
+        While (field != null)
+        {
+            If (!field.IsStatic && field.Name == name)
+                Return This.ResolveType(definingSyntax, field.TypeName);
+            field = field.Next;
+        }
+        Return null;
+    }
+
     Public Safe Function HirExpression InvalidExpression(SyntaxTree syntax, ExpressionNode expression,
                                                           string title, string detail)
     {
@@ -983,7 +1025,8 @@ Class SemanticCompilation
             targetFunction = This.ResolveGenericCallTarget(syntax, function, targetFunction, expression);
             If (targetFunction == null) Return This.FailedExpression(expression);
             returnType = targetFunction.ReturnType;
-            callKind = [int](HirCallKind.UnitFunction);
+            callKind = targetFunction.Declaration.IsDelegate ?
+                [int](HirCallKind.Delegate) : [int](HirCallKind.UnitFunction);
             targetName = targetFunction.QualifiedName();
         }
         Else
@@ -1048,7 +1091,8 @@ Class SemanticCompilation
                 targetFunction = This.ResolveGenericCallTarget(syntax, function, targetFunction, expression);
                 If (targetFunction == null) Return This.FailedExpression(expression);
                 returnType = targetFunction.ReturnType;
-                callKind = targetFunction.OwnerType == null ?
+                callKind = targetFunction.Declaration.IsDelegate ?
+                    [int](HirCallKind.Delegate) : targetFunction.OwnerType == null ?
                     [int](HirCallKind.UnitFunction) : [int](HirCallKind.InstanceMethod);
                 targetName = targetFunction.QualifiedName();
             }
@@ -1180,6 +1224,32 @@ Class SemanticCompilation
                     staticValue.Symbol = global.Value;
                     Return staticValue;
                 }
+                TypeSymbol instanceField = This.FindInstanceFieldType(
+                    syntax, function.OwnerType, expression.Text);
+                If (instanceField != null && function.Receiver != null)
+                {
+                    HirExpression receiver = New HirExpression(
+                        [int](HirExpressionKind.Local), expression, function.OwnerType);
+                    receiver.Target = "This";
+                    receiver.Symbol = function.Receiver;
+                    HirExpression fieldValue = New HirExpression(
+                        [int](HirExpressionKind.Field), expression, instanceField);
+                    fieldValue.Left = receiver;
+                    fieldValue.Target = expression.Text;
+                    Return fieldValue;
+                }
+            }
+            FunctionSymbol callable = This.FindVisibleCallable(syntax,
+                function == null ? null : function.OwnerType, expression.Text);
+            If (callable != null)
+            {
+                HirExpression callableValue = New HirExpression(
+                    callable.Declaration.IsDelegate ? [int](HirExpressionKind.Delegate) :
+                        [int](HirExpressionKind.FunctionReference),
+                    expression, This.MakePointerType(This.Primitive("byte")));
+                callableValue.Target = callable.QualifiedName();
+                callableValue.Function = callable;
+                Return callableValue;
             }
             If (expression.Text == "This" && function != null && function.OwnerType != null)
             {
@@ -1389,7 +1459,11 @@ Class SemanticCompilation
         }
         If (statement.Kind == [int](StatementKind.Variable))
         {
-            result.DeclaredType = This.ResolveFunctionType(syntax, function, statement.TypeName);
+            result.Expression = This.BindExpression(syntax, function, scope, statement.Expression);
+            If (statement.TypeName == "Var")
+                result.DeclaredType = result.Expression == null ?
+                    This.Primitive("any") : result.Expression.Type;
+            Else result.DeclaredType = This.ResolveFunctionType(syntax, function, statement.TypeName);
             If (result.DeclaredType == null)
             {
                 This.UnresolvedTypeCount = This.UnresolvedTypeCount + 1;
@@ -1397,7 +1471,6 @@ Class SemanticCompilation
                     statement.Line, statement.Column);
                 result.DeclaredType = This.Primitive("any");
             }
-            result.Expression = This.BindExpression(syntax, function, scope, statement.Expression);
             result.DeclaredSymbol = New ValueSymbol(statement.Name, result.DeclaredType, false);
             scope.Add(result.DeclaredSymbol);
         }
@@ -1459,7 +1532,7 @@ Class SemanticCompilation
         FunctionSymbol function = This.FirstFunction;
         While (function != null)
         {
-            If (!function.IsGenericTemplate())
+            If (!function.IsGenericTemplate() && !function.Declaration.IsDelegate)
             {
                 unit = This.FindUnit(function.UnitName);
                 HirModule module = This.FindHirModule(function.UnitName);

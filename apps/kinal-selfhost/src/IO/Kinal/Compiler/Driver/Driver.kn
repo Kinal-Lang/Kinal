@@ -61,6 +61,7 @@ Safe Function void PrintHelp()
     IO.Console.PrintLine("  tokens <file> dump stable machine-readable tokens");
     IO.Console.PrintLine("  parse <file> validate Selfhost.Core syntax");
     IO.Console.PrintLine("  ast <file>   build and summarize the syntax tree");
+    IO.Console.PrintLine("  check-source <entry> [sources...]  analyze direct source files");
     IO.Console.PrintLine("  project <manifest> [profile]      load a kinal.knproj");
     IO.Console.PrintLine("  project-ast <manifest> [profile]  parse every project source");
     IO.Console.PrintLine("  check <manifest> [profile]        resolve declarations and types");
@@ -170,6 +171,33 @@ Safe Function int Run(string[] args)
         IO.Console.PrintLine(command == "build-object" ? "format=kinal-selfhost-object-v1" :
             (command == "build-ir" ? "format=kinal-selfhost-ir-v1" : "format=kinal-selfhost-executable-v1"));
         IO.Console.PrintLine("output=" + args[2]);
+        Return 0;
+    }
+
+    If (command == "check-source")
+    {
+        If (args.Length() < 2)
+        {
+            IO.Console.PrintLine("check-source requires at least one input file");
+            Return 2;
+        }
+        CompileSession session = New CompileSession();
+        int sourceIndex = 1;
+        While (sourceIndex < args.Length())
+        {
+            CompilationUnit unit = session.ParseFile(args[sourceIndex]);
+            If (sourceIndex == 1 && unit != null) session.EntryUnitName = unit.Syntax.UnitName;
+            sourceIndex = sourceIndex + 1;
+        }
+        SemanticCompilation semantics = null;
+        If (!session.HasErrors())
+        {
+            semantics = New SemanticCompilation(session);
+            semantics.Analyze();
+        }
+        IO.Kinal.Compiler.Core.Diagnostics.PrintAll(session.Diagnostics);
+        If (session.HasErrors()) Return 1;
+        IO.Console.PrintLine(semantics.Summary());
         Return 0;
     }
 

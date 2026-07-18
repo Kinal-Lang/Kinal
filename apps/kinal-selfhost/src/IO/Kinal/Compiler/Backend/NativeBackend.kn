@@ -19,6 +19,8 @@ Class NativeBackend
     Public LlvmModule Module;
     Public LlvmTypeBinding FirstType;
     Public LlvmGlobalBinding FirstGlobal;
+    Public LlvmDelegateBinding FirstDelegate;
+    Public LlvmDelegateAdapter FirstDelegateAdapter;
     Public LlvmFunctionBinding FirstFunction;
     Public LlvmRuntimeFunction FirstRuntime;
     Public byte* AnyType;
@@ -31,6 +33,8 @@ Class NativeBackend
         This.Module = New LlvmModule("kinal.selfhost.output");
         This.FirstType = null;
         This.FirstGlobal = null;
+        This.FirstDelegate = null;
+        This.FirstDelegateAdapter = null;
         This.FirstFunction = null;
         This.FirstRuntime = null;
         This.AnyType = null;
@@ -315,6 +319,23 @@ Class NativeBackend
         Return null;
     }
 
+    Public Safe Function void AddDelegateBinding(LlvmDelegateBinding binding)
+    {
+        binding.Next = This.FirstDelegate;
+        This.FirstDelegate = binding;
+    }
+
+    Public Safe Function LlvmDelegateBinding FindDelegateBinding(FunctionSymbol symbol)
+    {
+        LlvmDelegateBinding current = This.FirstDelegate;
+        While (current != null)
+        {
+            If (current.Symbol == symbol) Return current;
+            current = current.Next;
+        }
+        Return null;
+    }
+
     Public Trusted Function byte* ConstantGlobalInitializer(GlobalSymbol symbol)
     {
         ExpressionNode expression = symbol.Declaration.Initializer;
@@ -411,7 +432,8 @@ Class NativeBackend
                 symbol = symbol.Next;
                 Continue;
             }
-            bool cAbi = symbol.Declaration.IsExtern;
+            bool cAbi = symbol.Declaration.IsExtern ||
+                (symbol.Declaration.IsDelegate && symbol.Declaration.Abi == "C");
             LlvmHandles parameters = New LlvmHandles();
             bool hasReceiver = symbol.OwnerType != null &&
                 (!symbol.Declaration.IsStatic || symbol.Declaration.IsConstructor);
@@ -424,6 +446,19 @@ Class NativeBackend
             }
             byte* returnType = cAbi ? This.AbiTypeHandle(symbol.ReturnType) : This.TypeHandle(symbol.ReturnType);
             byte* functionType = This.Module.FunctionType(returnType, parameters, false);
+            If (symbol.Declaration.IsDelegate)
+            {
+                byte* pointerType = This.Module.PointerType(functionType);
+                byte* address = This.Module.AddGlobal(pointerType,
+                    "__kn_sh_delegate_" + This.Sanitize(symbol.QualifiedName()));
+                If (address == null || !This.Module.SetInitializer(address,
+                    This.Module.ConstNull(pointerType)))
+                    This.Fail("failed to declare delegate: " + symbol.QualifiedName());
+                Else This.AddDelegateBinding(New LlvmDelegateBinding(
+                    symbol, functionType, address, cAbi));
+                symbol = symbol.Next;
+                Continue;
+            }
             byte* function = This.Module.AddFunction(This.FunctionName(symbol), functionType);
             If (function == null) This.Fail("failed to declare function: " + symbol.QualifiedName());
             This.AddFunctionBinding(New LlvmFunctionBinding(symbol, functionType, function, cAbi));
@@ -884,6 +919,11 @@ Class NativeBackend
             LlvmGlobalBinding global = This.FindGlobalBinding(expression.Symbol);
             Return global == null ? null : global.Address;
         }
+        If (expression.Kind == [int](HirExpressionKind.Delegate))
+        {
+            LlvmDelegateBinding delegate = This.FindDelegateBinding(expression.Function);
+            Return delegate == null ? null : delegate.Address;
+        }
         If (expression.Kind == [int](HirExpressionKind.Field))
         {
             LlvmValue receiver = This.EmitExpression(context, expression.Left);
@@ -980,6 +1020,100 @@ Class NativeBackend
         byte* result = This.Module.Call(binding.FunctionType, binding.Function, arguments, resultName);
         Return binding.UsesCAbi ? This.FromCAbi(result, binding.Symbol.ReturnType) :
             New LlvmValue(result, binding.Symbol.ReturnType);
+    }
+
+    Public Trusted Function LlvmValue EmitDelegateCall(LlvmFunctionContext context,
+                                                        HirExpression expression)
+    {
+        LlvmDelegateBinding binding = This.FindDelegateBinding(expression.Function);
+        If (binding == null)
+        {
+            This.Fail("delegate binding is missing: " + expression.Target);
+            Return This.DefaultValue(expression.Type);
+        }
+        byte* pointerType = This.Module.PointerType(binding.FunctionType);
+        byte* callable = This.Module.Load(pointerType, binding.Address, This.Unique("delegate"));
+        LlvmHandles arguments = New LlvmHandles();
+        ParameterSymbol parameter = binding.Symbol.FirstParameter;
+        HirExpression argument = expression.FirstArgument;
+        While (parameter != null)
+        {
+            If (argument == null)
+            {
+                This.Fail("missing delegate argument: " + binding.Symbol.QualifiedName());
+                arguments.Add(This.DefaultValue(parameter.Type).Handle);
+            }
+            Else
+            {
+                LlvmValue value = This.EmitExpression(context, argument);
+                arguments.Add(binding.UsesCAbi ? This.ToCAbi(value, parameter.Type) :
+                    This.CastValue(value, parameter.Type).Handle);
+                argument = argument.Next;
+            }
+            parameter = parameter.Next;
+        }
+        string resultName = binding.Symbol.ReturnType.Kind == [int](TypeKind.VoidType) ?
+            "" : This.Unique("delegate_call");
+        byte* result = This.Module.Call(binding.FunctionType, callable, arguments, resultName);
+        Return binding.UsesCAbi ? This.FromCAbi(result, binding.Symbol.ReturnType) :
+            New LlvmValue(result, binding.Symbol.ReturnType);
+    }
+
+    Public Trusted Function byte* EnsureDelegateAdapter(FunctionSymbol delegate,
+                                                         FunctionSymbol target)
+    {
+        LlvmDelegateAdapter existing = This.FirstDelegateAdapter;
+        While (existing != null)
+        {
+            If (existing.Delegate == delegate && existing.Target == target) Return existing.Function;
+            existing = existing.Next;
+        }
+        LlvmDelegateBinding delegateBinding = This.FindDelegateBinding(delegate);
+        LlvmFunctionBinding targetBinding = This.FindFunctionBinding(target);
+        If (delegateBinding == null || targetBinding == null || target.OwnerType != null ||
+            delegate.ParameterCount() != target.ParameterCount())
+        {
+            This.Fail("incompatible delegate assignment: " + delegate.QualifiedName());
+            Return null;
+        }
+
+        byte* adapter = This.Module.AddFunction("__kn_sh_delegate_adapter_" +
+            This.Sanitize(delegate.QualifiedName()) + "_" + This.Sanitize(target.QualifiedName()),
+            delegateBinding.FunctionType);
+        LlvmDelegateAdapter cached = New LlvmDelegateAdapter(delegate, target, adapter);
+        cached.Next = This.FirstDelegateAdapter;
+        This.FirstDelegateAdapter = cached;
+
+        byte* savedBlock = This.Module.CurrentBlock();
+        byte* entry = This.Module.AppendBlock(adapter, "entry");
+        This.Module.PositionAtEnd(entry);
+        LlvmHandles arguments = New LlvmHandles();
+        ParameterSymbol delegateParameter = delegate.FirstParameter;
+        ParameterSymbol targetParameter = target.FirstParameter;
+        int index = 0;
+        While (delegateParameter != null && targetParameter != null)
+        {
+            LlvmValue value = delegateBinding.UsesCAbi ?
+                This.FromCAbi(This.Module.Parameter(adapter, index), delegateParameter.Type) :
+                New LlvmValue(This.Module.Parameter(adapter, index), delegateParameter.Type);
+            arguments.Add(This.CastValue(value, targetParameter.Type).Handle);
+            delegateParameter = delegateParameter.Next;
+            targetParameter = targetParameter.Next;
+            index = index + 1;
+        }
+        string resultName = target.ReturnType.Kind == [int](TypeKind.VoidType) ? "" : "result";
+        byte* result = This.Module.Call(targetBinding.FunctionType, targetBinding.Function,
+            arguments, resultName);
+        If (delegate.ReturnType.Kind == [int](TypeKind.VoidType)) This.Module.ReturnVoid();
+        Else
+        {
+            LlvmValue value = This.CastValue(New LlvmValue(result, target.ReturnType),
+                delegate.ReturnType);
+            This.Module.ReturnValue(delegateBinding.UsesCAbi ?
+                This.ToCAbi(value, delegate.ReturnType) : value.Handle);
+        }
+        If (savedBlock != null) This.Module.PositionAtEnd(savedBlock);
+        Return adapter;
     }
 
     Public Trusted Function LlvmValue EmitDynamicFunctionCall(LlvmFunctionContext context,
@@ -1781,7 +1915,25 @@ Class NativeBackend
         If (assignment)
         {
             byte* address = This.EmitAddress(context, expression.Left);
-            LlvmValue right = This.CastValue(This.EmitExpression(context, expression.Right), expression.Left.Type);
+            LlvmValue right = null;
+            If (expression.Left.Kind == [int](HirExpressionKind.Delegate) &&
+                expression.Right.Kind == [int](HirExpressionKind.FunctionReference))
+            {
+                LlvmDelegateBinding delegate = This.FindDelegateBinding(expression.Left.Function);
+                LlvmFunctionBinding target = This.FindFunctionBinding(expression.Right.Function);
+                If (delegate == null || target == null)
+                {
+                    This.Fail("delegate assignment binding is missing: " + expression.Left.Target);
+                    right = This.DefaultValue(expression.Left.Type);
+                }
+                Else
+                {
+                    byte* callable = delegate.UsesCAbi ?
+                        This.EnsureDelegateAdapter(delegate.Symbol, target.Symbol) : target.Function;
+                    right = New LlvmValue(callable, expression.Left.Type);
+                }
+            }
+            Else right = This.CastValue(This.EmitExpression(context, expression.Right), expression.Left.Type);
             If (operatorKind != [int](TokenKind.Assign))
             {
                 LlvmValue left = New LlvmValue(This.Module.Load(This.TypeHandle(expression.Left.Type), address,
@@ -2158,7 +2310,8 @@ Class NativeBackend
             Return This.DefaultValue(expression.Type);
         }
         If (expression.Kind == [int](HirExpressionKind.Local) ||
-            expression.Kind == [int](HirExpressionKind.Global))
+            expression.Kind == [int](HirExpressionKind.Global) ||
+            expression.Kind == [int](HirExpressionKind.Delegate))
         {
             byte* address = This.EmitAddress(context, expression);
             If (address == null)
@@ -2171,6 +2324,16 @@ Class NativeBackend
                 This.Unique("load")), expression.Type);
             result.Address = address;
             Return result;
+        }
+        If (expression.Kind == [int](HirExpressionKind.FunctionReference))
+        {
+            LlvmFunctionBinding function = This.FindFunctionBinding(expression.Function);
+            If (function == null)
+            {
+                This.Fail("function reference binding is missing: " + expression.Target);
+                Return This.DefaultValue(expression.Type);
+            }
+            Return New LlvmValue(function.Function, expression.Type);
         }
         If (expression.Kind == [int](HirExpressionKind.Field) ||
             expression.Kind == [int](HirExpressionKind.Index))
@@ -2197,6 +2360,8 @@ Class NativeBackend
                 Return This.EmitRuntimeBuiltin(context, expression);
             If (expression.CallKind == [int](HirCallKind.DynamicFunction))
                 Return This.EmitDynamicFunctionCall(context, expression);
+            If (expression.CallKind == [int](HirCallKind.Delegate))
+                Return This.EmitDelegateCall(context, expression);
             LlvmFunctionBinding binding = expression.Function == null ?
                 This.FindFunctionByTarget(expression.Target, This.HirArgumentCount(expression)) :
                 This.FindFunctionBinding(expression.Function);

@@ -1,0 +1,34 @@
+Unit Tests.Selfhost.Delegates;
+
+Get IO.Console;
+
+Function int Add(int a, int b)
+{
+    Return a + b;
+}
+
+Function int Multiply(int a, int b)
+{
+    Return a * b;
+}
+
+Delegate Function int c_add(int a, int b) By C;
+Delegate Function int kinal_multiply(int a, int b) By Kinal;
+Delegate Function int operation(int a, int b);
+
+Trusted Static Function int Main()
+{
+    c_add = Add;
+    kinal_multiply = Multiply;
+    operation = Add;
+    int first = c_add(20, 22);
+    int second = kinal_multiply(6, 7);
+    int third = operation(40, 2);
+    operation = Multiply;
+    int fourth = operation(6, 7);
+    IO.Console.PrintLine(first);
+    IO.Console.PrintLine(second);
+    IO.Console.PrintLine(third);
+    IO.Console.PrintLine(fourth);
+    Return first == 42 && second == 42 && third == 42 && fourth == 42 ? 0 : 1;
+}

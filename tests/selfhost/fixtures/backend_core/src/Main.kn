@@ -33,18 +33,18 @@ Class NodeContext
 
     Public Safe Constructor()
     {
-        This.First = null;
+        First = null;
     }
 
     Public Safe Function void Add(Node node)
     {
-        node.Next = This.First;
-        This.First = node;
+        node.Next = First;
+        First = node;
     }
 
     Public Safe Function Node Find(string name)
     {
-        Node current = This.First;
+        Node current = First;
         While (current != null)
         {
             If (current.Name == name) Return current;
@@ -56,9 +56,9 @@ Class NodeContext
 
 Trusted Static Function int Main()
 {
-    string canonical = IO.Text.Replace("string[ ]", " ", "");
-    Canonicalizer canonicalizer = New Canonicalizer();
-    string memberCanonical = canonicalizer.Canonical("char[ ]");
+    Var canonical = IO.Text.Replace("string[ ]", " ", "");
+    Var canonicalizer = New Canonicalizer();
+    Var memberCanonical = canonicalizer.Canonical("char[ ]");
     NodeContext context = New NodeContext();
     context.Add(New Node("value"));
     Node found = context.Find("value");

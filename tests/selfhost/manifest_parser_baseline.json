@@ -1,17 +1,5 @@
 {
   "platform": "windows",
   "positive_sources": 164,
-  "unsupported_sources": [
-    "tests/common/dynlib_loader.kn",
-    "tests/common/global_null_sugar.kn",
-    "tests/common/localized_aliases.kn",
-    "tests/common/ptr_to_function_cast.kn",
-    "tests/common/unsafe_alias_get_keyword.kn",
-    "tests/common/unsafe_alias_keyword.kn",
-    "tests/common/unsafe_alias_unicode_keyword.kn",
-    "tests/common/unsafe_unsafe_unsafe_alias.kn",
-    "tests/common/unsafe_unsafe_unsafe_alias_semicolon_target.kn",
-    "tests/common/unsafe_unsafe_unsafe_alias_sequence.kn",
-    "tests/windows/ffi_abi.kn"
-  ]
+  "unsupported_sources": []
 }

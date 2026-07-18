@@ -91,6 +91,42 @@ def main() -> int:
     )
     results.append({"name": "contextual_qualified_names", "ok": True})
 
+    unsafe_alias_fixtures = [
+        root / "tests" / "common" / "unsafe_alias_keyword.kn",
+        root / "tests" / "common" / "unsafe_alias_get_keyword.kn",
+        root / "tests" / "common" / "unsafe_alias_unicode_keyword.kn",
+        root / "tests" / "common" / "localized_aliases.kn",
+        root / "tests" / "common" / "unsafe_unsafe_unsafe_alias.kn",
+        root / "tests" / "common" / "unsafe_unsafe_unsafe_alias_sequence.kn",
+        root / "tests" / "common" / "unsafe_unsafe_unsafe_alias_semicolon_target.kn",
+    ]
+    for index, unsafe_alias_fixture in enumerate(unsafe_alias_fixtures):
+        unsafe_stage0_ast_path = out_dir / f"unsafe-alias-{index}-stage0.kast"
+        unsafe_stage0_ast = run(
+            [
+                str(stage0),
+                "build",
+                "--no-module-discovery",
+                "--color",
+                "never",
+                "--emit",
+                "ast",
+                str(unsafe_alias_fixture),
+                "-o",
+                str(unsafe_stage0_ast_path),
+            ],
+            cwd=root,
+        )
+        require(unsafe_stage0_ast.returncode == 0, "stage0 unsafe-alias AST failed", unsafe_stage0_ast)
+        unsafe_stage1_ast = run([str(compiler), "ast", str(unsafe_alias_fixture)], cwd=root)
+        require(unsafe_stage1_ast.returncode == 0, "stage1 unsafe-alias AST failed", unsafe_stage1_ast)
+        require(
+            unsafe_stage0_ast_path.read_text(encoding="utf-8").replace("\r\n", "\n").strip()
+            == unsafe_stage1_ast.stdout.replace("\r\n", "\n").strip(),
+            f"stage0/stage1 unsafe-alias syntax mismatch: {unsafe_alias_fixture}",
+        )
+    results.append({"name": "unsafe_alias_syntax", "ok": True, "files": len(unsafe_alias_fixtures)})
+
     switch_fixture = root / "tests" / "selfhost" / "fixtures" / "switch_expression.kn"
     switch_stage0_path = out_dir / "switch-expression-stage0.kast"
     switch_stage0 = run(
@@ -314,6 +350,80 @@ def main() -> int:
         aliases_run,
     )
     results.append({"name": "symbol_aliases", "ok": True})
+
+    delegates_project = root / "tests" / "selfhost" / "fixtures" / "delegates" / "kinal.knproj"
+    delegates_executable = out_dir / f"delegates{executable_suffix}"
+    delegates_build = run(
+        [str(compiler), "build", str(delegates_project), str(delegates_executable), "test"],
+        cwd=root,
+    )
+    require(delegates_build.returncode == 0, "stage1 delegate fixture build failed", delegates_build)
+    require(delegates_executable.is_file(), "stage1 delegate fixture executable is missing")
+    delegates_run = run([str(delegates_executable)], cwd=root)
+    require(delegates_run.returncode == 0, "stage1 delegate fixture execution failed", delegates_run)
+    require(
+        delegates_run.stdout.replace("\r\n", "\n").strip() == "42\n42\n42\n42",
+        "stage1 delegate fixture output differs",
+        delegates_run,
+    )
+    delegate_syntax_fixtures = [
+        root / "tests" / "common" / "ptr_to_function_cast.kn",
+        root / "tests" / "common" / "dynlib_loader.kn",
+        root / "tests" / "windows" / "ffi_abi.kn",
+    ]
+    for index, delegate_fixture in enumerate(delegate_syntax_fixtures):
+        delegate_stage0_path = out_dir / f"delegate-{index}-stage0.kast"
+        delegate_stage0 = run(
+            [
+                str(stage0),
+                "build",
+                "--no-module-discovery",
+                "--color",
+                "never",
+                "--emit",
+                "ast",
+                str(delegate_fixture),
+                "-o",
+                str(delegate_stage0_path),
+            ],
+            cwd=root,
+        )
+        require(delegate_stage0.returncode == 0, "stage0 delegate syntax emit failed", delegate_stage0)
+        delegate_stage1 = run([str(compiler), "ast", str(delegate_fixture)], cwd=root)
+        require(delegate_stage1.returncode == 0, "stage1 delegate syntax build failed", delegate_stage1)
+        require(
+            delegate_stage0_path.read_text(encoding="utf-8").replace("\r\n", "\n").strip()
+            == delegate_stage1.stdout.replace("\r\n", "\n").strip(),
+            f"stage0/stage1 delegate syntax mismatch: {delegate_fixture}",
+        )
+    results.append({"name": "delegates", "ok": True, "files": len(delegate_syntax_fixtures)})
+
+    global_literal_fixture = root / "tests" / "common" / "global_null_sugar.kn"
+    global_literal_stage0_path = out_dir / "global-literals-stage0.kast"
+    global_literal_stage0 = run(
+        [
+            str(stage0),
+            "build",
+            "--no-module-discovery",
+            "--color",
+            "never",
+            "--emit",
+            "ast",
+            str(global_literal_fixture),
+            "-o",
+            str(global_literal_stage0_path),
+        ],
+        cwd=root,
+    )
+    require(global_literal_stage0.returncode == 0, "stage0 global-literal syntax emit failed", global_literal_stage0)
+    global_literal_stage1 = run([str(compiler), "ast", str(global_literal_fixture)], cwd=root)
+    require(global_literal_stage1.returncode == 0, "stage1 global-literal syntax build failed", global_literal_stage1)
+    require(
+        global_literal_stage0_path.read_text(encoding="utf-8").replace("\r\n", "\n").strip()
+        == global_literal_stage1.stdout.replace("\r\n", "\n").strip(),
+        "stage0/stage1 global-literal syntax mismatch",
+    )
+    results.append({"name": "global_literal_syntax", "ok": True})
 
     array_project = root / "tests" / "selfhost" / "fixtures" / "array_types" / "kinal.knproj"
     array_executable = out_dir / f"array-types{executable_suffix}"
@@ -549,6 +659,32 @@ def main() -> int:
         "sources": manifest_parser_data["sources"],
         "passed": manifest_parser_data["passed"],
         "coverage": manifest_parser_data["coverage"],
+    })
+
+    manifest_sema_report = out_dir / "manifest-sema.json"
+    manifest_sema = run(
+        [
+            sys.executable,
+            str(root / "tests" / "selfhost" / "audit_manifest_sema.py"),
+            "--compiler",
+            str(compiler),
+            "--root",
+            str(root),
+            "--baseline",
+            str(root / "tests" / "selfhost" / "manifest_sema_baseline.json"),
+            "--output",
+            str(manifest_sema_report),
+        ],
+        cwd=root,
+    )
+    require(manifest_sema.returncode == 0, "stage1 manifest semantic audit failed", manifest_sema)
+    manifest_sema_data = json.loads(manifest_sema_report.read_text(encoding="utf-8"))
+    results.append({
+        "name": "manifest_sema_coverage",
+        "ok": True,
+        "cases": manifest_sema_data["cases"],
+        "passed": manifest_sema_data["passed"],
+        "coverage": manifest_sema_data["coverage"],
     })
 
     (out_dir / "results.json").write_text(json.dumps(results, indent=2) + "\n", encoding="utf-8")

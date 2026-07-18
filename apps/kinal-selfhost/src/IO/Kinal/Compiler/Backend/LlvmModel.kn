@@ -70,6 +70,41 @@ Class LlvmGlobalBinding
     }
 }
 
+Class LlvmDelegateBinding
+{
+    Public FunctionSymbol Symbol;
+    Public byte* FunctionType;
+    Public byte* Address;
+    Public bool UsesCAbi;
+    Public LlvmDelegateBinding Next;
+
+    Public Safe Constructor(FunctionSymbol symbol, byte* functionType,
+                            byte* address, bool usesCAbi)
+    {
+        This.Symbol = symbol;
+        This.FunctionType = functionType;
+        This.Address = address;
+        This.UsesCAbi = usesCAbi;
+        This.Next = null;
+    }
+}
+
+Class LlvmDelegateAdapter
+{
+    Public FunctionSymbol Delegate;
+    Public FunctionSymbol Target;
+    Public byte* Function;
+    Public LlvmDelegateAdapter Next;
+
+    Public Safe Constructor(FunctionSymbol delegate, FunctionSymbol target, byte* function)
+    {
+        This.Delegate = delegate;
+        This.Target = target;
+        This.Function = function;
+        This.Next = null;
+    }
+}
+
 Class LlvmRuntimeFunction
 {
     Public string Name;
