@@ -249,6 +249,9 @@ Class SemanticCompilation
     Public Safe Function TypeSymbol ResolveType(SyntaxTree syntax, string rawName)
     {
         string name = This.CanonicalTypeName(rawName);
+        If (name == "Object.Function") name = "IO.Type.Object.Function";
+        ElseIf (name == "Object.Class") name = "IO.Type.Object.Class";
+        ElseIf (name == "Object.Block") name = "IO.Type.Object.Block";
         int fixedOpen = IO.Text.IndexOf(name, "[");
         If (fixedOpen > 0 && IO.Text.EndsWith(name, "]"))
         {
@@ -563,6 +566,20 @@ Class SemanticCompilation
                     }
                     This.AddGlobalSymbol(New GlobalSymbol(unit.Name, declaration, type));
                     This.GlobalCount = This.GlobalCount + 1;
+                    If (declaration.Initializer != null &&
+                        (declaration.Initializer.Kind == [int](ExpressionKind.FunctionLiteral) ||
+                         declaration.Initializer.Kind == [int](ExpressionKind.BlockLiteral)))
+                    {
+                        string literalName = "__global_literal_" + declaration.Name;
+                        string returnType = declaration.Initializer.Kind ==
+                            [int](ExpressionKind.FunctionLiteral) ?
+                            declaration.Initializer.Text : "void";
+                        FunctionDecl literal = New FunctionDecl(literalName, returnType,
+                            declaration.Line, declaration.Column);
+                        literal.IsStatic = true;
+                        literal.Body = declaration.Initializer.Body;
+                        unit.Syntax.AddFunction(literal);
+                    }
                 }
                 declaration = declaration.Next;
             }
@@ -602,6 +619,20 @@ Class SemanticCompilation
                 typeDeclaration = typeDeclaration.Next;
             }
             unit = unit.Next;
+        }
+    }
+
+    Public Safe Function void LinkGlobalLiteralFunctions()
+    {
+        GlobalSymbol global = This.FirstGlobal;
+        While (global != null)
+        {
+            If (global.Declaration.Initializer != null &&
+                (global.Declaration.Initializer.Kind == [int](ExpressionKind.FunctionLiteral) ||
+                 global.Declaration.Initializer.Kind == [int](ExpressionKind.BlockLiteral)))
+                global.Value.CallableFunction = This.FindQualifiedFunction(global.UnitName +
+                    ".__global_literal_" + global.Declaration.Name, 0);
+            global = global.Next;
         }
     }
 
@@ -1248,31 +1279,42 @@ Class SemanticCompilation
             string memberName = targetSyntax.Text;
             If (receiver.Kind != [int](HirExpressionKind.Invalid))
             {
-                targetFunction = This.FindMethod(receiver.Type, memberName, argumentCount);
-                If (targetFunction != null)
+                If (receiver.Symbol != null && receiver.Symbol.CallableFunction != null &&
+                    memberName == "Run")
                 {
-                    targetFunction = This.ResolveGenericCallTarget(syntax, function, targetFunction, expression);
-                    If (targetFunction == null) Return This.FailedExpression(expression);
-                    returnType = targetFunction.ReturnType;
-                    callKind = [int](HirCallKind.InstanceMethod);
-                    targetName = targetFunction.QualifiedName();
+                    targetFunction = receiver.Symbol.CallableFunction;
+                    returnType = This.Primitive("any");
+                    callKind = [int](HirCallKind.DynamicFunction);
+                    targetName = receiver.Target;
                 }
-                Else
+                If (returnType == null)
                 {
-                    returnType = This.RuntimeCallType(memberName, receiver.Type);
-                    If (returnType != null)
+                    targetFunction = This.FindMethod(receiver.Type, memberName, argumentCount);
+                    If (targetFunction != null)
                     {
-                        If (expression.TypeArgumentCount() != 0)
+                        targetFunction = This.ResolveGenericCallTarget(syntax, function, targetFunction, expression);
+                        If (targetFunction == null) Return This.FailedExpression(expression);
+                        returnType = targetFunction.ReturnType;
+                        callKind = [int](HirCallKind.InstanceMethod);
+                        targetName = targetFunction.QualifiedName();
+                    }
+                    Else
+                    {
+                        returnType = This.RuntimeCallType(memberName, receiver.Type);
+                        If (returnType != null)
                         {
-                            This.Report(syntax, "Invalid generic call", memberName,
-                                expression.Line, expression.Column);
-                            Return This.FailedExpression(expression);
+                            If (expression.TypeArgumentCount() != 0)
+                            {
+                                This.Report(syntax, "Invalid generic call", memberName,
+                                    expression.Line, expression.Column);
+                                Return This.FailedExpression(expression);
+                            }
+                            callKind = [int](HirCallKind.RuntimeBuiltin);
+                            targetName = receiver.Type.Kind == [int](TypeKind.NamedType) &&
+                                receiver.Type.Name == "block" ? receiver.Target + "." + memberName : memberName;
+                            If (receiver.Type.Kind == [int](TypeKind.NamedType) &&
+                                receiver.Type.Name == "block") receiver = null;
                         }
-                        callKind = [int](HirCallKind.RuntimeBuiltin);
-                        targetName = receiver.Type.Kind == [int](TypeKind.NamedType) &&
-                            receiver.Type.Name == "block" ? receiver.Target + "." + memberName : memberName;
-                        If (receiver.Type.Kind == [int](TypeKind.NamedType) &&
-                            receiver.Type.Name == "block") receiver = null;
                     }
                 }
             }
@@ -1296,13 +1338,19 @@ Class SemanticCompilation
             Else
             {
                 ValueSymbol dynamic = scope.Find(targetSyntax.Text);
+                If (dynamic == null)
+                {
+                    GlobalSymbol dynamicGlobal = This.FindGlobal(syntax.UnitName, targetSyntax.Text);
+                    If (dynamicGlobal != null) dynamic = dynamicGlobal.Value;
+                }
                 If (dynamic != null &&
                     (dynamic.CallableFunction != null ||
                      dynamic.Type.Name == "IO.Type.Object.Function" ||
                      dynamic.Type.Name == "Object.Function"))
                 {
                     receiver = This.BindExpression(syntax, function, scope, targetSyntax);
-                    returnType = This.Primitive("any");
+                    returnType = dynamic.CallableFunction == null ?
+                        This.Primitive("any") : dynamic.CallableFunction.ReturnType;
                     callKind = [int](HirCallKind.DynamicFunction);
                     targetName = targetSyntax.Text;
                     targetFunction = dynamic.CallableFunction;
@@ -1413,6 +1461,43 @@ Class SemanticCompilation
         Return This.InvalidExpression(syntax, expression, "Unknown member", expression.Text);
     }
 
+    Public Safe Function HirExpression BindStringExpression(SyntaxTree syntax,
+                                                              FunctionSymbol function,
+                                                              BindingScope scope,
+                                                              ExpressionNode expression)
+    {
+        HirExpression text = null;
+        If (expression.Kind == [int](ExpressionKind.FormattedString) &&
+            expression.FirstArgument != null)
+        {
+            ExpressionNode part = expression.FirstArgument;
+            While (part != null)
+            {
+                HirExpression boundPart = This.BindExpression(syntax, function, scope, part);
+                If (text == null) text = boundPart;
+                Else
+                {
+                    HirExpression combined = New HirExpression([int](HirExpressionKind.Binary),
+                        expression, This.Primitive("string"));
+                    combined.Operator = [int](TokenKind.Plus);
+                    combined.Left = text;
+                    combined.Right = boundPart;
+                    text = combined;
+                }
+                part = part.Next;
+            }
+        }
+        Else text = New HirExpression([int](HirExpressionKind.Constant),
+            expression, This.Primitive("string"));
+        If (!expression.IsCharacterString) Return text;
+        HirExpression characters = New HirExpression([int](HirExpressionKind.Call),
+            expression, This.MakeArrayType(This.Primitive("char")));
+        characters.CallKind = [int](HirCallKind.RuntimeBuiltin);
+        characters.Target = "ToChars";
+        characters.Left = text;
+        Return characters;
+    }
+
     Public Safe Function int TargetIntegerConstant(string path)
     {
         If (path == "IO.Target.OS" || path == "IO.Target.OS.Current" ||
@@ -1455,7 +1540,7 @@ Class SemanticCompilation
             Return New HirExpression([int](HirExpressionKind.Constant), expression, This.Primitive("int"));
         If (expression.Kind == [int](ExpressionKind.String) ||
             expression.Kind == [int](ExpressionKind.FormattedString))
-            Return New HirExpression([int](HirExpressionKind.Constant), expression, This.Primitive("string"));
+            Return This.BindStringExpression(syntax, function, scope, expression);
         If (expression.Kind == [int](ExpressionKind.Character))
             Return New HirExpression([int](HirExpressionKind.Constant), expression, This.Primitive("char"));
         If (expression.Kind == [int](ExpressionKind.Boolean))
@@ -1618,6 +1703,22 @@ Class SemanticCompilation
                 item = item.Next;
             }
             result.Type = This.MakeArrayType(elementType);
+            Return result;
+        }
+        If (expression.Kind == [int](ExpressionKind.DictLiteral))
+        {
+            HirExpression result = New HirExpression([int](HirExpressionKind.DictLiteral),
+                expression, This.Primitive("dict"));
+            ExpressionNode item = expression.FirstArgument;
+            While (item != null)
+            {
+                HirExpression entry = New HirExpression([int](HirExpressionKind.DictEntry),
+                    item, This.Primitive("void"));
+                entry.Left = This.BindExpression(syntax, function, scope, item.Left);
+                entry.Right = This.BindExpression(syntax, function, scope, item.Right);
+                result.AddArgument(entry);
+                item = item.Next;
+            }
             Return result;
         }
         If (expression.Kind == [int](ExpressionKind.Switch))
@@ -1828,6 +1929,12 @@ Class SemanticCompilation
                     statement.Line, statement.Column);
                 result.DeclaredType = This.Primitive("any");
             }
+            If (result.DeclaredType.Kind == [int](TypeKind.DictType) &&
+                statement.Expression != null &&
+                statement.Expression.Kind == [int](ExpressionKind.ArrayLiteral) &&
+                statement.Expression.FirstArgument == null)
+                result.Expression = New HirExpression([int](HirExpressionKind.DictLiteral),
+                    statement.Expression, result.DeclaredType);
             result.DeclaredSymbol = New ValueSymbol(statement.Name, result.DeclaredType, false);
             If (result.Expression != null &&
                 result.Expression.Kind == [int](HirExpressionKind.FunctionReference))
@@ -1937,6 +2044,7 @@ Class SemanticCompilation
         This.IndexDeclarations();
         This.IndexGlobals();
         This.IndexFunctions();
+        This.LinkGlobalLiteralFunctions();
         UnitSymbol unit = This.FirstUnit;
         While (unit != null)
         {

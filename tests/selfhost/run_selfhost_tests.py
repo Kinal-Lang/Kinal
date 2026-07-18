@@ -442,6 +442,24 @@ def main() -> int:
     )
     results.append({"name": "global_literal_syntax", "ok": True})
 
+    global_literals_project = root / "tests" / "selfhost" / "fixtures" / "global_literals" / "kinal.knproj"
+    global_literals_executable = out_dir / f"global-literals{executable_suffix}"
+    global_literals_build = run(
+        [str(compiler), "build", str(global_literals_project), str(global_literals_executable), "test"],
+        cwd=root,
+    )
+    require(global_literals_build.returncode == 0, "stage1 global-literal fixture build failed", global_literals_build)
+    require(global_literals_executable.is_file(), "stage1 global-literal fixture executable is missing")
+    global_literals_run = run([str(global_literals_executable)], cwd=root)
+    require(global_literals_run.returncode == 0, "stage1 global-literal fixture execution failed", global_literals_run)
+    require(
+        global_literals_run.stdout.replace("\r\n", "\n").strip() ==
+        "0\nnull\nblock\nIO.Type.Object.Class",
+        "stage1 global-literal fixture output differs",
+        global_literals_run,
+    )
+    results.append({"name": "global_literals", "ok": True})
+
     array_project = root / "tests" / "selfhost" / "fixtures" / "array_types" / "kinal.knproj"
     array_executable = out_dir / f"array-types{executable_suffix}"
     array_build = run(
@@ -471,6 +489,24 @@ def main() -> int:
         expression_ops_run,
     )
     results.append({"name": "expression_ops", "ok": True})
+
+    string_prefixes_project = root / "tests" / "selfhost" / "fixtures" / "string_prefixes" / "kinal.knproj"
+    string_prefixes_executable = out_dir / f"string-prefixes{executable_suffix}"
+    string_prefixes_build = run(
+        [str(compiler), "build", str(string_prefixes_project), str(string_prefixes_executable), "test"],
+        cwd=root,
+    )
+    require(string_prefixes_build.returncode == 0, "stage1 string-prefix fixture build failed", string_prefixes_build)
+    require(string_prefixes_executable.is_file(), "stage1 string-prefix fixture executable is missing")
+    string_prefixes_run = run([str(string_prefixes_executable)], cwd=root)
+    require(string_prefixes_run.returncode == 0, "stage1 string-prefix fixture execution failed", string_prefixes_run)
+    require(
+        string_prefixes_run.stdout.replace("\r\n", "\n") ==
+        "\\n \\\\ / abc\n11\nv=7\nsum=12\n{7}\n3\na\nc\n3\nz\n7\n2\n\\\nn\n",
+        "stage1 string-prefix fixture output differs",
+        string_prefixes_run,
+    )
+    results.append({"name": "string_prefixes", "ok": True})
 
     generic_project = root / "tests" / "selfhost" / "fixtures" / "generic_functions" / "kinal.knproj"
     generic_executable = out_dir / f"generic-functions{executable_suffix}"

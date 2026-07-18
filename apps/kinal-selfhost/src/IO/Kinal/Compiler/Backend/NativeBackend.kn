@@ -356,6 +356,7 @@ Class NativeBackend
         If (expression.Kind == [int](ExpressionKind.String) ||
             expression.Kind == [int](ExpressionKind.FormattedString))
             Return This.Module.GlobalString(
+                expression.IsRawString ? This.Unquote(expression.Text) :
                 expression.Kind == [int](ExpressionKind.FormattedString) ?
                     This.ExpandFormattedString(expression.Text) : This.DecodeString(expression.Text),
                 This.Unique("global_text"));
@@ -367,6 +368,13 @@ Class NativeBackend
                 Return This.Module.ConstFloat(type, -[float](expression.Left.Text));
             Return This.Module.ConstI64(type, -[i64]([int](expression.Left.Text)), true);
         }
+        If (expression.Kind == [int](ExpressionKind.FunctionLiteral) ||
+            expression.Kind == [int](ExpressionKind.BlockLiteral))
+        {
+            LlvmFunctionBinding function = This.FindFunctionBinding(symbol.Value.CallableFunction);
+            If (function != null) Return This.EnsureCallableWrapper(function);
+        }
+        If (expression.Kind == [int](ExpressionKind.Name)) Return This.Module.ConstNull(type);
         Return null;
     }
 
@@ -439,6 +447,29 @@ Class NativeBackend
                 This.Module.Store(value, binding.Address);
             }
             binding = binding.Next;
+        }
+    }
+
+    Public Trusted Function void InitializeGlobalCopies()
+    {
+        LlvmGlobalBinding destination = This.FirstGlobal;
+        While (destination != null)
+        {
+            ExpressionNode initializer = destination.Symbol.Declaration.Initializer;
+            If (initializer != null && initializer.Kind == [int](ExpressionKind.Name))
+            {
+                GlobalSymbol sourceSymbol = This.Semantics.FindGlobal(
+                    destination.Symbol.UnitName, initializer.Text);
+                LlvmGlobalBinding source = sourceSymbol == null ?
+                    null : This.FindGlobalBinding(sourceSymbol.Value);
+                If (source != null)
+                {
+                    byte* value = This.Module.Load(This.TypeHandle(source.Symbol.Value.Type),
+                        source.Address, This.Unique("global_copy"));
+                    This.Module.Store(value, destination.Address);
+                }
+            }
+            destination = destination.Next;
         }
     }
 
@@ -1211,7 +1242,9 @@ Class NativeBackend
         arguments.Add(This.Module.ConstInt(This.Module.IntType(64), argumentCount));
         byte* result = This.Module.Call(wrapperType, callable.Handle, arguments,
             This.Unique("dynamic_call"));
-        Return New LlvmValue(result, This.Semantics.Primitive("any"));
+        LlvmValue boxedResult = New LlvmValue(result, This.Semantics.Primitive("any"));
+        If (expression.Type.Kind == [int](TypeKind.AnyType)) Return boxedResult;
+        Return This.UnboxAny(boxedResult, expression.Type);
     }
 
     Public Trusted Function byte* EnsureCallableWrapper(LlvmFunctionBinding binding)
@@ -1494,6 +1527,26 @@ Class NativeBackend
         value = This.Module.InsertValue(value, newData, 0, "");
         value = This.Module.InsertValue(value, newLength, 1, "");
         Return New LlvmValue(value, arrayType);
+    }
+
+    Public Trusted Function LlvmValue EmitDictLiteral(LlvmFunctionContext context,
+                                                       HirExpression expression)
+    {
+        byte* dictionary = This.CallRuntime("__kn_dict_new", This.Types0(),
+            This.Unique("dict_literal"));
+        HirExpression entry = expression.FirstArgument;
+        While (entry != null)
+        {
+            LlvmValue key = This.CastValue(This.EmitExpression(context, entry.Left),
+                This.Semantics.Primitive("string"));
+            LlvmValue boxed = This.BoxAny(This.EmitExpression(context, entry.Right));
+            byte* tag = This.Module.ExtractValue(boxed.Handle, 0, This.Unique("dict_literal_tag"));
+            byte* payload = This.Module.ExtractValue(boxed.Handle, 1,
+                This.Unique("dict_literal_payload"));
+            This.CallRuntime("__kn_dict_set", This.Types4(dictionary, key.Handle, tag, payload), "");
+            entry = entry.Next;
+        }
+        Return New LlvmValue(dictionary, expression.Type);
     }
 
     Public Trusted Function LlvmValue EmitRuntimeBuiltin(LlvmFunctionContext context, HirExpression expression)
@@ -2365,6 +2418,7 @@ Class NativeBackend
             If (syntaxKind == [int](ExpressionKind.String) ||
                 syntaxKind == [int](ExpressionKind.FormattedString))
                 Return New LlvmValue(This.Module.GlobalString(
+                    expression.Syntax.IsRawString ? This.Unquote(expression.Name) :
                     syntaxKind == [int](ExpressionKind.FormattedString) ?
                         This.ExpandFormattedString(expression.Name) : This.DecodeString(expression.Name),
                     This.Unique("text")), expression.Type);
@@ -2417,6 +2471,8 @@ Class NativeBackend
         If (expression.Kind == [int](HirExpressionKind.Conditional)) Return This.EmitConditional(context, expression);
         If (expression.Kind == [int](HirExpressionKind.ArrayLiteral))
             Return This.EmitArrayLiteral(context, expression);
+        If (expression.Kind == [int](HirExpressionKind.DictLiteral))
+            Return This.EmitDictLiteral(context, expression);
         If (expression.Kind == [int](HirExpressionKind.Switch))
             Return This.EmitSwitchExpression(context, expression);
         If (expression.Kind == [int](HirExpressionKind.NewObject)) Return This.EmitNewObject(context, expression);
@@ -2790,6 +2846,7 @@ Class NativeBackend
         This.Module.PositionAtEnd(block);
         This.CallRuntime("__kn_gc_init", This.Types0(), "");
         This.InitializeFixedGlobalArrays();
+        This.InitializeGlobalCopies();
 
         LlvmHandles arguments = New LlvmHandles();
         int count = entryBinding.Symbol.ParameterCount();
@@ -2837,8 +2894,8 @@ Class NativeBackend
         }
         This.PrepareTypes();
         This.DeclareRuntime();
-        This.DeclareGlobals();
         This.DeclareFunctions();
+        This.DeclareGlobals();
         This.EmitFunctions();
         This.EmitEntryPoint();
         If (This.Failed()) Return false;

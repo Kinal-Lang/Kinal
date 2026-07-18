@@ -1,0 +1,20 @@
+Unit Tests.Selfhost.GlobalLiterals;
+
+Get IO.Console;
+
+Object.Function globalFunction = Function int()
+{
+};
+Object.Block globalBlock = Block< / IO.Console.PrintLine("block");
+/ >;
+Object.Class globalClass = globalBlock;
+char* globalPointer = null;
+
+Static Function int Main()
+{
+    IO.Console.PrintLine(globalFunction());
+    If (globalPointer == null) IO.Console.PrintLine("null");
+    globalBlock.Run();
+    IO.Console.PrintLine(globalClass.TypeOf());
+    Return 0;
+}

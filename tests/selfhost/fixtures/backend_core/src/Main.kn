@@ -62,7 +62,11 @@ Trusted Static Function int Main()
     NodeContext context = New NodeContext();
     context.Add(New Node("value"));
     Node found = context.Find("value");
+    dict values = {"name": "kinal", "answer": 42};
+    dict empty = {};
     IO.Console.PrintLine(canonical);
     IO.Console.PrintLine(memberCanonical);
-    Return canonical == "string[]" && memberCanonical == "char[]" && found != null ? 0 : 1;
+    Return canonical == "string[]" && memberCanonical == "char[]" && found != null &&
+        [string](values.Fetch("name")) == "kinal" && [int](values.Fetch("answer")) == 42 &&
+        empty.Count() == 0 ? 0 : 1;
 }

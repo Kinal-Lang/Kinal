@@ -38,6 +38,7 @@ Project KinalSelfhost
                 "../../out/selfhost/bridge/kn_selfhost_llvm.o",
                 "../../out/selfhost/bridge/kn_selfhost_runtime.o"
             ];
+            LinkArgs = ["/stack:16777216"];
         }
     }
 

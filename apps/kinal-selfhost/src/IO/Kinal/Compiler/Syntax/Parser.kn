@@ -3,6 +3,7 @@ Unit IO.Kinal.Compiler.Syntax.Parser;
 Get IO.Text;
 Get IO.Kinal.Compiler.Core.Diagnostics;
 Get IO.Kinal.Compiler.Source.SourceFile;
+Get IO.Kinal.Compiler.Lex.Lexer;
 Get IO.Kinal.Compiler.Lex.Token;
 Get IO.Kinal.Compiler.Lex.TokenKind;
 Get IO.Kinal.Compiler.Syntax.SyntaxTree;
@@ -909,15 +910,25 @@ Safe Function ExpressionNode ParseArrayLiteral(ParseCursor cursor)
 {
     string token = CurrentToken(cursor);
     Advance(cursor);
-    ExpressionNode array = New ExpressionNode([int](ExpressionKind.ArrayLiteral), "",
+    ExpressionNode collection = New ExpressionNode([int](ExpressionKind.ArrayLiteral), "",
         IO.Kinal.Compiler.Lex.Token.Line(token), IO.Kinal.Compiler.Lex.Token.Column(token));
     While (!IsEnd(cursor) && CurrentKind(cursor) != [int](TokenKind.RightBrace))
     {
-        array.AddArgument(ParseExpression(cursor, 1));
+        ExpressionNode first = ParseExpression(cursor, 1);
+        If (Match(cursor, [int](TokenKind.Colon)))
+        {
+            collection.Kind = [int](ExpressionKind.DictLiteral);
+            ExpressionNode entry = New ExpressionNode([int](ExpressionKind.DictEntry), "",
+                first.Line, first.Column);
+            entry.Left = first;
+            entry.Right = ParseExpression(cursor, 1);
+            collection.AddArgument(entry);
+        }
+        Else collection.AddArgument(first);
         If (!Match(cursor, [int](TokenKind.Comma))) Break;
     }
     Match(cursor, [int](TokenKind.RightBrace));
-    Return array;
+    Return collection;
 }
 
 Safe Function ExpressionNode ParseSwitchExpression(ParseCursor cursor)
@@ -1012,6 +1023,130 @@ Safe Function ExpressionNode ParseBlockLiteral(ParseCursor cursor)
     Return value;
 }
 
+Safe Function bool IsFormatPrefix(string name)
+{
+    Return name == "f" || name == "format";
+}
+
+Safe Function bool IsRawPrefix(string name)
+{
+    Return name == "r" || name == "raw";
+}
+
+Safe Function bool IsCharacterPrefix(string name)
+{
+    Return name == "c" || name == "chars";
+}
+
+Safe Function bool IsStringPrefix(string name)
+{
+    Return IsFormatPrefix(name) || IsRawPrefix(name) || IsCharacterPrefix(name);
+}
+
+Safe Function void AddFormattedLiteral(ExpressionNode value, string text, bool raw)
+{
+    ExpressionNode literal = New ExpressionNode([int](ExpressionKind.String),
+        "\"" + text + "\"", value.Line, value.Column);
+    literal.IsRawString = raw;
+    value.AddArgument(literal);
+}
+
+Safe Function ExpressionNode ParseFormattedFragment(string text, int line, int column)
+{
+    SourceFile source = New SourceFile("<formatted-string>", text);
+    list diagnostics = list.Create();
+    list tokens = IO.Kinal.Compiler.Lex.Lexer.Tokenize(source, diagnostics);
+    If (diagnostics.Count() != 0)
+        Return New ExpressionNode([int](ExpressionKind.Missing), text, line, column);
+    ParseCursor fragment = New ParseCursor(tokens);
+    Return ParseExpression(fragment, 1);
+}
+
+Safe Function void ReadFormattedParts(ExpressionNode value, string rawToken, bool raw)
+{
+    int rawLength = IO.Text.Length(rawToken);
+    string body = rawLength >= 2 ? IO.Text.Slice(rawToken, 1, rawLength - 2) : rawToken;
+    char[] chars = body.ToChars();
+    string literal = "";
+    int index = 0;
+    While (index < chars.Length())
+    {
+        int current = [int](chars[index]);
+        If (current == 123 && index + 1 < chars.Length() && [int](chars[index + 1]) == 123)
+        {
+            literal = literal + "{";
+            index = index + 2;
+            Continue;
+        }
+        If (current == 125 && index + 1 < chars.Length() && [int](chars[index + 1]) == 125)
+        {
+            literal = literal + "}";
+            index = index + 2;
+            Continue;
+        }
+        If (current == 123)
+        {
+            AddFormattedLiteral(value, literal, raw);
+            literal = "";
+            index = index + 1;
+            int depth = 1;
+            string expressionText = "";
+            While (index < chars.Length() && depth > 0)
+            {
+                int nested = [int](chars[index]);
+                If (nested == 123) depth = depth + 1;
+                ElseIf (nested == 125)
+                {
+                    depth = depth - 1;
+                    If (depth == 0)
+                    {
+                        index = index + 1;
+                        Break;
+                    }
+                }
+                If (depth > 0) expressionText = expressionText + [string](chars[index]);
+                index = index + 1;
+            }
+            value.AddArgument(ParseFormattedFragment(expressionText, value.Line, value.Column));
+            Continue;
+        }
+        literal = literal + [string](chars[index]);
+        index = index + 1;
+    }
+    AddFormattedLiteral(value, literal, raw);
+}
+
+Safe Function ExpressionNode ParsePrefixedString(ParseCursor cursor, string firstPrefix,
+                                                   string location)
+{
+    bool formatted = IsFormatPrefix(firstPrefix);
+    bool raw = IsRawPrefix(firstPrefix);
+    bool characters = IsCharacterPrefix(firstPrefix);
+    While (CurrentKind(cursor) == [int](TokenKind.LeftBracket))
+    {
+        Advance(cursor);
+        int start = cursor.Position;
+        While (!IsEnd(cursor) && CurrentKind(cursor) != [int](TokenKind.RightBracket)) Advance(cursor);
+        string prefix = JoinTokenText(cursor, start, cursor.Position);
+        Match(cursor, [int](TokenKind.RightBracket));
+        If (IsFormatPrefix(prefix)) formatted = true;
+        ElseIf (IsRawPrefix(prefix)) raw = true;
+        ElseIf (IsCharacterPrefix(prefix)) characters = true;
+    }
+    string stringToken = CurrentToken(cursor);
+    If (CurrentKind(cursor) == [int](TokenKind.String) ||
+        CurrentKind(cursor) == [int](TokenKind.BadString)) Advance(cursor);
+    ExpressionNode value = New ExpressionNode(
+        formatted ? [int](ExpressionKind.FormattedString) : [int](ExpressionKind.String),
+        IO.Kinal.Compiler.Lex.Token.Text(stringToken),
+        IO.Kinal.Compiler.Lex.Token.Line(location), IO.Kinal.Compiler.Lex.Token.Column(location));
+    value.IsRawString = raw;
+    value.IsCharacterString = characters;
+    If (formatted && !IO.Text.Contains(value.Text, "{IO.Version}"))
+        ReadFormattedParts(value, value.Text, raw);
+    Return value;
+}
+
 Safe Function ExpressionNode ParsePrimary(ParseCursor cursor)
 {
     string token = CurrentToken(cursor);
@@ -1067,14 +1202,7 @@ Safe Function ExpressionNode ParsePrimary(ParseCursor cursor)
         While (!IsEnd(cursor) && CurrentKind(cursor) != [int](TokenKind.RightBracket)) Advance(cursor);
         string typeName = JoinTokenText(cursor, typeStart, cursor.Position);
         Match(cursor, [int](TokenKind.RightBracket));
-        If (typeName == "f" &&
-            (CurrentKind(cursor) == [int](TokenKind.String) ||
-             CurrentKind(cursor) == [int](TokenKind.BadString)))
-        {
-            string formatted = CurrentToken(cursor);
-            Advance(cursor);
-            Return NewExpression([int](ExpressionKind.FormattedString), formatted);
-        }
+        If (IsStringPrefix(typeName)) Return ParsePrefixedString(cursor, typeName, token);
         ExpressionNode cast = New ExpressionNode([int](ExpressionKind.Cast), typeName,
             IO.Kinal.Compiler.Lex.Token.Line(token), IO.Kinal.Compiler.Lex.Token.Column(token));
         If (Match(cursor, [int](TokenKind.LeftParen)))

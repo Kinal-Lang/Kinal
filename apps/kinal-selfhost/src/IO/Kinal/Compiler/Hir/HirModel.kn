@@ -22,6 +22,8 @@ Enum HirExpressionKind By int
     NewObject,
     Cast,
     ArrayLiteral,
+    DictLiteral,
+    DictEntry,
     Switch,
     SwitchCase
 }

@@ -19,6 +19,8 @@ Enum ExpressionKind By int
     NewObject,
     Cast,
     ArrayLiteral,
+    DictLiteral,
+    DictEntry,
     Switch,
     SwitchCase,
     FunctionLiteral,
@@ -53,6 +55,8 @@ Class ExpressionNode
     Public string Text;
     Public int Operator;
     Public bool IsPostfix;
+    Public bool IsRawString;
+    Public bool IsCharacterString;
     Public int Line;
     Public int Column;
     Public ExpressionNode Left;
@@ -71,6 +75,8 @@ Class ExpressionNode
         This.Text = text;
         This.Operator = 0;
         This.IsPostfix = false;
+        This.IsRawString = false;
+        This.IsCharacterString = false;
         This.Line = line;
         This.Column = column;
         This.Left = null;

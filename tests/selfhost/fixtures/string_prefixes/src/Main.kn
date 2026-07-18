@@ -1,0 +1,27 @@
+Unit Tests.Selfhost.StringPrefixes;
+
+Get IO.Console;
+
+Static Function int Main()
+{
+    string rawText = [r]"\n \\ / abc";
+    int value = 7;
+    char[] plainChars = [c]"abc";
+    char[] formattedChars = [f][c]"z={value}";
+    char[] rawChars = [chars][raw]"\n";
+    IO.Console.PrintLine(rawText);
+    IO.Console.PrintLine(rawText.Length());
+    IO.Console.PrintLine([f]"v={value}");
+    IO.Console.PrintLine([format]"sum={value + 5}");
+    IO.Console.PrintLine([f]"{{{value}}}");
+    IO.Console.PrintLine(plainChars.Length());
+    IO.Console.PrintLine(plainChars[0]);
+    IO.Console.PrintLine(plainChars[2]);
+    IO.Console.PrintLine(formattedChars.Length());
+    IO.Console.PrintLine(formattedChars[0]);
+    IO.Console.PrintLine(formattedChars[2]);
+    IO.Console.PrintLine(rawChars.Length());
+    IO.Console.PrintLine(rawChars[0]);
+    IO.Console.PrintLine(rawChars[1]);
+    Return 0;
+}
