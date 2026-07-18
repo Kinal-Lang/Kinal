@@ -1793,7 +1793,13 @@ Safe Function void ReadParameters(ParseCursor cursor, FunctionDecl function)
             string typeName = JoinTokenText(cursor, start, nameIndex);
             If (nameIndex + 1 < declarationEnd)
                 typeName = typeName + " " + JoinTokenText(cursor, nameIndex + 1, declarationEnd);
-            function.AddParameter(New ParameterDecl(name, typeName));
+            ParameterDecl parameter = New ParameterDecl(name, typeName);
+            If (assign < comma)
+            {
+                cursor.Position = assign + 1;
+                parameter.DefaultValue = ParseExpression(cursor, 1);
+            }
+            function.AddParameter(parameter);
         }
         cursor.Position = comma;
         If (!Match(cursor, [int](TokenKind.Comma))) Break;

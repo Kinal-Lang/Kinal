@@ -465,7 +465,8 @@ def main() -> int:
     expression_ops_run = run([str(expression_ops_executable)], cwd=root)
     require(expression_ops_run.returncode == 0, "stage1 expression-ops fixture execution failed", expression_ops_run)
     require(
-        expression_ops_run.stdout.replace("\r\n", "\n").strip() == "1\n3\n9\n3\n1\n3\n10\n12",
+        expression_ops_run.stdout.replace("\r\n", "\n").strip() ==
+        "1\n3\n9\n3\n1\n3\n10\n12\n3\n6\n6\nwindows",
         "stage1 expression-ops fixture output differs",
         expression_ops_run,
     )

@@ -3,6 +3,7 @@ Unit Tests.Selfhost.SymbolAliases;
 Get IO.Console;
 
 Alias Print By IO.Console.PrintLine;
+Alias Output By Print;
 Alias Say By Tests.Selfhost.SymbolAliases.Box.Say;
 Alias Ready By Tests.Selfhost.SymbolAliases.Mode.Ready;
 
@@ -21,7 +22,7 @@ Class Box
 
 Safe Static Function int Main()
 {
-    Print(Say());
-    Print(Ready);
+    Output(Say());
+    Output(Ready);
     Return Ready == Mode.Ready ? 0 : 1;
 }

@@ -25,12 +25,14 @@ Class ParameterDecl
 {
     Public string Name;
     Public string TypeName;
+    Public ExpressionNode DefaultValue;
     Public ParameterDecl Next;
 
     Public Safe Constructor(string name, string typeName)
     {
         This.Name = name;
         This.TypeName = typeName;
+        This.DefaultValue = null;
         This.Next = null;
     }
 }

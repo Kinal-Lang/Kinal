@@ -388,6 +388,60 @@ Class NativeBackend
         }
     }
 
+    Public Safe Function int FixedGlobalArrayLength(GlobalSymbol symbol)
+    {
+        string typeName = symbol.Declaration.TypeName;
+        int open = IO.Text.IndexOf(typeName, "[");
+        int close = IO.Text.IndexOf(typeName, "]");
+        If (open < 0 || close <= open + 1) Return -1;
+        string lengthText = IO.Text.Replace(
+            IO.Text.Slice(typeName, open + 1, close - open - 1), " ", "");
+        char[] chars = lengthText.ToChars();
+        bool numeric = chars.Length() > 0;
+        int index = 0;
+        While (index < chars.Length())
+        {
+            int value = [int](chars[index]);
+            If (value < 48 || value > 57) numeric = false;
+            index = index + 1;
+        }
+        If (numeric) Return [int](lengthText);
+        GlobalSymbol constant = This.Semantics.FindGlobal(symbol.UnitName, lengthText);
+        If (constant != null && constant.Declaration.IsConst &&
+            constant.Declaration.Initializer != null &&
+            constant.Declaration.Initializer.Kind == [int](ExpressionKind.Number))
+            Return [int](constant.Declaration.Initializer.Text);
+        Return -1;
+    }
+
+    Public Trusted Function void InitializeFixedGlobalArrays()
+    {
+        LlvmGlobalBinding binding = This.FirstGlobal;
+        While (binding != null)
+        {
+            TypeSymbol arrayType = binding.Symbol.Value.Type;
+            int lengthValue = This.FixedGlobalArrayLength(binding.Symbol);
+            If (arrayType.Kind == [int](TypeKind.ArrayType) && lengthValue >= 0)
+            {
+                TypeSymbol elementType = arrayType.ElementType;
+                byte* elementHandle = This.TypeHandle(elementType);
+                byte* length = This.Module.ConstInt(This.Module.IntType(64), lengthValue);
+                byte* bytes = This.Module.Multiply(length, This.Module.SizeOf(elementHandle),
+                    This.Unique("global_array_bytes"));
+                byte* memory = This.CallRuntime("__kn_gc_alloc", This.Types1(bytes),
+                    This.Unique("global_array_memory"));
+                This.CallRuntime("kn_sh_rt_memory_zero", This.Types2(memory, bytes), "");
+                byte* data = This.Module.BitCast(memory, This.Module.PointerType(elementHandle),
+                    This.Unique("global_array_data"));
+                byte* value = This.Module.ConstUndef(This.TypeHandle(arrayType));
+                value = This.Module.InsertValue(value, data, 0, "");
+                value = This.Module.InsertValue(value, length, 1, "");
+                This.Module.Store(value, binding.Address);
+            }
+            binding = binding.Next;
+        }
+    }
+
     Public Safe Function LlvmFunctionBinding FindFunctionBinding(FunctionSymbol symbol)
     {
         LlvmFunctionBinding current = This.FirstFunction;
@@ -2347,7 +2401,7 @@ Class NativeBackend
                 This.Fail("function reference binding is missing: " + expression.Target);
                 Return This.DefaultValue(expression.Type);
             }
-            Return New LlvmValue(function.Function, expression.Type);
+            Return New LlvmValue(This.EnsureCallableWrapper(function), expression.Type);
         }
         If (expression.Kind == [int](HirExpressionKind.Field) ||
             expression.Kind == [int](HirExpressionKind.Index))
@@ -2735,6 +2789,7 @@ Class NativeBackend
         byte* block = This.Module.AppendBlock(mainFunction, "entry");
         This.Module.PositionAtEnd(block);
         This.CallRuntime("__kn_gc_init", This.Types0(), "");
+        This.InitializeFixedGlobalArrays();
 
         LlvmHandles arguments = New LlvmHandles();
         int count = entryBinding.Symbol.ParameterCount();

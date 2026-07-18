@@ -1,17 +1,25 @@
 Unit Tests.Selfhost.ArrayTypes;
 
+Const int GLOBAL_LENGTH = 4;
+int[GLOBAL_LENGTH] globalValues;
+
 Trusted Static Function int Main(string[] args)
 {
     char[] chars = "ok".ToChars();
     int fixed[5] = {1, 2};
     int inferred[] = {10, 20, 30};
+    int[GLOBAL_LENGTH] typedFixed;
     int scalar = 0;
     int* pointer = &scalar;
     fixed[4] = inferred.Index(1);
+    globalValues[3] = 40;
+    typedFixed[2] = 30;
     If (args.Length() != 2 || chars.Length() != 2 ||
         fixed.Length() != 5 || fixed[2] != 0 || fixed[4] != 20 ||
         inferred.Length() != 3 || scalar.TypeOf() != "int" ||
-        fixed.TypeOf() != "int[]" || pointer.TypeOf() != "int*")
+        fixed.TypeOf() != "int[]" || pointer.TypeOf() != "int*" ||
+        globalValues.Length() != 4 || globalValues[3] != 40 ||
+        typedFixed.Length() != 4 || typedFixed[2] != 30)
     {
         Return 1;
     }

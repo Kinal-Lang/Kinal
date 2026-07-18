@@ -6,10 +6,15 @@ Class Box
 {
     Public int Value;
 
-    Public Function Box(int value)
+    Public Function Box(int value = 10)
     {
         Value = value;
     }
+}
+
+Static Function int Add(int left = 1, int right = 2)
+{
+    Return left + right;
 }
 
 Static Function int Main()
@@ -25,9 +30,13 @@ Static Function int Main()
     int values[] = {1, 2};
     int indexPostfix = values[0]++;
     int indexPrefix = ++values[1];
-    Box box = New Box(10);
+    Box box = New Box();
     int fieldPostfix = box.Value++;
     int fieldPrefix = ++box.Value;
+    int defaultDirect = Add();
+    int defaultNamed = Add(right = 5, left = default);
+    Var callable = Add;
+    int defaultDynamic = [int](callable(default, 5));
     IO.Console.PrintLine(postfix);
     IO.Console.PrintLine(prefix);
     IO.Console.PrintLine(x);
@@ -36,5 +45,16 @@ Static Function int Main()
     IO.Console.PrintLine(indexPrefix);
     IO.Console.PrintLine(fieldPostfix);
     IO.Console.PrintLine(fieldPrefix);
+    IO.Console.PrintLine(defaultDirect);
+    IO.Console.PrintLine(defaultNamed);
+    IO.Console.PrintLine(defaultDynamic);
+    If (IO.Target.OS == IO.Target.OS.Windows)
+    {
+        IO.Console.PrintLine("windows");
+    }
+    Else
+    {
+        UnsupportedTargetBranch();
+    }
     Return 0;
 }

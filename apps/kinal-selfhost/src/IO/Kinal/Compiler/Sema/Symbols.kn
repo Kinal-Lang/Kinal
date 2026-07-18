@@ -7,6 +7,7 @@ Class ParameterSymbol
 {
     Public string Name;
     Public TypeSymbol Type;
+    Public ParameterDecl Declaration;
     Public ValueSymbol Value;
     Public ParameterSymbol Next;
 
@@ -14,6 +15,7 @@ Class ParameterSymbol
     {
         This.Name = name;
         This.Type = type;
+        This.Declaration = null;
         This.Value = null;
         This.Next = null;
     }
@@ -76,6 +78,24 @@ Class FunctionSymbol
         Return count;
     }
 
+    Public Safe Function int RequiredParameterCount()
+    {
+        int count = 0;
+        ParameterSymbol current = This.FirstParameter;
+        While (current != null)
+        {
+            If (current.Declaration == null || current.Declaration.DefaultValue == null)
+                count = count + 1;
+            current = current.Next;
+        }
+        Return count;
+    }
+
+    Public Safe Function bool AcceptsArgumentCount(int count)
+    {
+        Return count >= This.RequiredParameterCount() && count <= This.ParameterCount();
+    }
+
     Public Safe Function string QualifiedName()
     {
         string functionName = This.Name;
@@ -135,6 +155,7 @@ Class ValueSymbol
     Public string Name;
     Public TypeSymbol Type;
     Public bool IsParameter;
+    Public FunctionSymbol CallableFunction;
     Public ValueSymbol Next;
 
     Public Safe Constructor(string name, TypeSymbol type, bool isParameter)
@@ -142,6 +163,7 @@ Class ValueSymbol
         This.Name = name;
         This.Type = type;
         This.IsParameter = isParameter;
+        This.CallableFunction = null;
         This.Next = null;
     }
 }

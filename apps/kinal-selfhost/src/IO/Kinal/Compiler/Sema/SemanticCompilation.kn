@@ -249,6 +249,30 @@ Class SemanticCompilation
     Public Safe Function TypeSymbol ResolveType(SyntaxTree syntax, string rawName)
     {
         string name = This.CanonicalTypeName(rawName);
+        int fixedOpen = IO.Text.IndexOf(name, "[");
+        If (fixedOpen > 0 && IO.Text.EndsWith(name, "]"))
+        {
+            TypeSymbol fixedElement = This.ResolveType(syntax,
+                IO.Text.Slice(name, 0, fixedOpen));
+            If (fixedElement == null) Return null;
+            int dimensionCount = 0;
+            char[] fixedChars = name.ToChars();
+            int fixedIndex = fixedOpen;
+            While (fixedIndex < fixedChars.Length())
+            {
+                If ([int](fixedChars[fixedIndex]) == 91) dimensionCount = dimensionCount + 1;
+                fixedIndex = fixedIndex + 1;
+            }
+            TypeSymbol fixedType = fixedElement;
+            While (dimensionCount > 0)
+            {
+                TypeSymbol arrayType = New TypeSymbol([int](TypeKind.ArrayType), fixedType.Name + "[]");
+                arrayType.ElementType = fixedType;
+                fixedType = arrayType;
+                dimensionCount = dimensionCount - 1;
+            }
+            Return fixedType;
+        }
         If (IO.Text.EndsWith(name, "*"))
         {
             TypeSymbol element = This.ResolveType(syntax,
@@ -396,6 +420,12 @@ Class SemanticCompilation
 
     Public Safe Function void CheckFunction(SyntaxTree syntax, FunctionDecl function)
     {
+        ParameterDecl parameter = function.FirstParameter;
+        While (parameter != null)
+        {
+            This.CheckExpression(syntax, parameter.DefaultValue);
+            parameter = parameter.Next;
+        }
         This.CheckStatement(syntax, function.Body);
     }
 
@@ -441,9 +471,11 @@ Class SemanticCompilation
         ParameterDecl parameter = declaration.FirstParameter;
         While (parameter != null)
         {
-            function.AddParameter(New ParameterSymbol(parameter.Name,
+            ParameterSymbol parameterSymbol = New ParameterSymbol(parameter.Name,
                 This.CheckFunctionType(unit.Syntax, function, parameter.TypeName,
-                    declaration.Line, declaration.Column)));
+                    declaration.Line, declaration.Column));
+            parameterSymbol.Declaration = parameter;
+            function.AddParameter(parameterSymbol);
             parameter = parameter.Next;
         }
         This.AddFunctionSymbol(function);
@@ -580,7 +612,7 @@ Class SemanticCompilation
         While (import != null)
         {
             This.ImportCount = This.ImportCount + 1;
-            If (!This.IsKnownImport(import.Target))
+            If (!This.IsKnownImport(This.ExpandImportPath(syntax, import.Target)))
             {
                 This.UnresolvedImportCount = This.UnresolvedImportCount + 1;
                 This.Report(syntax, "Unknown imported unit", import.Target, import.Line, import.Column);
@@ -644,7 +676,7 @@ Class SemanticCompilation
         FunctionSymbol current = This.FirstFunction;
         While (current != null)
         {
-            If (current.QualifiedName() == name && current.ParameterCount() == parameterCount) Return current;
+            If (current.QualifiedName() == name && current.AcceptsArgumentCount(parameterCount)) Return current;
             current = current.Next;
         }
         Return null;
@@ -657,7 +689,7 @@ Class SemanticCompilation
         While (current != null)
         {
             If (current.OwnerType == owner && current.Name == name &&
-                current.ParameterCount() == parameterCount) Return current;
+                current.AcceptsArgumentCount(parameterCount)) Return current;
             current = current.Next;
         }
         Return null;
@@ -672,7 +704,7 @@ Class SemanticCompilation
         While (current != null)
         {
             If (current.OwnerType == null && current.UnitName == syntax.UnitName &&
-                current.Name == name && current.ParameterCount() == parameterCount) Return current;
+                current.Name == name && current.AcceptsArgumentCount(parameterCount)) Return current;
             current = current.Next;
         }
         ImportDecl import = syntax.FirstImport;
@@ -682,7 +714,7 @@ Class SemanticCompilation
             While (current != null)
             {
                 If (current.OwnerType == null && current.UnitName == import.Target &&
-                    current.Name == name && current.ParameterCount() == parameterCount) Return current;
+                    current.Name == name && current.AcceptsArgumentCount(parameterCount)) Return current;
                 current = current.Next;
             }
             import = import.Next;
@@ -789,8 +821,10 @@ Class SemanticCompilation
         ParameterDecl declaredParameter = definition.Declaration.FirstParameter;
         While (declaredParameter != null)
         {
-            instance.AddParameter(New ParameterSymbol(declaredParameter.Name,
-                This.ResolveFunctionType(definingSyntax, instance, declaredParameter.TypeName)));
+            ParameterSymbol parameterSymbol = New ParameterSymbol(declaredParameter.Name,
+                This.ResolveFunctionType(definingSyntax, instance, declaredParameter.TypeName));
+            parameterSymbol.Declaration = declaredParameter;
+            instance.AddParameter(parameterSymbol);
             declaredParameter = declaredParameter.Next;
         }
         If (instance.ReturnType == null)
@@ -853,20 +887,31 @@ Class SemanticCompilation
 
     Public Safe Function string ExpandImportPath(SyntaxTree syntax, string path)
     {
-        ImportDecl import = syntax.FirstImport;
-        While (import != null)
+        string expanded = path;
+        int pass = 0;
+        While (pass < 32)
         {
-            If (path == import.Name) Return import.Target;
-            string prefix = import.Name + ".";
-            If (IO.Text.StartsWith(path, prefix))
+            string next = expanded;
+            ImportDecl import = syntax.FirstImport;
+            While (import != null)
             {
-                Return import.Target + "." +
-                    IO.Text.Slice(path, IO.Text.Length(prefix),
-                        IO.Text.Length(path) - IO.Text.Length(prefix));
+                If (expanded == import.Name) next = import.Target;
+                Else
+                {
+                    string prefix = import.Name + ".";
+                    If (IO.Text.StartsWith(expanded, prefix))
+                        next = import.Target + "." +
+                            IO.Text.Slice(expanded, IO.Text.Length(prefix),
+                                IO.Text.Length(expanded) - IO.Text.Length(prefix));
+                }
+                If (next != expanded) Break;
+                import = import.Next;
             }
-            import = import.Next;
+            If (next == expanded) Return expanded;
+            expanded = next;
+            pass = pass + 1;
         }
-        Return path;
+        Return expanded;
     }
 
     Public Safe Function int ArgumentCount(ExpressionNode call)
@@ -1086,6 +1131,79 @@ Class SemanticCompilation
         Return New HirExpression([int](HirExpressionKind.Invalid), expression, This.Primitive("any"));
     }
 
+    Public Safe Function bool IsNamedArgument(ExpressionNode expression)
+    {
+        Return expression != null && expression.Kind == [int](ExpressionKind.Binary) &&
+            expression.Operator == [int](TokenKind.Assign) && expression.Left != null &&
+            expression.Left.Kind == [int](ExpressionKind.Name);
+    }
+
+    Public Safe Function ExpressionNode FindNamedArgument(ExpressionNode call, string name)
+    {
+        ExpressionNode argument = call.FirstArgument;
+        While (argument != null)
+        {
+            If (This.IsNamedArgument(argument) && argument.Left.Text == name)
+                Return argument.Right;
+            argument = argument.Next;
+        }
+        Return null;
+    }
+
+    Public Safe Function ExpressionNode PositionalArgument(ExpressionNode call, int ordinal)
+    {
+        int index = 0;
+        ExpressionNode argument = call.FirstArgument;
+        While (argument != null)
+        {
+            If (!This.IsNamedArgument(argument))
+            {
+                If (index == ordinal) Return argument;
+                index = index + 1;
+            }
+            argument = argument.Next;
+        }
+        Return null;
+    }
+
+    Public Safe Function void BindFunctionArguments(SyntaxTree syntax, FunctionSymbol caller,
+                                                      BindingScope scope, ExpressionNode call,
+                                                      FunctionSymbol target, HirExpression bound)
+    {
+        ParameterSymbol parameter = target.FirstParameter;
+        int positionalOrdinal = 0;
+        While (parameter != null)
+        {
+            ExpressionNode selected = This.FindNamedArgument(call, parameter.Name);
+            If (selected == null)
+            {
+                selected = This.PositionalArgument(call, positionalOrdinal);
+                positionalOrdinal = positionalOrdinal + 1;
+            }
+            bool useDefault = selected == null ||
+                (selected.Kind == [int](ExpressionKind.Null) && selected.Text == "default");
+            If (useDefault)
+            {
+                ExpressionNode defaultValue = parameter.Declaration == null ?
+                    null : parameter.Declaration.DefaultValue;
+                If (defaultValue == null)
+                {
+                    This.Report(syntax, "Missing argument", parameter.Name, call.Line, call.Column);
+                    bound.AddArgument(New HirExpression([int](HirExpressionKind.Constant),
+                        selected, parameter.Type));
+                }
+                Else
+                {
+                    BindingScope defaultScope = New BindingScope(null);
+                    bound.AddArgument(This.BindExpression(target.Syntax, target,
+                        defaultScope, defaultValue));
+                }
+            }
+            Else bound.AddArgument(This.BindExpression(syntax, caller, scope, selected));
+            parameter = parameter.Next;
+        }
+    }
+
     Public Safe Function HirExpression BindCall(SyntaxTree syntax, FunctionSymbol function,
                                                  BindingScope scope, ExpressionNode expression)
     {
@@ -1179,13 +1297,15 @@ Class SemanticCompilation
             {
                 ValueSymbol dynamic = scope.Find(targetSyntax.Text);
                 If (dynamic != null &&
-                    (dynamic.Type.Name == "IO.Type.Object.Function" ||
+                    (dynamic.CallableFunction != null ||
+                     dynamic.Type.Name == "IO.Type.Object.Function" ||
                      dynamic.Type.Name == "Object.Function"))
                 {
                     receiver = This.BindExpression(syntax, function, scope, targetSyntax);
                     returnType = This.Primitive("any");
                     callKind = [int](HirCallKind.DynamicFunction);
                     targetName = targetSyntax.Text;
+                    targetFunction = dynamic.CallableFunction;
                 }
             }
         }
@@ -1201,11 +1321,16 @@ Class SemanticCompilation
         bound.Target = targetName;
         bound.Function = targetFunction;
         bound.Left = receiver;
-        ExpressionNode argument = expression.FirstArgument;
-        While (argument != null)
+        If (targetFunction != null)
+            This.BindFunctionArguments(syntax, function, scope, expression, targetFunction, bound);
+        Else
         {
-            bound.AddArgument(This.BindExpression(syntax, function, scope, argument));
-            argument = argument.Next;
+            ExpressionNode argument = expression.FirstArgument;
+            While (argument != null)
+            {
+                bound.AddArgument(This.BindExpression(syntax, function, scope, argument));
+                argument = argument.Next;
+            }
         }
         Return bound;
     }
@@ -1213,6 +1338,16 @@ Class SemanticCompilation
     Public Safe Function HirExpression BindMember(SyntaxTree syntax, FunctionSymbol function,
                                                    BindingScope scope, ExpressionNode expression)
     {
+        string fullPath = This.ExpressionPath(expression);
+        int targetValue = This.TargetIntegerConstant(fullPath);
+        If (targetValue >= 0)
+        {
+            HirExpression constant = New HirExpression([int](HirExpressionKind.Constant),
+                expression, This.Primitive("int"));
+            constant.Target = fullPath;
+            constant.Name = [string](targetValue);
+            Return constant;
+        }
         HirExpression receiver = This.BindExpression(syntax, function, scope, expression.Left);
         If (receiver.Kind == [int](HirExpressionKind.Invalid)) Return receiver;
         If (receiver.Type.Kind == [int](TypeKind.NamespaceType))
@@ -1276,6 +1411,39 @@ Class SemanticCompilation
             Return result;
         }
         Return This.InvalidExpression(syntax, expression, "Unknown member", expression.Text);
+    }
+
+    Public Safe Function int TargetIntegerConstant(string path)
+    {
+        If (path == "IO.Target.OS" || path == "IO.Target.OS.Current" ||
+            path == "IO.Target.Windows" || path == "IO.Target.OS.Windows") Return 1;
+        If (path == "IO.Target.Linux" || path == "IO.Target.OS.Linux") Return 2;
+        If (path == "IO.Target.MacOS" || path == "IO.Target.OS.MacOS") Return 3;
+        If (path == "IO.Target.Unknown" || path == "IO.Target.OS.Unknown") Return 0;
+        If (path == "IO.Target.Arch" || path == "IO.Target.Arch.Current" ||
+            path == "IO.Target.X64" || path == "IO.Target.Arch.X64") Return 2;
+        If (path == "IO.Target.X86" || path == "IO.Target.Arch.X86") Return 1;
+        If (path == "IO.Target.Arm64" || path == "IO.Target.Arch.Arm64") Return 3;
+        If (path == "IO.Target.Arch.Unknown") Return 0;
+        If (path == "IO.Target.Env" || path == "IO.Target.Env.Current" ||
+            path == "IO.Target.Hosted" || path == "IO.Target.Env.Hosted") Return 1;
+        If (path == "IO.Target.Freestanding" || path == "IO.Target.Env.Freestanding") Return 2;
+        If (path == "IO.Target.Env.Unknown") Return 0;
+        If (path == "IO.Target.PointerBits") Return 64;
+        Return -1;
+    }
+
+    Public Safe Function int EvaluateTargetCondition(ExpressionNode expression)
+    {
+        If (expression == null || expression.Kind != [int](ExpressionKind.Binary) ||
+            (expression.Operator != [int](TokenKind.Equal) &&
+             expression.Operator != [int](TokenKind.NotEqual))) Return -1;
+        int left = This.TargetIntegerConstant(This.ExpressionPath(expression.Left));
+        int right = This.TargetIntegerConstant(This.ExpressionPath(expression.Right));
+        If (left < 0 || right < 0) Return -1;
+        bool equal = left == right;
+        If (expression.Operator == [int](TokenKind.NotEqual)) equal = !equal;
+        Return equal ? 1 : 0;
     }
 
     Public Safe Function HirExpression BindExpression(SyntaxTree syntax, FunctionSymbol function,
@@ -1412,11 +1580,19 @@ Class SemanticCompilation
             HirExpression result = New HirExpression([int](HirExpressionKind.NewObject), expression, type);
             result.CallKind = [int](HirCallKind.Constructor);
             result.Target = type.QualifiedName() + ".Constructor";
-            ExpressionNode argument = expression.FirstArgument;
-            While (argument != null)
+            FunctionSymbol constructor = This.FindMethod(type, "Constructor",
+                This.ArgumentCount(expression));
+            result.Function = constructor;
+            If (constructor != null)
+                This.BindFunctionArguments(syntax, function, scope, expression, constructor, result);
+            Else
             {
-                result.AddArgument(This.BindExpression(syntax, function, scope, argument));
-                argument = argument.Next;
+                ExpressionNode argument = expression.FirstArgument;
+                While (argument != null)
+                {
+                    result.AddArgument(This.BindExpression(syntax, function, scope, argument));
+                    argument = argument.Next;
+                }
             }
             Return result;
         }
@@ -1538,6 +1714,25 @@ Class SemanticCompilation
         If (statement == null) Return null;
         HirStatement result = New HirStatement(statement.Kind);
         result.Name = statement.Name;
+        If (statement.Kind == [int](StatementKind.If))
+        {
+            int targetCondition = This.EvaluateTargetCondition(statement.Expression);
+            If (targetCondition >= 0)
+            {
+                ExpressionNode conditionSyntax = New ExpressionNode(
+                    [int](ExpressionKind.Boolean), targetCondition == 1 ? "true" : "false",
+                    statement.Line, statement.Column);
+                result.Expression = New HirExpression([int](HirExpressionKind.Constant),
+                    conditionSyntax, This.Primitive("bool"));
+                If (targetCondition == 1)
+                    result.FirstChild = This.BindStatement(syntax, function,
+                        New BindingScope(scope), statement.FirstChild);
+                Else result.ElseBranch = This.BindStatement(syntax, function,
+                    New BindingScope(scope), statement.ElseBranch);
+                result.Next = This.BindStatement(syntax, function, scope, statement.Next);
+                Return result;
+            }
+        }
         If (statement.Kind == [int](StatementKind.UnsafeBlock))
         {
             TypeSymbol blockType = New TypeSymbol([int](TypeKind.NamedType), "block");
@@ -1596,6 +1791,31 @@ Class SemanticCompilation
         }
         If (statement.Kind == [int](StatementKind.Variable))
         {
+            If (statement.SecondExpression == null)
+            {
+                int fixedOpen = IO.Text.IndexOf(statement.TypeName, "[");
+                int fixedClose = IO.Text.IndexOf(statement.TypeName, "]");
+                If (fixedOpen > 0 && fixedClose > fixedOpen + 1)
+                {
+                    string lengthText = This.CanonicalTypeName(IO.Text.Slice(
+                        statement.TypeName, fixedOpen + 1, fixedClose - fixedOpen - 1));
+                    If (!IO.Text.IsEmpty(lengthText))
+                    {
+                        char[] lengthChars = lengthText.ToChars();
+                        bool numberLength = true;
+                        int lengthIndex = 0;
+                        While (lengthIndex < lengthChars.Length())
+                        {
+                            int value = [int](lengthChars[lengthIndex]);
+                            If (value < 48 || value > 57) numberLength = false;
+                            lengthIndex = lengthIndex + 1;
+                        }
+                        statement.SecondExpression = New ExpressionNode(
+                            numberLength ? [int](ExpressionKind.Number) : [int](ExpressionKind.Name),
+                            lengthText, statement.Line, statement.Column);
+                    }
+                }
+            }
             result.Expression = This.BindExpression(syntax, function, scope, statement.Expression);
             If (statement.TypeName == "Var")
                 result.DeclaredType = result.Expression == null ?
@@ -1609,6 +1829,9 @@ Class SemanticCompilation
                 result.DeclaredType = This.Primitive("any");
             }
             result.DeclaredSymbol = New ValueSymbol(statement.Name, result.DeclaredType, false);
+            If (result.Expression != null &&
+                result.Expression.Kind == [int](HirExpressionKind.FunctionReference))
+                result.DeclaredSymbol.CallableFunction = result.Expression.Function;
             scope.Add(result.DeclaredSymbol);
         }
         Else
