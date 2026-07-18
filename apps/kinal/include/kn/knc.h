@@ -5,6 +5,7 @@ typedef struct
 {
     const char *entry_name;
     int enable_superloop;
+    const char *listing_path;
 } KnKncOptions;
 
 int kn_emit_knc(const char *out_path,

@@ -736,11 +736,46 @@ def run_driver_integration_tests(compiler: Path, out_dir: Path) -> int:
         return 1
     if run_knc_case("knc_vm_console_varargs", "console_varargs.kn", "\nA 1 true\nB 2\n") != 0:
         return 1
-    if run_knc_case("knc_vm_superloop", "knc_superloop.kn", "5\n0\n") != 0:
+    if run_knc_case("knc_vm_superloop", "knc_superloop.kn", "5\n0\n1000\n") != 0:
         return 1
     if run_knc_case("knc_vm_superloop_branches", "knc_superloop_branches.kn", "1\n5\n-1\n0\n") != 0:
         return 1
     knc_superloop_src = ROOT / "tests" / "common" / "knc_superloop.kn"
+    knc_superloop_listing = out_dir / "listing" / "knc_superloop.knasm"
+    knc_superloop_binary = out_dir / "listing" / "knc_superloop.knc"
+    run(
+        [
+            str(compiler), "vm", "build", "--no-module-discovery", str(knc_superloop_src),
+            "-o", str(knc_superloop_binary), "--listing", str(knc_superloop_listing),
+        ],
+        cwd=ROOT,
+    )
+    listing_text = knc_superloop_listing.read_text(encoding="utf-8").replace("\r\n", "\n")
+    if "LoopIntLtInc" not in listing_text or "LoopBackIntLtInc" in listing_text or "fused loop on k" not in listing_text:
+        print("[FAIL] knc_readable_listing")
+        return 1
+    print("[OK] knc_readable_listing")
+
+    disasm_out = run([str(vm_exe), "--disasm", str(knc_superloop_binary)], cwd=ROOT, capture=True)
+    assert isinstance(disasm_out, subprocess.CompletedProcess)
+    disasm_text = (disasm_out.stdout or "").replace("\r\n", "\n")
+    if disasm_out.returncode != 0 or "LoopIntLtInc" not in disasm_text or "Tests.KncSuperloop.Main" not in disasm_text:
+        print("[FAIL] knc_vm_disasm")
+        return 1
+    print("[OK] knc_vm_disasm")
+
+    cli_disasm_out = run(
+        [str(compiler), "vm", "disasm", "--vm-path", str(vm_exe), str(knc_superloop_binary)],
+        cwd=ROOT,
+        capture=True,
+    )
+    assert isinstance(cli_disasm_out, subprocess.CompletedProcess)
+    cli_disasm_text = (cli_disasm_out.stdout or "").replace("\r\n", "\n")
+    if cli_disasm_out.returncode != 0 or "LoopIntLtInc" not in cli_disasm_text:
+        print("[FAIL] kinal_vm_disasm")
+        return 1
+    print("[OK] kinal_vm_disasm")
+
     knc_superloop_no_fuse = out_dir / "knc_superloop_nofuse.knc"
     run(
         [str(compiler), "vm", "build", "--no-module-discovery", "--no-superloop", str(knc_superloop_src), "-o", str(knc_superloop_no_fuse)],
@@ -748,7 +783,7 @@ def run_driver_integration_tests(compiler: Path, out_dir: Path) -> int:
     )
     knc_superloop_no_fuse_out = run([str(vm_exe), str(knc_superloop_no_fuse)], cwd=ROOT, capture=True)
     assert isinstance(knc_superloop_no_fuse_out, subprocess.CompletedProcess)
-    if knc_superloop_no_fuse_out.returncode != 0 or (knc_superloop_no_fuse_out.stdout or "").replace("\r\n", "\n") != "5\n0\n":
+    if knc_superloop_no_fuse_out.returncode != 0 or (knc_superloop_no_fuse_out.stdout or "").replace("\r\n", "\n") != "5\n0\n1000\n":
         print("[FAIL] knc_vm_superloop_nofuse")
         return 1
     print("[OK] knc_vm_superloop_nofuse")
@@ -935,11 +970,12 @@ def run_driver_integration_tests(compiler: Path, out_dir: Path) -> int:
         or "Link:" not in help_text
         or "--emit <bin|obj|asm|ir|check|tokens|ast>" not in help_text
         or "kinal vm run <file.kn|file.knc> [-- program-args...]" not in help_text
+        or "kinal vm disasm <file.knc>" not in help_text
         or "kinal pkg build --manifest <file|dir> -o <file.klib>" not in help_text
         or "--project <file|dir>" not in help_text
         or "--crt <auto|dynamic|static>" not in help_text
         or "--link-file <file>" not in help_text
-        or '.knc             Use "kinal vm run" or "kinal vm pack"' not in help_text
+        or '.knc             Use "kinal vm run", "kinal vm disasm", or "kinal vm pack"' not in help_text
         or "--no-module-discovery" not in help_text
         or "--vm" in help_text
         or "--emit-klib" in help_text

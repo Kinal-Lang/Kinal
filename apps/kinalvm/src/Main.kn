@@ -6,6 +6,7 @@ Get Loader By IO.Kinal.VM.Loader;
 Get VM By IO.Kinal.VM.VM;
 Get Stdlib By IO.Kinal.VM.Stdlib;
 Get Binary By IO.Kinal.VM.Binary;
+Get IO.Kinal.VM.Disassembler;
 
 Trusted Static Function int Main(string[] args)
 {
@@ -53,13 +54,25 @@ Unsafe Static Function int Run(string[] args)
         Console.PrintLine([f]"KinalVM {IO.Version}");
         Return 0;
     }
+    If (args.Length() >= 1 && args[0] == "--disasm")
+    {
+        If (args.Length() != 2)
+        {
+            Console.PrintLine("usage: kinalvm --disasm <file.knc>");
+            Return 1;
+        }
+        Bytecode.Program disassemblyProgram = Loader.KNCLoader.Load(args[1]);
+        Stdlib.StdlibRegistry disassemblyRegistry = Stdlib.StdlibRegistry.BuildDefault();
+        IO.Kinal.VM.Disassembler.Print(disassemblyProgram, disassemblyRegistry);
+        Return 0;
+    }
     Bytecode.Program program = TryLoadEmbedded();
 
     If (program == null)
     {
         If (args.Length() < 1)
         {
-            Console.PrintLine("usage: kinalvm <file.knc>");
+            Console.PrintLine("usage: kinalvm <file.knc> | kinalvm --disasm <file.knc>");
             Return 1;
         }
         program = Loader.KNCLoader.Load(args[0]);

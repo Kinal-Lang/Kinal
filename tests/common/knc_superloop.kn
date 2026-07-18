@@ -15,5 +15,12 @@ Static Function int Main()
     {
     }
     Console.PrintLine(j);
+
+    int k= 0;
+    While (k< 1000)
+    {
+        k= k+ 1;
+    }
+    Console.PrintLine(k);
     Return 0;
 }

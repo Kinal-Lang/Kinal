@@ -1,0 +1,195 @@
+Unit IO.Kinal.VM.Disassembler;
+
+Get IO.Console;
+Get IO.Text;
+Get IO.Kinal.VM.Bytecode;
+Get IO.Kinal.VM.Stdlib;
+
+Static Function string[] OpcodeNames()
+    {
+        Return {
+            "LoadInt", "LoadFloat", "LoadBool", "LoadString", "LoadChar", "Move",
+            "AddInt", "SubInt", "MulInt", "DivInt", "AddFloat", "SubFloat", "MulFloat", "DivFloat",
+            "NegInt", "NegFloat", "Eq", "Ne", "LtInt", "LeInt", "GtInt", "GeInt",
+            "LtFloat", "LeFloat", "GtFloat", "GeFloat", "NotBool", "BitAndInt", "BitOrInt",
+            "BitXorInt", "ShlInt", "ShrInt", "BitNotInt", "IntToString", "BoolToString",
+            "CharToString", "StringToInt", "StringToBool", "CharToInt", "IntToChar", "StringToChar",
+            "Jump", "JumpIfFalse", "JumpIfTrue", "CallBuiltin", "CallFunc", "NewObject", "NewArray",
+            "LoadField", "StoreField", "LoadIndex", "StoreIndex", "ArrayLength", "ArrayAdd", "CallVirt",
+            "IsType", "LoadGlobal", "StoreGlobal", "Ret", "Halt", "MakeFunc", "CallClosure", "NewCell",
+            "LoadCell", "StoreCell", "LoadCapture", "StoreCapture", "LoadCaptureCell", "PushTry", "PopTry",
+            "Throw", "MakePtrLocal", "MakePtrGlobal", "MakePtrIndex", "MakePtrField", "MakePtrFunc",
+            "MakePtrCell", "LoadPtr", "StorePtr", "AddPtr", "LoopIntLtInc", "LoopIntLeInc", "LoopIntGtDec",
+            "LoopIntGeDec", "LoopIntEqInc", "LoopIntNeInc", "LoopIntEqDec", "LoopIntNeDec",
+            "JumpIfIntLtFalse", "JumpIfIntLeFalse", "JumpIfIntGtFalse", "JumpIfIntGeFalse",
+            "JumpIfIntEqFalse", "JumpIfIntNeFalse", "IncInt", "DecInt", "IntToFloat", "FloatToInt",
+            "FloatToString", "StringToFloat", "BoolToInt", "BoolToFloat", "FloatToBool",
+            "LoopBackIntLtInc", "LoopBackIntLeInc", "LoopBackIntGtDec", "LoopBackIntGeDec",
+            "LoopBackIntEqInc", "LoopBackIntNeInc", "LoopBackIntEqDec", "LoopBackIntNeDec",
+            "LoopArrayFillIntLtInc", "LoopArrayFillIntLeInc", "LoopArraySumIntLtInc",
+            "LoopArraySumIntLeInc", "LoopSumIntLtInc", "LoopSumIntLeInc", "AddIntImm", "SubIntImm",
+            "MulIntImm", "DivIntImm", "LtIntImm", "LeIntImm", "GtIntImm", "GeIntImm",
+            "BitAndIntImm", "BitOrIntImm", "BitXorIntImm", "ShlIntImm", "ShrIntImm", "UDivInt",
+            "URemInt", "ULtInt", "ULeInt", "UGtInt", "UGeInt", "LShrInt"
+        };
+    }
+
+Static Function string PadLeft(int value, int width)
+    {
+        string text = [string](value);
+        While (IO.Text.Length(text) < width) text = "0" + text;
+        Return text;
+    }
+
+Static Function string PadRight(string value, int width)
+    {
+        string text = value;
+        While (IO.Text.Length(text) < width) text = text + " ";
+        Return text;
+    }
+
+Static Function string Register(int value)
+    {
+        Return value == 255 ? "_" : "r" + [string](value);
+    }
+
+Static Function string Arguments(byte[] code, int first, int count)
+    {
+        string result = "(";
+        For (int i = 0; i < count && i < 4; i = i + 1)
+        {
+            If (i != 0) result = result + ", ";
+            result = result + Register([int](code[first + i]));
+        }
+        Return result + ")";
+    }
+
+Static Function string RawOperands(byte[] code, int pc, int size)
+    {
+        string result = "";
+        For (int i = 1; i < size; i = i + 1)
+        {
+            If (i != 1) result = result + ", ";
+            result = result + [string]([int](code[pc + i]));
+        }
+        Return result;
+    }
+
+Static Function string Instruction(IO.Kinal.VM.Bytecode.Program program,
+                                   IO.Kinal.VM.Stdlib.StdlibRegistry registry,
+                                   IO.Kinal.VM.Bytecode.FunctionInfo function,
+                                   string[] names, int pc)
+    {
+        byte[] code = function.Code;
+        int op = [int](code[pc]);
+        int size = IO.Kinal.VM.Bytecode.Program.InstructionSize(op);
+        string operands = "";
+        string comment = "";
+
+        If (op == [int](IO.Kinal.VM.Bytecode.OpCode.LoadInt) ||
+            op == [int](IO.Kinal.VM.Bytecode.OpCode.LoadFloat) ||
+            op == [int](IO.Kinal.VM.Bytecode.OpCode.LoadString) ||
+            op == [int](IO.Kinal.VM.Bytecode.OpCode.LoadChar))
+        {
+            int index = IO.Kinal.VM.Bytecode.Program.ReadU16(code, pc + 2);
+            operands = Register([int](code[pc + 1])) + ", #" + [string](index);
+            If (op == [int](IO.Kinal.VM.Bytecode.OpCode.LoadInt) && index < program.IntConstants.Length())
+                comment = [string](program.IntConstants[index]);
+            ElseIf (op == [int](IO.Kinal.VM.Bytecode.OpCode.LoadFloat) && index < program.FloatConstants.Length())
+                comment = [string](program.FloatConstants[index]);
+            ElseIf (op == [int](IO.Kinal.VM.Bytecode.OpCode.LoadString) && index < program.StringConstants.Length())
+                comment = "\"" + program.StringConstants[index] + "\"";
+            ElseIf (op == [int](IO.Kinal.VM.Bytecode.OpCode.LoadChar) && index < program.IntConstants.Length())
+                comment = "'" + [string]([char](program.IntConstants[index])) + "'";
+        }
+        ElseIf (op == [int](IO.Kinal.VM.Bytecode.OpCode.LoadBool))
+            operands = Register([int](code[pc + 1])) + ", " + ([int](code[pc + 2]) == 0 ? "false" : "true");
+        ElseIf (op == [int](IO.Kinal.VM.Bytecode.OpCode.Move))
+            operands = Register([int](code[pc + 1])) + ", " + Register([int](code[pc + 2]));
+        ElseIf ((op >= [int](IO.Kinal.VM.Bytecode.OpCode.AddInt) &&
+                 op <= [int](IO.Kinal.VM.Bytecode.OpCode.DivFloat)) ||
+                (op >= [int](IO.Kinal.VM.Bytecode.OpCode.Eq) &&
+                 op <= [int](IO.Kinal.VM.Bytecode.OpCode.ShrInt)) ||
+                op == [int](IO.Kinal.VM.Bytecode.OpCode.LoadIndex) ||
+                op == [int](IO.Kinal.VM.Bytecode.OpCode.StoreIndex) ||
+                op == [int](IO.Kinal.VM.Bytecode.OpCode.ArrayAdd) ||
+                op == [int](IO.Kinal.VM.Bytecode.OpCode.AddPtr))
+            operands = Register([int](code[pc + 1])) + ", " + Register([int](code[pc + 2])) +
+                ", " + Register([int](code[pc + 3]));
+        ElseIf ((op >= [int](IO.Kinal.VM.Bytecode.OpCode.NegInt) &&
+                 op <= [int](IO.Kinal.VM.Bytecode.OpCode.NegFloat)) ||
+                op == [int](IO.Kinal.VM.Bytecode.OpCode.NotBool) ||
+                (op >= [int](IO.Kinal.VM.Bytecode.OpCode.BitNotInt) &&
+                 op <= [int](IO.Kinal.VM.Bytecode.OpCode.StringToChar)) ||
+                op == [int](IO.Kinal.VM.Bytecode.OpCode.ArrayLength) ||
+                (op >= [int](IO.Kinal.VM.Bytecode.OpCode.NewCell) &&
+                 op <= [int](IO.Kinal.VM.Bytecode.OpCode.StoreCell)) ||
+                (op >= [int](IO.Kinal.VM.Bytecode.OpCode.MakePtrCell) &&
+                 op <= [int](IO.Kinal.VM.Bytecode.OpCode.StorePtr)) ||
+                (op >= [int](IO.Kinal.VM.Bytecode.OpCode.IntToFloat) &&
+                 op <= [int](IO.Kinal.VM.Bytecode.OpCode.FloatToBool)))
+            operands = Register([int](code[pc + 1])) + ", " + Register([int](code[pc + 2]));
+        ElseIf (op == [int](IO.Kinal.VM.Bytecode.OpCode.JumpOp))
+            operands = "@" + [string](IO.Kinal.VM.Bytecode.Program.ReadU16(code, pc + 1));
+        ElseIf (op == [int](IO.Kinal.VM.Bytecode.OpCode.JumpIfFalse) ||
+                op == [int](IO.Kinal.VM.Bytecode.OpCode.JumpIfTrue))
+            operands = Register([int](code[pc + 1])) + ", @" +
+                [string](IO.Kinal.VM.Bytecode.Program.ReadU16(code, pc + 2));
+        ElseIf (op == [int](IO.Kinal.VM.Bytecode.OpCode.CallBuiltin) ||
+                op == [int](IO.Kinal.VM.Bytecode.OpCode.CallFunc))
+        {
+            int target = IO.Kinal.VM.Bytecode.Program.ReadU16(code, pc + 2);
+            int count = [int](code[pc + 4]);
+            operands = Register([int](code[pc + 1])) + ", #" + [string](target) + ", " +
+                Arguments(code, pc + 5, count);
+            If (op == [int](IO.Kinal.VM.Bytecode.OpCode.CallBuiltin) && target < registry.Names.Length())
+                comment = registry.Names[target] + "()";
+            ElseIf (op == [int](IO.Kinal.VM.Bytecode.OpCode.CallFunc) && target < program.Functions.Length())
+                comment = program.Functions[target].Name + "()";
+        }
+        ElseIf (op >= [int](IO.Kinal.VM.Bytecode.OpCode.LoopIntLtInc) &&
+                op <= [int](IO.Kinal.VM.Bytecode.OpCode.LoopIntNeDec))
+            operands = Register([int](code[pc + 1])) + ", " + Register([int](code[pc + 2]));
+        ElseIf (op >= [int](IO.Kinal.VM.Bytecode.OpCode.LoopBackIntLtInc) &&
+                op <= [int](IO.Kinal.VM.Bytecode.OpCode.LoopBackIntNeDec))
+            operands = Register([int](code[pc + 1])) + ", " + Register([int](code[pc + 2])) +
+                ", @" + [string](IO.Kinal.VM.Bytecode.Program.ReadU16(code, pc + 3));
+        ElseIf (op == [int](IO.Kinal.VM.Bytecode.OpCode.Ret) ||
+                op == [int](IO.Kinal.VM.Bytecode.OpCode.ThrowOp) ||
+                op == [int](IO.Kinal.VM.Bytecode.OpCode.IncInt) ||
+                op == [int](IO.Kinal.VM.Bytecode.OpCode.DecInt))
+            operands = Register([int](code[pc + 1]));
+        Else operands = RawOperands(code, pc, size);
+
+        string line = PadLeft(pc, 4) + ": " + PadRight(names[op], 24) + operands;
+        If (comment != "") line = PadRight(line, 56) + "; " + comment;
+        Return line;
+    }
+
+Static Function void Print(IO.Kinal.VM.Bytecode.Program program,
+                           IO.Kinal.VM.Stdlib.StdlibRegistry registry)
+    {
+        string[] names = OpcodeNames();
+        IO.Console.PrintLine("; Kinal KNC2 disassembly");
+        IO.Console.PrintLine("; entry = #" + [string](program.EntryFunction) +
+            ", globals = " + [string](program.GlobalCount));
+
+        For (int functionIndex = 0; functionIndex < program.Functions.Length(); functionIndex = functionIndex + 1)
+        {
+            IO.Kinal.VM.Bytecode.FunctionInfo function = program.Functions[functionIndex];
+            IO.Console.PrintLine("");
+            IO.Console.PrintLine(".function #" + [string](functionIndex) + " " + function.Name +
+                " params=" + [string](function.ParamCount) +
+                " registers=" + [string](function.RegisterCount) +
+                " return=" + [string](function.ReturnKind));
+            int pc = 0;
+            While (pc < function.Code.Length())
+            {
+                int op = [int](function.Code[pc]);
+                int size = IO.Kinal.VM.Bytecode.Program.InstructionSize(op);
+                IO.Console.PrintLine(Instruction(program, registry, function, names, pc));
+                pc = pc + size;
+            }
+            IO.Console.PrintLine(".end");
+        }
+}

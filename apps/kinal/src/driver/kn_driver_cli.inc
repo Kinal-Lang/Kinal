@@ -27,7 +27,7 @@ static void print_help(void)
         "  build       Compile source files to native executables, objects, assembly, or IR\n"
         "  run         Compile a source file to a temporary native executable and run it\n"
         "  fmt         Format .kn source files\n"
-        "  vm          Bytecode operations (build, run, pack)\n"
+        "  vm          Bytecode operations (build, run, disasm, pack)\n"
         "  pkg         Package management (build, info, unpack)\n"
         "\n"
         "Build quick reference:\n"
@@ -103,6 +103,7 @@ static void print_help(void)
         "  kinal vm build <file.kn> -o <file.knc>\n"
         "  kinal vm build --project <dir> --profile <name>\n"
         "  kinal vm run <file.kn|file.knc> [-- program-args...]\n"
+        "  kinal vm disasm <file.knc>\n"
         "  kinal vm pack <file.kn|file.knc> -o <file>\n"
         "  kinal pkg build --manifest <file|dir> -o <file.klib>\n"
         "  kinal pkg info <file.klib>\n"
@@ -112,7 +113,7 @@ static void print_help(void)
         "  .kn/.kinal/.fx   Full frontend compile\n"
         "  .ll/.s/.asm      Continue from intermediate and compile forward\n"
         "  .o/.obj          Continue from object and link\n"
-        "  .knc             Use \"kinal vm run\" or \"kinal vm pack\"\n"
+        "  .knc             Use \"kinal vm run\", \"kinal vm disasm\", or \"kinal vm pack\"\n"
         "\n"
         "Use \"kinal <subcommand> --help\" for detailed subcommand help.\n";
     kn_write_str(kn_diag_localize("ui.help.full", fallback));
@@ -221,6 +222,7 @@ static void print_vm_help(void)
         "Subcommands:\n"
         "  build   Compile source files to .knc bytecode\n"
         "  run     Execute .kn source or .knc bytecode via KinalVM\n"
+        "  disasm  Print a readable listing from .knc bytecode\n"
         "  pack    Bundle source or .knc into a standalone vm-exe\n"
         "\n"
         "Use \"kinal vm <subcommand> --help\" for details.\n";
@@ -1348,6 +1350,7 @@ static int kn_run_main(int argc, char **argv)
  * ================================================================ */
 static int kn_vm_build_main(int argc, char **argv);
 static int kn_vm_run_main(int argc, char **argv);
+static int kn_vm_disasm_main(int argc, char **argv);
 static int kn_vm_pack_main(int argc, char **argv);
 
 static int kn_vm_main(int argc, char **argv)
@@ -1356,6 +1359,7 @@ static int kn_vm_main(int argc, char **argv)
     if (kn_strcmp(argv[1], "-h") == 0 || kn_strcmp(argv[1], "--help") == 0) { print_vm_help(); return 0; }
     if (kn_strcmp(argv[1], "build") == 0) return kn_vm_build_main(argc - 1, argv + 1);
     if (kn_strcmp(argv[1], "run") == 0) return kn_vm_run_main(argc - 1, argv + 1);
+    if (kn_strcmp(argv[1], "disasm") == 0) return kn_vm_disasm_main(argc - 1, argv + 1);
     if (kn_strcmp(argv[1], "pack") == 0) return kn_vm_pack_main(argc - 1, argv + 1);
     kn_write_str("unknown vm subcommand: "); kn_write_str(argv[1]); kn_write_str("\n");
     print_vm_help();
@@ -1365,6 +1369,7 @@ static int kn_vm_main(int argc, char **argv)
 static int kn_vm_build_main(int argc, char **argv)
 {
     const char *out = 0;
+    const char *listing_path = 0;
     const char *input = 0;
     const char *project_manifest = 0;
     const char *project_profile = 0;
@@ -1390,12 +1395,14 @@ static int kn_vm_build_main(int argc, char **argv)
                 "  --profile <name>  Select a profile from kinal.knproj\n"
                 "  --superloop          Enable superloop fusion\n"
                 "  --no-superloop       Disable superloop fusion\n"
+                "  --listing <file>     Write a readable .knasm bytecode listing\n"
                 "  --no-module-discovery  Disable auto-discovery\n"
                 "  --pkg-root <dir>  Add a local package root\n"
                 "  --stdpkg-root <dir>  Add an official stdpkg root override\n");
             return 0;
         }
         if ((kn_strcmp(arg, "-o") == 0 || kn_strcmp(arg, "--output") == 0) && i + 1 < argc) { out = argv[++i]; continue; }
+        if (kn_strcmp(arg, "--listing") == 0 && i + 1 < argc) { listing_path = argv[++i]; continue; }
         if (kn_strcmp(arg, "--project") == 0 && i + 1 < argc) { project_manifest = argv[++i]; continue; }
         if (kn_strcmp(arg, "--profile") == 0 && i + 1 < argc) { project_profile = argv[++i]; continue; }
         if (kn_strcmp(arg, "--no-superloop") == 0) { knc_superloop = 0; superloop_explicit = 1; continue; }
@@ -1520,6 +1527,12 @@ static int kn_vm_build_main(int argc, char **argv)
         make_default_output(out_default, sizeof(out_default), KN_EMIT_KNC, KN_ARTIFACT_EXE, KN_ENV_HOSTED, default_target_triple(), input);
         out = out_default;
     }
+    if (listing_path && !ensure_output_parent(listing_path)) {
+        kn_write_str("failed to create listing output directory: ");
+        kn_write_str(listing_path);
+        kn_write_str("\n");
+        return 1;
+    }
 
     KnCompileConfig cfg;
     kn_memset(&cfg, 0, sizeof(cfg));
@@ -1534,6 +1547,7 @@ static int kn_vm_build_main(int argc, char **argv)
     cfg.runtime_mode = KN_RUNTIME_GC;
     cfg.entry_symbol = "Main";
     cfg.knc_superloop = knc_superloop;
+    cfg.knc_listing_path = listing_path;
     cfg.package_roots = pkg_roots.items;
     cfg.package_root_count = pkg_roots.count;
     cfg.official_package_roots = stdpkg_roots.items;
@@ -1779,6 +1793,67 @@ static int kn_vm_run_main(int argc, char **argv)
     }
     int rc = run_knc_vm_ex(vm_exe, input, prog_argc, prog_args);
     if (rc < 0) { kn_write_str("failed to launch kinalvm\n"); return 1; }
+    return rc;
+}
+
+static int kn_vm_disasm_main(int argc, char **argv)
+{
+    const char *input = 0;
+    const char *vm_path = 0;
+
+    for (int i = 1; i < argc; i++)
+    {
+        const char *arg = argv[i];
+        if (kn_strcmp(arg, "-h") == 0 || kn_strcmp(arg, "--help") == 0)
+        {
+            kn_write_str("Usage: kinal vm disasm [options] <file.knc>\n\n"
+                         "  --vm-path <file>  Explicit KinalVM executable path\n");
+            return 0;
+        }
+        if (kn_strcmp(arg, "--vm-path") == 0 && i + 1 < argc)
+        {
+            vm_path = argv[++i];
+            continue;
+        }
+        if (arg[0] == '-' && arg[1])
+        {
+            kn_write_str("unknown option: ");
+            kn_write_str(arg);
+            kn_write_str("\n");
+            return 2;
+        }
+        if (!input) input = arg;
+        else
+        {
+            kn_write_str("'kinal vm disasm' accepts exactly one input file\n");
+            return 2;
+        }
+    }
+
+    if (!input)
+    {
+        kn_write_str("'kinal vm disasm' requires a .knc file\n");
+        return 1;
+    }
+    if (classify_input(input) != KN_INPUT_KNC)
+    {
+        kn_write_str("'kinal vm disasm' requires a .knc file\n");
+        return 1;
+    }
+
+    char vm_exe[KN_MAX_PATH];
+    if (!resolve_vm_executable(vm_exe, sizeof(vm_exe), vm_path))
+    {
+        kn_write_str("failed to locate kinalvm; pass --vm-path <file>\n");
+        return 1;
+    }
+    const char *args[2] = { "--disasm", input };
+    int rc = run_native_program(vm_exe, 2, args);
+    if (rc < 0)
+    {
+        kn_write_str("failed to launch kinalvm\n");
+        return 1;
+    }
     return rc;
 }
 

@@ -204,7 +204,7 @@ If `--project` points to a directory, `kinal` looks for `kinal.knproj` first. If
 | `.kn` / `.kinal` / `.fx` | Full frontend compilation |
 | `.ll` / `.s` / `.asm` | Continue compilation from an intermediate representation |
 | `.o` / `.obj` | Continue from object file and link |
-| `.knc` | Bytecode; use `kinal vm run` or `kinal vm pack` |
+| `.knc` | Bytecode; use `kinal vm run`, `kinal vm disasm`, or `kinal vm pack` |
 
 ---
 
@@ -309,6 +309,7 @@ kinal build --lang zh main.kn
 kinal vm build main.kn -o main.knc
 kinal vm build --project . --profile vm
 kinal vm run main.kn                       # or main.knc
+kinal vm disasm main.knc
 kinal vm pack main.kn -o myapp             # Standalone executable
 
 # Package management

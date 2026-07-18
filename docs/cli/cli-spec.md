@@ -22,6 +22,7 @@ kinal
 ├── vm          Bytecode operations
 │   ├── build   Compile to .knc
 │   ├── run     Execute .kn or .knc via KinalVM
+│   ├── disasm  Print readable .knc instructions
 │   └── pack    Bundle into a vm-exe
 └── pkg         Package management
     ├── build   Build .klib
@@ -147,6 +148,7 @@ When operations share the same target object, use **second-level subcommands**:
 ```
 kinal vm build    ← Operations around VM bytecode
 kinal vm run
+kinal vm disasm
 kinal vm pack
 
 kinal pkg build   ← Operations around packages
@@ -201,7 +203,7 @@ Top-level quick reference:
   --lang <en|zh>              Diagnostic language
   kinal build ...             Native build entry
   kinal run ...               Native quick-run entry
-  kinal vm ...                Bytecode build/run/pack entry
+  kinal vm ...                Bytecode build/run/disasm/pack entry
   kinal pkg ...               Package build/info/unpack entry
 
 Use "kinal <subcommand> --help" for detailed subcommand help.
@@ -234,7 +236,7 @@ The CLI maintains only canonical entry points; no legacy aliases or top-level im
 
 - Native builds always use `kinal build`
 - Native quick-run always uses `kinal run`
-- Bytecode build, run, and pack always use `kinal vm build|run|pack`
+- Bytecode build, inspection, run, and pack use `kinal vm build|disasm|run|pack`
 - Package operations always use `kinal pkg build|info|unpack`
 - Documentation, tests, and build scripts must not use legacy forms such as `kinal main.kn`, `kinal --vm`, or `--emit-klib`
 

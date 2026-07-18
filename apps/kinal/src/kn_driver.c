@@ -105,6 +105,7 @@ typedef struct
     int show_link;
     int show_link_search;
     int knc_superloop;
+    const char *knc_listing_path;
     int project_mode;
 } KnCompileConfig;
 

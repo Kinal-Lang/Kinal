@@ -1,6 +1,6 @@
 # kinal vm — Bytecode Virtual Machine
 
-`kinal vm` is the subcommand group for managing KinalVM bytecode, providing build, run, and pack operations.
+`kinal vm` is the subcommand group for building, inspecting, running, and packaging KinalVM bytecode.
 
 ---
 
@@ -10,6 +10,7 @@
 |------------|---------|
 | `kinal vm build` | Compile `.kn` source files to `.knc` bytecode |
 | `kinal vm run` | Execute `.kn` source files or `.knc` bytecode files |
+| `kinal vm disasm` | Print a readable disassembly of an existing `.knc` file |
 | `kinal vm pack` | Bundle source files or `.knc` into a standalone executable (vm-exe) |
 
 ---
@@ -29,6 +30,7 @@ kinal vm build <file.kn> [-o <output.knc>]
 | `--profile <name>` | Select a profile from `kinal.knproj` |
 | `--no-superloop` | Disable KNC superloop fusion |
 | `--superloop` | Enable KNC superloop fusion (default) |
+| `--listing <file>` | Write a readable compiler listing (conventionally `.knasm`) |
 | `--no-module-discovery` | Disable automatic module discovery |
 | `--pkg-root <dir>` | Add a local package root |
 | `--stdpkg-root <dir>` | Add an official stdpkg root override |
@@ -42,6 +44,9 @@ kinal vm build --project . --profile vm
 
 # Disable superloop
 kinal vm build --no-superloop main.kn
+
+# Keep source-level local names in a readable listing
+kinal vm build main.kn -o main.knc --listing main.knasm
 ```
 
 ---
@@ -75,6 +80,24 @@ kinal vm run --project .
 
 # Pass arguments
 kinal vm run main.knc -- arg1 arg2
+```
+
+---
+
+## kinal vm disasm
+
+Print a readable instruction listing from an existing `.knc` file.
+
+```bash
+kinal vm disasm [--vm-path <file>] <file.knc>
+```
+
+This form works from the binary alone and includes function names, constant values, builtin names, registers, and jump targets. Local variable names are not part of the KNC binary format; use `kinal vm build --listing <file>` when source-level local-name comments are required.
+
+The standalone VM exposes the same binary disassembler:
+
+```bash
+kinalvm --disasm main.knc
 ```
 
 ---
@@ -157,10 +180,11 @@ KinalVM's async runtime is event-loop based:
 
 ## Standalone kinalvm Tool
 
-`kinalvm` is a standalone KinalVM executable that can run `.knc` directly:
+`kinalvm` is a standalone KinalVM executable that can run or inspect `.knc` directly:
 
 ```bash
-kinalvm [--superloop|--no-superloop] <file.knc> [-- program-args...]
+kinalvm <file.knc>
+kinalvm --disasm <file.knc>
 ```
 
 ---

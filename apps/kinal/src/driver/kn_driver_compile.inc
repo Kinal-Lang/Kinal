@@ -1275,6 +1275,7 @@ static int kn_compile(int in_count, const char **in_paths, const KnCompileConfig
         kn_memset(&knc_opts, 0, sizeof(knc_opts));
         knc_opts.entry_name = entry_name;
         knc_opts.enable_superloop = cfg->knc_superloop;
+        knc_opts.listing_path = cfg->knc_listing_path;
         if (kn_emit_knc(out_path, &metas, &funcs, &imports, &classes, &interfaces, &structs, &enums, &globals, &knc_opts) != 0)
             return -1;
         p_codegen = now_ms() - t_knc;

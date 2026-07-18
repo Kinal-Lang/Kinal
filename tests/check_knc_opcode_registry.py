@@ -104,10 +104,35 @@ def parse_dispatch_targets(text: str) -> list[str]:
     return re.findall(r"\bDispatch\.([A-Za-z0-9_]+)\b", body)
 
 
+def parse_c_listing_names(text: str) -> list[str]:
+    match = re.search(
+        r"static\s+const\s+char\s+\*knc_opcode_name\s*\([^)]*\)\s*\{.*?"
+        r"static\s+const\s+char\s+\*names\s*\[\s*\]\s*=\s*\{(?P<body>.*?)\}\s*;",
+        text,
+        re.S,
+    )
+    if not match:
+        raise AssertionError("missing C readable-listing opcode names")
+    return re.findall(r'"([A-Za-z0-9_]+)"', match.group("body"))
+
+
+def parse_kinal_disassembler_names(text: str) -> list[str]:
+    match = re.search(
+        r"Static\s+Function\s+string\[\]\s+OpcodeNames\s*\([^)]*\)\s*\{.*?"
+        r"Return\s*\{(?P<body>.*?)\}\s*;",
+        text,
+        re.S,
+    )
+    if not match:
+        raise AssertionError("missing KinalVM disassembler opcode names")
+    return re.findall(r'"([A-Za-z0-9_]+)"', match.group("body"))
+
+
 def main() -> int:
     knc_source = read("apps/kinal/src/kn_knc.c")
     bytecode_source = read("apps/kinalvm/src/IO/Kinal/VM/Bytecode.kn")
     vm_source = read("apps/kinalvm/src/IO/Kinal/VM/VM.kn")
+    disassembler_source = read("apps/kinalvm/src/IO/Kinal/VM/Disassembler.kn")
 
     c_opcodes = parse_c_opcodes(knc_source)
     expected_values = list(range(EXPECTED_LAST_OPCODE + 1))
@@ -118,6 +143,15 @@ def main() -> int:
     expected_bytecode = [(c_name_to_bytecode(name), value) for name, value in c_opcodes]
     if bytecode_opcodes != expected_bytecode:
         raise AssertionError("Bytecode.OpCode names/ordinals do not match the C KncOpCode ABI")
+
+    expected_listing_names = [
+        "Jump" if name == "JumpOp" else "Throw" if name == "ThrowOp" else name
+        for name, _ in bytecode_opcodes
+    ]
+    if parse_c_listing_names(knc_source) != expected_listing_names:
+        raise AssertionError("C readable-listing opcode names do not match the KNC ABI")
+    if parse_kinal_disassembler_names(disassembler_source) != expected_listing_names:
+        raise AssertionError("KinalVM disassembler opcode names do not match the KNC ABI")
 
     sizes = parse_instruction_sizes(bytecode_source)
     if [name for name, _ in sizes] != [name for name, _ in bytecode_opcodes]:

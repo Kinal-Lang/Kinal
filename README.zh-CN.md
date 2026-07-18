@@ -241,7 +241,7 @@ python x.py release
 |------|------|
 | `kinal build` | 编译为原生可执行文件、目标文件、汇编或 LLVM IR |
 | `kinal run` | 编译并立即运行，类似 `go run` |
-| `kinal vm build/run/pack` | KinalVM 字节码构建、执行、打包 |
+| `kinal vm build/run/disasm/pack` | KinalVM 字节码构建、检查、执行、打包 |
 | `kinal fmt` | 代码格式化 |
 | `kinal pkg build/info/unpack` | 包管理 |
 | `kinal-lsp` | LSP 语言服务器（VS Code 等编辑器补全、诊断） |

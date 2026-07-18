@@ -1,0 +1,10 @@
+Unit Tests.Selfhost.SwitchExpression;
+
+Static Function int Main()
+{
+    Return Switch(1)
+    {
+        Case(1) { 10 }
+        Case(default) { 20 }
+    };
+}

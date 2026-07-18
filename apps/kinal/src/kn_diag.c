@@ -111,7 +111,7 @@ static const char g_help_full_en[] =
     "  build       Compile source files to native executables, objects, assembly, or IR\n"
     "  run         Compile a source file to a temporary native executable and run it\n"
     "  fmt         Format .kn source files\n"
-    "  vm          Bytecode operations (build, run, pack)\n"
+    "  vm          Bytecode operations (build, run, disasm, pack)\n"
     "  pkg         Package management (build, info, unpack)\n"
     "\n"
     "Build quick reference:\n"
@@ -182,6 +182,7 @@ static const char g_help_full_en[] =
     "VM / package quick reference:\n"
     "  kinal vm build <file.kn> -o <file.knc>\n"
     "  kinal vm run <file.kn|file.knc> [-- program-args...]\n"
+    "  kinal vm disasm <file.knc>\n"
     "  kinal vm pack <file.kn|file.knc> -o <file>\n"
     "  kinal pkg build --manifest <file|dir> -o <file.klib>\n"
     "  kinal pkg info <file.klib>\n"
@@ -191,7 +192,7 @@ static const char g_help_full_en[] =
     "  .kn/.kinal/.fx   Full frontend compile\n"
     "  .ll/.s/.asm      Continue from intermediate and compile forward\n"
     "  .o/.obj          Continue from object and link\n"
-    "  .knc             Use \"kinal vm run\" or \"kinal vm pack\"\n"
+    "  .knc             Use \"kinal vm run\", \"kinal vm disasm\", or \"kinal vm pack\"\n"
     "\n"
     "Use \"kinal <subcommand> --help\" for detailed subcommand help.\n";
 

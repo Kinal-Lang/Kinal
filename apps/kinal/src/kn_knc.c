@@ -352,6 +352,7 @@ typedef struct
     int synthetic_is_block;
     BlockRecordList *synthetic_block_records;
     CaptureBuf captures;
+    StrBuf register_names;
     ByteBuf code;
 } KncFuncRecord;
 
@@ -1205,6 +1206,13 @@ static void add_local(KncFuncState *st, const char *name, Type type, int reg)
     local.storage = KNC_LOCAL_VALUE;
     local.capture_slot = -1;
     localbuf_push(&st->locals, local);
+    if (st->program && st->func_index >= 0 && st->func_index < st->program->count && reg >= 0)
+    {
+        StrBuf *names = &st->program->items[st->func_index].register_names;
+        while (names->count <= reg)
+            strbuf_push(names, 0);
+        names->items[reg] = name;
+    }
 }
 
 static KncLocal *find_local(KncFuncState *st, const char *name)
@@ -2219,6 +2227,32 @@ static int knc_match_empty_superloop_for(KncFuncState *st,
     if (!knc_match_loop_update_expr(st, post, &local, &delta_sign))
         return 0;
     if (!knc_match_loop_cond(st, cond, local, delta_sign, out_limit, out_op, 0))
+        return 0;
+
+    *out_local = local;
+    return 1;
+}
+
+static int knc_match_empty_superloop_while(KncFuncState *st,
+                                           Stmt *s,
+                                           KncLocal **out_local,
+                                           Expr **out_limit,
+                                           KncOpCode *out_op)
+{
+    Stmt *body;
+    KncLocal *local;
+    int delta_sign;
+
+    if (!st || !s || s->kind != ST_WHILE || !st->program || !st->program->enable_superloop ||
+        !s->v.whiles.cond || !s->v.whiles.body)
+        return 0;
+
+    body = s->v.whiles.body;
+    if (body->kind != ST_BLOCK || body->v.block.stmts.count != 1)
+        return 0;
+    if (!knc_match_loop_update_stmt(st, body->v.block.stmts.items[0], &local, &delta_sign))
+        return 0;
+    if (!knc_match_loop_cond(st, s->v.whiles.cond, local, delta_sign, out_limit, out_op, 0))
         return 0;
 
     *out_local = local;
@@ -5475,7 +5509,21 @@ static int compile_stmt(KncFuncState *st, Stmt *s)
         KncLocal *fused_local = 0;
         Expr *fused_limit = 0;
         KncOpCode fused_op = (KncOpCode)0;
+        KncLocal *super_local = 0;
+        Expr *super_limit = 0;
+        KncOpCode super_op = (KncOpCode)0;
         LoopState loop;
+
+        if (knc_match_empty_superloop_while(st, s, &super_local, &super_limit, &super_op))
+        {
+            KncValue limit = compile_expr(st, super_limit);
+            if (kn_diag_error_count() > 0)
+                return -1;
+            emit_u8(st->code, super_op);
+            emit_u8(st->code, super_local->reg);
+            emit_u8(st->code, limit.reg);
+            return 0;
+        }
 
         if (knc_match_sum_superloop_while(st, s, &reduce_sum_local, &reduce_counter_local, &reduce_limit, &reduce_op))
         {
@@ -6088,6 +6136,259 @@ static int write_string(FILE *fp, const char *text)
     return write_bytes(fp, text, len);
 }
 
+static const char *knc_opcode_name(int op)
+{
+    static const char *names[] = {
+        "LoadInt", "LoadFloat", "LoadBool", "LoadString", "LoadChar", "Move",
+        "AddInt", "SubInt", "MulInt", "DivInt", "AddFloat", "SubFloat", "MulFloat", "DivFloat",
+        "NegInt", "NegFloat", "Eq", "Ne", "LtInt", "LeInt", "GtInt", "GeInt",
+        "LtFloat", "LeFloat", "GtFloat", "GeFloat", "NotBool", "BitAndInt", "BitOrInt",
+        "BitXorInt", "ShlInt", "ShrInt", "BitNotInt", "IntToString", "BoolToString",
+        "CharToString", "StringToInt", "StringToBool", "CharToInt", "IntToChar", "StringToChar",
+        "Jump", "JumpIfFalse", "JumpIfTrue", "CallBuiltin", "CallFunc", "NewObject", "NewArray",
+        "LoadField", "StoreField", "LoadIndex", "StoreIndex", "ArrayLength", "ArrayAdd", "CallVirt",
+        "IsType", "LoadGlobal", "StoreGlobal", "Ret", "Halt", "MakeFunc", "CallClosure", "NewCell",
+        "LoadCell", "StoreCell", "LoadCapture", "StoreCapture", "LoadCaptureCell", "PushTry", "PopTry",
+        "Throw", "MakePtrLocal", "MakePtrGlobal", "MakePtrIndex", "MakePtrField", "MakePtrFunc",
+        "MakePtrCell", "LoadPtr", "StorePtr", "AddPtr", "LoopIntLtInc", "LoopIntLeInc", "LoopIntGtDec",
+        "LoopIntGeDec", "LoopIntEqInc", "LoopIntNeInc", "LoopIntEqDec", "LoopIntNeDec",
+        "JumpIfIntLtFalse", "JumpIfIntLeFalse", "JumpIfIntGtFalse", "JumpIfIntGeFalse",
+        "JumpIfIntEqFalse", "JumpIfIntNeFalse", "IncInt", "DecInt", "IntToFloat", "FloatToInt",
+        "FloatToString", "StringToFloat", "BoolToInt", "BoolToFloat", "FloatToBool",
+        "LoopBackIntLtInc", "LoopBackIntLeInc", "LoopBackIntGtDec", "LoopBackIntGeDec",
+        "LoopBackIntEqInc", "LoopBackIntNeInc", "LoopBackIntEqDec", "LoopBackIntNeDec",
+        "LoopArrayFillIntLtInc", "LoopArrayFillIntLeInc", "LoopArraySumIntLtInc",
+        "LoopArraySumIntLeInc", "LoopSumIntLtInc", "LoopSumIntLeInc", "AddIntImm", "SubIntImm",
+        "MulIntImm", "DivIntImm", "LtIntImm", "LeIntImm", "GtIntImm", "GeIntImm",
+        "BitAndIntImm", "BitOrIntImm", "BitXorIntImm", "ShlIntImm", "ShrIntImm", "UDivInt",
+        "URemInt", "ULtInt", "ULeInt", "UGtInt", "UGeInt", "LShrInt"
+    };
+    return op >= 0 && op < (int)(sizeof(names) / sizeof(names[0])) ? names[op] : "Unknown";
+}
+
+static int knc_instruction_size(int op)
+{
+    if (op == KNC_OP_HALT || op == KNC_OP_POP_TRY) return 1;
+    if (op == KNC_OP_RET || op == KNC_OP_THROW || op == KNC_OP_INC_INT || op == KNC_OP_DEC_INT) return 2;
+    if (op == KNC_OP_LOAD_BOOL || op == KNC_OP_MOVE || (op >= KNC_OP_NEG_INT && op <= KNC_OP_NEG_FLOAT) ||
+        op == KNC_OP_NOT_BOOL || (op >= KNC_OP_BITNOT_INT && op <= KNC_OP_STRING_TO_CHAR) ||
+        (op >= KNC_OP_ARRAY_LENGTH && op <= KNC_OP_ARRAY_LENGTH) || (op >= KNC_OP_NEW_CELL && op <= KNC_OP_STORE_CELL) ||
+        op == KNC_OP_MAKE_PTR_LOCAL || (op >= KNC_OP_MAKE_PTR_CELL && op <= KNC_OP_STORE_PTR) ||
+        (op >= KNC_OP_LOOP_INT_LT_INC && op <= KNC_OP_LOOP_INT_NE_DEC) ||
+        (op >= KNC_OP_INT_TO_FLOAT && op <= KNC_OP_FLOAT_TO_BOOL)) return 3;
+    if (op == KNC_OP_LOAD_INT || op == KNC_OP_LOAD_FLOAT || op == KNC_OP_LOAD_STRING || op == KNC_OP_LOAD_CHAR ||
+        (op >= KNC_OP_ADD_INT && op <= KNC_OP_DIV_FLOAT) || (op >= KNC_OP_EQ && op <= KNC_OP_SHR_INT) ||
+        op == KNC_OP_JUMP_IF_FALSE || op == KNC_OP_JUMP_IF_TRUE || op == KNC_OP_NEW_OBJECT || op == KNC_OP_NEW_ARRAY ||
+        op == KNC_OP_LOAD_INDEX || op == KNC_OP_STORE_INDEX || op == KNC_OP_ARRAY_ADD ||
+        op == KNC_OP_LOAD_GLOBAL || op == KNC_OP_STORE_GLOBAL || (op >= KNC_OP_LOAD_CAPTURE && op <= KNC_OP_LOAD_CAPTURE_CELL) ||
+        op == KNC_OP_MAKE_PTR_GLOBAL || op == KNC_OP_MAKE_PTR_INDEX || op == KNC_OP_MAKE_PTR_FUNC || op == KNC_OP_ADD_PTR ||
+        op == KNC_OP_LOOP_ARRAY_FILL_INT_LT_INC || op == KNC_OP_LOOP_ARRAY_FILL_INT_LE_INC ||
+        op == KNC_OP_LOOP_SUM_INT_LT_INC || op == KNC_OP_LOOP_SUM_INT_LE_INC) return 4;
+    if (op == KNC_OP_JUMP) return 3;
+    if (op == KNC_OP_LOAD_FIELD || op == KNC_OP_STORE_FIELD || op == KNC_OP_MAKE_PTR_FIELD ||
+        (op >= KNC_OP_JUMP_IF_INT_LT_FALSE && op <= KNC_OP_JUMP_IF_INT_NE_FALSE) ||
+        (op >= KNC_OP_LOOP_BACK_INT_LT_INC && op <= KNC_OP_LOOP_BACK_INT_NE_DEC) ||
+        (op >= KNC_OP_LOOP_ARRAY_SUM_INT_LT_INC && op <= KNC_OP_LOOP_ARRAY_SUM_INT_LE_INC) ||
+        (op >= KNC_OP_ADD_INT_IMM && op <= KNC_OP_LSHR_INT)) return 5;
+    if (op == KNC_OP_IS_TYPE) return 6;
+    if (op == KNC_OP_PUSH_TRY) return 7;
+    if (op == KNC_OP_MAKE_FUNC || op == KNC_OP_CALL_CLOSURE) return 8;
+    if (op == KNC_OP_CALL_BUILTIN || op == KNC_OP_CALL_FUNC || op == KNC_OP_CALL_VIRT) return 9;
+    return 0;
+}
+
+static int knc_u16_at(const unsigned char *code, int at)
+{
+    return (int)code[at] | ((int)code[at + 1] << 8);
+}
+
+static const char *knc_register_name(const KncFuncRecord *record, int reg)
+{
+    if (!record || reg < 0 || reg >= record->register_names.count)
+        return 0;
+    return record->register_names.items[reg];
+}
+
+static void knc_listing_reg(FILE *fp, int reg)
+{
+    if (reg == 255) fputs("_", fp);
+    else fprintf(fp, "r%d", reg);
+}
+
+static void knc_listing_args(FILE *fp, const unsigned char *code, int count, int first)
+{
+    fputc('(', fp);
+    for (int i = 0; i < count && i < 4; i++)
+    {
+        if (i) fputs(", ", fp);
+        knc_listing_reg(fp, code[first + i]);
+    }
+    fputc(')', fp);
+}
+
+static void knc_listing_quoted(FILE *fp, const char *text)
+{
+    int count = 0;
+    fputc('"', fp);
+    for (const char *p = text ? text : ""; *p && count < 48; p++, count++)
+    {
+        if (*p == '\n') fputs("\\n", fp);
+        else if (*p == '\r') fputs("\\r", fp);
+        else if (*p == '\t') fputs("\\t", fp);
+        else if (*p == '"' || *p == '\\') { fputc('\\', fp); fputc(*p, fp); }
+        else fputc(*p, fp);
+    }
+    if (text && text[count]) fputs("...", fp);
+    fputc('"', fp);
+}
+
+static const char *knc_listing_builtin_name(int vm_id, char *buffer, size_t cap)
+{
+    for (int kind = 0; kind < KN_BUILTIN_COUNT; kind++)
+    {
+        if (kn_builtin_vm_id((KnBuiltinKind)kind) == vm_id)
+        {
+            const KnStdFunc *spec = kn_std_find_by_kind((KnBuiltinKind)kind);
+            if (spec && spec->module && spec->name)
+            {
+                snprintf(buffer, cap, "%s.%s", spec->module, spec->name);
+                return buffer;
+            }
+        }
+    }
+    return 0;
+}
+
+static void knc_write_instruction_listing(FILE *fp, const KncProgram *program,
+                                          const KncFuncRecord *record, int pc)
+{
+    const unsigned char *code = record->code.items;
+    int op = code[pc];
+    int size = knc_instruction_size(op);
+    const char *destination_name = size > 1 ? knc_register_name(record, code[pc + 1]) : 0;
+    char builtin_name[128];
+
+    fprintf(fp, "%04d: %-24s", pc, knc_opcode_name(op));
+    if (op == KNC_OP_LOAD_INT || op == KNC_OP_LOAD_FLOAT || op == KNC_OP_LOAD_STRING || op == KNC_OP_LOAD_CHAR)
+    {
+        int index = knc_u16_at(code, pc + 2);
+        knc_listing_reg(fp, code[pc + 1]);
+        fprintf(fp, ", #%d", index);
+        if (op == KNC_OP_LOAD_INT && index < program->ints.count) fprintf(fp, "               ; %d", program->ints.items[index]);
+        else if (op == KNC_OP_LOAD_FLOAT && index < program->floats.count) fprintf(fp, "               ; %.17g", program->floats.items[index]);
+        else if (op == KNC_OP_LOAD_STRING && index < program->strings.count) { fputs("               ; ", fp); knc_listing_quoted(fp, program->strings.items[index]); }
+        else if (op == KNC_OP_LOAD_CHAR && index < program->ints.count) fprintf(fp, "               ; '%c'", program->ints.items[index]);
+    }
+    else if (op == KNC_OP_LOAD_BOOL)
+    {
+        knc_listing_reg(fp, code[pc + 1]);
+        fprintf(fp, ", %s", code[pc + 2] ? "true" : "false");
+    }
+    else if (op == KNC_OP_MOVE)
+    {
+        knc_listing_reg(fp, code[pc + 1]); fputs(", ", fp); knc_listing_reg(fp, code[pc + 2]);
+        if (destination_name) fprintf(fp, "               ; %s = r%d", destination_name, code[pc + 2]);
+    }
+    else if ((op >= KNC_OP_ADD_INT && op <= KNC_OP_DIV_FLOAT) ||
+             (op >= KNC_OP_EQ && op <= KNC_OP_SHR_INT) ||
+             op == KNC_OP_LOAD_INDEX || op == KNC_OP_STORE_INDEX || op == KNC_OP_ARRAY_ADD || op == KNC_OP_ADD_PTR)
+    {
+        knc_listing_reg(fp, code[pc + 1]); fputs(", ", fp); knc_listing_reg(fp, code[pc + 2]);
+        fputs(", ", fp); knc_listing_reg(fp, code[pc + 3]);
+    }
+    else if ((op >= KNC_OP_NEG_INT && op <= KNC_OP_NEG_FLOAT) || op == KNC_OP_NOT_BOOL ||
+             (op >= KNC_OP_BITNOT_INT && op <= KNC_OP_STRING_TO_CHAR) || op == KNC_OP_ARRAY_LENGTH ||
+             (op >= KNC_OP_NEW_CELL && op <= KNC_OP_STORE_CELL) || (op >= KNC_OP_MAKE_PTR_CELL && op <= KNC_OP_STORE_PTR) ||
+             (op >= KNC_OP_INT_TO_FLOAT && op <= KNC_OP_FLOAT_TO_BOOL))
+    {
+        knc_listing_reg(fp, code[pc + 1]); fputs(", ", fp); knc_listing_reg(fp, code[pc + 2]);
+    }
+    else if (op == KNC_OP_JUMP)
+        fprintf(fp, "@%d", knc_u16_at(code, pc + 1));
+    else if (op == KNC_OP_JUMP_IF_FALSE || op == KNC_OP_JUMP_IF_TRUE)
+    {
+        knc_listing_reg(fp, code[pc + 1]); fprintf(fp, ", @%d", knc_u16_at(code, pc + 2));
+    }
+    else if (op == KNC_OP_CALL_BUILTIN || op == KNC_OP_CALL_FUNC)
+    {
+        int target = knc_u16_at(code, pc + 2);
+        int count = code[pc + 4];
+        knc_listing_reg(fp, code[pc + 1]); fprintf(fp, ", #%d, ", target); knc_listing_args(fp, code, count, pc + 5);
+        if (op == KNC_OP_CALL_BUILTIN)
+        {
+            const char *name = knc_listing_builtin_name(target, builtin_name, sizeof(builtin_name));
+            if (name) fprintf(fp, "               ; %s()", name);
+        }
+        else if (target >= 0 && target < program->count)
+            fprintf(fp, "               ; %s()", program->items[target].debug_name ? program->items[target].debug_name : "function");
+    }
+    else if (op == KNC_OP_NEW_OBJECT || op == KNC_OP_LOAD_GLOBAL || op == KNC_OP_STORE_GLOBAL ||
+             op == KNC_OP_MAKE_PTR_GLOBAL || op == KNC_OP_MAKE_PTR_FUNC)
+    {
+        knc_listing_reg(fp, code[pc + 1]); fprintf(fp, ", #%d", knc_u16_at(code, pc + 2));
+    }
+    else if (op == KNC_OP_NEW_ARRAY || op == KNC_OP_MAKE_PTR_INDEX)
+    {
+        knc_listing_reg(fp, code[pc + 1]); fputs(", ", fp); knc_listing_reg(fp, code[pc + 2]);
+        fprintf(fp, ", %d", code[pc + 3]);
+    }
+    else if (op == KNC_OP_LOAD_FIELD || op == KNC_OP_STORE_FIELD || op == KNC_OP_MAKE_PTR_FIELD)
+    {
+        knc_listing_reg(fp, code[pc + 1]); fputs(", ", fp); knc_listing_reg(fp, code[pc + 2]);
+        fprintf(fp, ", #%d", knc_u16_at(code, pc + 3));
+    }
+    else if (op >= KNC_OP_LOOP_INT_LT_INC && op <= KNC_OP_LOOP_INT_NE_DEC)
+    {
+        knc_listing_reg(fp, code[pc + 1]); fputs(", ", fp); knc_listing_reg(fp, code[pc + 2]);
+        if (destination_name) fprintf(fp, "               ; fused loop on %s", destination_name);
+    }
+    else if (op >= KNC_OP_LOOP_BACK_INT_LT_INC && op <= KNC_OP_LOOP_BACK_INT_NE_DEC)
+    {
+        knc_listing_reg(fp, code[pc + 1]); fputs(", ", fp); knc_listing_reg(fp, code[pc + 2]);
+        fprintf(fp, ", @%d", knc_u16_at(code, pc + 3));
+    }
+    else if (op == KNC_OP_RET || op == KNC_OP_THROW || op == KNC_OP_INC_INT || op == KNC_OP_DEC_INT)
+        knc_listing_reg(fp, code[pc + 1]);
+    else if (size > 1)
+    {
+        for (int i = 1; i < size; i++)
+        {
+            if (i > 1) fputs(", ", fp);
+            fprintf(fp, "0x%02x", code[pc + i]);
+        }
+    }
+    fputc('\n', fp);
+}
+
+static int write_program_listing(const char *path, const KncProgram *program)
+{
+    FILE *fp;
+    if (!path || !path[0] || !program) return 0;
+    fp = fopen(path, "wb");
+    if (!fp) return -1;
+    fprintf(fp, "; Kinal readable KNC listing\n; entry = #%d, globals = %d\n", program->entry_index, program->globals.count);
+    for (int i = 0; i < program->count; i++)
+    {
+        const KncFuncRecord *record = &program->items[i];
+        fprintf(fp, "\n.function #%d %s params=%d registers=%d return=%d\n",
+                i, record->debug_name ? record->debug_name : "<anonymous>",
+                record->param_count, record->reg_count, record->return_kind);
+        for (int pc = 0; pc < record->code.count; )
+        {
+            int size = knc_instruction_size(record->code.items[pc]);
+            if (size <= 0 || pc + size > record->code.count)
+            {
+                fprintf(fp, "%04d: Invalid                  0x%02x\n", pc, record->code.items[pc]);
+                break;
+            }
+            knc_write_instruction_listing(fp, program, record, pc);
+            pc += size;
+        }
+        fputs(".end\n", fp);
+    }
+    return fclose(fp) == 0 ? 0 : -1;
+}
+
 static int write_program_file(const char *out_path, KncProgram *program)
 {
     FILE *fp = fopen(out_path, "wb");
@@ -6517,6 +6818,11 @@ int kn_emit_knc(const char *out_path,
     if (write_program_file(out_path, &program) != 0)
     {
         knc_diag(program.fallback_src, 1, 1, "Failed to write .knc output");
+        return -1;
+    }
+    if (opts && opts->listing_path && write_program_listing(opts->listing_path, &program) != 0)
+    {
+        knc_diag(program.fallback_src, 1, 1, "Failed to write readable KNC listing");
         return -1;
     }
     return 0;

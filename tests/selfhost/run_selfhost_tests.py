@@ -90,6 +90,33 @@ def main() -> int:
     )
     results.append({"name": "contextual_qualified_names", "ok": True})
 
+    switch_fixture = root / "tests" / "selfhost" / "fixtures" / "switch_expression.kn"
+    switch_stage0_path = out_dir / "switch-expression-stage0.kast"
+    switch_stage0 = run(
+        [
+            str(stage0),
+            "build",
+            "--no-module-discovery",
+            "--color",
+            "never",
+            "--emit",
+            "ast",
+            str(switch_fixture),
+            "-o",
+            str(switch_stage0_path),
+        ],
+        cwd=root,
+    )
+    require(switch_stage0.returncode == 0, "stage0 switch-expression fixture failed", switch_stage0)
+    switch_stage1 = run([str(compiler), "ast", str(switch_fixture)], cwd=root)
+    require(switch_stage1.returncode == 0, "stage1 switch-expression AST failed", switch_stage1)
+    require(
+        switch_stage0_path.read_text(encoding="utf-8").replace("\r\n", "\n").strip()
+        == switch_stage1.stdout.replace("\r\n", "\n").strip(),
+        "stage0/stage1 switch-expression syntax mismatch",
+    )
+    results.append({"name": "switch_expression", "ok": True})
+
     source_root = root / "apps" / "kinal-selfhost" / "src"
     source_files = sorted(source_root.rglob("*.kn"))
     project_file = root / "apps" / "kinal-selfhost" / "kinal.knproj"
@@ -225,6 +252,78 @@ def main() -> int:
         missing_generic,
     )
     results.append({"name": "generic_missing_arguments", "ok": True})
+
+    kinalvm_project = root / "apps" / "kinalvm" / "kinal.knproj"
+    kinalvm_source_files = sorted((kinalvm_project.parent / "src").rglob("*.kn"))
+    kinalvm_stage0_ast_path = out_dir / "kinalvm-stage0.kast"
+    kinalvm_stage0_ast = run(
+        [
+            str(stage0),
+            "build",
+            "--project",
+            str(kinalvm_project.parent),
+            "--profile",
+            "release",
+            "--emit",
+            "ast",
+            "-o",
+            str(kinalvm_stage0_ast_path),
+        ],
+        cwd=root,
+    )
+    require(kinalvm_stage0_ast.returncode == 0, "stage0 KinalVM syntax emit failed", kinalvm_stage0_ast)
+    kinalvm_stage1_ast = run([str(compiler), "project-ast", str(kinalvm_project), "release"], cwd=root)
+    require(kinalvm_stage1_ast.returncode == 0, "stage1 KinalVM syntax build failed", kinalvm_stage1_ast)
+    require(
+        kinalvm_stage0_ast_path.read_text(encoding="utf-8").replace("\r\n", "\n").strip()
+        == kinalvm_stage1_ast.stdout.replace("\r\n", "\n").strip(),
+        "stage0/stage1 KinalVM syntax mismatch",
+    )
+    kinalvm_check = run([str(compiler), "check", str(kinalvm_project), "release"], cwd=root)
+    require(kinalvm_check.returncode == 0, "stage1 KinalVM semantic check failed", kinalvm_check)
+    require(
+        "unresolved_expressions=0" in kinalvm_check.stdout.replace("\r\n", "\n").splitlines(),
+        "stage1 KinalVM semantic check left unresolved expressions",
+        kinalvm_check,
+    )
+    kinalvm_executable = out_dir / f"kinalvm-selfhost{executable_suffix}"
+    kinalvm_build = run(
+        [str(compiler), "build", str(kinalvm_project), str(kinalvm_executable), "release"],
+        cwd=root,
+    )
+    require(kinalvm_build.returncode == 0, "stage1 KinalVM build failed", kinalvm_build)
+    require(kinalvm_executable.is_file(), "stage1 KinalVM executable is missing")
+
+    kinalvm_smoke_source = root / "tests" / "common" / "knc_superloop.kn"
+    kinalvm_smoke_knc = out_dir / "kinalvm-superloop.knc"
+    kinalvm_smoke_build = run(
+        [
+            str(stage0),
+            "vm",
+            "build",
+            "--no-module-discovery",
+            str(kinalvm_smoke_source),
+            "-o",
+            str(kinalvm_smoke_knc),
+        ],
+        cwd=root,
+    )
+    require(kinalvm_smoke_build.returncode == 0, "stage0 KinalVM smoke bytecode build failed", kinalvm_smoke_build)
+    kinalvm_smoke = run([str(kinalvm_executable), str(kinalvm_smoke_knc)], cwd=root)
+    require(kinalvm_smoke.returncode == 0, "self-built KinalVM smoke execution failed", kinalvm_smoke)
+    require(
+        kinalvm_smoke.stdout.replace("\r\n", "\n").strip() == "5\n0\n1000",
+        "self-built KinalVM smoke output differs",
+        kinalvm_smoke,
+    )
+    kinalvm_disasm = run([str(kinalvm_executable), "--disasm", str(kinalvm_smoke_knc)], cwd=root)
+    require(kinalvm_disasm.returncode == 0, "self-built KinalVM disassembly failed", kinalvm_disasm)
+    require(
+        "LoopIntLtInc" in kinalvm_disasm.stdout and "IntToString" in kinalvm_disasm.stdout,
+        "self-built KinalVM disassembly is incomplete",
+        kinalvm_disasm,
+    )
+    results.append({"name": "kinalvm_selfhost", "ok": True, "sources": len(kinalvm_source_files)})
 
     for source in source_files:
         proc = run([str(compiler), "lex", str(source)], cwd=root)

@@ -1,6 +1,6 @@
 # kinal vm — 字节码虚拟机
 
-`kinal vm` 是管理 KinalVM 字节码的子命令组，提供构建、执行、打包三种操作。
+`kinal vm` 是用于构建、检查、执行和打包 KinalVM 字节码的子命令组。
 
 ---
 
@@ -10,6 +10,7 @@
 |--------|------|
 | `kinal vm build` | 将 `.kn` 源文件编译为 `.knc` 字节码 |
 | `kinal vm run` | 执行 `.kn` 源文件或 `.knc` 字节码文件 |
+| `kinal vm disasm` | 输出已有 `.knc` 文件的可读反汇编 |
 | `kinal vm pack` | 将源文件或 `.knc` 打包为独立可执行文件（vm-exe） |
 
 ---
@@ -29,6 +30,7 @@ kinal vm build <文件.kn> [-o <输出.knc>]
 | `--profile <名称>` | 选择 `kinal.knproj` 中的 Profile |
 | `--no-superloop` | 禁用 KNC 超级循环融合 |
 | `--superloop` | 启用 KNC 超级循环融合（默认） |
+| `--listing <文件>` | 写出可读的编译期指令清单（建议扩展名 `.knasm`） |
 | `--no-module-discovery` | 禁用自动模块发现 |
 | `--pkg-root <目录>` | 添加本地包根目录 |
 | `--stdpkg-root <目录>` | 添加官方 stdpkg 根目录覆盖 |
@@ -42,6 +44,9 @@ kinal vm build --project . --profile vm
 
 # 禁用超级循环
 kinal vm build --no-superloop main.kn
+
+# 生成保留源码局部变量名的可读清单
+kinal vm build main.kn -o main.knc --listing main.knasm
 ```
 
 ---
@@ -73,6 +78,24 @@ kinal vm run --project .
 
 # 传递参数
 kinal vm run main.knc -- arg1 arg2
+```
+
+---
+
+## kinal vm disasm
+
+从已有 `.knc` 文件输出可读指令清单。
+
+```bash
+kinal vm disasm [--vm-path <文件>] <文件.knc>
+```
+
+该形式只依赖二进制，包含函数名、常量值、内建函数名、寄存器和跳转目标。KNC 二进制当前不保存局部变量名；如需源码局部变量注释，应在编译时使用 `kinal vm build --listing <文件>`。
+
+独立 VM 也提供相同的二进制反汇编入口：
+
+```bash
+kinalvm --disasm main.knc
 ```
 
 ---
@@ -155,10 +178,11 @@ KinalVM 的异步运行时基于事件循环：
 
 ## 独立 kinalvm 工具
 
-`kinalvm` 是独立的 KinalVM 可执行文件，可直接运行 `.knc`：
+`kinalvm` 是独立的 KinalVM 可执行文件，可直接运行或检查 `.knc`：
 
 ```bash
-kinalvm [--superloop|--no-superloop] <文件.knc> [-- 程序参数...]
+kinalvm <文件.knc>
+kinalvm --disasm <文件.knc>
 ```
 
 ---

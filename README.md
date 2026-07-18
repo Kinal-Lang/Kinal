@@ -122,7 +122,7 @@ See [Build Guide](dev/build.md) for details.
 |------|-------------|
 | kinal build | Compile to native executable, object file, assembly, or LLVM IR |
 | kinal run | Compile and run immediately |
-| kinal vm build/run/pack | KinalVM bytecode build, run, and pack |
+| kinal vm build/run/disasm/pack | KinalVM bytecode build, inspection, run, and pack |
 | kinal fmt | Code formatter |
 | kinal pkg build/info/unpack | Package management |
 | kinal-lsp | LSP server for editor completion and diagnostics |
