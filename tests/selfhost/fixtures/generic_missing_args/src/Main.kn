@@ -1,0 +1,12 @@
+Unit Tests.Selfhost.GenericMissingArgs;
+
+Function T Identity< T>(T value)
+{
+    Return value;
+}
+
+Static Function int Main()
+{
+    int value = Identity(1);
+    Return value;
+}

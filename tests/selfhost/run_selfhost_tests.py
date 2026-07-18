@@ -135,6 +135,62 @@ def main() -> int:
     require(array_run.returncode == 0, "stage1 array fixture execution failed", array_run)
     results.append({"name": "array_types_fixture", "ok": True})
 
+    generic_project = root / "tests" / "selfhost" / "fixtures" / "generic_functions" / "kinal.knproj"
+    generic_executable = out_dir / f"generic-functions{executable_suffix}"
+    generic_build = run(
+        [str(compiler), "build", str(generic_project), str(generic_executable), "test"],
+        cwd=root,
+    )
+    require(generic_build.returncode == 0, "stage1 generic fixture build failed", generic_build)
+    require(generic_executable.is_file(), "stage1 generic fixture executable is missing")
+    generic_run = run([str(generic_executable)], cwd=root)
+    require(generic_run.returncode == 0, "stage1 generic fixture execution failed", generic_run)
+    require(
+        generic_run.stdout.replace("\r\n", "\n").strip() == "42\nnest\n3",
+        "stage1 generic fixture output differs",
+        generic_run,
+    )
+    generic_stage0_ast_path = out_dir / "generic-stage0.kast"
+    generic_stage0_ast = run(
+        [
+            str(stage0),
+            "build",
+            "--project",
+            str(generic_project.parent),
+            "--profile",
+            "test",
+            "--emit",
+            "ast",
+            "-o",
+            str(generic_stage0_ast_path),
+        ],
+        cwd=root,
+    )
+    require(generic_stage0_ast.returncode == 0, "stage0 generic syntax emit failed", generic_stage0_ast)
+    generic_stage1_ast = run([str(compiler), "project-ast", str(generic_project), "test"], cwd=root)
+    require(generic_stage1_ast.returncode == 0, "stage1 generic syntax build failed", generic_stage1_ast)
+    require(
+        generic_stage0_ast_path.read_text(encoding="utf-8").replace("\r\n", "\n").strip()
+        == generic_stage1_ast.stdout.replace("\r\n", "\n").strip(),
+        "stage0/stage1 generic syntax mismatch",
+    )
+    results.append({"name": "generic_function_instances", "ok": True})
+
+    missing_generic_project = (
+        root / "tests" / "selfhost" / "fixtures" / "generic_missing_args" / "kinal.knproj"
+    )
+    missing_generic = run(
+        [str(compiler), "check", str(missing_generic_project), "test"],
+        cwd=root,
+    )
+    missing_generic_text = (missing_generic.stdout + missing_generic.stderr).lower()
+    require(
+        missing_generic.returncode != 0 and "generic function" in missing_generic_text,
+        "stage1 accepted a generic call without type arguments",
+        missing_generic,
+    )
+    results.append({"name": "generic_missing_arguments", "ok": True})
+
     for source in source_files:
         proc = run([str(compiler), "lex", str(source)], cwd=root)
         require(proc.returncode == 0, f"stage1 cannot lex its own source: {source}", proc)

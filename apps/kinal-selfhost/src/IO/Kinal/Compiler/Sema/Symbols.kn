@@ -28,6 +28,10 @@ Class FunctionSymbol
     Public ParameterSymbol FirstParameter;
     Public FunctionDecl Declaration;
     Public ValueSymbol Receiver;
+    Public bool IsGenericInstance;
+    Public FunctionSymbol GenericDefinition;
+    Public string GenericKey;
+    Public TypeSubstitution FirstSubstitution;
     Public FunctionSymbol Next;
 
     Public Safe Constructor(string unitName, TypeSymbol ownerType, FunctionDecl declaration)
@@ -39,6 +43,10 @@ Class FunctionSymbol
         This.FirstParameter = null;
         This.Declaration = declaration;
         This.Receiver = null;
+        This.IsGenericInstance = false;
+        This.GenericDefinition = null;
+        This.GenericKey = "";
+        This.FirstSubstitution = null;
         This.Next = null;
     }
 
@@ -68,11 +76,55 @@ Class FunctionSymbol
 
     Public Safe Function string QualifiedName()
     {
+        string functionName = This.Name;
+        If (This.IsGenericInstance) functionName = functionName + "$" + This.GenericKey;
         If (This.OwnerType != null)
         {
-            Return This.OwnerType.QualifiedName() + "." + This.Name;
+            Return This.OwnerType.QualifiedName() + "." + functionName;
         }
-        Return This.UnitName + "." + This.Name;
+        Return This.UnitName + "." + functionName;
+    }
+
+    Public Safe Function bool IsGenericTemplate()
+    {
+        Return This.Declaration.FirstTypeParameter != null && !This.IsGenericInstance;
+    }
+
+    Public Safe Function void AddSubstitution(TypeSubstitution substitution)
+    {
+        If (This.FirstSubstitution == null)
+        {
+            This.FirstSubstitution = substitution;
+            Return;
+        }
+        TypeSubstitution current = This.FirstSubstitution;
+        While (current.Next != null) current = current.Next;
+        current.Next = substitution;
+    }
+
+    Public Safe Function TypeSymbol Substitute(string name)
+    {
+        TypeSubstitution current = This.FirstSubstitution;
+        While (current != null)
+        {
+            If (current.Name == name) Return current.Type;
+            current = current.Next;
+        }
+        Return null;
+    }
+}
+
+Class TypeSubstitution
+{
+    Public string Name;
+    Public TypeSymbol Type;
+    Public TypeSubstitution Next;
+
+    Public Safe Constructor(string name, TypeSymbol type)
+    {
+        This.Name = name;
+        This.Type = type;
+        This.Next = null;
     }
 }
 

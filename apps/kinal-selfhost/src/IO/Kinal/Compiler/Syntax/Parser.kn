@@ -218,6 +218,58 @@ Safe Function bool IsFunctionModifier(int kind)
            kind == [int](TokenKind.KwAsync) || kind == [int](TokenKind.KwExtern);
 }
 
+Safe Function int FindFunctionNamePosition(ParseCursor cursor, int start)
+{
+    int scan = start;
+    While (scan + 1 < cursor.Tokens.Count())
+    {
+        int kind = KindAt(cursor, scan);
+        If (kind == [int](TokenKind.Identifier))
+        {
+            int next = KindAt(cursor, scan + 1);
+            If (next == [int](TokenKind.LeftParen)) Return scan;
+            If (next == [int](TokenKind.Less))
+            {
+                int depth = 0;
+                int end = scan + 1;
+                While (end < cursor.Tokens.Count())
+                {
+                    int genericKind = KindAt(cursor, end);
+                    If (genericKind == [int](TokenKind.Less)) depth = depth + 1;
+                    ElseIf (genericKind == [int](TokenKind.Greater))
+                    {
+                        depth = depth - 1;
+                        If (depth == 0) Break;
+                    }
+                    ElseIf (genericKind == [int](TokenKind.Semicolon) ||
+                            genericKind == [int](TokenKind.LeftBrace) ||
+                            genericKind == [int](TokenKind.Eof)) Break;
+                    end = end + 1;
+                }
+                If (depth == 0 && KindAt(cursor, end + 1) == [int](TokenKind.LeftParen)) Return scan;
+            }
+        }
+        If (kind == [int](TokenKind.Semicolon) || kind == [int](TokenKind.LeftBrace) ||
+            kind == [int](TokenKind.Eof)) Break;
+        scan = scan + 1;
+    }
+    Return -1;
+}
+
+Safe Function bool ParseTypeParameterList(ParseCursor cursor, list diagnostics, SourceFile source)
+{
+    If (!Expect(cursor, diagnostics, source, [int](TokenKind.Less),
+                "Expected '<'", "generic parameter list must start with '<'")) Return false;
+    While (!IsEnd(cursor))
+    {
+        If (!Expect(cursor, diagnostics, source, [int](TokenKind.Identifier),
+                    "Expected identifier", "generic type parameter requires a name")) Return false;
+        If (!Match(cursor, [int](TokenKind.Comma))) Break;
+    }
+    Return Expect(cursor, diagnostics, source, [int](TokenKind.Greater),
+                  "Expected '>'", "generic parameter list is not closed");
+}
+
 Safe Function bool ParseFunction(ParseCursor cursor, list diagnostics, SourceFile source)
 {
     bool external = false;
@@ -229,27 +281,15 @@ Safe Function bool ParseFunction(ParseCursor cursor, list diagnostics, SourceFil
     If (!Expect(cursor, diagnostics, source, [int](TokenKind.KwFunction),
                 "Expected Function", "function declaration is missing Function")) Return false;
 
-    int namePosition = -1;
-    int scan = cursor.Position;
-    While (scan + 1 < cursor.Tokens.Count())
-    {
-        If (KindAt(cursor, scan) == [int](TokenKind.Identifier) &&
-            KindAt(cursor, scan + 1) == [int](TokenKind.LeftParen))
-        {
-            namePosition = scan;
-            Break;
-        }
-        int kind = KindAt(cursor, scan);
-        If (kind == [int](TokenKind.Semicolon) || kind == [int](TokenKind.LeftBrace) ||
-            kind == [int](TokenKind.Eof)) Break;
-        scan = scan + 1;
-    }
+    int namePosition = FindFunctionNamePosition(cursor, cursor.Position);
     If (namePosition < 0)
     {
         Report(cursor, diagnostics, source, "Expected function name", "missing name before parameter list");
         Return false;
     }
     cursor.Position = namePosition + 1;
+    If (CurrentKind(cursor) == [int](TokenKind.Less) &&
+        !ParseTypeParameterList(cursor, diagnostics, source)) Return false;
     If (!SkipBalanced(cursor, diagnostics, source, [int](TokenKind.LeftParen),
                       [int](TokenKind.RightParen), "Expected parameter list")) Return false;
     If (external)
@@ -398,6 +438,55 @@ Safe Function void ReadArguments(ParseCursor cursor, ExpressionNode call)
     Match(cursor, [int](TokenKind.RightParen));
 }
 
+Safe Function bool IsGenericCallArgumentList(ParseCursor cursor)
+{
+    If (CurrentKind(cursor) != [int](TokenKind.Less)) Return false;
+    int depth = 0;
+    int index = cursor.Position;
+    While (index < cursor.Tokens.Count())
+    {
+        int kind = KindAt(cursor, index);
+        If (kind == [int](TokenKind.Less)) depth = depth + 1;
+        ElseIf (kind == [int](TokenKind.Greater))
+        {
+            depth = depth - 1;
+            If (depth == 0) Return KindAt(cursor, index + 1) == [int](TokenKind.LeftParen);
+        }
+        ElseIf (kind == [int](TokenKind.Semicolon) || kind == [int](TokenKind.Eof)) Return false;
+        index = index + 1;
+    }
+    Return false;
+}
+
+Safe Function void ReadTypeArguments(ParseCursor cursor, ExpressionNode call)
+{
+    If (!Match(cursor, [int](TokenKind.Less))) Return;
+    While (!IsEnd(cursor) && CurrentKind(cursor) != [int](TokenKind.Greater))
+    {
+        int start = cursor.Position;
+        string location = CurrentToken(cursor);
+        int depth = 0;
+        While (!IsEnd(cursor))
+        {
+            int kind = CurrentKind(cursor);
+            If (kind == [int](TokenKind.Less)) depth = depth + 1;
+            ElseIf (kind == [int](TokenKind.Greater))
+            {
+                If (depth == 0) Break;
+                depth = depth - 1;
+            }
+            If (kind == [int](TokenKind.Comma) && depth == 0) Break;
+            Advance(cursor);
+        }
+        call.AddTypeArgument(New TypeArgumentNode(
+            JoinTokenText(cursor, start, cursor.Position),
+            IO.Kinal.Compiler.Lex.Token.Line(location),
+            IO.Kinal.Compiler.Lex.Token.Column(location)));
+        If (!Match(cursor, [int](TokenKind.Comma))) Break;
+    }
+    Match(cursor, [int](TokenKind.Greater));
+}
+
 Safe Function ExpressionNode ParsePrimary(ParseCursor cursor)
 {
     string token = CurrentToken(cursor);
@@ -477,6 +566,16 @@ Safe Function ExpressionNode ParsePostfix(ParseCursor cursor)
     While (!IsEnd(cursor))
     {
         string token = CurrentToken(cursor);
+        If (IsGenericCallArgumentList(cursor))
+        {
+            ExpressionNode call = New ExpressionNode([int](ExpressionKind.Call), "",
+                IO.Kinal.Compiler.Lex.Token.Line(token), IO.Kinal.Compiler.Lex.Token.Column(token));
+            call.Left = value;
+            ReadTypeArguments(cursor, call);
+            ReadArguments(cursor, call);
+            value = call;
+            Continue;
+        }
         If (CurrentKind(cursor) == [int](TokenKind.LeftParen))
         {
             ExpressionNode call = New ExpressionNode([int](ExpressionKind.Call), "",
@@ -729,13 +828,7 @@ Safe Function FunctionDecl ReadFunctionNode(ParseCursor cursor, bool constructor
 
     Advance(cursor);
     int returnStart = cursor.Position;
-    int nameIndex = returnStart;
-    While (KindAt(cursor, nameIndex) != [int](TokenKind.Eof))
-    {
-        If (KindAt(cursor, nameIndex) == [int](TokenKind.Identifier) &&
-            KindAt(cursor, nameIndex + 1) == [int](TokenKind.LeftParen)) Break;
-        nameIndex = nameIndex + 1;
-    }
+    int nameIndex = FindFunctionNamePosition(cursor, returnStart);
     string nameToken = RawAt(cursor, nameIndex);
     FunctionDecl value = New FunctionDecl(
         IO.Kinal.Compiler.Lex.Token.Text(nameToken), JoinTokenText(cursor, returnStart, nameIndex),
@@ -745,6 +838,20 @@ Safe Function FunctionDecl ReadFunctionNode(ParseCursor cursor, bool constructor
     value.IsExtern = isExtern;
     value.Safety = safety;
     cursor.Position = nameIndex + 1;
+    If (Match(cursor, [int](TokenKind.Less)))
+    {
+        While (!IsEnd(cursor) && CurrentKind(cursor) != [int](TokenKind.Greater))
+        {
+            string parameterToken = CurrentToken(cursor);
+            value.AddTypeParameter(New TypeParameterDecl(
+                IO.Kinal.Compiler.Lex.Token.Text(parameterToken),
+                IO.Kinal.Compiler.Lex.Token.Line(parameterToken),
+                IO.Kinal.Compiler.Lex.Token.Column(parameterToken)));
+            Advance(cursor);
+            If (!Match(cursor, [int](TokenKind.Comma))) Break;
+        }
+        Match(cursor, [int](TokenKind.Greater));
+    }
     ReadParameters(cursor, value);
     If (Match(cursor, [int](TokenKind.KwBy))) ReadQualifiedName(cursor);
     If (!Match(cursor, [int](TokenKind.Semicolon))) value.Body = ParseAstBlock(cursor);

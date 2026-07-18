@@ -99,6 +99,7 @@ Class FunctionDecl
     Public int Line;
     Public int Column;
     Public ParameterDecl FirstParameter;
+    Public TypeParameterDecl FirstTypeParameter;
     Public StatementNode Body;
     Public SyntaxAttribute FirstAttribute;
     Public FunctionDecl Next;
@@ -115,6 +116,7 @@ Class FunctionDecl
         This.Line = line;
         This.Column = column;
         This.FirstParameter = null;
+        This.FirstTypeParameter = null;
         This.Body = null;
         This.FirstAttribute = null;
         This.Next = null;
@@ -142,6 +144,46 @@ Class FunctionDecl
             current = current.Next;
         }
         Return count;
+    }
+
+    Public Safe Function void AddTypeParameter(TypeParameterDecl parameter)
+    {
+        If (This.FirstTypeParameter == null)
+        {
+            This.FirstTypeParameter = parameter;
+            Return;
+        }
+        TypeParameterDecl current = This.FirstTypeParameter;
+        While (current.Next != null) current = current.Next;
+        current.Next = parameter;
+    }
+
+    Public Safe Function int TypeParameterCount()
+    {
+        int count = 0;
+        TypeParameterDecl current = This.FirstTypeParameter;
+        While (current != null)
+        {
+            count = count + 1;
+            current = current.Next;
+        }
+        Return count;
+    }
+}
+
+Class TypeParameterDecl
+{
+    Public string Name;
+    Public int Line;
+    Public int Column;
+    Public TypeParameterDecl Next;
+
+    Public Safe Constructor(string name, int line, int column)
+    {
+        This.Name = name;
+        This.Line = line;
+        This.Column = column;
+        This.Next = null;
     }
 }
 

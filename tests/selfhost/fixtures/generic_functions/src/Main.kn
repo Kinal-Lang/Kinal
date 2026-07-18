@@ -1,0 +1,15 @@
+Unit Tests.Selfhost.GenericFunctions;
+
+Get IO.Console;
+Get Tests.Selfhost.GenericLibrary;
+
+Trusted Static Function int Main()
+{
+    int number = Forward< int>(42);
+    string text = Forward< string>("nest");
+    int first = First< int, string>(3, "ignored");
+    IO.Console.PrintLine(number);
+    IO.Console.PrintLine(text);
+    IO.Console.PrintLine(first);
+    Return number == 42 && text == "nest" && first == 3 ? 0 : 1;
+}

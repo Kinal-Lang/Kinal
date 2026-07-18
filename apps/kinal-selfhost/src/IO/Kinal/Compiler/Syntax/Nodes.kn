@@ -43,6 +43,7 @@ Class ExpressionNode
     Public ExpressionNode Right;
     Public ExpressionNode Third;
     Public ExpressionNode FirstArgument;
+    Public TypeArgumentNode FirstTypeArgument;
     Public ExpressionNode Next;
 
     Public Safe Constructor(int kind, string text, int line, int column)
@@ -56,6 +57,7 @@ Class ExpressionNode
         This.Right = null;
         This.Third = null;
         This.FirstArgument = null;
+        This.FirstTypeArgument = null;
         This.Next = null;
     }
 
@@ -81,6 +83,46 @@ Class ExpressionNode
             current = current.Next;
         }
         Return count;
+    }
+
+    Public Safe Function void AddTypeArgument(TypeArgumentNode value)
+    {
+        If (This.FirstTypeArgument == null)
+        {
+            This.FirstTypeArgument = value;
+            Return;
+        }
+        TypeArgumentNode current = This.FirstTypeArgument;
+        While (current.Next != null) current = current.Next;
+        current.Next = value;
+    }
+
+    Public Safe Function int TypeArgumentCount()
+    {
+        int count = 0;
+        TypeArgumentNode current = This.FirstTypeArgument;
+        While (current != null)
+        {
+            count = count + 1;
+            current = current.Next;
+        }
+        Return count;
+    }
+}
+
+Class TypeArgumentNode
+{
+    Public string TypeName;
+    Public int Line;
+    Public int Column;
+    Public TypeArgumentNode Next;
+
+    Public Safe Constructor(string typeName, int line, int column)
+    {
+        This.TypeName = typeName;
+        This.Line = line;
+        This.Column = column;
+        This.Next = null;
     }
 }
 

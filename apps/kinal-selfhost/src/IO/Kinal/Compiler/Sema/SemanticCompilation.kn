@@ -33,6 +33,8 @@ Class SemanticCompilation
     Public HirModule FirstHirModule;
     Public int ImportCount;
     Public int FunctionCount;
+    Public int GenericTemplateCount;
+    Public int GenericInstanceCount;
     Public int DeclarationTypeCount;
     Public int UnresolvedImportCount;
     Public int UnresolvedTypeCount;
@@ -48,6 +50,8 @@ Class SemanticCompilation
         This.FirstHirModule = null;
         This.ImportCount = 0;
         This.FunctionCount = 0;
+        This.GenericTemplateCount = 0;
+        This.GenericInstanceCount = 0;
         This.DeclarationTypeCount = 0;
         This.UnresolvedImportCount = 0;
         This.UnresolvedTypeCount = 0;
@@ -232,6 +236,46 @@ Class SemanticCompilation
         Return null;
     }
 
+    Public Safe Function TypeSymbol ResolveFunctionType(SyntaxTree syntax,
+                                                         FunctionSymbol function, string rawName)
+    {
+        string name = This.CanonicalTypeName(rawName);
+        If (IO.Text.EndsWith(name, "*"))
+        {
+            TypeSymbol element = This.ResolveFunctionType(syntax, function,
+                IO.Text.Slice(name, 0, IO.Text.Length(name) - 1));
+            If (element == null) Return null;
+            TypeSymbol pointerType = New TypeSymbol([int](TypeKind.PointerType), element.Name + "*");
+            pointerType.ElementType = element;
+            Return pointerType;
+        }
+        If (IO.Text.EndsWith(name, "[]"))
+        {
+            TypeSymbol element = This.ResolveFunctionType(syntax, function,
+                IO.Text.Slice(name, 0, IO.Text.Length(name) - 2));
+            If (element == null) Return null;
+            Return This.MakeArrayType(element);
+        }
+        If (function != null)
+        {
+            TypeSymbol substituted = function.Substitute(name);
+            If (substituted != null) Return substituted;
+        }
+        Return This.ResolveType(syntax, name);
+    }
+
+    Public Safe Function TypeSymbol CheckFunctionType(SyntaxTree syntax,
+                                                       FunctionSymbol function, string name,
+                                                       int line, int column)
+    {
+        This.DeclarationTypeCount = This.DeclarationTypeCount + 1;
+        TypeSymbol type = This.ResolveFunctionType(syntax, function, name);
+        If (type != null) Return type;
+        This.UnresolvedTypeCount = This.UnresolvedTypeCount + 1;
+        This.Report(syntax, "Unknown type", This.CanonicalTypeName(name), line, column);
+        Return null;
+    }
+
     Public Safe Function void CheckType(SyntaxTree syntax, string name, int line, int column)
     {
         This.DeclarationTypeCount = This.DeclarationTypeCount + 1;
@@ -295,14 +339,34 @@ Class SemanticCompilation
     {
         FunctionSymbol function = New FunctionSymbol(unit.Name, owner, declaration);
         This.FunctionCount = This.FunctionCount + 1;
-        This.CheckType(unit.Syntax, declaration.ReturnType, declaration.Line, declaration.Column);
-        function.ReturnType = This.ResolveType(unit.Syntax, declaration.ReturnType);
+        TypeParameterDecl typeParameter = declaration.FirstTypeParameter;
+        While (typeParameter != null)
+        {
+            If (function.Substitute(typeParameter.Name) != null)
+                This.Report(unit.Syntax, "Duplicate generic parameter", typeParameter.Name,
+                    typeParameter.Line, typeParameter.Column);
+            Else
+            {
+                TypeSymbol parameterType = New TypeSymbol([int](TypeKind.TypeParameter), typeParameter.Name);
+                function.AddSubstitution(New TypeSubstitution(typeParameter.Name, parameterType));
+            }
+            typeParameter = typeParameter.Next;
+        }
+        If (function.IsGenericTemplate()) This.GenericTemplateCount = This.GenericTemplateCount + 1;
+        If (declaration.IsExtern && function.IsGenericTemplate())
+            This.Report(unit.Syntax, "Invalid generic function", "Extern function cannot be generic",
+                declaration.Line, declaration.Column);
+        If (owner != null && function.IsGenericTemplate())
+            This.Report(unit.Syntax, "Unsupported generic method", declaration.Name,
+                declaration.Line, declaration.Column);
+        function.ReturnType = This.CheckFunctionType(unit.Syntax, function,
+            declaration.ReturnType, declaration.Line, declaration.Column);
         ParameterDecl parameter = declaration.FirstParameter;
         While (parameter != null)
         {
-            This.CheckType(unit.Syntax, parameter.TypeName, declaration.Line, declaration.Column);
             function.AddParameter(New ParameterSymbol(parameter.Name,
-                This.ResolveType(unit.Syntax, parameter.TypeName)));
+                This.CheckFunctionType(unit.Syntax, function, parameter.TypeName,
+                    declaration.Line, declaration.Column)));
             parameter = parameter.Next;
         }
         This.AddFunctionSymbol(function);
@@ -353,7 +417,7 @@ Class SemanticCompilation
         FunctionDecl function = syntax.FirstFunction;
         While (function != null)
         {
-            This.CheckFunction(syntax, function);
+            If (function.FirstTypeParameter == null) This.CheckFunction(syntax, function);
             function = function.Next;
         }
         TypeDecl type = syntax.FirstType;
@@ -369,7 +433,7 @@ Class SemanticCompilation
             function = type.FirstMethod;
             While (function != null)
             {
-                This.CheckFunction(syntax, function);
+                If (function.FirstTypeParameter == null) This.CheckFunction(syntax, function);
                 function = function.Next;
             }
             type = type.Next;
@@ -437,6 +501,131 @@ Class SemanticCompilation
             import = import.Next;
         }
         Return null;
+    }
+
+    Public Safe Function string TypeIdentity(TypeSymbol type)
+    {
+        If (type == null) Return "?";
+        If (type.Kind == [int](TypeKind.ArrayType)) Return This.TypeIdentity(type.ElementType) + "[]";
+        If (type.Kind == [int](TypeKind.PointerType)) Return This.TypeIdentity(type.ElementType) + "*";
+        Return type.QualifiedName();
+    }
+
+    Public Safe Function FunctionSymbol FindGenericInstance(FunctionSymbol definition, string key)
+    {
+        FunctionSymbol current = This.FirstFunction;
+        While (current != null)
+        {
+            If (current.IsGenericInstance && current.GenericDefinition == definition &&
+                current.GenericKey == key) Return current;
+            current = current.Next;
+        }
+        Return null;
+    }
+
+    Public Safe Function FunctionSymbol InstantiateGenericFunction(SyntaxTree callerSyntax,
+                                                                     FunctionSymbol caller,
+                                                                     FunctionSymbol definition,
+                                                                     ExpressionNode call)
+    {
+        TypeParameterDecl parameter = definition.Declaration.FirstTypeParameter;
+        TypeArgumentNode argument = call.FirstTypeArgument;
+        TypeSubstitution first = null;
+        TypeSubstitution last = null;
+        string key = "";
+        int count = 0;
+        While (parameter != null && argument != null)
+        {
+            TypeSymbol argumentType = This.ResolveFunctionType(callerSyntax, caller, argument.TypeName);
+            If (argumentType == null)
+            {
+                This.Report(callerSyntax, "Unknown generic argument",
+                    This.CanonicalTypeName(argument.TypeName), argument.Line, argument.Column);
+                Return null;
+            }
+            TypeSubstitution substitution = New TypeSubstitution(parameter.Name, argumentType);
+            If (first == null) first = substitution;
+            Else last.Next = substitution;
+            last = substitution;
+            If (!IO.Text.IsEmpty(key)) key = key + "$";
+            key = key + This.TypeIdentity(argumentType);
+            count = count + 1;
+            parameter = parameter.Next;
+            argument = argument.Next;
+        }
+        If (parameter != null || argument != null || count != definition.Declaration.TypeParameterCount())
+        {
+            This.Report(callerSyntax, "Generic arity", definition.Name,
+                call.Line, call.Column);
+            Return null;
+        }
+
+        FunctionSymbol existing = This.FindGenericInstance(definition, key);
+        If (existing != null) Return existing;
+
+        FunctionSymbol instance = New FunctionSymbol(definition.UnitName,
+            definition.OwnerType, definition.Declaration);
+        instance.IsGenericInstance = true;
+        instance.GenericDefinition = definition;
+        instance.GenericKey = key;
+        instance.FirstSubstitution = first;
+        UnitSymbol definingUnit = This.FindUnit(definition.UnitName);
+        SyntaxTree definingSyntax = definingUnit == null ? callerSyntax : definingUnit.Syntax;
+        instance.ReturnType = This.ResolveFunctionType(definingSyntax, instance,
+            definition.Declaration.ReturnType);
+        ParameterDecl declaredParameter = definition.Declaration.FirstParameter;
+        While (declaredParameter != null)
+        {
+            instance.AddParameter(New ParameterSymbol(declaredParameter.Name,
+                This.ResolveFunctionType(definingSyntax, instance, declaredParameter.TypeName)));
+            declaredParameter = declaredParameter.Next;
+        }
+        If (instance.ReturnType == null)
+        {
+            This.Report(definingSyntax, "Invalid generic return type", definition.Name,
+                definition.Declaration.Line, definition.Declaration.Column);
+            Return null;
+        }
+        ParameterSymbol concreteParameter = instance.FirstParameter;
+        While (concreteParameter != null)
+        {
+            If (concreteParameter.Type == null)
+            {
+                This.Report(definingSyntax, "Invalid generic parameter type", definition.Name,
+                    definition.Declaration.Line, definition.Declaration.Column);
+                Return null;
+            }
+            concreteParameter = concreteParameter.Next;
+        }
+        This.AddFunctionSymbol(instance);
+        This.FunctionCount = This.FunctionCount + 1;
+        This.GenericInstanceCount = This.GenericInstanceCount + 1;
+        Return instance;
+    }
+
+    Public Safe Function FunctionSymbol ResolveGenericCallTarget(SyntaxTree syntax,
+                                                                  FunctionSymbol caller,
+                                                                  FunctionSymbol target,
+                                                                  ExpressionNode call)
+    {
+        If (target == null) Return null;
+        If (target.IsGenericTemplate())
+        {
+            If (call.TypeArgumentCount() == 0)
+            {
+                This.Report(syntax, "Generic function", "explicit type arguments are required",
+                    call.Line, call.Column);
+                Return null;
+            }
+            Return This.InstantiateGenericFunction(syntax, caller, target, call);
+        }
+        If (call.TypeArgumentCount() != 0)
+        {
+            This.Report(syntax, "Invalid generic call", target.Name,
+                call.Line, call.Column);
+            Return null;
+        }
+        Return target;
     }
 
     Public Safe Function string ExpressionPath(ExpressionNode expression)
@@ -541,6 +730,12 @@ Class SemanticCompilation
         Return New HirExpression([int](HirExpressionKind.Invalid), expression, This.Primitive("any"));
     }
 
+    Public Safe Function HirExpression FailedExpression(ExpressionNode expression)
+    {
+        This.UnresolvedExpressionCount = This.UnresolvedExpressionCount + 1;
+        Return New HirExpression([int](HirExpressionKind.Invalid), expression, This.Primitive("any"));
+    }
+
     Public Safe Function HirExpression BindCall(SyntaxTree syntax, FunctionSymbol function,
                                                  BindingScope scope, ExpressionNode expression)
     {
@@ -556,6 +751,8 @@ Class SemanticCompilation
 
         If (targetFunction != null)
         {
+            targetFunction = This.ResolveGenericCallTarget(syntax, function, targetFunction, expression);
+            If (targetFunction == null) Return This.FailedExpression(expression);
             returnType = targetFunction.ReturnType;
             callKind = [int](HirCallKind.UnitFunction);
             targetName = targetFunction.QualifiedName();
@@ -563,7 +760,16 @@ Class SemanticCompilation
         Else
         {
             returnType = This.RuntimeCallType(path, null);
-            If (returnType != null) callKind = [int](HirCallKind.RuntimeBuiltin);
+            If (returnType != null)
+            {
+                If (expression.TypeArgumentCount() != 0)
+                {
+                    This.Report(syntax, "Invalid generic call", path,
+                        expression.Line, expression.Column);
+                    Return This.FailedExpression(expression);
+                }
+                callKind = [int](HirCallKind.RuntimeBuiltin);
+            }
         }
 
         If (returnType == null && targetSyntax != null &&
@@ -576,6 +782,8 @@ Class SemanticCompilation
                 targetFunction = This.FindMethod(receiver.Type, memberName, argumentCount);
                 If (targetFunction != null)
                 {
+                    targetFunction = This.ResolveGenericCallTarget(syntax, function, targetFunction, expression);
+                    If (targetFunction == null) Return This.FailedExpression(expression);
                     returnType = targetFunction.ReturnType;
                     callKind = [int](HirCallKind.InstanceMethod);
                     targetName = targetFunction.QualifiedName();
@@ -585,6 +793,12 @@ Class SemanticCompilation
                     returnType = This.RuntimeCallType(memberName, receiver.Type);
                     If (returnType != null)
                     {
+                        If (expression.TypeArgumentCount() != 0)
+                        {
+                            This.Report(syntax, "Invalid generic call", memberName,
+                                expression.Line, expression.Column);
+                            Return This.FailedExpression(expression);
+                        }
                         callKind = [int](HirCallKind.RuntimeBuiltin);
                         targetName = memberName;
                     }
@@ -599,6 +813,8 @@ Class SemanticCompilation
                 targetSyntax.Text, argumentCount);
             If (targetFunction != null)
             {
+                targetFunction = This.ResolveGenericCallTarget(syntax, function, targetFunction, expression);
+                If (targetFunction == null) Return This.FailedExpression(expression);
                 returnType = targetFunction.ReturnType;
                 callKind = targetFunction.OwnerType == null ?
                     [int](HirCallKind.UnitFunction) : [int](HirCallKind.InstanceMethod);
@@ -615,6 +831,7 @@ Class SemanticCompilation
         HirExpression bound = New HirExpression([int](HirExpressionKind.Call), expression, returnType);
         bound.CallKind = callKind;
         bound.Target = targetName;
+        bound.Function = targetFunction;
         bound.Left = receiver;
         ExpressionNode argument = expression.FirstArgument;
         While (argument != null)
@@ -719,7 +936,7 @@ Class SemanticCompilation
             Return This.BindCall(syntax, function, scope, expression);
         If (expression.Kind == [int](ExpressionKind.NewObject))
         {
-            TypeSymbol type = This.ResolveType(syntax, expression.Text);
+            TypeSymbol type = This.ResolveFunctionType(syntax, function, expression.Text);
             If (type == null) Return This.InvalidExpression(syntax, expression, "Unknown constructed type", expression.Text);
             HirExpression result = New HirExpression([int](HirExpressionKind.NewObject), expression, type);
             result.CallKind = [int](HirCallKind.Constructor);
@@ -734,7 +951,7 @@ Class SemanticCompilation
         }
         If (expression.Kind == [int](ExpressionKind.Cast))
         {
-            TypeSymbol type = This.ResolveType(syntax, expression.Text);
+            TypeSymbol type = This.ResolveFunctionType(syntax, function, expression.Text);
             If (type == null) Return This.InvalidExpression(syntax, expression, "Unknown cast type", expression.Text);
             HirExpression result = New HirExpression([int](HirExpressionKind.Cast), expression, type);
             result.Left = This.BindExpression(syntax, function, scope, expression.Left);
@@ -808,7 +1025,14 @@ Class SemanticCompilation
         result.Name = statement.Name;
         If (statement.Kind == [int](StatementKind.Variable))
         {
-            result.DeclaredType = This.ResolveType(syntax, statement.TypeName);
+            result.DeclaredType = This.ResolveFunctionType(syntax, function, statement.TypeName);
+            If (result.DeclaredType == null)
+            {
+                This.UnresolvedTypeCount = This.UnresolvedTypeCount + 1;
+                This.Report(syntax, "Unknown type", This.CanonicalTypeName(statement.TypeName),
+                    statement.Line, statement.Column);
+                result.DeclaredType = This.Primitive("any");
+            }
             result.Expression = This.BindExpression(syntax, function, scope, statement.Expression);
             result.DeclaredSymbol = New ValueSymbol(statement.Name, result.DeclaredType, false);
             scope.Add(result.DeclaredSymbol);
@@ -843,16 +1067,34 @@ Class SemanticCompilation
         current.Next = module;
     }
 
+    Public Safe Function HirModule FindHirModule(string unitName)
+    {
+        HirModule current = This.FirstHirModule;
+        While (current != null)
+        {
+            If (current.UnitName == unitName) Return current;
+            current = current.Next;
+        }
+        Return null;
+    }
+
     Public Safe Function void BindBodies()
     {
         UnitSymbol unit = This.FirstUnit;
         While (unit != null)
         {
-            HirModule module = New HirModule(unit.Name);
-            FunctionSymbol function = This.FirstFunction;
-            While (function != null)
+            This.AddHirModule(New HirModule(unit.Name));
+            unit = unit.Next;
+        }
+
+        FunctionSymbol function = This.FirstFunction;
+        While (function != null)
+        {
+            If (!function.IsGenericTemplate())
             {
-                If (function.UnitName == unit.Name)
+                unit = This.FindUnit(function.UnitName);
+                HirModule module = This.FindHirModule(function.UnitName);
+                If (unit != null && module != null)
                 {
                     BindingScope scope = New BindingScope(null);
                     If (function.OwnerType != null &&
@@ -872,10 +1114,8 @@ Class SemanticCompilation
                     hirFunction.Body = This.BindStatement(unit.Syntax, function, scope, function.Declaration.Body);
                     module.AddFunction(hirFunction);
                 }
-                function = function.Next;
             }
-            This.AddHirModule(module);
-            unit = unit.Next;
+            function = function.Next;
         }
     }
 
@@ -902,7 +1142,9 @@ Class SemanticCompilation
             result = result + "\nfunction=" + function.QualifiedName() +
                 "|parameters=" + [string](function.ParameterCount()) +
                 "|static=" + [string](function.Declaration.IsStatic ? 1 : 0) +
-                "|constructor=" + [string](function.Declaration.IsConstructor ? 1 : 0);
+                "|constructor=" + [string](function.Declaration.IsConstructor ? 1 : 0) +
+                "|generic_template=" + [string](function.IsGenericTemplate() ? 1 : 0) +
+                "|generic_instance=" + [string](function.IsGenericInstance ? 1 : 0);
             function = function.Next;
         }
         Return result;
@@ -927,6 +1169,8 @@ Class SemanticCompilation
                "imports=" + [string](This.ImportCount) + "\n" +
                "types=" + [string](This.NamedTypeCount()) + "\n" +
                "functions=" + [string](This.FunctionCount) + "\n" +
+               "generic_templates=" + [string](This.GenericTemplateCount) + "\n" +
+               "generic_instances=" + [string](This.GenericInstanceCount) + "\n" +
                "declaration_types=" + [string](This.DeclarationTypeCount) + "\n" +
                "unresolved_imports=" + [string](This.UnresolvedImportCount) + "\n" +
                "unresolved_types=" + [string](This.UnresolvedTypeCount) + "\n" +

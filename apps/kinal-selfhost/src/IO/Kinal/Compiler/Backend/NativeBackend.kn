@@ -297,6 +297,11 @@ Class NativeBackend
         FunctionSymbol symbol = This.Semantics.FirstFunction;
         While (symbol != null)
         {
+            If (symbol.IsGenericTemplate())
+            {
+                symbol = symbol.Next;
+                Continue;
+            }
             bool cAbi = symbol.Declaration.IsExtern;
             LlvmHandles parameters = New LlvmHandles();
             bool hasReceiver = symbol.OwnerType != null &&
@@ -1195,8 +1200,9 @@ Class NativeBackend
         {
             If (expression.CallKind == [int](HirCallKind.RuntimeBuiltin))
                 Return This.EmitRuntimeBuiltin(context, expression);
-            LlvmFunctionBinding binding = This.FindFunctionByTarget(expression.Target,
-                This.HirArgumentCount(expression));
+            LlvmFunctionBinding binding = expression.Function == null ?
+                This.FindFunctionByTarget(expression.Target, This.HirArgumentCount(expression)) :
+                This.FindFunctionBinding(expression.Function);
             If (binding == null)
             {
                 This.Fail("function binding is missing: " + expression.Target);

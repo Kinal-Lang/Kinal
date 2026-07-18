@@ -1,0 +1,15 @@
+Unit Tests.ExpressionDepthValid;
+
+Get IO.Console;
+Get IO.Text;
+
+Static Function int Main()
+{
+    string value =
+        "a" + "a" + "a" + "a" + "a" + "a" + "a" + "a" + "a" + "a" +
+        "a" + "a" + "a" + "a" + "a" + "a" + "a" + "a" + "a" + "a" +
+        "a" + "a" + "a" + "a" + "a" + "a" + "a" + "a" + "a" + "a" +
+        "a" + "a" + "a" + "a" + "a" + "a" + "a" + "a" + "a" + "a";
+    IO.Console.PrintLine(IO.Text.Length(value));
+    Return 0;
+}

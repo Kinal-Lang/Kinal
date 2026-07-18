@@ -18,7 +18,8 @@ Enum TypeKind By int
     PointerType,
     NamedType,
     NamespaceType,
-    NullType
+    NullType,
+    TypeParameter
 }
 
 Class TypeSymbol

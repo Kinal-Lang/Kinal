@@ -40,7 +40,9 @@ byte-identical. Generated files and the JSON report live under `out/selfhost`.
 ## Scope
 
 The current implementation covers the language subset used by its own source
-and the dedicated backend fixtures. It proves genuine self-hosting, but it is
+and the dedicated backend fixtures. Explicit top-level generic functions use
+typed substitutions and compile-time monomorphization, including nested and
+cross-unit instantiation. It proves genuine self-hosting, but it is
 not yet a drop-in replacement for every C stage0 feature, standard-library
 package, target, diagnostic, KNC/VM backend, or the planned complete generic
 system. Those surfaces should be migrated behind the typed HIR boundary rather

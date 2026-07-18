@@ -36,6 +36,7 @@ Class HirExpression
     Public ExpressionNode Syntax;
     Public TypeSymbol Type;
     Public ValueSymbol Symbol;
+    Public FunctionSymbol Function;
     Public string Name;
     Public string Target;
     Public int Operator;
@@ -52,6 +53,7 @@ Class HirExpression
         This.Syntax = syntax;
         This.Type = type;
         This.Symbol = null;
+        This.Function = null;
         This.Name = syntax == null ? "" : syntax.Text;
         This.Target = "";
         This.Operator = syntax == null ? 0 : syntax.Operator;
