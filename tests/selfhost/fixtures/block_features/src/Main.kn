@@ -1,0 +1,56 @@
+Unit Tests.Selfhost.BlockFeatures;
+
+Get IO.Console;
+
+Static Function int Main()
+{
+    Block JumpDemo< / Jump B;
+    IO.Console.PrintLine("jump-1");
+    Record A IO.Console.PrintLine("jump-2");
+    Record B IO.Console.PrintLine("jump-3");
+    / >
+
+    IO.Type.Object.Block flow = Block Flow< / IO.Console.PrintLine("flow-1");
+    Record A IO.Console.PrintLine("flow-2");
+    Record B IO.Console.PrintLine("flow-3");
+    / >;
+
+    JumpDemo.Run();
+    flow.RunUntil(flow.B);
+    flow.Jump(flow.B);
+    flow.JumpAndRunUntil(flow.A, flow.B);
+    IO.Console.PrintLine(flow.B);
+
+    IO.Type.Object.Block blocks[1] = { flow };
+    blocks[0].JumpAndRunUntil(1, 2);
+
+    Var message = "before";
+    IO.Type.Object.Block captured = Block< / IO.Console.PrintLine(message);
+    / >;
+    message = "after";
+    captured.Run();
+
+    Block ScopeDecl< / Class Temp
+    {
+    }
+    Struct Pair
+    {
+        int A;
+        int B;
+    }
+    Enum Flag
+    {
+        Off, On
+    }
+    Interface ITemp
+    {
+        Function void Touch();
+    }
+    Function int LocalAdd(int a, int b)
+    {
+        Return a + b;
+    }
+    IO.Console.PrintLine(LocalAdd(3, 4));
+    / > ScopeDecl.Run();
+    Return 0;
+}

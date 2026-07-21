@@ -105,6 +105,9 @@ Class FunctionDecl
     Public bool IsExtern;
     Public bool IsDelegate;
     Public bool IsConstructor;
+    Public bool IsAbstract;
+    Public bool IsVirtual;
+    Public bool IsOverride;
     Public string Abi;
     Public int Line;
     Public int Column;
@@ -126,6 +129,9 @@ Class FunctionDecl
         This.IsExtern = false;
         This.IsDelegate = false;
         This.IsConstructor = false;
+        This.IsAbstract = false;
+        This.IsVirtual = false;
+        This.IsOverride = false;
         This.Abi = "Kinal";
         This.Line = line;
         This.Column = column;
@@ -227,6 +233,7 @@ Class TypeDecl
 {
     Public int Kind;
     Public string Name;
+    Public string BaseName;
     Public bool IsStatic;
     Public int Line;
     Public int Column;
@@ -243,6 +250,7 @@ Class TypeDecl
     {
         This.Kind = kind;
         This.Name = name;
+        This.BaseName = "";
         This.IsStatic = false;
         This.Line = line;
         This.Column = column;

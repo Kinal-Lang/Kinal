@@ -155,6 +155,10 @@ Extern Function byte* NativeBuildZeroExtend(byte* module, byte* value, byte* typ
 Extern Function byte* NativeBuildSignExtend(byte* module, byte* value, byte* type, string name) By C;
 [LinkName("kn_sh_llvm_build_trunc")]
 Extern Function byte* NativeBuildTruncate(byte* module, byte* value, byte* type, string name) By C;
+[LinkName("kn_sh_llvm_build_fp_ext")]
+Extern Function byte* NativeBuildFloatExtend(byte* module, byte* value, byte* type, string name) By C;
+[LinkName("kn_sh_llvm_build_fp_trunc")]
+Extern Function byte* NativeBuildFloatTruncate(byte* module, byte* value, byte* type, string name) By C;
 [LinkName("kn_sh_llvm_build_ptr_to_int")]
 Extern Function byte* NativeBuildPointerToInt(byte* module, byte* value, byte* type, string name) By C;
 [LinkName("kn_sh_llvm_build_int_to_ptr")]
@@ -412,6 +416,8 @@ Class LlvmModule
     Public Trusted Function byte* ZeroExtend(byte* value, byte* type, string name) { Return NativeBuildZeroExtend(This.Handle, value, type, name); }
     Public Trusted Function byte* SignExtend(byte* value, byte* type, string name) { Return NativeBuildSignExtend(This.Handle, value, type, name); }
     Public Trusted Function byte* Truncate(byte* value, byte* type, string name) { Return NativeBuildTruncate(This.Handle, value, type, name); }
+    Public Trusted Function byte* FloatExtend(byte* value, byte* type, string name) { Return NativeBuildFloatExtend(This.Handle, value, type, name); }
+    Public Trusted Function byte* FloatTruncate(byte* value, byte* type, string name) { Return NativeBuildFloatTruncate(This.Handle, value, type, name); }
     Public Trusted Function byte* PointerToInt(byte* value, byte* type, string name) { Return NativeBuildPointerToInt(This.Handle, value, type, name); }
     Public Trusted Function byte* IntToPointer(byte* value, byte* type, string name) { Return NativeBuildIntToPointer(This.Handle, value, type, name); }
     Public Trusted Function byte* SignedIntToFloat(byte* value, byte* type, string name) { Return NativeBuildSignedIntToFloat(This.Handle, value, type, name); }

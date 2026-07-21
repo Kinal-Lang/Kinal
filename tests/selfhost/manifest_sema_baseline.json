@@ -1,29 +1,5 @@
 {
   "platform": "windows",
   "positive_cases": 156,
-  "unsupported_cases": [
-    "autolink",
-    "block_features",
-    "block_hierarchy",
-    "class_null_compare",
-    "custom_cast_json",
-    "function_objects",
-    "nested_interface_in_class",
-    "nested_types_in_class",
-    "oop_features",
-    "package_basic",
-    "qual_module",
-    "same_unit_autolink",
-    "stdlib_cat",
-    "stdlib_char_complete",
-    "stdlib_json_complete",
-    "stdlib_math_complete",
-    "stdlib_more",
-    "stdlib_request_compile",
-    "stdlib_request_https",
-    "stdlib_request_model",
-    "stdlib_ui_alias_nested_new",
-    "stdlib_web_compile",
-    "stdlib_web_gc_roots"
-  ]
+  "unsupported_cases": []
 }

@@ -173,6 +173,7 @@ Class NativeBackend
     Public Safe Function bool NeedsGcRoot(TypeSymbol type)
     {
         Return This.IsReferenceType(type) || type.Kind == [int](TypeKind.ArrayType) ||
+            type.Kind == [int](TypeKind.PackageType) ||
             type.Kind == [int](TypeKind.AnyType);
     }
 
@@ -191,6 +192,15 @@ Class NativeBackend
         Return type.Name == "byte" || type.Name == "char" || type.Name == "u8" ||
             type.Name == "u16" || type.Name == "u32" || type.Name == "u64" ||
             type.Name == "usize";
+    }
+
+    Public Safe Function int FloatBits(TypeSymbol type)
+    {
+        If (type == null) Return 64;
+        If (type.Name == "f16") Return 16;
+        If (type.Name == "f32") Return 32;
+        If (type.Name == "f128") Return 128;
+        Return 64;
     }
 
     Public Safe Function void AddTypeBinding(LlvmTypeBinding binding)
@@ -224,7 +234,7 @@ Class NativeBackend
             Return This.Module.FloatType(64);
         }
         If (type.Kind == [int](TypeKind.AnyType)) Return This.AnyType;
-        If (type.Kind == [int](TypeKind.ArrayType))
+        If (type.Kind == [int](TypeKind.ArrayType) || type.Kind == [int](TypeKind.PackageType))
         {
             LlvmHandles fields = New LlvmHandles();
             fields.Add(This.Module.PointerType(This.TypeHandle(type.ElementType)));
@@ -247,6 +257,35 @@ Class NativeBackend
         If (type != null && (type.Name == "int" || type.Name == "bool"))
             Return This.Module.IntType(32);
         Return This.TypeHandle(type);
+    }
+
+    Public Safe Function int InstanceFieldCount(TypeSymbol type)
+    {
+        If (type == null || type.Declaration == null) Return 0;
+        int count = This.InstanceFieldCount(type.BaseType);
+        FieldDecl field = type.Declaration.FirstField;
+        While (field != null)
+        {
+            If (!field.IsStatic) count = count + 1;
+            field = field.Next;
+        }
+        Return count;
+    }
+
+    Public Trusted Function void AppendInstanceFieldTypes(LlvmHandles fields, TypeSymbol type)
+    {
+        If (type == null || type.Declaration == null) Return;
+        This.AppendInstanceFieldTypes(fields, type.BaseType);
+        FieldDecl field = type.Declaration.FirstField;
+        While (field != null)
+        {
+            If (!field.IsStatic)
+            {
+                TypeSymbol fieldType = This.Semantics.ResolveType(type.Syntax, field.TypeName);
+                fields.Add(This.TypeHandle(fieldType));
+            }
+            field = field.Next;
+        }
     }
 
     Public Trusted Function void PrepareTypes()
@@ -279,17 +318,7 @@ Class NativeBackend
             LlvmHandles fields = New LlvmHandles();
             byte* bytePointer = This.Module.PointerType(This.Module.IntType(8));
             fields.Add(This.Module.PointerType(bytePointer));
-            FieldDecl field = binding.Symbol.Declaration.FirstField;
-            While (field != null)
-            {
-                If (!field.IsStatic)
-                {
-                    TypeSymbol fieldType = This.Semantics.ResolveType(
-                        This.Semantics.FindUnit(binding.Symbol.UnitName).Syntax, field.TypeName);
-                    fields.Add(This.TypeHandle(fieldType));
-                }
-                field = field.Next;
-            }
+            This.AppendInstanceFieldTypes(fields, binding.Symbol);
             If (!This.Module.SetStructBody(binding.StructHandle, fields, false))
                 This.Fail("failed to define class layout: " + binding.Symbol.QualifiedName());
             binding = binding.Next;
@@ -370,10 +399,7 @@ Class NativeBackend
         }
         If (expression.Kind == [int](ExpressionKind.FunctionLiteral) ||
             expression.Kind == [int](ExpressionKind.BlockLiteral))
-        {
-            LlvmFunctionBinding function = This.FindFunctionBinding(symbol.Value.CallableFunction);
-            If (function != null) Return This.EnsureCallableWrapper(function);
-        }
+            Return This.Module.ConstNull(type);
         If (expression.Kind == [int](ExpressionKind.Name)) Return This.Module.ConstNull(type);
         Return null;
     }
@@ -473,6 +499,91 @@ Class NativeBackend
         }
     }
 
+    Public Trusted Function byte* CreateCallableObject(byte* wrapper, byte* environment)
+    {
+        byte* bytePointer = This.Module.PointerType(This.Module.IntType(8));
+        byte* bytes = This.Module.Multiply(
+            This.Module.ConstInt(This.Module.IntType(64), 2),
+            This.Module.SizeOf(bytePointer), This.Unique("callable_bytes"));
+        byte* callable = This.CallRuntime("__kn_gc_alloc", This.Types1(bytes),
+            This.Unique("callable"));
+        byte* wrapperSlot = This.Module.Gep(bytePointer, callable,
+            This.Types1(This.Module.ConstInt(This.Module.IntType(64), 0)), true,
+            This.Unique("callable_wrapper_slot"));
+        byte* environmentSlot = This.Module.Gep(bytePointer, callable,
+            This.Types1(This.Module.ConstInt(This.Module.IntType(64), 1)), true,
+            This.Unique("callable_environment_slot"));
+        This.Module.Store(wrapper, wrapperSlot);
+        This.Module.Store(environment == null ? This.Module.ConstNull(bytePointer) : environment,
+            environmentSlot);
+        Return callable;
+    }
+
+    Public Trusted Function byte* EmitCallableObject(LlvmFunctionContext context,
+                                                      LlvmFunctionBinding binding)
+    {
+        byte* environment = null;
+        int captureCount = binding.Symbol.CaptureCount();
+        If (captureCount > 0)
+        {
+            byte* bytePointer = This.Module.PointerType(This.Module.IntType(8));
+            byte* bytes = This.Module.Multiply(
+                This.Module.ConstInt(This.Module.IntType(64), captureCount),
+                This.Module.SizeOf(bytePointer), This.Unique("environment_bytes"));
+            environment = This.CallRuntime("__kn_gc_alloc", This.Types1(bytes),
+                This.Unique("environment"));
+            CaptureSymbol capture = binding.Symbol.FirstCapture;
+            While (capture != null)
+            {
+                LlvmVariable variable = context.FindVariable(capture.Source, capture.Name);
+                If (variable == null)
+                {
+                    byte* slot = This.Module.Gep(bytePointer, environment,
+                        This.Types1(This.Module.ConstInt(This.Module.IntType(64), capture.Index)),
+                        true, This.Unique("environment_slot"));
+                    This.Module.Store(This.Module.ConstNull(bytePointer), slot);
+                }
+                Else
+                {
+                    byte* slot = This.Module.Gep(bytePointer, environment,
+                        This.Types1(This.Module.ConstInt(This.Module.IntType(64), capture.Index)),
+                        true, This.Unique("environment_slot"));
+                    This.Module.Store(variable.Address, slot);
+                }
+                capture = capture.Next;
+            }
+        }
+        byte* entry = binding.Symbol.IsBlockLiteral ?
+            This.Module.BitCast(binding.Function,
+                This.Module.PointerType(This.Module.IntType(8)), This.Unique("block_entry")) :
+            This.EnsureCallableWrapper(binding);
+        Return This.CreateCallableObject(entry, environment);
+    }
+
+    Public Trusted Function void InitializeGlobalCallables()
+    {
+        LlvmGlobalBinding global = This.FirstGlobal;
+        While (global != null)
+        {
+            FunctionSymbol function = global.Symbol.Value.CallableFunction;
+            If (function != null)
+            {
+                LlvmFunctionBinding binding = This.FindFunctionBinding(function);
+                If (binding == null) This.Fail("global callable binding is missing: " +
+                    global.Symbol.QualifiedName());
+                Else
+                {
+                    byte* entry = binding.Symbol.IsBlockLiteral ?
+                        This.Module.BitCast(binding.Function,
+                            This.Module.PointerType(This.Module.IntType(8)), This.Unique("block_entry")) :
+                        This.EnsureCallableWrapper(binding);
+                    This.Module.Store(This.CreateCallableObject(entry, null), global.Address);
+                }
+            }
+            global = global.Next;
+        }
+    }
+
     Public Safe Function LlvmFunctionBinding FindFunctionBinding(FunctionSymbol symbol)
     {
         LlvmFunctionBinding current = This.FirstFunction;
@@ -482,6 +593,95 @@ Class NativeBackend
             current = current.Next;
         }
         Return null;
+    }
+
+    Public Safe Function bool IsVirtualMethod(FunctionSymbol symbol)
+    {
+        Return symbol != null && !symbol.Declaration.IsStatic &&
+            !symbol.Declaration.IsConstructor &&
+            (symbol.Declaration.IsAbstract || symbol.Declaration.IsVirtual ||
+             symbol.Declaration.IsOverride);
+    }
+
+    Public Safe Function int VirtualSlotCount(TypeSymbol type)
+    {
+        If (type == null) Return 0;
+        int count = This.VirtualSlotCount(type.BaseType);
+        FunctionSymbol method = This.Semantics.FirstFunction;
+        While (method != null)
+        {
+            If (method.OwnerType == type && This.IsVirtualMethod(method))
+            {
+                FunctionSymbol inherited = This.Semantics.FindMethod(type.BaseType,
+                    method.Name, method.ParameterCount());
+                If (!This.IsVirtualMethod(inherited)) count = count + 1;
+            }
+            method = method.Next;
+        }
+        Return count;
+    }
+
+    Public Safe Function int VirtualSlot(TypeSymbol owner, FunctionSymbol method)
+    {
+        If (owner == null || method == null) Return -1;
+        FunctionSymbol inherited = This.Semantics.FindMethod(owner.BaseType,
+            method.Name, method.ParameterCount());
+        If (This.IsVirtualMethod(inherited)) Return This.VirtualSlot(owner.BaseType, inherited);
+        int slot = This.VirtualSlotCount(owner.BaseType);
+        FunctionSymbol current = This.Semantics.FirstFunction;
+        While (current != null)
+        {
+            If (current.OwnerType == owner && This.IsVirtualMethod(current))
+            {
+                FunctionSymbol currentInherited = This.Semantics.FindMethod(owner.BaseType,
+                    current.Name, current.ParameterCount());
+                If (!This.IsVirtualMethod(currentInherited))
+                {
+                    If (current == method) Return slot;
+                    slot = slot + 1;
+                }
+            }
+            current = current.Next;
+        }
+        Return -1;
+    }
+
+    Public Safe Function FunctionSymbol VirtualSlotDeclaration(TypeSymbol type, int slot)
+    {
+        If (type == null || slot < 0) Return null;
+        int inheritedCount = This.VirtualSlotCount(type.BaseType);
+        If (slot < inheritedCount) Return This.VirtualSlotDeclaration(type.BaseType, slot);
+        int currentSlot = inheritedCount;
+        FunctionSymbol method = This.Semantics.FirstFunction;
+        While (method != null)
+        {
+            If (method.OwnerType == type && This.IsVirtualMethod(method))
+            {
+                FunctionSymbol inherited = This.Semantics.FindMethod(type.BaseType,
+                    method.Name, method.ParameterCount());
+                If (!This.IsVirtualMethod(inherited))
+                {
+                    If (currentSlot == slot) Return method;
+                    currentSlot = currentSlot + 1;
+                }
+            }
+            method = method.Next;
+        }
+        Return null;
+    }
+
+    Public Safe Function FunctionSymbol VirtualImplementation(TypeSymbol type,
+                                                               FunctionSymbol declaration)
+    {
+        TypeSymbol current = type;
+        While (current != null)
+        {
+            FunctionSymbol method = This.Semantics.FindDirectMethod(current,
+                declaration.Name, declaration.ParameterCount());
+            If (This.IsVirtualMethod(method)) Return method;
+            current = current.BaseType;
+        }
+        Return declaration;
     }
 
     Public Safe Function LlvmFunctionBinding FindFunctionByTarget(string target, int parameterCount)
@@ -520,16 +720,30 @@ Class NativeBackend
             bool cAbi = symbol.Declaration.IsExtern ||
                 (symbol.Declaration.IsDelegate && symbol.Declaration.Abi == "C");
             LlvmHandles parameters = New LlvmHandles();
-            bool hasReceiver = symbol.OwnerType != null &&
-                (!symbol.Declaration.IsStatic || symbol.Declaration.IsConstructor);
-            If (hasReceiver) parameters.Add(This.TypeHandle(symbol.OwnerType));
-            ParameterSymbol parameter = symbol.FirstParameter;
-            While (parameter != null)
+            byte* returnType = null;
+            If (symbol.IsBlockLiteral)
             {
-                parameters.Add(cAbi ? This.AbiTypeHandle(parameter.Type) : This.TypeHandle(parameter.Type));
-                parameter = parameter.Next;
+                parameters.Add(This.Module.PointerType(This.Module.IntType(8)));
+                parameters.Add(This.Module.IntType(64));
+                parameters.Add(This.Module.IntType(64));
+                parameters.Add(This.Module.IntType(64));
+                returnType = This.Module.VoidType();
             }
-            byte* returnType = cAbi ? This.AbiTypeHandle(symbol.ReturnType) : This.TypeHandle(symbol.ReturnType);
+            Else
+            {
+                bool hasReceiver = symbol.OwnerType != null &&
+                    (!symbol.Declaration.IsStatic || symbol.Declaration.IsConstructor);
+                If (symbol.FirstCapture != null)
+                    parameters.Add(This.Module.PointerType(This.Module.IntType(8)));
+                If (hasReceiver) parameters.Add(This.TypeHandle(symbol.OwnerType));
+                ParameterSymbol parameter = symbol.FirstParameter;
+                While (parameter != null)
+                {
+                    parameters.Add(cAbi ? This.AbiTypeHandle(parameter.Type) : This.TypeHandle(parameter.Type));
+                    parameter = parameter.Next;
+                }
+                returnType = cAbi ? This.AbiTypeHandle(symbol.ReturnType) : This.TypeHandle(symbol.ReturnType);
+            }
             byte* functionType = This.Module.FunctionType(returnType, parameters, false);
             If (symbol.Declaration.IsDelegate)
             {
@@ -638,6 +852,7 @@ Class NativeBackend
         This.DeclareRuntimeFunction("kn_sh_rt_string_concat", pointer, This.Types2(pointer, pointer));
         This.DeclareRuntimeFunction("kn_sh_rt_i64_to_string", pointer, This.Types1(int64Type));
         This.DeclareRuntimeFunction("kn_sh_rt_char_to_string", pointer, This.Types1(int8Type));
+        This.DeclareRuntimeFunction("kn_sh_rt_any_to_string", pointer, This.Types2(int64Type, int64Type));
         This.DeclareRuntimeFunction("kn_sh_rt_string_to_i64", int64Type, This.Types1(pointer));
         This.DeclareRuntimeFunction("kn_sh_rt_string_to_f32", This.Module.FloatType(32), This.Types1(pointer));
         This.DeclareRuntimeFunction("kn_sh_rt_string_to_f64", This.Module.FloatType(64), This.Types1(pointer));
@@ -735,7 +950,8 @@ Class NativeBackend
     {
         If (left == right) Return true;
         If (left == null || right == null || left.Kind != right.Kind || left.Name != right.Name) Return false;
-        If (left.Kind == [int](TypeKind.ArrayType)) Return This.SameType(left.ElementType, right.ElementType);
+        If (left.Kind == [int](TypeKind.ArrayType) || left.Kind == [int](TypeKind.PackageType))
+            Return This.SameType(left.ElementType, right.ElementType);
         Return true;
     }
 
@@ -748,7 +964,7 @@ Class NativeBackend
     {
         byte* typeHandle = This.TypeHandle(type);
         If (type.Kind == [int](TypeKind.VoidType)) Return New LlvmValue(null, type);
-        If (type.Kind == [int](TypeKind.ArrayType))
+        If (type.Kind == [int](TypeKind.ArrayType) || type.Kind == [int](TypeKind.PackageType))
         {
             byte* value = This.Module.ConstUndef(typeHandle);
             value = This.Module.InsertValue(value,
@@ -846,12 +1062,35 @@ Class NativeBackend
         Return This.DefaultValue(target);
     }
 
+    Public Trusted Function LlvmValue AnyToString(LlvmValue value, TypeSymbol target)
+    {
+        byte* tag = This.Module.ExtractValue(value.Handle, 0, This.Unique("any_tag"));
+        byte* payload = This.Module.ExtractValue(value.Handle, 1, This.Unique("any_payload"));
+        If (tag == null || payload == null)
+        {
+            This.Fail("cannot extract dynamic any value for string conversion");
+            Return This.DefaultValue(target);
+        }
+        byte* result = This.CallRuntime("kn_sh_rt_any_to_string",
+            This.Types2(tag, payload), This.Unique("any_text"));
+        If (result == null) This.Fail("cannot lower dynamic any-to-string conversion");
+        Return New LlvmValue(result, target);
+    }
+
     Public Trusted Function LlvmValue CastValue(LlvmValue value, TypeSymbol target)
     {
         If (value == null || target == null) Return value;
         If (This.SameType(value.Type, target)) Return New LlvmValue(value.Handle, target);
         If (target.Kind == [int](TypeKind.AnyType)) Return This.BoxAny(value);
+        If (value.Type.Kind == [int](TypeKind.AnyType) && target.Kind == [int](TypeKind.StringType))
+            Return This.AnyToString(value, target);
         If (value.Type.Kind == [int](TypeKind.AnyType)) Return This.UnboxAny(value, target);
+        If ((value.Type.Kind == [int](TypeKind.PackageType) &&
+             target.Kind == [int](TypeKind.ArrayType) && target.ElementType.Kind == [int](TypeKind.AnyType)) ||
+            (value.Type.Kind == [int](TypeKind.ArrayType) &&
+             value.Type.ElementType.Kind == [int](TypeKind.AnyType) &&
+             target.Kind == [int](TypeKind.PackageType)))
+            Return New LlvmValue(value.Handle, target);
         If (value.Type.Kind == [int](TypeKind.NullType)) Return This.DefaultValue(target);
 
         If (target.Kind == [int](TypeKind.StringType))
@@ -923,6 +1162,19 @@ Class NativeBackend
                 This.Module.FloatToSignedInt(value.Handle, This.TypeHandle(target), This.Unique("float_to_int"));
             Return New LlvmValue(converted, target);
         }
+        If (value.Type.Kind == [int](TypeKind.FloatType) &&
+            target.Kind == [int](TypeKind.FloatType))
+        {
+            int sourceBits = This.FloatBits(value.Type);
+            int targetBits = This.FloatBits(target);
+            If (sourceBits < targetBits)
+                Return New LlvmValue(This.Module.FloatExtend(value.Handle,
+                    This.TypeHandle(target), This.Unique("float_widen")), target);
+            If (sourceBits > targetBits)
+                Return New LlvmValue(This.Module.FloatTruncate(value.Handle,
+                    This.TypeHandle(target), This.Unique("float_narrow")), target);
+            Return New LlvmValue(value.Handle, target);
+        }
         If (This.IsIntegerLike(value.Type) && target.Kind == [int](TypeKind.PointerType))
             Return New LlvmValue(This.Module.IntToPointer(This.ToI64(value), This.TypeHandle(target),
                 This.Unique("int_to_pointer")), target);
@@ -962,7 +1214,9 @@ Class NativeBackend
     Public Safe Function int FieldIndex(TypeSymbol owner, string name)
     {
         If (owner == null || owner.Declaration == null) Return -1;
-        int index = 1;
+        int inherited = This.FieldIndex(owner.BaseType, name);
+        If (inherited >= 0) Return inherited;
+        int index = 1 + This.InstanceFieldCount(owner.BaseType);
         FieldDecl field = owner.Declaration.FirstField;
         While (field != null)
         {
@@ -974,6 +1228,69 @@ Class NativeBackend
             field = field.Next;
         }
         Return -1;
+    }
+
+    Public Trusted Function int InitializeObjectFields(LlvmTypeBinding binding,
+                                                        byte* object,
+                                                        TypeSymbol type,
+                                                        int fieldIndex)
+    {
+        If (type == null || type.Declaration == null) Return fieldIndex;
+        fieldIndex = This.InitializeObjectFields(binding, object, type.BaseType, fieldIndex);
+        FieldDecl field = type.Declaration.FirstField;
+        While (field != null)
+        {
+            If (!field.IsStatic)
+            {
+                TypeSymbol fieldType = This.Semantics.ResolveType(type.Syntax, field.TypeName);
+                byte* address = This.Module.StructGep(binding.StructHandle, object,
+                    fieldIndex, This.Unique("field_init"));
+                This.Module.Store(This.DefaultValue(fieldType).Handle, address);
+                fieldIndex = fieldIndex + 1;
+            }
+            field = field.Next;
+        }
+        Return fieldIndex;
+    }
+
+    Public Trusted Function void InitializeObjectVtable(LlvmTypeBinding binding,
+                                                         byte* object,
+                                                         TypeSymbol type)
+    {
+        byte* bytePointer = This.Module.PointerType(This.Module.IntType(8));
+        byte* vtableSlot = This.Module.StructGep(binding.StructHandle, object, 0,
+            This.Unique("vtable_slot"));
+        int slotCount = This.VirtualSlotCount(type);
+        If (slotCount == 0)
+        {
+            This.Module.Store(This.Module.ConstNull(This.Module.PointerType(bytePointer)), vtableSlot);
+            Return;
+        }
+        byte* count = This.Module.ConstInt(This.Module.IntType(64), slotCount);
+        byte* bytes = This.Module.Multiply(count, This.Module.SizeOf(bytePointer),
+            This.Unique("vtable_bytes"));
+        byte* vtable = This.CallRuntime("__kn_gc_alloc", This.Types1(bytes),
+            This.Unique("vtable"));
+        int slot = 0;
+        While (slot < slotCount)
+        {
+            FunctionSymbol declaration = This.VirtualSlotDeclaration(type, slot);
+            FunctionSymbol implementation = This.VirtualImplementation(type, declaration);
+            LlvmFunctionBinding function = This.FindFunctionBinding(implementation);
+            If (function == null)
+            {
+                This.Fail("virtual method binding is missing: " + declaration.QualifiedName());
+            }
+            Else
+            {
+                byte* address = This.Module.Gep(bytePointer, vtable,
+                    This.Types1(This.Module.ConstInt(This.Module.IntType(64), slot)), true,
+                    This.Unique("vtable_entry"));
+                This.Module.Store(function.Function, address);
+            }
+            slot = slot + 1;
+        }
+        This.Module.Store(vtable, vtableSlot);
     }
 
     Public Safe Function int EnumValue(TypeSymbol type, string target)
@@ -1026,7 +1343,8 @@ Class NativeBackend
             LlvmValue receiver = This.EmitExpression(context, expression.Left);
             LlvmValue indexValue = This.CastValue(This.EmitExpression(context, expression.Right),
                 This.Semantics.Primitive("int"));
-            If (receiver.Type.Kind == [int](TypeKind.ArrayType))
+            If (receiver.Type.Kind == [int](TypeKind.ArrayType) ||
+                receiver.Type.Kind == [int](TypeKind.PackageType))
             {
                 byte* data = This.Module.ExtractValue(receiver.Handle, 0, This.Unique("array_data"));
                 LlvmHandles indices = This.Types1(indexValue.Handle);
@@ -1105,6 +1423,66 @@ Class NativeBackend
         byte* result = This.Module.Call(binding.FunctionType, binding.Function, arguments, resultName);
         Return binding.UsesCAbi ? This.FromCAbi(result, binding.Symbol.ReturnType) :
             New LlvmValue(result, binding.Symbol.ReturnType);
+    }
+
+    Public Trusted Function LlvmValue EmitVirtualFunctionCall(LlvmFunctionContext context,
+                                                               LlvmFunctionBinding binding,
+                                                               HirExpression expression,
+                                                               LlvmValue receiver)
+    {
+        If (receiver == null)
+        {
+            LlvmVariable thisVariable = context.FindVariable(context.Binding.Symbol.Receiver, "This");
+            If (thisVariable != null)
+                receiver = New LlvmValue(This.Module.Load(This.TypeHandle(thisVariable.Type),
+                    thisVariable.Address, This.Unique("this")), thisVariable.Type);
+        }
+        If (receiver == null)
+        {
+            This.Fail("virtual call has no receiver: " + binding.Symbol.QualifiedName());
+            Return This.DefaultValue(binding.Symbol.ReturnType);
+        }
+        int slot = This.VirtualSlot(binding.Symbol.OwnerType, binding.Symbol);
+        LlvmTypeBinding receiverBinding = This.FindTypeBinding(receiver.Type);
+        If (slot < 0 || receiverBinding == null)
+        {
+            This.Fail("virtual slot is missing: " + binding.Symbol.QualifiedName());
+            Return This.DefaultValue(binding.Symbol.ReturnType);
+        }
+        byte* bytePointer = This.Module.PointerType(This.Module.IntType(8));
+        byte* vtableAddress = This.Module.StructGep(receiverBinding.StructHandle,
+            receiver.Handle, 0, This.Unique("vtable_slot"));
+        byte* vtable = This.Module.Load(This.Module.PointerType(bytePointer),
+            vtableAddress, This.Unique("vtable"));
+        byte* methodAddress = This.Module.Gep(bytePointer, vtable,
+            This.Types1(This.Module.ConstInt(This.Module.IntType(64), slot)), true,
+            This.Unique("virtual_slot"));
+        byte* callable = This.Module.Load(This.Module.PointerType(binding.FunctionType),
+            methodAddress, This.Unique("virtual_method"));
+
+        LlvmHandles arguments = New LlvmHandles();
+        arguments.Add(This.CastValue(receiver, binding.Symbol.OwnerType).Handle);
+        ParameterSymbol parameter = binding.Symbol.FirstParameter;
+        HirExpression argument = expression.FirstArgument;
+        While (parameter != null)
+        {
+            If (argument == null)
+            {
+                This.Fail("missing argument for " + binding.Symbol.QualifiedName());
+                arguments.Add(This.DefaultValue(parameter.Type).Handle);
+            }
+            Else
+            {
+                arguments.Add(This.CastValue(This.EmitExpression(context, argument),
+                    parameter.Type).Handle);
+                argument = argument.Next;
+            }
+            parameter = parameter.Next;
+        }
+        string resultName = binding.Symbol.ReturnType.Kind == [int](TypeKind.VoidType) ?
+            "" : This.Unique("virtual_call");
+        Return New LlvmValue(This.Module.Call(binding.FunctionType, callable,
+            arguments, resultName), binding.Symbol.ReturnType);
     }
 
     Public Trusted Function LlvmValue EmitDelegateCall(LlvmFunctionContext context,
@@ -1201,6 +1579,47 @@ Class NativeBackend
         Return adapter;
     }
 
+    Public Trusted Function LlvmValue EmitBlockObjectCall(LlvmFunctionContext context,
+                                                           HirExpression expression)
+    {
+        LlvmValue callable = This.EmitExpression(context, expression.Left);
+        byte* bytePointer = This.Module.PointerType(This.Module.IntType(8));
+        LlvmHandles parameters = New LlvmHandles();
+        parameters.Add(bytePointer);
+        parameters.Add(This.Module.IntType(64));
+        parameters.Add(This.Module.IntType(64));
+        parameters.Add(This.Module.IntType(64));
+        byte* entryType = This.Module.FunctionType(This.Module.VoidType(), parameters, false);
+        byte* entrySlot = This.Module.Gep(bytePointer, callable.Handle,
+            This.Types1(This.Module.ConstInt(This.Module.IntType(64), 0)), true,
+            This.Unique("block_entry_slot"));
+        byte* environmentSlot = This.Module.Gep(bytePointer, callable.Handle,
+            This.Types1(This.Module.ConstInt(This.Module.IntType(64), 1)), true,
+            This.Unique("block_environment_slot"));
+        byte* entry = This.Module.Load(This.Module.PointerType(entryType), entrySlot,
+            This.Unique("block_entry"));
+        byte* environment = This.Module.Load(bytePointer, environmentSlot,
+            This.Unique("block_environment"));
+        int mode = expression.Target == "Block.Jump" ? 1 :
+            (expression.Target == "Block.RunUntil" ? 2 :
+            (expression.Target == "Block.JumpAndRunUntil" ? 3 : 0));
+        byte* firstValue = This.Module.ConstInt(This.Module.IntType(64), 0);
+        byte* secondValue = This.Module.ConstInt(This.Module.IntType(64), 0);
+        If (expression.FirstArgument != null)
+            firstValue = This.CastValue(This.EmitExpression(context, expression.FirstArgument),
+                This.Semantics.Primitive("isize")).Handle;
+        If (expression.FirstArgument != null && expression.FirstArgument.Next != null)
+            secondValue = This.CastValue(This.EmitExpression(context, expression.FirstArgument.Next),
+                This.Semantics.Primitive("isize")).Handle;
+        LlvmHandles arguments = New LlvmHandles();
+        arguments.Add(environment);
+        arguments.Add(This.Module.ConstInt(This.Module.IntType(64), mode));
+        arguments.Add(firstValue);
+        arguments.Add(secondValue);
+        This.Module.Call(entryType, entry, arguments, "");
+        Return This.DefaultValue(This.Semantics.Primitive("void"));
+    }
+
     Public Trusted Function LlvmValue EmitDynamicFunctionCall(LlvmFunctionContext context,
                                                                HirExpression expression)
     {
@@ -1232,15 +1651,26 @@ Class NativeBackend
         }
 
         LlvmHandles parameters = New LlvmHandles();
-        parameters.Add(This.Module.PointerType(This.Module.IntType(8)));
+        byte* bytePointer = This.Module.PointerType(This.Module.IntType(8));
+        parameters.Add(bytePointer);
         parameters.Add(anyPointer);
         parameters.Add(This.Module.IntType(64));
         byte* wrapperType = This.Module.FunctionType(This.AnyType, parameters, false);
+        byte* wrapperSlot = This.Module.Gep(bytePointer, callable.Handle,
+            This.Types1(This.Module.ConstInt(This.Module.IntType(64), 0)), true,
+            This.Unique("callable_wrapper_slot"));
+        byte* environmentSlot = This.Module.Gep(bytePointer, callable.Handle,
+            This.Types1(This.Module.ConstInt(This.Module.IntType(64), 1)), true,
+            This.Unique("callable_environment_slot"));
+        byte* wrapper = This.Module.Load(This.Module.PointerType(wrapperType), wrapperSlot,
+            This.Unique("callable_wrapper"));
+        byte* environment = This.Module.Load(bytePointer, environmentSlot,
+            This.Unique("callable_environment"));
         LlvmHandles arguments = New LlvmHandles();
-        arguments.Add(This.Module.ConstNull(This.Module.PointerType(This.Module.IntType(8))));
+        arguments.Add(environment);
         arguments.Add(argumentPointer);
         arguments.Add(This.Module.ConstInt(This.Module.IntType(64), argumentCount));
-        byte* result = This.Module.Call(wrapperType, callable.Handle, arguments,
+        byte* result = This.Module.Call(wrapperType, wrapper, arguments,
             This.Unique("dynamic_call"));
         LlvmValue boxedResult = New LlvmValue(result, This.Semantics.Primitive("any"));
         If (expression.Type.Kind == [int](TypeKind.AnyType)) Return boxedResult;
@@ -1269,7 +1699,11 @@ Class NativeBackend
         This.Module.PositionAtEnd(entry);
 
         LlvmHandles arguments = New LlvmHandles();
-        If (binding.Symbol.OwnerType != null &&
+        If (binding.Symbol.FirstCapture != null)
+        {
+            arguments.Add(This.Module.Parameter(wrapper, 0));
+        }
+        ElseIf (binding.Symbol.OwnerType != null &&
             (!binding.Symbol.Declaration.IsStatic || binding.Symbol.Declaration.IsConstructor))
         {
             byte* receiver = This.Module.BitCast(This.Module.Parameter(wrapper, 0),
@@ -1410,10 +1844,11 @@ Class NativeBackend
                 This.EmitMetaDictInteger(dictionary, "owner_param_count", symbol.ParameterCount());
                 LlvmFunctionBinding functionBinding = This.FindFunctionBinding(symbol);
                 byte* wrapper = This.EnsureCallableWrapper(functionBinding);
+                byte* callable = This.CreateCallableObject(wrapper, null);
                 This.CallRuntime("__kn_dict_set", This.Types4(dictionary,
                     This.Module.GlobalString("owner_ptr", This.Unique("meta_key")),
                     This.Module.ConstInt(This.Module.IntType(64), 6),
-                    This.Module.PointerToInt(wrapper, This.Module.IntType(64), This.Unique("meta_owner_pointer"))), "");
+                    This.Module.PointerToInt(callable, This.Module.IntType(64), This.Unique("meta_owner_pointer"))), "");
                 This.EmitMetaDictString(dictionary, "module", symbol.UnitName);
                 This.EmitMetaDictString(dictionary, "meta", attribute.Name);
                 This.EmitMetaDictString(dictionary, "name", attribute.Name);
@@ -1552,7 +1987,9 @@ Class NativeBackend
     Public Trusted Function LlvmValue EmitRuntimeBuiltin(LlvmFunctionContext context, HirExpression expression)
     {
         string target = expression.Target;
-        If (IO.Text.EndsWith(target, ".Run"))
+        If (IO.Text.StartsWith(target, "Block."))
+            Return This.EmitBlockObjectCall(context, expression);
+        If (expression.Left == null && IO.Text.EndsWith(target, ".Run"))
         {
             string blockName = IO.Text.Slice(target, 0, IO.Text.Length(target) - 4);
             This.EmitUnsafeBlock(context, context.FindBlock(blockName));
@@ -1576,6 +2013,34 @@ Class NativeBackend
             This.CallRuntime(newline ? "kn_sh_rt_print_line" : "kn_sh_rt_print",
                 This.Types1(value.Handle), "");
             Return This.DefaultValue(This.Semantics.Primitive("void"));
+        }
+        If (target == "IO.Type.string.Length")
+        {
+            LlvmValue value = This.CastValue(This.EmitExpression(context, first),
+                This.Semantics.Primitive("string"));
+            Return New LlvmValue(This.CallRuntime("kn_sh_rt_string_length",
+                This.Types1(value.Handle), This.Unique("string_length")),
+                This.Semantics.Primitive("int"));
+        }
+        If (target == "IO.Type.string.Concat")
+        {
+            LlvmValue left = This.CastValue(This.EmitExpression(context, first),
+                This.Semantics.Primitive("string"));
+            LlvmValue right = This.CastValue(This.EmitExpression(context, first.Next),
+                This.Semantics.Primitive("string"));
+            Return New LlvmValue(This.CallRuntime("kn_sh_rt_string_concat",
+                This.Types2(left.Handle, right.Handle), This.Unique("string_concat")),
+                This.Semantics.Primitive("string"));
+        }
+        If (target == "IO.Type.string.Equals")
+        {
+            LlvmValue left = This.CastValue(This.EmitExpression(context, first),
+                This.Semantics.Primitive("string"));
+            LlvmValue right = This.CastValue(This.EmitExpression(context, first.Next),
+                This.Semantics.Primitive("string"));
+            Return New LlvmValue(This.RuntimeBool(This.CallRuntime("kn_sh_rt_string_equal",
+                This.Types2(left.Handle, right.Handle), This.Unique("string_equal_c"))),
+                This.Semantics.Primitive("bool"));
         }
         If (target == "list.Create")
             Return New LlvmValue(This.CallRuntime("__kn_list_new", This.Types0(), This.Unique("list")),
@@ -1872,24 +2337,9 @@ Class NativeBackend
         byte* size = This.Module.SizeOf(typeBinding.StructHandle);
         byte* memory = This.CallRuntime("__kn_gc_alloc", This.Types1(size), This.Unique("object_memory"));
         byte* object = This.Module.BitCast(memory, typeBinding.Handle, This.Unique("object"));
-        byte* vtable = This.Module.StructGep(typeBinding.StructHandle, object, 0, This.Unique("vtable_slot"));
-        byte* bytePointer = This.Module.PointerType(This.Module.IntType(8));
-        This.Module.Store(This.Module.ConstNull(This.Module.PointerType(bytePointer)), vtable);
+        This.InitializeObjectVtable(typeBinding, object, type);
 
-        int fieldIndex = 1;
-        FieldDecl field = type.Declaration.FirstField;
-        SyntaxTree definingSyntax = This.Semantics.FindUnit(type.UnitName).Syntax;
-        While (field != null)
-        {
-            If (!field.IsStatic)
-            {
-                TypeSymbol fieldType = This.Semantics.ResolveType(definingSyntax, field.TypeName);
-                byte* address = This.Module.StructGep(typeBinding.StructHandle, object, fieldIndex, This.Unique("field_init"));
-                This.Module.Store(This.DefaultValue(fieldType).Handle, address);
-                fieldIndex = fieldIndex + 1;
-            }
-            field = field.Next;
-        }
+        This.InitializeObjectFields(typeBinding, object, type, 1);
 
         int count = This.HirArgumentCount(expression);
         LlvmFunctionBinding constructor = This.FirstFunction;
@@ -2358,6 +2808,19 @@ Class NativeBackend
                     If (!This.Module.IsTerminated(This.Module.CurrentBlock()))
                         This.Module.Branch(record.Block);
                     This.Module.PositionAtEnd(record.Block);
+                    If (context.RuntimeUntilEnabled != null)
+                    {
+                        byte* runBlock = This.Module.AppendBlock(context.Binding.Function,
+                            This.Unique("block_record_run"));
+                        byte* atLimit = This.Module.Compare([int](LlvmIntPredicate.Equal),
+                            context.RuntimeUntilOrdinal,
+                            This.Module.ConstInt(This.Module.IntType(64), record.Ordinal),
+                            This.Unique("block_at_limit"));
+                        byte* stop = This.Module.And(context.RuntimeUntilEnabled, atLimit,
+                            This.Unique("block_stop"));
+                        This.Module.ConditionalBranch(stop, binding.DoneBlock, runBlock);
+                        This.Module.PositionAtEnd(runBlock);
+                    }
                     This.EmitStatementList(context, current.FirstChild);
                 }
             }
@@ -2455,7 +2918,7 @@ Class NativeBackend
                 This.Fail("function reference binding is missing: " + expression.Target);
                 Return This.DefaultValue(expression.Type);
             }
-            Return New LlvmValue(This.EnsureCallableWrapper(function), expression.Type);
+            Return New LlvmValue(This.EmitCallableObject(context, function), expression.Type);
         }
         If (expression.Kind == [int](HirExpressionKind.Field) ||
             expression.Kind == [int](HirExpressionKind.Index))
@@ -2471,13 +2934,24 @@ Class NativeBackend
         If (expression.Kind == [int](HirExpressionKind.Conditional)) Return This.EmitConditional(context, expression);
         If (expression.Kind == [int](HirExpressionKind.ArrayLiteral))
             Return This.EmitArrayLiteral(context, expression);
+        If (expression.Kind == [int](HirExpressionKind.PackageLiteral))
+            Return This.EmitArrayValue(context, expression.Type, expression.FirstArgument,
+                This.Module.ConstInt(This.Module.IntType(64), This.HirArgumentCount(expression)));
         If (expression.Kind == [int](HirExpressionKind.DictLiteral))
             Return This.EmitDictLiteral(context, expression);
         If (expression.Kind == [int](HirExpressionKind.Switch))
             Return This.EmitSwitchExpression(context, expression);
         If (expression.Kind == [int](HirExpressionKind.NewObject)) Return This.EmitNewObject(context, expression);
         If (expression.Kind == [int](HirExpressionKind.Cast))
+        {
+            If (expression.Left != null &&
+                expression.Left.Kind == [int](HirExpressionKind.PackageLiteral) &&
+                expression.Type.Kind == [int](TypeKind.ArrayType))
+                Return This.EmitArrayValue(context, expression.Type, expression.Left.FirstArgument,
+                    This.Module.ConstInt(This.Module.IntType(64),
+                        This.HirArgumentCount(expression.Left)));
             Return This.CastValue(This.EmitExpression(context, expression.Left), expression.Type);
+        }
         If (expression.Kind == [int](HirExpressionKind.Call))
         {
             If (expression.CallKind == [int](HirCallKind.RuntimeBuiltin))
@@ -2495,6 +2969,10 @@ Class NativeBackend
                 Return This.DefaultValue(expression.Type);
             }
             LlvmValue receiver = expression.Left == null ? null : This.EmitExpression(context, expression.Left);
+            If (expression.CallKind == [int](HirCallKind.InstanceMethod) &&
+                This.IsVirtualMethod(binding.Symbol) &&
+                (expression.Left == null || expression.Left.Name != "Base"))
+                Return This.EmitVirtualFunctionCall(context, binding, expression, receiver);
             Return This.EmitFunctionCall(context, binding, expression, receiver);
         }
         If (expression.Kind == [int](HirExpressionKind.Invalid))
@@ -2768,11 +3246,108 @@ Class NativeBackend
         }
     }
 
+    Public Trusted Function void EmitBlockFunctionBody(LlvmFunctionBinding binding,
+                                                        HirFunction hirFunction)
+    {
+        byte* entry = This.Module.AppendBlock(binding.Function, "entry");
+        This.Module.PositionAtEnd(entry);
+        LlvmFunctionContext context = New LlvmFunctionContext(binding);
+        context.GcFrame = This.CallRuntime("__kn_gc_push_frame", This.Types0(), This.Unique("gc_frame"));
+
+        If (binding.Symbol.FirstCapture != null)
+        {
+            byte* bytePointer = This.Module.PointerType(This.Module.IntType(8));
+            byte* environment = This.Module.Parameter(binding.Function, 0);
+            CaptureSymbol capture = binding.Symbol.FirstCapture;
+            While (capture != null)
+            {
+                byte* slot = This.Module.Gep(bytePointer, environment,
+                    This.Types1(This.Module.ConstInt(This.Module.IntType(64), capture.Index)),
+                    true, This.Unique("capture_slot"));
+                byte* address = This.Module.Load(bytePointer, slot,
+                    This.Unique("capture_address"));
+                context.AddVariable(New LlvmVariable(capture.Name, capture.Value,
+                    capture.Type, address));
+                capture = capture.Next;
+            }
+        }
+
+        LlvmBlockBinding block = This.RegisterUnsafeBlock(context, hirFunction.Body);
+        block.Emitted = true;
+        block.StartBlock = This.Module.AppendBlock(binding.Function, This.Unique("block_start"));
+        block.DoneBlock = This.Module.AppendBlock(binding.Function, This.Unique("block_done"));
+        LlvmRecordBinding record = block.FirstRecord;
+        While (record != null)
+        {
+            record.Block = This.Module.AppendBlock(binding.Function,
+                This.Unique("block_record_" + This.Sanitize(record.Name)));
+            record = record.Next;
+        }
+
+        byte* mode = This.Module.Parameter(binding.Function, 1);
+        byte* first = This.Module.Parameter(binding.Function, 2);
+        byte* second = This.Module.Parameter(binding.Function, 3);
+        byte* modeJump = This.Module.Compare([int](LlvmIntPredicate.Equal), mode,
+            This.Module.ConstInt(This.Module.IntType(64), 1), This.Unique("block_mode_jump"));
+        byte* modeJumpUntil = This.Module.Compare([int](LlvmIntPredicate.Equal), mode,
+            This.Module.ConstInt(This.Module.IntType(64), 3), This.Unique("block_mode_jump_until"));
+        byte* startsAtRecord = This.Module.Or(modeJump, modeJumpUntil,
+            This.Unique("block_starts_at_record"));
+        byte* startOrdinal = This.Module.Select(startsAtRecord, first,
+            This.Module.ConstInt(This.Module.IntType(64), 0), This.Unique("block_start_ordinal"));
+        byte* modeUntil = This.Module.Compare([int](LlvmIntPredicate.Equal), mode,
+            This.Module.ConstInt(This.Module.IntType(64), 2), This.Unique("block_mode_until"));
+        context.RuntimeUntilEnabled = This.Module.Or(modeUntil, modeJumpUntil,
+            This.Unique("block_until_enabled"));
+        context.RuntimeUntilOrdinal = This.Module.Select(modeJumpUntil, second, first,
+            This.Unique("block_until_ordinal"));
+
+        byte* firstCheck = This.Module.AppendBlock(binding.Function, This.Unique("block_dispatch"));
+        byte* startsAtBeginning = This.Module.Compare([int](LlvmIntPredicate.Equal), startOrdinal,
+            This.Module.ConstInt(This.Module.IntType(64), 0), This.Unique("block_starts_at_beginning"));
+        This.Module.ConditionalBranch(startsAtBeginning, block.StartBlock, firstCheck);
+        This.Module.PositionAtEnd(firstCheck);
+        record = block.FirstRecord;
+        While (record != null)
+        {
+            byte* nextCheck = This.Module.AppendBlock(binding.Function,
+                This.Unique("block_dispatch_next"));
+            byte* matches = This.Module.Compare([int](LlvmIntPredicate.Equal), startOrdinal,
+                This.Module.ConstInt(This.Module.IntType(64), record.Ordinal),
+                This.Unique("block_dispatch_match"));
+            This.Module.ConditionalBranch(matches, record.Block, nextCheck);
+            This.Module.PositionAtEnd(nextCheck);
+            record = record.Next;
+        }
+        This.Module.Branch(block.DoneBlock);
+
+        This.Module.PositionAtEnd(block.StartBlock);
+        byte* startRun = This.Module.AppendBlock(binding.Function, This.Unique("block_start_run"));
+        byte* stopAtStart = This.Module.And(context.RuntimeUntilEnabled,
+            This.Module.Compare([int](LlvmIntPredicate.Equal), context.RuntimeUntilOrdinal,
+                This.Module.ConstInt(This.Module.IntType(64), 0), This.Unique("block_start_limit")),
+            This.Unique("block_stop_at_start"));
+        This.Module.ConditionalBranch(stopAtStart, block.DoneBlock, startRun);
+        This.Module.PositionAtEnd(startRun);
+        context.ActiveBlock = block;
+        This.EmitUnsafeStatementList(context, block, hirFunction.Body.FirstChild);
+        If (!This.Module.IsTerminated(This.Module.CurrentBlock())) This.Module.Branch(block.DoneBlock);
+
+        This.Module.PositionAtEnd(block.DoneBlock);
+        This.PopGcFrame(context);
+        This.Module.ReturnVoid();
+    }
+
     Public Trusted Function void EmitFunctionBody(LlvmFunctionBinding binding)
     {
         If (binding.Symbol.Declaration.IsExtern) Return;
         HirFunction hirFunction = This.FindHirFunction(binding.Symbol);
         If (hirFunction == null || hirFunction.Body == null) Return;
+        If (binding.Symbol.IsBlockLiteral)
+        {
+            This.EmitBlockFunctionBody(binding, hirFunction);
+            Return;
+        }
 
         byte* entry = This.Module.AppendBlock(binding.Function, "entry");
         This.Module.PositionAtEnd(entry);
@@ -2780,6 +3355,24 @@ Class NativeBackend
         context.GcFrame = This.CallRuntime("__kn_gc_push_frame", This.Types0(), This.Unique("gc_frame"));
 
         int parameterIndex = 0;
+        If (binding.Symbol.FirstCapture != null)
+        {
+            byte* bytePointer = This.Module.PointerType(This.Module.IntType(8));
+            byte* environment = This.Module.Parameter(binding.Function, parameterIndex);
+            parameterIndex = parameterIndex + 1;
+            CaptureSymbol capture = binding.Symbol.FirstCapture;
+            While (capture != null)
+            {
+                byte* slot = This.Module.Gep(bytePointer, environment,
+                    This.Types1(This.Module.ConstInt(This.Module.IntType(64), capture.Index)),
+                    true, This.Unique("capture_slot"));
+                byte* address = This.Module.Load(bytePointer, slot,
+                    This.Unique("capture_address"));
+                context.AddVariable(New LlvmVariable(capture.Name, capture.Value,
+                    capture.Type, address));
+                capture = capture.Next;
+            }
+        }
         bool hasReceiver = binding.Symbol.OwnerType != null &&
             (!binding.Symbol.Declaration.IsStatic || binding.Symbol.Declaration.IsConstructor);
         If (hasReceiver)
@@ -2846,6 +3439,7 @@ Class NativeBackend
         This.Module.PositionAtEnd(block);
         This.CallRuntime("__kn_gc_init", This.Types0(), "");
         This.InitializeFixedGlobalArrays();
+        This.InitializeGlobalCallables();
         This.InitializeGlobalCopies();
 
         LlvmHandles arguments = New LlvmHandles();

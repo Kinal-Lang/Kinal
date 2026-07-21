@@ -222,6 +222,106 @@ def main() -> int:
     )
     results.append({"name": "native_backend_fixture", "ok": True})
 
+    stdlib_project = root / "tests" / "selfhost" / "fixtures" / "stdlib_core" / "kinal.knproj"
+    stdlib_executable = out_dir / f"stdlib-core{executable_suffix}"
+    stdlib_check = run([str(compiler), "check", str(stdlib_project), "test"], cwd=root)
+    require(stdlib_check.returncode == 0, "stage1 standard-library source check failed", stdlib_check)
+    stdlib_build = run(
+        [str(compiler), "build", str(stdlib_project), str(stdlib_executable), "test"],
+        cwd=root,
+    )
+    require(stdlib_build.returncode == 0, "stage1 standard-library fixture build failed", stdlib_build)
+    stdlib_run = run([str(stdlib_executable)], cwd=root)
+    require(stdlib_run.returncode == 0, "stage1 standard-library fixture execution failed", stdlib_run)
+    require(
+        stdlib_run.stdout.replace("\r\n", "\n").strip() == "R\n7\nkinal\ntrue",
+        "stage1 standard-library fixture output differs",
+        stdlib_run,
+    )
+    results.append({"name": "stdlib_source_package", "ok": True})
+
+    oop_project = root / "tests" / "selfhost" / "fixtures" / "oop_inheritance" / "kinal.knproj"
+    oop_executable = out_dir / f"oop-inheritance{executable_suffix}"
+    oop_build = run(
+        [str(compiler), "build", str(oop_project), str(oop_executable), "test"],
+        cwd=root,
+    )
+    require(oop_build.returncode == 0, "stage1 inheritance fixture build failed", oop_build)
+    oop_run = run([str(oop_executable)], cwd=root)
+    require(oop_run.returncode == 0, "stage1 inheritance fixture execution failed", oop_run)
+    require(
+        oop_run.stdout.replace("\r\n", "\n").strip() == "5\nbase:derived",
+        "stage1 inheritance fixture output differs",
+        oop_run,
+    )
+    results.append({"name": "oop_inheritance", "ok": True})
+
+    nested_project = root / "tests" / "selfhost" / "fixtures" / "nested_types" / "kinal.knproj"
+    nested_executable = out_dir / f"nested-types{executable_suffix}"
+    nested_build = run(
+        [str(compiler), "build", str(nested_project), str(nested_executable), "test"],
+        cwd=root,
+    )
+    require(nested_build.returncode == 0, "stage1 nested-type fixture build failed", nested_build)
+    nested_run = run([str(nested_executable)], cwd=root)
+    require(nested_run.returncode == 0, "stage1 nested-type fixture execution failed", nested_run)
+    require(
+        nested_run.stdout.replace("\r\n", "\n").strip() == "7",
+        "stage1 nested-type fixture output differs",
+        nested_run,
+    )
+    results.append({"name": "nested_types", "ok": True})
+
+    closure_project = root / "tests" / "selfhost" / "fixtures" / "function_closures" / "kinal.knproj"
+    closure_executable = out_dir / f"function-closures{executable_suffix}"
+    closure_build = run(
+        [str(compiler), "build", str(closure_project), str(closure_executable), "test"],
+        cwd=root,
+    )
+    require(closure_build.returncode == 0, "stage1 closure fixture build failed", closure_build)
+    closure_run = run([str(closure_executable)], cwd=root)
+    require(closure_run.returncode == 0, "stage1 closure fixture execution failed", closure_run)
+    require(
+        closure_run.stdout.replace("\r\n", "\n").strip() == "5\n25\n15\n21",
+        "stage1 closure fixture output differs",
+        closure_run,
+    )
+    results.append({"name": "function_closures", "ok": True})
+
+    package_project = root / "tests" / "selfhost" / "fixtures" / "package_values" / "kinal.knproj"
+    package_executable = out_dir / f"package-values{executable_suffix}"
+    package_build = run(
+        [str(compiler), "build", str(package_project), str(package_executable), "test"],
+        cwd=root,
+    )
+    require(package_build.returncode == 0, "stage1 package-value fixture build failed", package_build)
+    package_run = run([str(package_executable)], cwd=root)
+    require(package_run.returncode == 0, "stage1 package-value fixture execution failed", package_run)
+    require(
+        package_run.stdout.replace("\r\n", "\n").strip() ==
+        "200\n200\nOK\nOK\n3\n1\n200\n2\nb\n2\n3\n3",
+        "stage1 package-value fixture output differs",
+        package_run,
+    )
+    results.append({"name": "package_values", "ok": True})
+
+    block_project = root / "tests" / "selfhost" / "fixtures" / "block_features" / "kinal.knproj"
+    block_executable = out_dir / f"block-features{executable_suffix}"
+    block_build = run(
+        [str(compiler), "build", str(block_project), str(block_executable), "test"],
+        cwd=root,
+    )
+    require(block_build.returncode == 0, "stage1 Block fixture build failed", block_build)
+    block_run = run([str(block_executable)], cwd=root)
+    require(block_run.returncode == 0, "stage1 Block fixture execution failed", block_run)
+    require(
+        block_run.stdout.replace("\r\n", "\n").strip() ==
+        "jump-3\nflow-1\nflow-2\nflow-3\nflow-2\n2\nflow-2\nafter\n7",
+        "stage1 Block fixture output differs",
+        block_run,
+    )
+    results.append({"name": "block_features", "ok": True})
+
     globals_project = root / "tests" / "selfhost" / "fixtures" / "global_variables" / "kinal.knproj"
     globals_executable = out_dir / f"global-variables{executable_suffix}"
     globals_build = run(
@@ -454,7 +554,7 @@ def main() -> int:
     require(global_literals_run.returncode == 0, "stage1 global-literal fixture execution failed", global_literals_run)
     require(
         global_literals_run.stdout.replace("\r\n", "\n").strip() ==
-        "0\nnull\nblock\nIO.Type.Object.Class",
+        "0\nnull\nblock\nIO.Type.Object.Class\nlocal-block\nIO.Type.Object.Class",
         "stage1 global-literal fixture output differs",
         global_literals_run,
     )

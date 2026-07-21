@@ -64,7 +64,7 @@ int kn_sh_llvm_set_initializer(void *global, void *value);
 void *kn_sh_llvm_build_global_string(void *module_handle, const char *text,
                                      const char *name);
 
-/* Memory and aggregate instructions. */
+/* Memory and aggregate instructions. Alloca is placed in the function entry. */
 void *kn_sh_llvm_build_alloca(void *module_handle, void *type,
                               const char *name);
 void *kn_sh_llvm_build_load(void *module_handle, void *type, void *pointer,
@@ -137,6 +137,10 @@ void *kn_sh_llvm_build_sext(void *module_handle, void *value, void *type,
                             const char *name);
 void *kn_sh_llvm_build_trunc(void *module_handle, void *value, void *type,
                              const char *name);
+void *kn_sh_llvm_build_fp_ext(void *module_handle, void *value, void *type,
+                              const char *name);
+void *kn_sh_llvm_build_fp_trunc(void *module_handle, void *value, void *type,
+                                const char *name);
 void *kn_sh_llvm_build_ptr_to_int(void *module_handle, void *value, void *type,
                                   const char *name);
 void *kn_sh_llvm_build_int_to_ptr(void *module_handle, void *value, void *type,

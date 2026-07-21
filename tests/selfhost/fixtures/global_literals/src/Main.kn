@@ -16,5 +16,10 @@ Static Function int Main()
     If (globalPointer == null) IO.Console.PrintLine("null");
     globalBlock.Run();
     IO.Console.PrintLine(globalClass.TypeOf());
+    Object.Block localBlock = Block< / IO.Console.PrintLine("local-block");
+    / >;
+    Object.Class localClass = localBlock;
+    localBlock.Run();
+    IO.Console.PrintLine(localClass.TypeOf());
     Return 0;
 }

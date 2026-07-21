@@ -1,0 +1,31 @@
+Unit Tests.Selfhost.FunctionClosures;
+
+Get IO.Console;
+
+Function int Add(int left, int right)
+{
+    Return left + right;
+}
+
+Static Function int Main()
+{
+    IO.Type.Object.Function function = Add;
+    int direct = function(2, 3);
+
+    int base = 10;
+    IO.Type.Object.Function closure = Function int(int value)
+    {
+        Return value + base;
+    };
+    base = 20;
+
+    IO.Type.Object.Function functions[2] = { Add, closure };
+    int first = functions[0](7, 8);
+    int second = functions[1](1);
+
+    IO.Console.PrintLine(direct);
+    IO.Console.PrintLine(closure(5));
+    IO.Console.PrintLine(first);
+    IO.Console.PrintLine(second);
+    Return 0;
+}

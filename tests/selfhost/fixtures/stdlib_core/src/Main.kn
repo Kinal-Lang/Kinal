@@ -1,0 +1,15 @@
+Unit Tests.Selfhost.StdlibCore;
+
+Get IO.Char;
+Get IO.Console;
+Get IO.Math;
+Get IO.Type.string;
+
+Trusted Static Function int Main()
+{
+    IO.Console.PrintLine(IO.Char.ToUpper('r'));
+    IO.Console.PrintLine(IO.Math.Abs(-7));
+    IO.Console.PrintLine(IO.Type.string.Concat("ki", "nal"));
+    IO.Console.PrintLine(IO.Math.Sqrt([f64](9)) == [f64](3));
+    Return 0;
+}

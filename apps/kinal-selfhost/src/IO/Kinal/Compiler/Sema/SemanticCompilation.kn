@@ -42,6 +42,7 @@ Class SemanticCompilation
     Public int UnresolvedTypeCount;
     Public int BoundExpressionCount;
     Public int UnresolvedExpressionCount;
+    Public int LocalLiteralCount;
 
     Public Safe Constructor(CompileSession session)
     {
@@ -61,6 +62,7 @@ Class SemanticCompilation
         This.UnresolvedTypeCount = 0;
         This.BoundExpressionCount = 0;
         This.UnresolvedExpressionCount = 0;
+        This.LocalLiteralCount = 0;
         This.RegisterBuiltinTypes();
     }
 
@@ -119,6 +121,9 @@ Class SemanticCompilation
         This.AddBuiltin("Object.Class", [int](TypeKind.NamedType));
         This.AddBuiltin("IO.Type.Object.Block", [int](TypeKind.NamedType));
         This.AddBuiltin("Object.Block", [int](TypeKind.NamedType));
+        TypeSymbol packageType = New TypeSymbol([int](TypeKind.PackageType), "IO.Type.Object.Package");
+        packageType.ElementType = This.Primitive("any");
+        This.AddType(packageType);
         This.AddBuiltin("IO.Collection.list", [int](TypeKind.ListType));
         This.AddBuiltin("IO.Collection.dict", [int](TypeKind.DictType));
         This.AddBuiltin("IO.Collection.set", [int](TypeKind.SetType));
@@ -148,6 +153,92 @@ Class SemanticCompilation
             current = current.Next;
         }
         Return null;
+    }
+
+    Public Safe Function UnitSymbol FindSyntaxUnit(SyntaxTree syntax)
+    {
+        UnitSymbol current = This.FirstUnit;
+        While (current != null)
+        {
+            If (current.Syntax == syntax) Return current;
+            current = current.Next;
+        }
+        Return null;
+    }
+
+    Public Safe Function FunctionSymbol CreateLocalLiteralFunction(SyntaxTree syntax,
+                                                                    ExpressionNode expression,
+                                                                    BindingScope outerScope)
+    {
+        This.LocalLiteralCount = This.LocalLiteralCount + 1;
+        string name = "__local_literal_" + [string](This.LocalLiteralCount);
+        string returnType = expression.Kind == [int](ExpressionKind.BlockLiteral) ?
+            "void" : expression.Text;
+        FunctionDecl literal = New FunctionDecl(name, returnType,
+            expression.Line, expression.Column);
+        literal.IsStatic = true;
+        literal.Body = expression.Body;
+        ExpressionNode parameter = expression.FirstArgument;
+        While (parameter != null)
+        {
+            literal.AddParameter(New ParameterDecl(parameter.Text,
+                parameter.Left == null ? "any" : parameter.Left.Text));
+            parameter = parameter.Next;
+        }
+        syntax.AddFunction(literal);
+        UnitSymbol unit = This.FindSyntaxUnit(syntax);
+        If (unit == null) Return null;
+        This.IndexFunction(unit, null, literal);
+        FunctionSymbol function = This.FindQualifiedFunction(syntax.UnitName + "." + name,
+            literal.ParameterCount());
+        function.IsBlockLiteral = expression.Kind == [int](ExpressionKind.BlockLiteral);
+        function.BlockRecords = This.BlockRecordNames(expression.Body == null ?
+            null : expression.Body.FirstChild);
+        BindingScope captureScope = outerScope;
+        While (captureScope != null)
+        {
+            ValueSymbol value = captureScope.FirstValue;
+            While (value != null)
+            {
+                function.AddCapture(value);
+                value = value.Next;
+            }
+            captureScope = captureScope.Parent;
+        }
+        Return function;
+    }
+
+    Public Safe Function string BlockRecordNames(StatementNode statement)
+    {
+        string result = "";
+        StatementNode current = statement;
+        While (current != null)
+        {
+            If (current.Kind == [int](StatementKind.Record))
+                result = result == "" ? current.Name : result + "," + current.Name;
+            Else
+            {
+                string nested = This.BlockRecordNames(current.FirstChild);
+                If (nested != "") result = result == "" ? nested : result + "," + nested;
+                nested = This.BlockRecordNames(current.ElseBranch);
+                If (nested != "") result = result == "" ? nested : result + "," + nested;
+            }
+            current = current.Next;
+        }
+        Return result;
+    }
+
+    Public Safe Function int NamedOrdinal(string names, string name)
+    {
+        If (names == "") Return -1;
+        list values = IO.Text.Split(names, ",");
+        int index = 0;
+        While (index < values.Count())
+        {
+            If ([string](values.Fetch(index)) == name) Return index + 1;
+            index = index + 1;
+        }
+        Return -1;
     }
 
     Public Safe Function bool IsRuntimeUnit(string name)
@@ -221,6 +312,7 @@ Class SemanticCompilation
                 TypeSymbol type = New TypeSymbol([int](TypeKind.NamedType), declaration.Name);
                 type.UnitName = syntax.UnitName;
                 type.Declaration = declaration;
+                type.Syntax = syntax;
                 If (This.FindExactType(type.QualifiedName()) != null)
                 {
                     This.Report(syntax, "Duplicate type", type.QualifiedName(), declaration.Line, declaration.Column);
@@ -252,6 +344,13 @@ Class SemanticCompilation
         If (name == "Object.Function") name = "IO.Type.Object.Function";
         ElseIf (name == "Object.Class") name = "IO.Type.Object.Class";
         ElseIf (name == "Object.Block") name = "IO.Type.Object.Block";
+        ElseIf (name == "Object.Package") name = "IO.Type.Object.Package";
+        If (IO.Text.StartsWith(name, "<") && IO.Text.EndsWith(name, ">"))
+        {
+            TypeSymbol packageType = New TypeSymbol([int](TypeKind.PackageType), name);
+            packageType.ElementType = This.Primitive("any");
+            Return packageType;
+        }
         int fixedOpen = IO.Text.IndexOf(name, "[");
         If (fixedOpen > 0 && IO.Text.EndsWith(name, "]"))
         {
@@ -534,10 +633,55 @@ Class SemanticCompilation
         Return null;
     }
 
+    Public Safe Function GlobalSymbol FindVisibleGlobal(SyntaxTree syntax, string name)
+    {
+        GlobalSymbol global = This.FindGlobal(syntax.UnitName, name);
+        If (global != null) Return global;
+        ImportDecl import = syntax.FirstImport;
+        While (import != null)
+        {
+            global = This.FirstGlobal;
+            While (global != null)
+            {
+                If (global.Declaration.Name == name &&
+                    (global.UnitName == import.Target ||
+                     IO.Text.StartsWith(import.Target, global.UnitName + "."))) Return global;
+                global = global.Next;
+            }
+            import = import.Next;
+        }
+        Return null;
+    }
+
     Public Safe Function GlobalSymbol FindStaticGlobal(TypeSymbol owner, string name)
     {
-        If (owner == null) Return null;
-        Return This.FindGlobal(owner.QualifiedName(), name);
+        TypeSymbol current = owner;
+        While (current != null)
+        {
+            GlobalSymbol global = This.FindGlobal(current.QualifiedName(), name);
+            If (global != null) Return global;
+            current = current.BaseType;
+        }
+        Return null;
+    }
+
+    Public Safe Function void LinkBaseTypes()
+    {
+        TypeSymbol type = This.FirstType;
+        While (type != null)
+        {
+            If (type.Declaration != null && !IO.Text.IsEmpty(type.Declaration.BaseName))
+            {
+                type.BaseType = This.ResolveType(type.Syntax, type.Declaration.BaseName);
+                If (type.BaseType == null)
+                {
+                    This.UnresolvedTypeCount = This.UnresolvedTypeCount + 1;
+                    This.Report(type.Syntax, "Unknown base type", type.Declaration.BaseName,
+                        type.Declaration.Line, type.Declaration.Column);
+                }
+            }
+            type = type.Next;
+        }
     }
 
     Public Safe Function void IndexGlobals()
@@ -713,7 +857,7 @@ Class SemanticCompilation
         Return null;
     }
 
-    Public Safe Function FunctionSymbol FindMethod(TypeSymbol owner, string name, int parameterCount)
+    Public Safe Function FunctionSymbol FindDirectMethod(TypeSymbol owner, string name, int parameterCount)
     {
         If (owner == null) Return null;
         FunctionSymbol current = This.FirstFunction;
@@ -722,6 +866,18 @@ Class SemanticCompilation
             If (current.OwnerType == owner && current.Name == name &&
                 current.AcceptsArgumentCount(parameterCount)) Return current;
             current = current.Next;
+        }
+        Return null;
+    }
+
+    Public Safe Function FunctionSymbol FindMethod(TypeSymbol owner, string name, int parameterCount)
+    {
+        TypeSymbol currentOwner = owner;
+        While (currentOwner != null)
+        {
+            FunctionSymbol direct = This.FindDirectMethod(currentOwner, name, parameterCount);
+            If (direct != null) Return direct;
+            currentOwner = currentOwner.BaseType;
         }
         Return null;
     }
@@ -782,6 +938,7 @@ Class SemanticCompilation
     {
         If (type == null) Return "?";
         If (type.Kind == [int](TypeKind.ArrayType)) Return This.TypeIdentity(type.ElementType) + "[]";
+        If (type.Kind == [int](TypeKind.PackageType)) Return type.Name;
         If (type.Kind == [int](TypeKind.PointerType)) Return This.TypeIdentity(type.ElementType) + "*";
         Return type.QualifiedName();
     }
@@ -1041,6 +1198,11 @@ Class SemanticCompilation
             target == "IO.Directory.DeleteIfExists") Return This.Primitive("bool");
         If (IO.Text.StartsWith(target, "IO.Type."))
         {
+            If (target == "IO.Type.string.Length") Return This.Primitive("int");
+            If (target == "IO.Type.string.Concat") Return This.Primitive("string");
+            If (target == "IO.Type.string.Equals") Return This.Primitive("bool");
+            If (target == "IO.Type.string.ToChars")
+                Return This.MakeArrayType(This.Primitive("char"));
             string convertedName = IO.Text.Slice(target, 8, IO.Text.Length(target) - 8);
             If (!IO.Text.Contains(convertedName, "."))
             {
@@ -1113,21 +1275,27 @@ Class SemanticCompilation
             target == "IsNumber" || target == "IsPointer" || target == "IsInt" ||
             target == "IsFloat" || target == "IsString" || target == "IsBool" ||
             target == "IsChar" || target == "IsObject")) Return This.Primitive("bool");
-        If (receiverKind == [int](TypeKind.NamedType) && receiver.Name == "block" && target == "Run")
-            Return This.Primitive("void");
+        If (receiverKind == [int](TypeKind.NamedType) &&
+            (receiver.Name == "block" || receiver.Name == "IO.Type.Object.Block" ||
+             receiver.Name == "Object.Block") &&
+            (target == "Run" || target == "Jump" || target == "RunUntil" ||
+             target == "JumpAndRunUntil")) Return This.Primitive("void");
         Return null;
     }
 
     Public Safe Function TypeSymbol FindFieldType(SyntaxTree syntax, TypeSymbol owner, string name)
     {
-        If (owner == null || owner.Declaration == null) Return null;
-        UnitSymbol ownerUnit = This.FindUnit(owner.UnitName);
-        SyntaxTree definingSyntax = ownerUnit == null ? syntax : ownerUnit.Syntax;
-        FieldDecl field = owner.Declaration.FirstField;
-        While (field != null)
+        TypeSymbol current = owner;
+        While (current != null && current.Declaration != null)
         {
-            If (field.Name == name) Return This.ResolveType(definingSyntax, field.TypeName);
-            field = field.Next;
+            SyntaxTree definingSyntax = current.Syntax == null ? syntax : current.Syntax;
+            FieldDecl field = current.Declaration.FirstField;
+            While (field != null)
+            {
+                If (field.Name == name) Return This.ResolveType(definingSyntax, field.TypeName);
+                field = field.Next;
+            }
+            current = current.BaseType;
         }
         Return null;
     }
@@ -1135,15 +1303,18 @@ Class SemanticCompilation
     Public Safe Function TypeSymbol FindInstanceFieldType(SyntaxTree syntax,
                                                            TypeSymbol owner, string name)
     {
-        If (owner == null || owner.Declaration == null) Return null;
-        UnitSymbol ownerUnit = This.FindUnit(owner.UnitName);
-        SyntaxTree definingSyntax = ownerUnit == null ? syntax : ownerUnit.Syntax;
-        FieldDecl field = owner.Declaration.FirstField;
-        While (field != null)
+        TypeSymbol current = owner;
+        While (current != null && current.Declaration != null)
         {
-            If (!field.IsStatic && field.Name == name)
-                Return This.ResolveType(definingSyntax, field.TypeName);
-            field = field.Next;
+            SyntaxTree definingSyntax = current.Syntax == null ? syntax : current.Syntax;
+            FieldDecl field = current.Declaration.FirstField;
+            While (field != null)
+            {
+                If (!field.IsStatic && field.Name == name)
+                    Return This.ResolveType(definingSyntax, field.TypeName);
+                field = field.Next;
+            }
+            current = current.BaseType;
         }
         Return null;
     }
@@ -1280,7 +1451,7 @@ Class SemanticCompilation
             If (receiver.Kind != [int](HirExpressionKind.Invalid))
             {
                 If (receiver.Symbol != null && receiver.Symbol.CallableFunction != null &&
-                    memberName == "Run")
+                    memberName == "Run" && !receiver.Symbol.CallableFunction.IsBlockLiteral)
                 {
                     targetFunction = receiver.Symbol.CallableFunction;
                     returnType = This.Primitive("any");
@@ -1310,8 +1481,14 @@ Class SemanticCompilation
                                 Return This.FailedExpression(expression);
                             }
                             callKind = [int](HirCallKind.RuntimeBuiltin);
-                            targetName = receiver.Type.Kind == [int](TypeKind.NamedType) &&
-                                receiver.Type.Name == "block" ? receiver.Target + "." + memberName : memberName;
+                            If (receiver.Type.Kind == [int](TypeKind.NamedType) &&
+                                receiver.Type.Name == "block")
+                                targetName = receiver.Target + "." + memberName;
+                            ElseIf (receiver.Type.Kind == [int](TypeKind.NamedType) &&
+                                (receiver.Type.Name == "IO.Type.Object.Block" ||
+                                 receiver.Type.Name == "Object.Block"))
+                                targetName = "Block." + memberName;
+                            Else targetName = memberName;
                             If (receiver.Type.Kind == [int](TypeKind.NamedType) &&
                                 receiver.Type.Name == "block") receiver = null;
                         }
@@ -1340,7 +1517,7 @@ Class SemanticCompilation
                 ValueSymbol dynamic = scope.Find(targetSyntax.Text);
                 If (dynamic == null)
                 {
-                    GlobalSymbol dynamicGlobal = This.FindGlobal(syntax.UnitName, targetSyntax.Text);
+                    GlobalSymbol dynamicGlobal = This.FindVisibleGlobal(syntax, targetSyntax.Text);
                     If (dynamicGlobal != null) dynamic = dynamicGlobal.Value;
                 }
                 If (dynamic != null &&
@@ -1355,6 +1532,24 @@ Class SemanticCompilation
                     targetName = targetSyntax.Text;
                     targetFunction = dynamic.CallableFunction;
                 }
+            }
+        }
+
+        If (returnType == null && targetSyntax != null &&
+            targetSyntax.Kind == [int](ExpressionKind.Index))
+        {
+            receiver = This.BindExpression(syntax, function, scope, targetSyntax);
+            If (receiver.Function != null ||
+                receiver.Type.Name == "IO.Type.Object.Function" ||
+                receiver.Type.Name == "Object.Function" ||
+                receiver.Type.Name == "IO.Type.Object.Block" ||
+                receiver.Type.Name == "Object.Block")
+            {
+                targetFunction = receiver.Function;
+                returnType = targetFunction == null ? This.Primitive("any") :
+                    targetFunction.ReturnType;
+                callKind = [int](HirCallKind.DynamicFunction);
+                targetName = "indexed callable";
             }
         }
 
@@ -1398,6 +1593,40 @@ Class SemanticCompilation
         }
         HirExpression receiver = This.BindExpression(syntax, function, scope, expression.Left);
         If (receiver.Kind == [int](HirExpressionKind.Invalid)) Return receiver;
+        string blockRecords = receiver.Symbol == null ? "" : receiver.Symbol.BlockRecords;
+        If (blockRecords == "" && receiver.Function != null)
+            blockRecords = receiver.Function.BlockRecords;
+        int blockOrdinal = This.NamedOrdinal(blockRecords, expression.Text);
+        If (blockOrdinal > 0)
+        {
+            ExpressionNode ordinalSyntax = New ExpressionNode([int](ExpressionKind.Number),
+                [string](blockOrdinal), expression.Line, expression.Column);
+            HirExpression ordinal = New HirExpression([int](HirExpressionKind.Constant),
+                ordinalSyntax, This.Primitive("isize"));
+            ordinal.Target = receiver.Target + "." + expression.Text;
+            Return ordinal;
+        }
+        If (receiver.Type.Kind == [int](TypeKind.PackageType) && receiver.Symbol != null &&
+            receiver.Symbol.PackageLabels != "")
+        {
+            list labels = IO.Text.Split(receiver.Symbol.PackageLabels, ",");
+            int labelIndex = 0;
+            While (labelIndex < labels.Count())
+            {
+                If ([string](labels.Fetch(labelIndex)) == expression.Text)
+                {
+                    ExpressionNode indexSyntax = New ExpressionNode([int](ExpressionKind.Number),
+                        [string](labelIndex), expression.Line, expression.Column);
+                    HirExpression result = New HirExpression([int](HirExpressionKind.Index),
+                        expression, receiver.Type.ElementType);
+                    result.Left = receiver;
+                    result.Right = New HirExpression([int](HirExpressionKind.Constant),
+                        indexSyntax, This.Primitive("int"));
+                    Return result;
+                }
+                labelIndex = labelIndex + 1;
+            }
+        }
         If (receiver.Type.Kind == [int](TypeKind.NamespaceType))
         {
             string combined = receiver.Target + "." + expression.Text;
@@ -1550,6 +1779,16 @@ Class SemanticCompilation
                 New TypeSymbol([int](TypeKind.NullType), "null"));
         If (expression.Kind == [int](ExpressionKind.Name))
         {
+            If (expression.Text == "Base" && function != null &&
+                function.OwnerType != null && function.OwnerType.BaseType != null)
+            {
+                HirExpression baseValue = New HirExpression(
+                    [int](HirExpressionKind.Local), expression, function.OwnerType.BaseType);
+                baseValue.Target = "This";
+                baseValue.Name = "Base";
+                baseValue.Symbol = function.Receiver;
+                Return baseValue;
+            }
             ValueSymbol value = scope.Find(expression.Text);
             If (value != null)
             {
@@ -1558,7 +1797,7 @@ Class SemanticCompilation
                 local.Symbol = value;
                 Return local;
             }
-            GlobalSymbol global = This.FindGlobal(syntax.UnitName, expression.Text);
+            GlobalSymbol global = This.FindVisibleGlobal(syntax, expression.Text);
             If (global != null)
             {
                 HirExpression globalValue = New HirExpression(
@@ -1689,6 +1928,21 @@ Class SemanticCompilation
             result.Left = This.BindExpression(syntax, function, scope, expression.Left);
             Return result;
         }
+        If (expression.Kind == [int](ExpressionKind.FunctionLiteral) ||
+            expression.Kind == [int](ExpressionKind.BlockLiteral))
+        {
+            FunctionSymbol literal = This.CreateLocalLiteralFunction(syntax, expression, scope);
+            If (literal == null)
+                Return This.InvalidExpression(syntax, expression, "Invalid local literal", "unit is missing");
+            TypeSymbol callableType = This.FindExactType(expression.Kind ==
+                [int](ExpressionKind.BlockLiteral) ?
+                "IO.Type.Object.Block" : "IO.Type.Object.Function");
+            HirExpression result = New HirExpression([int](HirExpressionKind.FunctionReference),
+                expression, callableType);
+            result.Target = literal.QualifiedName();
+            result.Function = literal;
+            Return result;
+        }
         If (expression.Kind == [int](ExpressionKind.ArrayLiteral))
         {
             TypeSymbol elementType = This.Primitive("any");
@@ -1703,6 +1957,20 @@ Class SemanticCompilation
                 item = item.Next;
             }
             result.Type = This.MakeArrayType(elementType);
+            Return result;
+        }
+        If (expression.Kind == [int](ExpressionKind.PackageLiteral))
+        {
+            TypeSymbol packageType = New TypeSymbol([int](TypeKind.PackageType), "Object.Package");
+            packageType.ElementType = This.Primitive("any");
+            HirExpression result = New HirExpression([int](HirExpressionKind.PackageLiteral),
+                expression, packageType);
+            ExpressionNode item = expression.FirstArgument;
+            While (item != null)
+            {
+                result.AddArgument(This.BindExpression(syntax, function, scope, item));
+                item = item.Next;
+            }
             Return result;
         }
         If (expression.Kind == [int](ExpressionKind.DictLiteral))
@@ -1748,12 +2016,16 @@ Class SemanticCompilation
         {
             HirExpression receiver = This.BindExpression(syntax, function, scope, expression.Left);
             TypeSymbol type = receiver.Type.Kind == [int](TypeKind.ArrayType) ||
+                receiver.Type.Kind == [int](TypeKind.PackageType) ||
                 receiver.Type.Kind == [int](TypeKind.PointerType) ?
                 receiver.Type.ElementType : This.Primitive("any");
             If (receiver.Type.Kind == [int](TypeKind.StringType)) type = This.Primitive("char");
             HirExpression result = New HirExpression([int](HirExpressionKind.Index), expression, type);
             result.Left = receiver;
             result.Right = This.BindExpression(syntax, function, scope, expression.Right);
+            If (receiver.Symbol != null && expression.Right != null &&
+                expression.Right.Kind == [int](ExpressionKind.Number))
+                result.Function = receiver.Symbol.CallableElement([int](expression.Right.Text));
             Return result;
         }
         If (expression.Kind == [int](ExpressionKind.Unary))
@@ -1838,6 +2110,7 @@ Class SemanticCompilation
         {
             TypeSymbol blockType = New TypeSymbol([int](TypeKind.NamedType), "block");
             ValueSymbol blockValue = New ValueSymbol(statement.Name, blockType, false);
+            blockValue.BlockRecords = This.BlockRecordNames(statement.FirstChild);
             scope.Add(blockValue);
             result.DeclaredSymbol = blockValue;
         }
@@ -1936,9 +2209,27 @@ Class SemanticCompilation
                 result.Expression = New HirExpression([int](HirExpressionKind.DictLiteral),
                     statement.Expression, result.DeclaredType);
             result.DeclaredSymbol = New ValueSymbol(statement.Name, result.DeclaredType, false);
+            result.DeclaredSymbol.PackageLabels = statement.PackageLabels;
             If (result.Expression != null &&
                 result.Expression.Kind == [int](HirExpressionKind.FunctionReference))
+            {
                 result.DeclaredSymbol.CallableFunction = result.Expression.Function;
+                If (result.Expression.Function != null)
+                    result.DeclaredSymbol.BlockRecords = result.Expression.Function.BlockRecords;
+            }
+            If (result.Expression != null &&
+                result.Expression.Kind == [int](HirExpressionKind.ArrayLiteral))
+            {
+                HirExpression item = result.Expression.FirstArgument;
+                int itemIndex = 0;
+                While (item != null)
+                {
+                    If (item.Function != null)
+                        result.DeclaredSymbol.AddCallableElement(itemIndex, item.Function);
+                    itemIndex = itemIndex + 1;
+                    item = item.Next;
+                }
+            }
             scope.Add(result.DeclaredSymbol);
         }
         Else
@@ -2017,6 +2308,12 @@ Class SemanticCompilation
                 If (syntax != null && module != null)
                 {
                     BindingScope scope = New BindingScope(null);
+                    CaptureSymbol capture = function.FirstCapture;
+                    While (capture != null)
+                    {
+                        scope.Add(capture.Value);
+                        capture = capture.Next;
+                    }
                     If (function.OwnerType != null &&
                         (!function.Declaration.IsStatic || function.Declaration.IsConstructor))
                     {
@@ -2042,6 +2339,7 @@ Class SemanticCompilation
     Public Safe Function bool Analyze()
     {
         This.IndexDeclarations();
+        This.LinkBaseTypes();
         This.IndexGlobals();
         This.IndexFunctions();
         This.LinkGlobalLiteralFunctions();

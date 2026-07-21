@@ -35,6 +35,9 @@ Class FunctionSymbol
     Public FunctionSymbol GenericDefinition;
     Public string GenericKey;
     Public TypeSubstitution FirstSubstitution;
+    Public CaptureSymbol FirstCapture;
+    Public bool IsBlockLiteral;
+    Public string BlockRecords;
     Public FunctionSymbol Next;
 
     Public Safe Constructor(string unitName, TypeSymbol ownerType, FunctionDecl declaration)
@@ -51,6 +54,9 @@ Class FunctionSymbol
         This.GenericDefinition = null;
         This.GenericKey = "";
         This.FirstSubstitution = null;
+        This.FirstCapture = null;
+        This.IsBlockLiteral = false;
+        This.BlockRecords = "";
         This.Next = null;
     }
 
@@ -134,6 +140,51 @@ Class FunctionSymbol
         }
         Return null;
     }
+
+    Public Safe Function void AddCapture(ValueSymbol source)
+    {
+        CaptureSymbol current = This.FirstCapture;
+        While (current != null)
+        {
+            If (current.Source == source || current.Name == source.Name) Return;
+            current = current.Next;
+        }
+        CaptureSymbol capture = New CaptureSymbol(source, This.CaptureCount());
+        capture.Next = This.FirstCapture;
+        This.FirstCapture = capture;
+    }
+
+    Public Safe Function int CaptureCount()
+    {
+        int count = 0;
+        CaptureSymbol current = This.FirstCapture;
+        While (current != null)
+        {
+            count = count + 1;
+            current = current.Next;
+        }
+        Return count;
+    }
+}
+
+Class CaptureSymbol
+{
+    Public string Name;
+    Public TypeSymbol Type;
+    Public ValueSymbol Source;
+    Public ValueSymbol Value;
+    Public int Index;
+    Public CaptureSymbol Next;
+
+    Public Safe Constructor(ValueSymbol source, int index)
+    {
+        This.Name = source.Name;
+        This.Type = source.Type;
+        This.Source = source;
+        This.Value = New ValueSymbol(source.Name, source.Type, false);
+        This.Index = index;
+        This.Next = null;
+    }
 }
 
 Class TypeSubstitution
@@ -155,7 +206,10 @@ Class ValueSymbol
     Public string Name;
     Public TypeSymbol Type;
     Public bool IsParameter;
+    Public string PackageLabels;
+    Public string BlockRecords;
     Public FunctionSymbol CallableFunction;
+    Public CallableElementSymbol FirstCallableElement;
     Public ValueSymbol Next;
 
     Public Safe Constructor(string name, TypeSymbol type, bool isParameter)
@@ -163,7 +217,42 @@ Class ValueSymbol
         This.Name = name;
         This.Type = type;
         This.IsParameter = isParameter;
+        This.PackageLabels = "";
+        This.BlockRecords = "";
         This.CallableFunction = null;
+        This.FirstCallableElement = null;
+        This.Next = null;
+    }
+
+    Public Safe Function void AddCallableElement(int index, FunctionSymbol function)
+    {
+        CallableElementSymbol element = New CallableElementSymbol(index, function);
+        element.Next = This.FirstCallableElement;
+        This.FirstCallableElement = element;
+    }
+
+    Public Safe Function FunctionSymbol CallableElement(int index)
+    {
+        CallableElementSymbol current = This.FirstCallableElement;
+        While (current != null)
+        {
+            If (current.Index == index) Return current.Function;
+            current = current.Next;
+        }
+        Return null;
+    }
+}
+
+Class CallableElementSymbol
+{
+    Public int Index;
+    Public FunctionSymbol Function;
+    Public CallableElementSymbol Next;
+
+    Public Safe Constructor(int index, FunctionSymbol function)
+    {
+        This.Index = index;
+        This.Function = function;
         This.Next = null;
     }
 }

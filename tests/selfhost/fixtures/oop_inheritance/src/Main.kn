@@ -1,0 +1,46 @@
+Unit Tests.Selfhost.OopInheritance;
+
+Get IO.Console;
+
+Abstract Class BaseValue
+{
+    Protected int Value;
+
+    Public Safe Constructor(int value)
+    {
+        This.Value = value;
+    }
+
+    Public Abstract Safe Function int Read();
+
+    Public Virtual Safe Function string Kind()
+    {
+        Return "base";
+    }
+}
+
+Class DerivedValue By BaseValue
+{
+    Public Safe Constructor(int value)
+    {
+        This.Value = value + 1;
+    }
+
+    Public Override Safe Function int Read()
+    {
+        Return This.Value;
+    }
+
+    Public Override Safe Function string Kind()
+    {
+        Return Base.Kind() + ":derived";
+    }
+}
+
+Safe Static Function int Main()
+{
+    BaseValue value = New DerivedValue(4);
+    IO.Console.PrintLine(value.Read());
+    IO.Console.PrintLine(value.Kind());
+    Return 0;
+}

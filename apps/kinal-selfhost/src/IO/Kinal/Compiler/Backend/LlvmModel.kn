@@ -213,6 +213,8 @@ Class LlvmFunctionContext
     Public byte* BreakTarget;
     Public byte* ContinueTarget;
     Public byte* GcFrame;
+    Public byte* RuntimeUntilEnabled;
+    Public byte* RuntimeUntilOrdinal;
 
     Public Safe Constructor(LlvmFunctionBinding binding)
     {
@@ -223,6 +225,8 @@ Class LlvmFunctionContext
         This.BreakTarget = null;
         This.ContinueTarget = null;
         This.GcFrame = null;
+        This.RuntimeUntilEnabled = null;
+        This.RuntimeUntilOrdinal = null;
     }
 
     Public Safe Function void AddVariable(LlvmVariable variable)

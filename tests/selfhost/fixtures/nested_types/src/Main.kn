@@ -1,0 +1,30 @@
+Unit Tests.Selfhost.NestedTypes;
+
+Get IO.Console;
+
+Class Outer
+{
+    Public Interface IValue
+    {
+        Public Abstract Function int Fetch();
+    }
+
+    Public Class Box By Outer.IValue
+    {
+        Public Constructor()
+        {
+        }
+
+        Public Override Function int Fetch()
+        {
+            Return 7;
+        }
+    }
+}
+
+Static Function int Main()
+{
+    Outer.IValue value = New Outer.Box();
+    IO.Console.PrintLine(value.Fetch());
+    Return 0;
+}

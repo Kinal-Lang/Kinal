@@ -24,7 +24,8 @@ Enum ExpressionKind By int
     Switch,
     SwitchCase,
     FunctionLiteral,
-    BlockLiteral
+    BlockLiteral,
+    PackageLiteral
 }
 
 Enum StatementKind By int
@@ -164,6 +165,7 @@ Class StatementNode
     Public int Kind;
     Public string Name;
     Public string TypeName;
+    Public string PackageLabels;
     Public int Line;
     Public int Column;
     Public ExpressionNode Expression;
@@ -180,6 +182,7 @@ Class StatementNode
         This.Kind = kind;
         This.Name = "";
         This.TypeName = "";
+        This.PackageLabels = "";
         This.Line = line;
         This.Column = column;
         This.Expression = null;

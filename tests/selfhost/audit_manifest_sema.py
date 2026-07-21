@@ -6,9 +6,9 @@ import subprocess
 from pathlib import Path
 
 
-def collect_positive_cases(root: Path, platform: str) -> list[tuple[str, list[Path]]]:
+def collect_positive_cases(root: Path, platform: str) -> list[tuple[str, list[Path], bool]]:
     manifest = json.loads((root / "tests" / "manifest.json").read_text(encoding="utf-8"))
-    cases: list[tuple[str, list[Path]]] = []
+    cases: list[tuple[str, list[Path], bool]] = []
     for case in manifest:
         if "expect_error" in case:
             continue
@@ -21,7 +21,7 @@ def collect_positive_cases(root: Path, platform: str) -> list[tuple[str, list[Pa
                 values = [values]
             sources.extend((root / value).resolve() for value in values if value.endswith(".kn"))
         if sources:
-            cases.append((case["name"], sources))
+            cases.append((case["name"], sources, bool(case.get("auto_link"))))
     return cases
 
 
@@ -39,9 +39,10 @@ def main() -> int:
     cases = collect_positive_cases(root, baseline["platform"])
     failures: list[str] = []
     diagnostics: dict[str, str] = {}
-    for name, sources in cases:
+    for name, sources, auto_link in cases:
+        command = "check-source-auto" if auto_link else "check-source"
         result = subprocess.run(
-            [str(compiler), "check-source", *(str(source) for source in sources)],
+            [str(compiler), command, *(str(source) for source in sources)],
             cwd=root,
             text=True,
             capture_output=True,

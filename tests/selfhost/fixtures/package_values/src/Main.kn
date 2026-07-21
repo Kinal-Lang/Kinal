@@ -1,0 +1,48 @@
+Unit Tests.Selfhost.PackageValues;
+
+Get IO.Console;
+
+Const int STATUS_MESSAGE = 1;
+
+Function <int, string> Status()
+{
+    Return <200, "OK">;
+}
+
+Function <int(2), string(2)> Repeated()
+{
+    Return <1, 2, "a", "b">;
+}
+
+Function <int, int> DivMod(int a, int b)
+{
+    Return <a / b, a % b>;
+}
+
+Static Function int Main()
+{
+    Object.Package status<code, message> = Status();
+    IO.Console.PrintLine(status.code);
+    IO.Console.PrintLine(status[0]);
+    IO.Console.PrintLine(status.message);
+    IO.Console.PrintLine(status[STATUS_MESSAGE]);
+
+    Object.Package div<q, r> = DivMod(10, 3);
+    IO.Console.PrintLine(div.q);
+    IO.Console.PrintLine(div.r);
+
+    <int, string> typed = Status();
+    IO.Console.PrintLine(typed[0]);
+
+    Object.Package repeated<one, two, first, second> = Repeated();
+    IO.Console.PrintLine(repeated.two);
+    IO.Console.PrintLine(repeated.second);
+
+    any[] statusItems = [any[]](status);
+    IO.Console.PrintLine(statusItems.Length());
+
+    int[] numbers = [int[]](<1, 2, 3>);
+    IO.Console.PrintLine(numbers.Length());
+    IO.Console.PrintLine(numbers[2]);
+    Return 0;
+}

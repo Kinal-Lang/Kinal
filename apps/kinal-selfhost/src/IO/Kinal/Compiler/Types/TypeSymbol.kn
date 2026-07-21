@@ -19,7 +19,8 @@ Enum TypeKind By int
     NamedType,
     NamespaceType,
     NullType,
-    TypeParameter
+    TypeParameter,
+    PackageType
 }
 
 Class TypeSymbol
@@ -28,7 +29,9 @@ Class TypeSymbol
     Public string Name;
     Public string UnitName;
     Public TypeSymbol ElementType;
+    Public TypeSymbol BaseType;
     Public TypeDecl Declaration;
+    Public SyntaxTree Syntax;
     Public TypeSymbol Next;
 
     Public Safe Constructor(int kind, string name)
@@ -37,7 +40,9 @@ Class TypeSymbol
         This.Name = name;
         This.UnitName = "";
         This.ElementType = null;
+        This.BaseType = null;
         This.Declaration = null;
+        This.Syntax = null;
         This.Next = null;
     }
 

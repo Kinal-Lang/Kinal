@@ -506,7 +506,23 @@ void *name(void *module_handle, void *left, void *right, const char *value_name)
 void *kn_sh_llvm_build_alloca(void *module_handle, void *type, const char *name)
 {
     KnShLlvmModule *state = module_state(module_handle);
-    return state && type ? LLVMBuildAlloca(state->builder, (LLVMTypeRef)type, safe_name(name)) : 0;
+    LLVMBasicBlockRef current;
+    LLVMValueRef function;
+    LLVMBasicBlockRef entry;
+    LLVMValueRef first;
+    LLVMValueRef value;
+    if (!state || !type) return 0;
+    current = LLVMGetInsertBlock(state->builder);
+    if (!current) return 0;
+    function = LLVMGetBasicBlockParent(current);
+    entry = function ? LLVMGetEntryBasicBlock(function) : 0;
+    if (!entry) return 0;
+    first = LLVMGetFirstInstruction(entry);
+    if (first) LLVMPositionBuilderBefore(state->builder, first);
+    else LLVMPositionBuilderAtEnd(state->builder, entry);
+    value = LLVMBuildAlloca(state->builder, (LLVMTypeRef)type, safe_name(name));
+    LLVMPositionBuilderAtEnd(state->builder, current);
+    return value;
 }
 
 void *kn_sh_llvm_build_load(void *module_handle, void *type, void *pointer, const char *name)
@@ -645,6 +661,8 @@ KN_SH_BUILD_CAST(kn_sh_llvm_build_bitcast, LLVMBuildBitCast)
 KN_SH_BUILD_CAST(kn_sh_llvm_build_zext, LLVMBuildZExt)
 KN_SH_BUILD_CAST(kn_sh_llvm_build_sext, LLVMBuildSExt)
 KN_SH_BUILD_CAST(kn_sh_llvm_build_trunc, LLVMBuildTrunc)
+KN_SH_BUILD_CAST(kn_sh_llvm_build_fp_ext, LLVMBuildFPExt)
+KN_SH_BUILD_CAST(kn_sh_llvm_build_fp_trunc, LLVMBuildFPTrunc)
 KN_SH_BUILD_CAST(kn_sh_llvm_build_ptr_to_int, LLVMBuildPtrToInt)
 KN_SH_BUILD_CAST(kn_sh_llvm_build_int_to_ptr, LLVMBuildIntToPtr)
 KN_SH_BUILD_CAST(kn_sh_llvm_build_si_to_fp, LLVMBuildSIToFP)

@@ -89,6 +89,15 @@ const char *kn_sh_rt_char_to_string(uint8_t value)
     return result;
 }
 
+const char *kn_sh_rt_any_to_string(int64_t tag, int64_t payload)
+{
+    if (tag == 1) return kn_sh_rt_i64_to_string(payload);
+    if (tag == 3) return payload ? "true" : "false";
+    if (tag == 4) return kn_sh_rt_char_to_string((uint8_t)payload);
+    if (tag == 5) return (const char *)(uintptr_t)payload;
+    return "null";
+}
+
 int64_t kn_sh_rt_string_to_i64(const char *text)
 {
     int negative = 0;

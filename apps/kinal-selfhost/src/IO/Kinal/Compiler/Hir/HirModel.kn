@@ -25,7 +25,8 @@ Enum HirExpressionKind By int
     DictLiteral,
     DictEntry,
     Switch,
-    SwitchCase
+    SwitchCase,
+    PackageLiteral
 }
 
 Enum HirCallKind By int
