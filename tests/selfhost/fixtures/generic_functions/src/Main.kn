@@ -5,9 +5,9 @@ Get Tests.Selfhost.GenericLibrary;
 
 Trusted Static Function int Main()
 {
-    int number = Forward< int>(42);
-    string text = Forward< string>("nest");
-    int first = First< int, string>(3, "ignored");
+    int number = Tests.Selfhost.GenericLibrary.Forward< int>(42);
+    string text = Tests.Selfhost.GenericLibrary.Forward< string>("nest");
+    int first = Tests.Selfhost.GenericLibrary.First< int, string>(3, "ignored");
     IO.Console.PrintLine(number);
     IO.Console.PrintLine(text);
     IO.Console.PrintLine(first);

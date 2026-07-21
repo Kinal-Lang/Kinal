@@ -166,6 +166,7 @@ Class StatementNode
     Public string Name;
     Public string TypeName;
     Public string PackageLabels;
+    Public bool IsUnsafe;
     Public int Line;
     Public int Column;
     Public ExpressionNode Expression;
@@ -183,6 +184,7 @@ Class StatementNode
         This.Name = "";
         This.TypeName = "";
         This.PackageLabels = "";
+        This.IsUnsafe = false;
         This.Line = line;
         This.Column = column;
         This.Expression = null;

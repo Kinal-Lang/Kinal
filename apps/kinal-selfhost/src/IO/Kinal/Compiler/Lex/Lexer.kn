@@ -408,7 +408,7 @@ Safe Function list Tokenize(SourceFile source, list diagnostics)
         }
         ElseIf (IO.Kinal.Compiler.Lex.Token.Kind(token) == [int](TokenKind.BadCharacter))
         {
-            IO.Kinal.Compiler.Core.Diagnostics.Add(diagnostics, source, "Lexer", "Invalid character literal",
+            IO.Kinal.Compiler.Core.Diagnostics.Add(diagnostics, source, "Parser", "Invalid Character Literal",
                 IO.Kinal.Compiler.Lex.Token.Text(token), IO.Kinal.Compiler.Lex.Token.Line(token),
                 IO.Kinal.Compiler.Lex.Token.Column(token), 1);
         }

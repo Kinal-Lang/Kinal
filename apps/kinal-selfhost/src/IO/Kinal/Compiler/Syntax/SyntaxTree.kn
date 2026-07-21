@@ -9,6 +9,8 @@ Class ImportDecl
     Public string Target;
     Public int Line;
     Public int Column;
+    // 0=Get, 1=Get alias, 2=selective Get, 3=Alias declaration.
+    Public int Kind;
     Public ImportDecl Next;
 
     Public Safe Constructor(string name, string target, int line, int column)
@@ -17,6 +19,21 @@ Class ImportDecl
         This.Target = target;
         This.Line = line;
         This.Column = column;
+        This.Kind = 0;
+        This.Next = null;
+    }
+}
+
+Class MetaDecl
+{
+    Public string Name;
+    Public bool IsRepeatable;
+    Public MetaDecl Next;
+
+    Public Safe Constructor(string name)
+    {
+        This.Name = name;
+        This.IsRepeatable = false;
         This.Next = null;
     }
 }
@@ -337,6 +354,8 @@ Class SyntaxTree
     Public string UnitName;
     Public ImportDecl FirstImport;
     Public ImportDecl LastImport;
+    Public MetaDecl FirstMeta;
+    Public MetaDecl LastMeta;
     Public FieldDecl FirstGlobal;
     Public FieldDecl LastGlobal;
     Public FunctionDecl FirstFunction;
@@ -350,6 +369,8 @@ Class SyntaxTree
         This.UnitName = unitName;
         This.FirstImport = null;
         This.LastImport = null;
+        This.FirstMeta = null;
+        This.LastMeta = null;
         This.FirstGlobal = null;
         This.LastGlobal = null;
         This.FirstFunction = null;
@@ -383,6 +404,20 @@ Class SyntaxTree
         {
             This.LastImport.Next = value;
             This.LastImport = value;
+        }
+    }
+
+    Public Safe Function void AddMeta(MetaDecl value)
+    {
+        If (This.FirstMeta == null)
+        {
+            This.FirstMeta = value;
+            This.LastMeta = value;
+        }
+        Else
+        {
+            This.LastMeta.Next = value;
+            This.LastMeta = value;
         }
     }
 

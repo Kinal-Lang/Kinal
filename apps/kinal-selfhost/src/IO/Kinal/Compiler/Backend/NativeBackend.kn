@@ -2761,6 +2761,17 @@ Class NativeBackend
         int operatorKind = expression.Operator;
         If (operatorKind == [int](TokenKind.Ampersand))
         {
+            If (expression.Left != null &&
+                expression.Left.Kind == [int](HirExpressionKind.FunctionReference))
+            {
+                LlvmFunctionBinding function = This.FindFunctionBinding(expression.Left.Function);
+                If (function == null)
+                {
+                    This.Fail("address-of function binding is missing");
+                    Return This.DefaultValue(expression.Type);
+                }
+                Return New LlvmValue(function.Function, expression.Type);
+            }
             byte* address = This.EmitAddress(context, expression.Left);
             If (address == null) This.Fail("address-of operand has no address");
             Return New LlvmValue(address, expression.Type);
@@ -2953,6 +2964,9 @@ Class NativeBackend
         If (expression.Kind == [int](HirExpressionKind.Constant))
         {
             int syntaxKind = expression.Syntax.Kind;
+            If (expression.Target == "__target_string")
+                Return New LlvmValue(This.Module.GlobalString(expression.Name,
+                    This.Unique("target_text")), expression.Type);
             int recordOrdinal = This.BlockRecordOrdinal(context, expression.Target);
             If (recordOrdinal >= 0)
                 Return New LlvmValue(This.Module.ConstInt(This.Module.IntType(64), recordOrdinal),
@@ -3048,6 +3062,20 @@ Class NativeBackend
                 expression.Type.Kind == [int](TypeKind.ArrayType))
                 Return This.EmitPackageArrayCast(context,
                     This.EmitExpression(context, expression.Left), expression.Type);
+            If (expression.Function != null)
+            {
+                LlvmFunctionBinding customCast = This.FindFunctionBinding(expression.Function);
+                If (customCast == null)
+                {
+                    This.Fail("custom cast binding is missing: " + expression.Function.QualifiedName());
+                    Return This.DefaultValue(expression.Type);
+                }
+                HirExpression call = New HirExpression([int](HirExpressionKind.Call),
+                    expression.Syntax, expression.Type);
+                call.Function = expression.Function;
+                call.AddArgument(expression.Left);
+                Return This.EmitFunctionCall(context, customCast, call, null);
+            }
             Return This.CastValue(This.EmitExpression(context, expression.Left), expression.Type);
         }
         If (expression.Kind == [int](HirExpressionKind.Call))

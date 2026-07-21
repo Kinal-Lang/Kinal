@@ -876,6 +876,35 @@ def main() -> int:
         "coverage": manifest_sema_data["coverage"],
     })
 
+    manifest_diagnostics_report = out_dir / "manifest-diagnostics.json"
+    manifest_diagnostics = run(
+        [
+            sys.executable,
+            str(root / "tests" / "selfhost" / "audit_manifest_diagnostics.py"),
+            "--compiler",
+            str(compiler),
+            "--root",
+            str(root),
+            "--baseline",
+            str(root / "tests" / "selfhost" / "manifest_diagnostics_baseline.json"),
+            "--output",
+            str(manifest_diagnostics_report),
+        ],
+        cwd=root,
+    )
+    require(manifest_diagnostics.returncode == 0,
+            "stage1 manifest diagnostic audit failed", manifest_diagnostics)
+    manifest_diagnostics_data = json.loads(
+        manifest_diagnostics_report.read_text(encoding="utf-8")
+    )
+    results.append({
+        "name": "manifest_diagnostic_coverage",
+        "ok": True,
+        "cases": manifest_diagnostics_data["cases"],
+        "passed": manifest_diagnostics_data["passed"],
+        "coverage": manifest_diagnostics_data["coverage"],
+    })
+
     (out_dir / "results.json").write_text(json.dumps(results, indent=2) + "\n", encoding="utf-8")
     print(f"[OK] selfhost tests: {len(results)} groups")
     return 0
