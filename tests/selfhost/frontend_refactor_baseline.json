@@ -1,0 +1,95 @@
+{
+  "format": "kinal-selfhost-frontend-refactor-baseline-v1",
+  "date": "2026-07-22",
+  "commit": "655795e9f3fa56ef03c75a43fa91cec94074802a",
+  "windows_manifest": {
+    "total": 225,
+    "positive": {
+      "passed": 156,
+      "total": 156
+    },
+    "negative": {
+      "passed": 69,
+      "total": 69
+    },
+    "parser_sources": {
+      "passed": 164,
+      "total": 164
+    },
+    "selfhost_test_groups": {
+      "passed": 40,
+      "total": 40
+    }
+  },
+  "bootstrap": {
+    "chain": "C stage0 -> Kinal stage1 -> Kinal stage2 -> Kinal stage3",
+    "completion": 100.0,
+    "stage1_sha256": "3c9cbc17b1ad8033e462a3f24e6dfc37e44a47a9ad895235250a181b92f815ce",
+    "stage2_sha256": "c9149e4b768453184366dc909e79316effb3caa5b47e0cfe6eca38d2b41a4dba",
+    "stage3_sha256": "c9149e4b768453184366dc909e79316effb3caa5b47e0cfe6eca38d2b41a4dba",
+    "stage2_stage3_executable_identical": true,
+    "frontend_summary_sha256": {
+      "project_ast": "e9d1bca1351ecf5be990aef30771a9ce589b0c04a87d600862cb3a076d032532",
+      "check": "95dda498c3543c41c8659467b82f94af8a8e49a2890f800a2d941756953c237e",
+      "symbols": "0a46154acc316644d06c72395ec31f96adfb8e609123035376157337234ff078"
+    },
+    "stage1_ir_sha256": "6ec78f7fac9c04c700baae1b75efe5031e778df2cc3eff6d1ed713694dd473ca",
+    "stage2_ir_sha256": "6ec78f7fac9c04c700baae1b75efe5031e778df2cc3eff6d1ed713694dd473ca",
+    "stage3_ir_sha256": "6ec78f7fac9c04c700baae1b75efe5031e778df2cc3eff6d1ed713694dd473ca",
+    "all_stage_ir_identical": true
+  },
+  "temporary_patterns": {
+    "token_kind_int_cast_occurrences": {
+      "lexer": 138,
+      "syntax": 563,
+      "total": 701,
+      "pattern": "[int](TokenKind.*)"
+    },
+    "lexer_numeric_character_comparisons": {
+      "total": 119,
+      "ascii_or_control_magic": 118,
+      "intentional_non_ascii_threshold": 1,
+      "allowed_threshold": "[int](value) >= 128"
+    }
+  },
+  "large_if_dispatches": [
+    { "file": "Lex/Lexer.kn", "function": "KeywordKind", "line": 95, "if_count": 78 },
+    { "file": "Lex/Lexer.kn", "function": "ReadSymbol", "line": 316, "if_count": 40 },
+    { "file": "Lex/Lexer.kn", "function": "Tokenize", "line": 367, "if_count": 8 },
+    { "file": "Syntax/Parser.kn", "function": "ParseStatement", "line": 360, "if_count": 13 },
+    { "file": "Syntax/Parser.kn", "function": "ValidatePrepared", "line": 768, "if_count": 24 },
+    { "file": "Syntax/Parser.kn", "function": "BinaryPrecedence", "line": 878, "if_count": 11 },
+    { "file": "Syntax/Parser.kn", "function": "ParsePrimary", "line": 1262, "if_count": 20 },
+    { "file": "Syntax/Parser.kn", "function": "FindDeclarationName", "line": 1491, "if_count": 14 },
+    { "file": "Syntax/Parser.kn", "function": "ParseAstStatement", "line": 1786, "if_count": 35 },
+    { "file": "Syntax/Parser.kn", "function": "ReadTypeMembers", "line": 2029, "if_count": 25 },
+    { "file": "Syntax/Parser.kn", "function": "Build", "line": 2295, "if_count": 24 }
+  ],
+  "known_c_stage0_differences": [
+    "Unsafe Alias matching walks rules from oldest to newest instead of latest-first.",
+    "PrepareTokens returns only tokens, so Unsafe Alias state is lost and Unit cannot be rejected with Invalid Unit With Unsafe Alias.",
+    "Normal and triple Unsafe Alias source/target token-category validation is incomplete.",
+    "Parameter scanning does not preserve nested comma depth in every function/local/anonymous-function path.",
+    "Validator and AST builder duplicate grammar and can diverge.",
+    "Unknown top-level tokens, unknown type members, and some primary-expression failures can be silently advanced or represented as Missing.",
+    "Panic-mode synchronization is not equivalent to C stage0.",
+    "The C stage0 statement recursion limit of 192 is not implemented.",
+    "Meta, Attribute, custom Cast, local-function, package-literal, Block-literal, and anonymous-function scope behavior is only partially converged.",
+    "ReadString consumes a character after a backslash at newline or carriage return where C stage0 stops before consuming it.",
+    "Unknown-character-to-EOF behavior is shared with C stage0 and must remain locked by differential tests unless both implementations change together."
+  ],
+  "measurement": {
+    "token_kind_scope": [
+      "apps/kinal-selfhost/src/IO/Kinal/Compiler/Lex",
+      "apps/kinal-selfhost/src/IO/Kinal/Compiler/Syntax"
+    ],
+    "lexer_character_comparison_rule": "Count numeric comparison operands attached to code/current/next/value/Current(state)/Peek(state); exclude positions, lengths, counters, and token enum encodings.",
+    "generated_evidence": [
+      "out/selfhost/tests/results.json",
+      "out/selfhost/bootstrap-report.json",
+      "out/selfhost/stage1/self.ll",
+      "out/selfhost/stage2/self.ll",
+      "out/selfhost/stage3/self.ll"
+    ]
+  }
+}
