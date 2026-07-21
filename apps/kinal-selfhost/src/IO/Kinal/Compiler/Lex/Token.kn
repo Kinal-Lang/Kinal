@@ -8,10 +8,10 @@ Safe Function string Separator()
     Return [string]([char](31));
 }
 
-Safe Function string Encode(int kind, string text, int line, int column)
+Safe Function string Encode(TokenKind kind, string text, int line, int column)
 {
     string safeText = IO.Text.Replace(text, Separator(), " ");
-    Return [string](kind) + Separator() + [string](line) + Separator() +
+    Return [string]([int](kind)) + Separator() + [string](line) + Separator() +
            [string](column) + Separator() + safeText;
 }
 
@@ -22,11 +22,11 @@ Safe Function string Part(string token, int index)
     Return [string](parts.Fetch(index));
 }
 
-Safe Function int Kind(string token)
+Safe Function TokenKind Kind(string token)
 {
     string value = Part(token, 0);
-    If (IO.Text.IsEmpty(value)) Return [int](TokenKind.Eof);
-    Return [int](value);
+    If (IO.Text.IsEmpty(value)) Return TokenKind.Eof;
+    Return [TokenKind]([int](value));
 }
 
 Safe Function int Line(string token)
@@ -94,7 +94,7 @@ Safe Function string HexText(string text)
 
 Safe Function string MachineDump(string token)
 {
-    Return [string](Kind(token)) + [string]([char](9)) +
+    Return [string]([int](Kind(token))) + [string]([char](9)) +
            [string](Line(token)) + [string]([char](9)) +
            [string](Column(token)) + [string]([char](9)) +
            HexText(Text(token));

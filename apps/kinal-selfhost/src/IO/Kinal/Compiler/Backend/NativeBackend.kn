@@ -156,7 +156,7 @@ Class NativeBackend
     Public Safe Function bool IsEnum(TypeSymbol type)
     {
         Return type != null && type.Declaration != null &&
-            type.Declaration.Kind == [int](TokenKind.KwEnum);
+            type.Declaration.Kind == TokenKind.KwEnum;
     }
 
     Public Safe Function bool IsReferenceType(TypeSymbol type)
@@ -390,7 +390,7 @@ Class NativeBackend
                     This.ExpandFormattedString(expression.Text) : This.DecodeString(expression.Text),
                 This.Unique("global_text"));
         If (expression.Kind == [int](ExpressionKind.Unary) &&
-            expression.Operator == [int](TokenKind.Minus) && expression.Left != null &&
+            expression.Operator == TokenKind.Minus && expression.Left != null &&
             expression.Left.Kind == [int](ExpressionKind.Number))
         {
             If (symbol.Value.Type.Kind == [int](TypeKind.FloatType))
@@ -2552,14 +2552,14 @@ Class NativeBackend
 
     Public Trusted Function LlvmValue EmitBinary(LlvmFunctionContext context, HirExpression expression)
     {
-        int operatorKind = expression.Operator;
-        If (operatorKind == [int](TokenKind.AndAnd)) Return This.EmitShortCircuit(context, expression, true);
-        If (operatorKind == [int](TokenKind.OrOr)) Return This.EmitShortCircuit(context, expression, false);
+        TokenKind operatorKind = expression.Operator;
+        If (operatorKind == TokenKind.AndAnd) Return This.EmitShortCircuit(context, expression, true);
+        If (operatorKind == TokenKind.OrOr) Return This.EmitShortCircuit(context, expression, false);
 
-        bool assignment = operatorKind == [int](TokenKind.Assign) ||
-            operatorKind == [int](TokenKind.PlusAssign) || operatorKind == [int](TokenKind.MinusAssign) ||
-            operatorKind == [int](TokenKind.StarAssign) || operatorKind == [int](TokenKind.SlashAssign) ||
-            operatorKind == [int](TokenKind.PercentAssign);
+        bool assignment = operatorKind == TokenKind.Assign ||
+            operatorKind == TokenKind.PlusAssign || operatorKind == TokenKind.MinusAssign ||
+            operatorKind == TokenKind.StarAssign || operatorKind == TokenKind.SlashAssign ||
+            operatorKind == TokenKind.PercentAssign;
         If (assignment)
         {
             bool packageElement = expression.Left.Kind == [int](HirExpressionKind.Index) &&
@@ -2585,7 +2585,7 @@ Class NativeBackend
                 }
             }
             Else right = This.CastValue(This.EmitExpression(context, expression.Right), expression.Left.Type);
-            If (operatorKind != [int](TokenKind.Assign))
+            If (operatorKind != TokenKind.Assign)
             {
                 LlvmValue left = null;
                 If (packageElement)
@@ -2597,24 +2597,24 @@ Class NativeBackend
                 }
                 Else left = New LlvmValue(This.Module.Load(This.TypeHandle(expression.Left.Type), address,
                     This.Unique("assignment_left")), expression.Left.Type);
-                If (operatorKind == [int](TokenKind.PlusAssign) && left.Type.Kind == [int](TypeKind.StringType))
+                If (operatorKind == TokenKind.PlusAssign && left.Type.Kind == [int](TypeKind.StringType))
                     right = New LlvmValue(This.CallRuntime("kn_sh_rt_string_concat",
                         This.Types2(left.Handle, This.CastValue(right, left.Type).Handle), This.Unique("concat")), left.Type);
-                ElseIf (left.Type.Kind == [int](TypeKind.FloatType) && operatorKind == [int](TokenKind.PlusAssign))
+                ElseIf (left.Type.Kind == [int](TypeKind.FloatType) && operatorKind == TokenKind.PlusAssign)
                     right = New LlvmValue(This.Module.FloatAdd(left.Handle, right.Handle, This.Unique("float_add")), left.Type);
-                ElseIf (left.Type.Kind == [int](TypeKind.FloatType) && operatorKind == [int](TokenKind.MinusAssign))
+                ElseIf (left.Type.Kind == [int](TypeKind.FloatType) && operatorKind == TokenKind.MinusAssign)
                     right = New LlvmValue(This.Module.FloatSubtract(left.Handle, right.Handle, This.Unique("float_sub")), left.Type);
-                ElseIf (left.Type.Kind == [int](TypeKind.FloatType) && operatorKind == [int](TokenKind.StarAssign))
+                ElseIf (left.Type.Kind == [int](TypeKind.FloatType) && operatorKind == TokenKind.StarAssign)
                     right = New LlvmValue(This.Module.FloatMultiply(left.Handle, right.Handle, This.Unique("float_mul")), left.Type);
-                ElseIf (left.Type.Kind == [int](TypeKind.FloatType) && operatorKind == [int](TokenKind.SlashAssign))
+                ElseIf (left.Type.Kind == [int](TypeKind.FloatType) && operatorKind == TokenKind.SlashAssign)
                     right = New LlvmValue(This.Module.FloatDivide(left.Handle, right.Handle, This.Unique("float_div")), left.Type);
-                ElseIf (operatorKind == [int](TokenKind.PlusAssign))
+                ElseIf (operatorKind == TokenKind.PlusAssign)
                     right = New LlvmValue(This.Module.Add(left.Handle, right.Handle, This.Unique("add")), left.Type);
-                ElseIf (operatorKind == [int](TokenKind.MinusAssign))
+                ElseIf (operatorKind == TokenKind.MinusAssign)
                     right = New LlvmValue(This.Module.Subtract(left.Handle, right.Handle, This.Unique("sub")), left.Type);
-                ElseIf (operatorKind == [int](TokenKind.StarAssign))
+                ElseIf (operatorKind == TokenKind.StarAssign)
                     right = New LlvmValue(This.Module.Multiply(left.Handle, right.Handle, This.Unique("mul")), left.Type);
-                ElseIf (operatorKind == [int](TokenKind.SlashAssign))
+                ElseIf (operatorKind == TokenKind.SlashAssign)
                 {
                     byte* quotient = This.IsUnsignedInteger(left.Type) ?
                         This.Module.UnsignedDivide(left.Handle, right.Handle, This.Unique("udiv")) :
@@ -2640,7 +2640,7 @@ Class NativeBackend
 
         LlvmValue left = This.EmitExpression(context, expression.Left);
         LlvmValue right = This.EmitExpression(context, expression.Right);
-        If (operatorKind == [int](TokenKind.Plus) &&
+        If (operatorKind == TokenKind.Plus &&
             (left.Type.Kind == [int](TypeKind.StringType) || right.Type.Kind == [int](TypeKind.StringType)))
         {
             left = This.CastValue(left, This.Semantics.Primitive("string"));
@@ -2649,13 +2649,13 @@ Class NativeBackend
                 This.Types2(left.Handle, right.Handle), This.Unique("concat")), This.Semantics.Primitive("string"));
         }
 
-        bool equality = operatorKind == [int](TokenKind.Equal) || operatorKind == [int](TokenKind.NotEqual);
+        bool equality = operatorKind == TokenKind.Equal || operatorKind == TokenKind.NotEqual;
         If (equality && left.Type.Kind == [int](TypeKind.StringType))
         {
             right = This.CastValue(right, left.Type);
             byte* equal = This.RuntimeBool(This.CallRuntime("kn_sh_rt_string_equal",
                 This.Types2(left.Handle, right.Handle), This.Unique("string_equal_c")));
-            If (operatorKind == [int](TokenKind.NotEqual)) equal = This.Module.Not(equal, This.Unique("string_not_equal"));
+            If (operatorKind == TokenKind.NotEqual) equal = This.Module.Not(equal, This.Unique("string_not_equal"));
             Return New LlvmValue(equal, This.Semantics.Primitive("bool"));
         }
         If (equality && (This.IsReferenceType(left.Type) || left.Type.Kind == [int](TypeKind.NullType) ||
@@ -2664,17 +2664,17 @@ Class NativeBackend
             TypeSymbol comparisonType = left.Type.Kind == [int](TypeKind.NullType) ? right.Type : left.Type;
             left = This.CastValue(left, comparisonType);
             right = This.CastValue(right, comparisonType);
-            int predicate = operatorKind == [int](TokenKind.Equal) ?
+            int predicate = operatorKind == TokenKind.Equal ?
                 [int](LlvmIntPredicate.Equal) : [int](LlvmIntPredicate.NotEqual);
             Return New LlvmValue(This.Module.Compare(predicate, left.Handle, right.Handle, This.Unique("ref_compare")),
                 This.Semantics.Primitive("bool"));
         }
 
         If (left.Type.Kind == [int](TypeKind.PointerType) &&
-            (operatorKind == [int](TokenKind.Plus) || operatorKind == [int](TokenKind.Minus)))
+            (operatorKind == TokenKind.Plus || operatorKind == TokenKind.Minus))
         {
             right = This.CastValue(right, This.Semantics.Primitive("isize"));
-            byte* offset = operatorKind == [int](TokenKind.Minus) ?
+            byte* offset = operatorKind == TokenKind.Minus ?
                 This.Module.Negate(right.Handle, This.Unique("pointer_negative_offset")) : right.Handle;
             Return New LlvmValue(This.Module.Gep(This.TypeHandle(left.Type.ElementType), left.Handle,
                 This.Types1(offset), true, This.Unique("pointer_offset")), left.Type);
@@ -2684,57 +2684,57 @@ Class NativeBackend
         right = This.CastValue(right, operandType);
         If (operandType.Kind == [int](TypeKind.FloatType))
         {
-            If (operatorKind == [int](TokenKind.Plus))
+            If (operatorKind == TokenKind.Plus)
                 Return New LlvmValue(This.Module.FloatAdd(left.Handle, right.Handle, This.Unique("float_add")), expression.Type);
-            If (operatorKind == [int](TokenKind.Minus))
+            If (operatorKind == TokenKind.Minus)
                 Return New LlvmValue(This.Module.FloatSubtract(left.Handle, right.Handle, This.Unique("float_sub")), expression.Type);
-            If (operatorKind == [int](TokenKind.Star))
+            If (operatorKind == TokenKind.Star)
                 Return New LlvmValue(This.Module.FloatMultiply(left.Handle, right.Handle, This.Unique("float_mul")), expression.Type);
-            If (operatorKind == [int](TokenKind.Slash))
+            If (operatorKind == TokenKind.Slash)
                 Return New LlvmValue(This.Module.FloatDivide(left.Handle, right.Handle, This.Unique("float_div")), expression.Type);
             int floatPredicate = [int](LlvmFloatPredicate.OrderedEqual);
-            If (operatorKind == [int](TokenKind.NotEqual))
+            If (operatorKind == TokenKind.NotEqual)
                 floatPredicate = [int](LlvmFloatPredicate.OrderedNotEqual);
-            ElseIf (operatorKind == [int](TokenKind.Less))
+            ElseIf (operatorKind == TokenKind.Less)
                 floatPredicate = [int](LlvmFloatPredicate.OrderedLess);
-            ElseIf (operatorKind == [int](TokenKind.LessEqual))
+            ElseIf (operatorKind == TokenKind.LessEqual)
                 floatPredicate = [int](LlvmFloatPredicate.OrderedLessEqual);
-            ElseIf (operatorKind == [int](TokenKind.Greater))
+            ElseIf (operatorKind == TokenKind.Greater)
                 floatPredicate = [int](LlvmFloatPredicate.OrderedGreater);
-            ElseIf (operatorKind == [int](TokenKind.GreaterEqual))
+            ElseIf (operatorKind == TokenKind.GreaterEqual)
                 floatPredicate = [int](LlvmFloatPredicate.OrderedGreaterEqual);
             Return New LlvmValue(This.Module.FloatCompare(floatPredicate, left.Handle, right.Handle,
                 This.Unique("float_compare")), This.Semantics.Primitive("bool"));
         }
-        If (operatorKind == [int](TokenKind.Plus))
+        If (operatorKind == TokenKind.Plus)
             Return New LlvmValue(This.Module.Add(left.Handle, right.Handle, This.Unique("add")), expression.Type);
-        If (operatorKind == [int](TokenKind.Minus))
+        If (operatorKind == TokenKind.Minus)
             Return New LlvmValue(This.Module.Subtract(left.Handle, right.Handle, This.Unique("sub")), expression.Type);
-        If (operatorKind == [int](TokenKind.Star))
+        If (operatorKind == TokenKind.Star)
             Return New LlvmValue(This.Module.Multiply(left.Handle, right.Handle, This.Unique("mul")), expression.Type);
-        If (operatorKind == [int](TokenKind.Slash))
+        If (operatorKind == TokenKind.Slash)
         {
             byte* quotient = This.IsUnsignedInteger(operandType) ?
                 This.Module.UnsignedDivide(left.Handle, right.Handle, This.Unique("udiv")) :
                 This.Module.SignedDivide(left.Handle, right.Handle, This.Unique("div"));
             Return New LlvmValue(quotient, expression.Type);
         }
-        If (operatorKind == [int](TokenKind.Percent))
+        If (operatorKind == TokenKind.Percent)
         {
             byte* remainder = This.IsUnsignedInteger(operandType) ?
                 This.Module.UnsignedRemainder(left.Handle, right.Handle, This.Unique("urem")) :
                 This.Module.SignedRemainder(left.Handle, right.Handle, This.Unique("rem"));
             Return New LlvmValue(remainder, expression.Type);
         }
-        If (operatorKind == [int](TokenKind.Ampersand))
+        If (operatorKind == TokenKind.Ampersand)
             Return New LlvmValue(This.Module.And(left.Handle, right.Handle, This.Unique("and")), expression.Type);
-        If (operatorKind == [int](TokenKind.BitOr))
+        If (operatorKind == TokenKind.BitOr)
             Return New LlvmValue(This.Module.Or(left.Handle, right.Handle, This.Unique("or")), expression.Type);
-        If (operatorKind == [int](TokenKind.Xor))
+        If (operatorKind == TokenKind.Xor)
             Return New LlvmValue(This.Module.Xor(left.Handle, right.Handle, This.Unique("xor")), expression.Type);
-        If (operatorKind == [int](TokenKind.ShiftLeft))
+        If (operatorKind == TokenKind.ShiftLeft)
             Return New LlvmValue(This.Module.ShiftLeft(left.Handle, right.Handle, This.Unique("shl")), expression.Type);
-        If (operatorKind == [int](TokenKind.ShiftRight))
+        If (operatorKind == TokenKind.ShiftRight)
         {
             byte* shifted = This.IsUnsignedInteger(operandType) ?
                 This.Module.LogicalShiftRight(left.Handle, right.Handle, This.Unique("lshr")) :
@@ -2743,14 +2743,14 @@ Class NativeBackend
         }
 
         int predicate = [int](LlvmIntPredicate.Equal);
-        If (operatorKind == [int](TokenKind.NotEqual)) predicate = [int](LlvmIntPredicate.NotEqual);
-        ElseIf (operatorKind == [int](TokenKind.Less)) predicate = This.IsUnsignedInteger(operandType) ?
+        If (operatorKind == TokenKind.NotEqual) predicate = [int](LlvmIntPredicate.NotEqual);
+        ElseIf (operatorKind == TokenKind.Less) predicate = This.IsUnsignedInteger(operandType) ?
             [int](LlvmIntPredicate.UnsignedLess) : [int](LlvmIntPredicate.SignedLess);
-        ElseIf (operatorKind == [int](TokenKind.LessEqual)) predicate = This.IsUnsignedInteger(operandType) ?
+        ElseIf (operatorKind == TokenKind.LessEqual) predicate = This.IsUnsignedInteger(operandType) ?
             [int](LlvmIntPredicate.UnsignedLessEqual) : [int](LlvmIntPredicate.SignedLessEqual);
-        ElseIf (operatorKind == [int](TokenKind.Greater)) predicate = This.IsUnsignedInteger(operandType) ?
+        ElseIf (operatorKind == TokenKind.Greater) predicate = This.IsUnsignedInteger(operandType) ?
             [int](LlvmIntPredicate.UnsignedGreater) : [int](LlvmIntPredicate.SignedGreater);
-        ElseIf (operatorKind == [int](TokenKind.GreaterEqual)) predicate = This.IsUnsignedInteger(operandType) ?
+        ElseIf (operatorKind == TokenKind.GreaterEqual) predicate = This.IsUnsignedInteger(operandType) ?
             [int](LlvmIntPredicate.UnsignedGreaterEqual) : [int](LlvmIntPredicate.SignedGreaterEqual);
         Return New LlvmValue(This.Module.Compare(predicate, left.Handle, right.Handle, This.Unique("compare")),
             This.Semantics.Primitive("bool"));
@@ -2758,8 +2758,8 @@ Class NativeBackend
 
     Public Trusted Function LlvmValue EmitUnary(LlvmFunctionContext context, HirExpression expression)
     {
-        int operatorKind = expression.Operator;
-        If (operatorKind == [int](TokenKind.Ampersand))
+        TokenKind operatorKind = expression.Operator;
+        If (operatorKind == TokenKind.Ampersand)
         {
             If (expression.Left != null &&
                 expression.Left.Kind == [int](HirExpressionKind.FunctionReference))
@@ -2777,22 +2777,22 @@ Class NativeBackend
             Return New LlvmValue(address, expression.Type);
         }
         LlvmValue operand = This.EmitExpression(context, expression.Left);
-        If (operatorKind == [int](TokenKind.Star))
+        If (operatorKind == TokenKind.Star)
             Return New LlvmValue(This.Module.Load(This.TypeHandle(expression.Type), operand.Handle,
                 This.Unique("dereference")), expression.Type);
-        If (operatorKind == [int](TokenKind.Not))
+        If (operatorKind == TokenKind.Not)
             Return New LlvmValue(This.Module.Not(operand.Handle, This.Unique("not")), expression.Type);
-        If (operatorKind == [int](TokenKind.Minus))
+        If (operatorKind == TokenKind.Minus)
             Return New LlvmValue(operand.Type.Kind == [int](TypeKind.FloatType) ?
                 This.Module.FloatNegate(operand.Handle, This.Unique("float_negate")) :
                 This.Module.Negate(operand.Handle, This.Unique("negate")), expression.Type);
-        If (operatorKind == [int](TokenKind.Tilde))
+        If (operatorKind == TokenKind.Tilde)
             Return New LlvmValue(This.Module.Not(operand.Handle, This.Unique("bit_not")), expression.Type);
-        If (operatorKind == [int](TokenKind.PlusPlus) || operatorKind == [int](TokenKind.MinusMinus))
+        If (operatorKind == TokenKind.PlusPlus || operatorKind == TokenKind.MinusMinus)
         {
             byte* address = This.EmitAddress(context, expression.Left);
             byte* one = This.Module.ConstInt(This.TypeHandle(operand.Type), 1);
-            byte* next = operatorKind == [int](TokenKind.PlusPlus) ?
+            byte* next = operatorKind == TokenKind.PlusPlus ?
                 This.Module.Add(operand.Handle, one, This.Unique("increment")) :
                 This.Module.Subtract(operand.Handle, one, This.Unique("decrement"));
             If (address != null) This.Module.Store(next, address);

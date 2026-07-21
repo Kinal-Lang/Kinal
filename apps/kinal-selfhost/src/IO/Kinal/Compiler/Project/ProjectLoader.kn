@@ -29,7 +29,7 @@ Class ProjectReader
         Return [string](This.Tokens.Fetch(This.Position));
     }
 
-    Public Safe Function int Kind()
+    Public Safe Function TokenKind Kind()
     {
         Return IO.Kinal.Compiler.Lex.Token.Kind(This.RawToken());
     }
@@ -41,7 +41,7 @@ Class ProjectReader
 
     Public Safe Function bool AtEnd()
     {
-        Return This.Kind() == [int](TokenKind.Eof);
+        Return This.Kind() == TokenKind.Eof;
     }
 
     Public Safe Function void Advance()
@@ -49,7 +49,7 @@ Class ProjectReader
         If (This.Position < This.Tokens.Count()) This.Position = This.Position + 1;
     }
 
-    Public Safe Function bool MatchKind(int kind)
+    Public Safe Function bool MatchKind(TokenKind kind)
     {
         If (This.Kind() != kind) Return false;
         This.Advance();
@@ -72,7 +72,7 @@ Class ProjectReader
             IO.Kinal.Compiler.Lex.Token.Line(token), IO.Kinal.Compiler.Lex.Token.Column(token), length);
     }
 
-    Public Safe Function bool ExpectKind(int kind, string title, string detail)
+    Public Safe Function bool ExpectKind(TokenKind kind, string title, string detail)
     {
         If (This.MatchKind(kind)) Return true;
         This.Report(title, detail);
@@ -112,7 +112,7 @@ Class ProjectReader
     Public Safe Function string ReadScalar()
     {
         string value = This.Text();
-        If (This.Kind() == [int](TokenKind.String)) value = This.DecodeString(value);
+        If (This.Kind() == TokenKind.String) value = This.DecodeString(value);
         This.Advance();
         Return value;
     }
@@ -120,16 +120,16 @@ Class ProjectReader
     Public Safe Function list ReadList()
     {
         list values = list.Create();
-        If (!This.ExpectKind([int](TokenKind.LeftBracket), "Expected '['", "list value must start with '['"))
+        If (!This.ExpectKind(TokenKind.LeftBracket, "Expected '['", "list value must start with '['"))
         {
             Return values;
         }
-        While (!This.AtEnd() && This.Kind() != [int](TokenKind.RightBracket))
+        While (!This.AtEnd() && This.Kind() != TokenKind.RightBracket)
         {
             values.Add(This.ReadScalar());
-            If (!This.MatchKind([int](TokenKind.Comma))) Break;
+            If (!This.MatchKind(TokenKind.Comma)) Break;
         }
-        This.ExpectKind([int](TokenKind.RightBracket), "Expected ']'", "list value is not closed");
+        This.ExpectKind(TokenKind.RightBracket, "Expected ']'", "list value is not closed");
         Return values;
     }
 
@@ -145,48 +145,48 @@ Class ProjectReader
 
     Public Safe Function string ReadScalarAssignment()
     {
-        If (!This.ExpectKind([int](TokenKind.Assign), "Expected '='", "field requires an assignment")) Return "";
+        If (!This.ExpectKind(TokenKind.Assign, "Expected '='", "field requires an assignment")) Return "";
         string value = This.ReadScalar();
-        This.ExpectKind([int](TokenKind.Semicolon), "Expected ';'", "field assignment must end with ';'");
+        This.ExpectKind(TokenKind.Semicolon, "Expected ';'", "field assignment must end with ';'");
         Return value;
     }
 
     Public Safe Function list ReadListAssignment()
     {
-        If (!This.ExpectKind([int](TokenKind.Assign), "Expected '='", "field requires an assignment"))
+        If (!This.ExpectKind(TokenKind.Assign, "Expected '='", "field requires an assignment"))
         {
             Return list.Create();
         }
         list value = This.ReadList();
-        This.ExpectKind([int](TokenKind.Semicolon), "Expected ';'", "field assignment must end with ';'");
+        This.ExpectKind(TokenKind.Semicolon, "Expected ';'", "field assignment must end with ';'");
         Return value;
     }
 
     Public Safe Function void SkipBlock()
     {
-        If (!This.MatchKind([int](TokenKind.LeftBrace))) Return;
+        If (!This.MatchKind(TokenKind.LeftBrace)) Return;
         int depth = 1;
         While (!This.AtEnd() && depth > 0)
         {
-            If (This.Kind() == [int](TokenKind.LeftBrace)) depth = depth + 1;
-            ElseIf (This.Kind() == [int](TokenKind.RightBrace)) depth = depth - 1;
+            If (This.Kind() == TokenKind.LeftBrace) depth = depth + 1;
+            ElseIf (This.Kind() == TokenKind.RightBrace) depth = depth - 1;
             This.Advance();
         }
     }
 
     Public Safe Function void SkipUnknownField()
     {
-        If (This.Kind() == [int](TokenKind.LeftBrace))
+        If (This.Kind() == TokenKind.LeftBrace)
         {
             This.SkipBlock();
             Return;
         }
-        If (!This.MatchKind([int](TokenKind.Assign)))
+        If (!This.MatchKind(TokenKind.Assign))
         {
             This.Advance();
             Return;
         }
-        If (This.Kind() == [int](TokenKind.LeftBracket))
+        If (This.Kind() == TokenKind.LeftBracket)
         {
             This.ReadList();
         }
@@ -194,15 +194,15 @@ Class ProjectReader
         {
             This.Advance();
         }
-        This.MatchKind([int](TokenKind.Semicolon));
+        This.MatchKind(TokenKind.Semicolon);
     }
 
     Public Safe Function SourceSetConfig ReadSourceSet()
     {
         string name = This.ReadScalar();
         SourceSetConfig sourceSet = New SourceSetConfig(name);
-        If (!This.ExpectKind([int](TokenKind.LeftBrace), "Expected '{'", "SourceSet body is missing")) Return sourceSet;
-        While (!This.AtEnd() && This.Kind() != [int](TokenKind.RightBrace))
+        If (!This.ExpectKind(TokenKind.LeftBrace, "Expected '{'", "SourceSet body is missing")) Return sourceSet;
+        While (!This.AtEnd() && This.Kind() != TokenKind.RightBrace)
         {
             string field = This.Text();
             This.Advance();
@@ -213,14 +213,14 @@ Class ProjectReader
             ElseIf (field == "RequireUnit") sourceSet.RequireUnit = This.ReadScalarAssignment() == "true";
             Else This.SkipUnknownField();
         }
-        This.ExpectKind([int](TokenKind.RightBrace), "Expected '}'", "SourceSet body is not closed");
+        This.ExpectKind(TokenKind.RightBrace, "Expected '}'", "SourceSet body is not closed");
         Return sourceSet;
     }
 
     Public Safe Function void ReadProfileSource(ProjectProfileConfig profile)
     {
-        If (!This.ExpectKind([int](TokenKind.LeftBrace), "Expected '{'", "Source body is missing")) Return;
-        While (!This.AtEnd() && This.Kind() != [int](TokenKind.RightBrace))
+        If (!This.ExpectKind(TokenKind.LeftBrace, "Expected '{'", "Source body is missing")) Return;
+        While (!This.AtEnd() && This.Kind() != TokenKind.RightBrace)
         {
             string field = This.Text();
             This.Advance();
@@ -230,13 +230,13 @@ Class ProjectReader
             ElseIf (field == "AutoDiscovery") profile.AutoDiscovery = This.ReadScalarAssignment() == "true";
             Else This.SkipUnknownField();
         }
-        This.ExpectKind([int](TokenKind.RightBrace), "Expected '}'", "Source body is not closed");
+        This.ExpectKind(TokenKind.RightBrace, "Expected '}'", "Source body is not closed");
     }
 
     Public Safe Function void ReadProfileBuild(ProjectProfileConfig profile)
     {
-        If (!This.ExpectKind([int](TokenKind.LeftBrace), "Expected '{'", "Build body is missing")) Return;
-        While (!This.AtEnd() && This.Kind() != [int](TokenKind.RightBrace))
+        If (!This.ExpectKind(TokenKind.LeftBrace, "Expected '{'", "Build body is missing")) Return;
+        While (!This.AtEnd() && This.Kind() != TokenKind.RightBrace)
         {
             string field = This.Text();
             This.Advance();
@@ -248,14 +248,14 @@ Class ProjectReader
             ElseIf (field == "Output") profile.Output = This.ReadScalarAssignment();
             Else This.SkipUnknownField();
         }
-        This.ExpectKind([int](TokenKind.RightBrace), "Expected '}'", "Build body is not closed");
+        This.ExpectKind(TokenKind.RightBrace, "Expected '}'", "Build body is not closed");
     }
 
     Public Safe Function ProjectProfileConfig ReadProfile()
     {
         ProjectProfileConfig profile = New ProjectProfileConfig(This.ReadScalar());
-        If (!This.ExpectKind([int](TokenKind.LeftBrace), "Expected '{'", "Profile body is missing")) Return profile;
-        While (!This.AtEnd() && This.Kind() != [int](TokenKind.RightBrace))
+        If (!This.ExpectKind(TokenKind.LeftBrace, "Expected '{'", "Profile body is missing")) Return profile;
+        While (!This.AtEnd() && This.Kind() != TokenKind.RightBrace)
         {
             string section = This.Text();
             This.Advance();
@@ -263,7 +263,7 @@ Class ProjectReader
             ElseIf (section == "Build") This.ReadProfileBuild(profile);
             Else This.SkipUnknownField();
         }
-        This.ExpectKind([int](TokenKind.RightBrace), "Expected '}'", "Profile body is not closed");
+        This.ExpectKind(TokenKind.RightBrace, "Expected '}'", "Profile body is not closed");
         Return profile;
     }
 
@@ -273,9 +273,9 @@ Class ProjectReader
         If (This.Diagnostics.Count() > 0) Return project;
         If (!This.ExpectText("Project", "Expected Project", "manifest must start with Project")) Return project;
         project.Name = This.ReadScalar();
-        If (!This.ExpectKind([int](TokenKind.LeftBrace), "Expected '{'", "Project body is missing")) Return project;
+        If (!This.ExpectKind(TokenKind.LeftBrace, "Expected '{'", "Project body is missing")) Return project;
 
-        While (!This.AtEnd() && This.Kind() != [int](TokenKind.RightBrace))
+        While (!This.AtEnd() && This.Kind() != TokenKind.RightBrace)
         {
             string field = This.Text();
             This.Advance();
@@ -284,7 +284,7 @@ Class ProjectReader
             ElseIf (field == "Profile") project.AddProfile(This.ReadProfile());
             Else This.SkipUnknownField();
         }
-        This.ExpectKind([int](TokenKind.RightBrace), "Expected '}'", "Project body is not closed");
+        This.ExpectKind(TokenKind.RightBrace, "Expected '}'", "Project body is not closed");
         Return project;
     }
 }

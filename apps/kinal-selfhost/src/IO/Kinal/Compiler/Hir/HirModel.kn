@@ -1,5 +1,6 @@
 Unit IO.Kinal.Compiler.Hir.HirModel;
 
+Get IO.Kinal.Compiler.Lex.TokenKind;
 Get IO.Kinal.Compiler.Syntax.Nodes;
 Get IO.Kinal.Compiler.Sema.Symbols;
 Get IO.Kinal.Compiler.Types.TypeSymbol;
@@ -50,7 +51,7 @@ Class HirExpression
     Public FunctionSymbol Function;
     Public string Name;
     Public string Target;
-    Public int Operator;
+    Public TokenKind Operator;
     Public HirExpression Left;
     Public HirExpression Right;
     Public HirExpression Third;
@@ -67,7 +68,7 @@ Class HirExpression
         This.Function = null;
         This.Name = syntax == null ? "" : syntax.Text;
         This.Target = "";
-        This.Operator = syntax == null ? 0 : syntax.Operator;
+        This.Operator = syntax == null ? TokenKind.Eof : syntax.Operator;
         This.Left = null;
         This.Right = null;
         This.Third = null;

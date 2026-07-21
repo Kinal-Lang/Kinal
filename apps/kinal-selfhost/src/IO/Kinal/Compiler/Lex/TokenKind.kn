@@ -134,15 +134,15 @@ Enum TokenKind By int
     Tilde
 }
 
-Safe Function string Name(int kind)
+Safe Function string Name(TokenKind kind)
 {
-    If (kind == [int](TokenKind.Eof)) Return "Eof";
-    If (kind == [int](TokenKind.Identifier)) Return "Identifier";
-    If (kind == [int](TokenKind.Number)) Return "Number";
-    If (kind == [int](TokenKind.String)) Return "String";
-    If (kind == [int](TokenKind.BadString)) Return "BadString";
-    If (kind == [int](TokenKind.Character)) Return "Character";
-    If (kind == [int](TokenKind.BadCharacter)) Return "BadCharacter";
-    If (kind == [int](TokenKind.KwUnit)) Return "KwUnit";
-    Return "Token(" + [string](kind) + ")";
+    If (kind == TokenKind.Eof) Return "Eof";
+    If (kind == TokenKind.Identifier) Return "Identifier";
+    If (kind == TokenKind.Number) Return "Number";
+    If (kind == TokenKind.String) Return "String";
+    If (kind == TokenKind.BadString) Return "BadString";
+    If (kind == TokenKind.Character) Return "Character";
+    If (kind == TokenKind.BadCharacter) Return "BadCharacter";
+    If (kind == TokenKind.KwUnit) Return "KwUnit";
+    Return "Token(" + [string]([int](kind)) + ")";
 }

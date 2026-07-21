@@ -92,87 +92,87 @@ Safe Function bool IsCharacterEscape(char value)
            code == 92 || code == 39 || code == 34;
 }
 
-Safe Function int KeywordKind(string text)
+Safe Function TokenKind KeywordKind(string text)
 {
-    If (text == "Unit") Return [int](TokenKind.KwUnit);
-    If (text == "Get") Return [int](TokenKind.KwGet);
-    If (text == "Set") Return [int](TokenKind.KwSet);
-    If (text == "Alias") Return [int](TokenKind.KwAlias);
-    If (text == "By") Return [int](TokenKind.KwBy);
-    If (text == "Property") Return [int](TokenKind.KwProperty);
-    If (text == "Function") Return [int](TokenKind.KwFunction);
-    If (text == "Return") Return [int](TokenKind.KwReturn);
-    If (text == "If") Return [int](TokenKind.KwIf);
-    If (text == "Else") Return [int](TokenKind.KwElse);
-    If (text == "ElseIf") Return [int](TokenKind.KwElseIf);
-    If (text == "While") Return [int](TokenKind.KwWhile);
-    If (text == "For") Return [int](TokenKind.KwFor);
-    If (text == "Foreach") Return [int](TokenKind.KwForeach);
-    If (text == "Switch") Return [int](TokenKind.KwSwitch);
-    If (text == "Case") Return [int](TokenKind.KwCase);
-    If (text == "Break") Return [int](TokenKind.KwBreak);
-    If (text == "Continue") Return [int](TokenKind.KwContinue);
-    If (text == "Try") Return [int](TokenKind.KwTry);
-    If (text == "Catch") Return [int](TokenKind.KwCatch);
-    If (text == "Throw") Return [int](TokenKind.KwThrow);
-    If (text == "Const") Return [int](TokenKind.KwConst);
-    If (text == "Var") Return [int](TokenKind.KwVar);
-    If (text == "Safe") Return [int](TokenKind.KwSafe);
-    If (text == "Trusted") Return [int](TokenKind.KwTrusted);
-    If (text == "Unsafe") Return [int](TokenKind.KwUnsafe);
-    If (text == "Async") Return [int](TokenKind.KwAsync);
-    If (text == "Await") Return [int](TokenKind.KwAwait);
-    If (text == "Extern") Return [int](TokenKind.KwExtern);
-    If (text == "Class") Return [int](TokenKind.KwClass);
-    If (text == "Interface") Return [int](TokenKind.KwInterface);
-    If (text == "Struct") Return [int](TokenKind.KwStruct);
-    If (text == "Enum") Return [int](TokenKind.KwEnum);
-    If (text == "Public") Return [int](TokenKind.KwPublic);
-    If (text == "Private") Return [int](TokenKind.KwPrivate);
-    If (text == "Protected") Return [int](TokenKind.KwProtected);
-    If (text == "Internal") Return [int](TokenKind.KwInternal);
-    If (text == "Static") Return [int](TokenKind.KwStatic);
-    If (text == "Virtual") Return [int](TokenKind.KwVirtual);
-    If (text == "Override") Return [int](TokenKind.KwOverride);
-    If (text == "Abstract") Return [int](TokenKind.KwAbstract);
-    If (text == "Sealed") Return [int](TokenKind.KwSealed);
-    If (text == "Constructor") Return [int](TokenKind.KwConstructor);
-    If (text == "New") Return [int](TokenKind.KwNew);
-    If (text == "This") Return [int](TokenKind.KwThis);
-    If (text == "Base") Return [int](TokenKind.KwBase);
-    If (text == "Block") Return [int](TokenKind.KwBlock);
-    If (text == "Record") Return [int](TokenKind.KwRecord);
-    If (text == "Jump") Return [int](TokenKind.KwJump);
-    If (text == "Delegate") Return [int](TokenKind.KwDelegate);
-    If (text == "true") Return [int](TokenKind.KwTrue);
-    If (text == "false") Return [int](TokenKind.KwFalse);
-    If (text == "Is") Return [int](TokenKind.KwIs);
-    If (text == "In") Return [int](TokenKind.KwIn);
-    If (text == "default") Return [int](TokenKind.KwDefault);
-    If (text == "null") Return [int](TokenKind.KwNull);
-    If (text == "void") Return [int](TokenKind.TypeVoid);
-    If (text == "bool") Return [int](TokenKind.TypeBool);
-    If (text == "byte") Return [int](TokenKind.TypeByte);
-    If (text == "char") Return [int](TokenKind.TypeChar);
-    If (text == "int") Return [int](TokenKind.TypeInt);
-    If (text == "float") Return [int](TokenKind.TypeFloat);
-    If (text == "f16") Return [int](TokenKind.TypeF16);
-    If (text == "f32") Return [int](TokenKind.TypeF32);
-    If (text == "f64") Return [int](TokenKind.TypeF64);
-    If (text == "f128") Return [int](TokenKind.TypeF128);
-    If (text == "i8") Return [int](TokenKind.TypeI8);
-    If (text == "i16") Return [int](TokenKind.TypeI16);
-    If (text == "i32") Return [int](TokenKind.TypeI32);
-    If (text == "i64") Return [int](TokenKind.TypeI64);
-    If (text == "u8") Return [int](TokenKind.TypeU8);
-    If (text == "u16") Return [int](TokenKind.TypeU16);
-    If (text == "u32") Return [int](TokenKind.TypeU32);
-    If (text == "u64") Return [int](TokenKind.TypeU64);
-    If (text == "isize") Return [int](TokenKind.TypeIsize);
-    If (text == "usize") Return [int](TokenKind.TypeUsize);
-    If (text == "string") Return [int](TokenKind.TypeString);
-    If (text == "any") Return [int](TokenKind.TypeAny);
-    Return [int](TokenKind.Identifier);
+    If (text == "Unit") Return TokenKind.KwUnit;
+    If (text == "Get") Return TokenKind.KwGet;
+    If (text == "Set") Return TokenKind.KwSet;
+    If (text == "Alias") Return TokenKind.KwAlias;
+    If (text == "By") Return TokenKind.KwBy;
+    If (text == "Property") Return TokenKind.KwProperty;
+    If (text == "Function") Return TokenKind.KwFunction;
+    If (text == "Return") Return TokenKind.KwReturn;
+    If (text == "If") Return TokenKind.KwIf;
+    If (text == "Else") Return TokenKind.KwElse;
+    If (text == "ElseIf") Return TokenKind.KwElseIf;
+    If (text == "While") Return TokenKind.KwWhile;
+    If (text == "For") Return TokenKind.KwFor;
+    If (text == "Foreach") Return TokenKind.KwForeach;
+    If (text == "Switch") Return TokenKind.KwSwitch;
+    If (text == "Case") Return TokenKind.KwCase;
+    If (text == "Break") Return TokenKind.KwBreak;
+    If (text == "Continue") Return TokenKind.KwContinue;
+    If (text == "Try") Return TokenKind.KwTry;
+    If (text == "Catch") Return TokenKind.KwCatch;
+    If (text == "Throw") Return TokenKind.KwThrow;
+    If (text == "Const") Return TokenKind.KwConst;
+    If (text == "Var") Return TokenKind.KwVar;
+    If (text == "Safe") Return TokenKind.KwSafe;
+    If (text == "Trusted") Return TokenKind.KwTrusted;
+    If (text == "Unsafe") Return TokenKind.KwUnsafe;
+    If (text == "Async") Return TokenKind.KwAsync;
+    If (text == "Await") Return TokenKind.KwAwait;
+    If (text == "Extern") Return TokenKind.KwExtern;
+    If (text == "Class") Return TokenKind.KwClass;
+    If (text == "Interface") Return TokenKind.KwInterface;
+    If (text == "Struct") Return TokenKind.KwStruct;
+    If (text == "Enum") Return TokenKind.KwEnum;
+    If (text == "Public") Return TokenKind.KwPublic;
+    If (text == "Private") Return TokenKind.KwPrivate;
+    If (text == "Protected") Return TokenKind.KwProtected;
+    If (text == "Internal") Return TokenKind.KwInternal;
+    If (text == "Static") Return TokenKind.KwStatic;
+    If (text == "Virtual") Return TokenKind.KwVirtual;
+    If (text == "Override") Return TokenKind.KwOverride;
+    If (text == "Abstract") Return TokenKind.KwAbstract;
+    If (text == "Sealed") Return TokenKind.KwSealed;
+    If (text == "Constructor") Return TokenKind.KwConstructor;
+    If (text == "New") Return TokenKind.KwNew;
+    If (text == "This") Return TokenKind.KwThis;
+    If (text == "Base") Return TokenKind.KwBase;
+    If (text == "Block") Return TokenKind.KwBlock;
+    If (text == "Record") Return TokenKind.KwRecord;
+    If (text == "Jump") Return TokenKind.KwJump;
+    If (text == "Delegate") Return TokenKind.KwDelegate;
+    If (text == "true") Return TokenKind.KwTrue;
+    If (text == "false") Return TokenKind.KwFalse;
+    If (text == "Is") Return TokenKind.KwIs;
+    If (text == "In") Return TokenKind.KwIn;
+    If (text == "default") Return TokenKind.KwDefault;
+    If (text == "null") Return TokenKind.KwNull;
+    If (text == "void") Return TokenKind.TypeVoid;
+    If (text == "bool") Return TokenKind.TypeBool;
+    If (text == "byte") Return TokenKind.TypeByte;
+    If (text == "char") Return TokenKind.TypeChar;
+    If (text == "int") Return TokenKind.TypeInt;
+    If (text == "float") Return TokenKind.TypeFloat;
+    If (text == "f16") Return TokenKind.TypeF16;
+    If (text == "f32") Return TokenKind.TypeF32;
+    If (text == "f64") Return TokenKind.TypeF64;
+    If (text == "f128") Return TokenKind.TypeF128;
+    If (text == "i8") Return TokenKind.TypeI8;
+    If (text == "i16") Return TokenKind.TypeI16;
+    If (text == "i32") Return TokenKind.TypeI32;
+    If (text == "i64") Return TokenKind.TypeI64;
+    If (text == "u8") Return TokenKind.TypeU8;
+    If (text == "u16") Return TokenKind.TypeU16;
+    If (text == "u32") Return TokenKind.TypeU32;
+    If (text == "u64") Return TokenKind.TypeU64;
+    If (text == "isize") Return TokenKind.TypeIsize;
+    If (text == "usize") Return TokenKind.TypeUsize;
+    If (text == "string") Return TokenKind.TypeString;
+    If (text == "any") Return TokenKind.TypeAny;
+    Return TokenKind.Identifier;
 }
 
 Safe Function void SkipTrivia(LexerState state)
@@ -204,7 +204,7 @@ Safe Function void SkipTrivia(LexerState state)
     }
 }
 
-Safe Function string MakeToken(LexerState state, int kind, int start, int line, int column)
+Safe Function string MakeToken(LexerState state, TokenKind kind, int start, int line, int column)
 {
     Return IO.Kinal.Compiler.Lex.Token.Encode(kind, IO.Text.Slice(state.Source.Text, start, state.Position - start), line, column);
 }
@@ -235,7 +235,7 @@ Safe Function string ReadNumber(LexerState state, int line, int column)
         }
     }
     If ([int](Current(state)) == 102 || [int](Current(state)) == 70) Advance(state);
-    Return MakeToken(state, [int](TokenKind.Number), start, line, column);
+    Return MakeToken(state, TokenKind.Number, start, line, column);
 }
 
 Safe Function string ReadString(LexerState state, int line, int column)
@@ -277,7 +277,7 @@ Safe Function string ReadString(LexerState state, int line, int column)
         }
         Advance(state);
     }
-    Return MakeToken(state, terminated ? [int](TokenKind.String) : [int](TokenKind.BadString), start, line, column);
+    Return MakeToken(state, terminated ? TokenKind.String : TokenKind.BadString, start, line, column);
 }
 
 Safe Function string ReadCharacter(LexerState state, int line, int column)
@@ -304,10 +304,10 @@ Safe Function string ReadCharacter(LexerState state, int line, int column)
         Advance(state);
     }
     valid = valid && closed && values == 1;
-    Return MakeToken(state, valid ? [int](TokenKind.Character) : [int](TokenKind.BadCharacter), start, line, column);
+    Return MakeToken(state, valid ? TokenKind.Character : TokenKind.BadCharacter, start, line, column);
 }
 
-Safe Function string SymbolToken(LexerState state, int kind, string text, int line, int column, bool twice)
+Safe Function string SymbolToken(LexerState state, TokenKind kind, string text, int line, int column, bool twice)
 {
     If (twice) AdvanceTwice(state); Else Advance(state);
     Return IO.Kinal.Compiler.Lex.Token.Encode(kind, text, line, column);
@@ -317,51 +317,51 @@ Safe Function string ReadSymbol(LexerState state, int line, int column)
 {
     int current = [int](Current(state));
     int next = [int](Peek(state));
-    If (current == 61 && next == 61) Return SymbolToken(state, [int](TokenKind.Equal), "==", line, column, true);
-    If (current == 33 && next == 61) Return SymbolToken(state, [int](TokenKind.NotEqual), "!=", line, column, true);
-    If (current == 60 && next == 61) Return SymbolToken(state, [int](TokenKind.LessEqual), "<=", line, column, true);
-    If (current == 62 && next == 61) Return SymbolToken(state, [int](TokenKind.GreaterEqual), ">=", line, column, true);
-    If (current == 60 && next == 60) Return SymbolToken(state, [int](TokenKind.ShiftLeft), "<<", line, column, true);
-    If (current == 62 && next == 62) Return SymbolToken(state, [int](TokenKind.ShiftRight), ">>", line, column, true);
-    If (current == 38 && next == 38) Return SymbolToken(state, [int](TokenKind.AndAnd), "&&", line, column, true);
-    If (current == 124 && next == 124) Return SymbolToken(state, [int](TokenKind.OrOr), "||", line, column, true);
-    If (current == 43 && next == 43) Return SymbolToken(state, [int](TokenKind.PlusPlus), "++", line, column, true);
-    If (current == 45 && next == 45) Return SymbolToken(state, [int](TokenKind.MinusMinus), "--", line, column, true);
-    If (current == 43 && next == 61) Return SymbolToken(state, [int](TokenKind.PlusAssign), "+=", line, column, true);
-    If (current == 45 && next == 61) Return SymbolToken(state, [int](TokenKind.MinusAssign), "-=", line, column, true);
-    If (current == 42 && next == 61) Return SymbolToken(state, [int](TokenKind.StarAssign), "*=", line, column, true);
-    If (current == 47 && next == 61) Return SymbolToken(state, [int](TokenKind.SlashAssign), "/=", line, column, true);
-    If (current == 37 && next == 61) Return SymbolToken(state, [int](TokenKind.PercentAssign), "%=", line, column, true);
+    If (current == 61 && next == 61) Return SymbolToken(state, TokenKind.Equal, "==", line, column, true);
+    If (current == 33 && next == 61) Return SymbolToken(state, TokenKind.NotEqual, "!=", line, column, true);
+    If (current == 60 && next == 61) Return SymbolToken(state, TokenKind.LessEqual, "<=", line, column, true);
+    If (current == 62 && next == 61) Return SymbolToken(state, TokenKind.GreaterEqual, ">=", line, column, true);
+    If (current == 60 && next == 60) Return SymbolToken(state, TokenKind.ShiftLeft, "<<", line, column, true);
+    If (current == 62 && next == 62) Return SymbolToken(state, TokenKind.ShiftRight, ">>", line, column, true);
+    If (current == 38 && next == 38) Return SymbolToken(state, TokenKind.AndAnd, "&&", line, column, true);
+    If (current == 124 && next == 124) Return SymbolToken(state, TokenKind.OrOr, "||", line, column, true);
+    If (current == 43 && next == 43) Return SymbolToken(state, TokenKind.PlusPlus, "++", line, column, true);
+    If (current == 45 && next == 45) Return SymbolToken(state, TokenKind.MinusMinus, "--", line, column, true);
+    If (current == 43 && next == 61) Return SymbolToken(state, TokenKind.PlusAssign, "+=", line, column, true);
+    If (current == 45 && next == 61) Return SymbolToken(state, TokenKind.MinusAssign, "-=", line, column, true);
+    If (current == 42 && next == 61) Return SymbolToken(state, TokenKind.StarAssign, "*=", line, column, true);
+    If (current == 47 && next == 61) Return SymbolToken(state, TokenKind.SlashAssign, "/=", line, column, true);
+    If (current == 37 && next == 61) Return SymbolToken(state, TokenKind.PercentAssign, "%=", line, column, true);
 
-    If (current == 40) Return SymbolToken(state, [int](TokenKind.LeftParen), "(", line, column, false);
-    If (current == 41) Return SymbolToken(state, [int](TokenKind.RightParen), ")", line, column, false);
-    If (current == 123) Return SymbolToken(state, [int](TokenKind.LeftBrace), "{", line, column, false);
-    If (current == 125) Return SymbolToken(state, [int](TokenKind.RightBrace), "}", line, column, false);
-    If (current == 91) Return SymbolToken(state, [int](TokenKind.LeftBracket), "[", line, column, false);
-    If (current == 93) Return SymbolToken(state, [int](TokenKind.RightBracket), "]", line, column, false);
-    If (current == 44) Return SymbolToken(state, [int](TokenKind.Comma), ",", line, column, false);
-    If (current == 59) Return SymbolToken(state, [int](TokenKind.Semicolon), ";", line, column, false);
-    If (current == 46) Return SymbolToken(state, [int](TokenKind.Dot), ".", line, column, false);
-    If (current == 58) Return SymbolToken(state, [int](TokenKind.Colon), ":", line, column, false);
-    If (current == 63) Return SymbolToken(state, [int](TokenKind.Question), "?", line, column, false);
-    If (current == 64) Return SymbolToken(state, [int](TokenKind.At), "@", line, column, false);
-    If (current == 43) Return SymbolToken(state, [int](TokenKind.Plus), "+", line, column, false);
-    If (current == 45) Return SymbolToken(state, [int](TokenKind.Minus), "-", line, column, false);
-    If (current == 42) Return SymbolToken(state, [int](TokenKind.Star), "*", line, column, false);
-    If (current == 47) Return SymbolToken(state, [int](TokenKind.Slash), "/", line, column, false);
-    If (current == 37) Return SymbolToken(state, [int](TokenKind.Percent), "%", line, column, false);
-    If (current == 61) Return SymbolToken(state, [int](TokenKind.Assign), "=", line, column, false);
-    If (current == 60) Return SymbolToken(state, [int](TokenKind.Less), "<", line, column, false);
-    If (current == 62) Return SymbolToken(state, [int](TokenKind.Greater), ">", line, column, false);
-    If (current == 33) Return SymbolToken(state, [int](TokenKind.Not), "!", line, column, false);
-    If (current == 38) Return SymbolToken(state, [int](TokenKind.Ampersand), "&", line, column, false);
-    If (current == 124) Return SymbolToken(state, [int](TokenKind.BitOr), "|", line, column, false);
-    If (current == 94) Return SymbolToken(state, [int](TokenKind.Xor), "^", line, column, false);
-    If (current == 126) Return SymbolToken(state, [int](TokenKind.Tilde), "~", line, column, false);
+    If (current == 40) Return SymbolToken(state, TokenKind.LeftParen, "(", line, column, false);
+    If (current == 41) Return SymbolToken(state, TokenKind.RightParen, ")", line, column, false);
+    If (current == 123) Return SymbolToken(state, TokenKind.LeftBrace, "{", line, column, false);
+    If (current == 125) Return SymbolToken(state, TokenKind.RightBrace, "}", line, column, false);
+    If (current == 91) Return SymbolToken(state, TokenKind.LeftBracket, "[", line, column, false);
+    If (current == 93) Return SymbolToken(state, TokenKind.RightBracket, "]", line, column, false);
+    If (current == 44) Return SymbolToken(state, TokenKind.Comma, ",", line, column, false);
+    If (current == 59) Return SymbolToken(state, TokenKind.Semicolon, ";", line, column, false);
+    If (current == 46) Return SymbolToken(state, TokenKind.Dot, ".", line, column, false);
+    If (current == 58) Return SymbolToken(state, TokenKind.Colon, ":", line, column, false);
+    If (current == 63) Return SymbolToken(state, TokenKind.Question, "?", line, column, false);
+    If (current == 64) Return SymbolToken(state, TokenKind.At, "@", line, column, false);
+    If (current == 43) Return SymbolToken(state, TokenKind.Plus, "+", line, column, false);
+    If (current == 45) Return SymbolToken(state, TokenKind.Minus, "-", line, column, false);
+    If (current == 42) Return SymbolToken(state, TokenKind.Star, "*", line, column, false);
+    If (current == 47) Return SymbolToken(state, TokenKind.Slash, "/", line, column, false);
+    If (current == 37) Return SymbolToken(state, TokenKind.Percent, "%", line, column, false);
+    If (current == 61) Return SymbolToken(state, TokenKind.Assign, "=", line, column, false);
+    If (current == 60) Return SymbolToken(state, TokenKind.Less, "<", line, column, false);
+    If (current == 62) Return SymbolToken(state, TokenKind.Greater, ">", line, column, false);
+    If (current == 33) Return SymbolToken(state, TokenKind.Not, "!", line, column, false);
+    If (current == 38) Return SymbolToken(state, TokenKind.Ampersand, "&", line, column, false);
+    If (current == 124) Return SymbolToken(state, TokenKind.BitOr, "|", line, column, false);
+    If (current == 94) Return SymbolToken(state, TokenKind.Xor, "^", line, column, false);
+    If (current == 126) Return SymbolToken(state, TokenKind.Tilde, "~", line, column, false);
 
     string unknown = [string](Current(state));
     Advance(state);
-    Return IO.Kinal.Compiler.Lex.Token.Encode([int](TokenKind.Eof), unknown, line, column);
+    Return IO.Kinal.Compiler.Lex.Token.Encode(TokenKind.Eof, unknown, line, column);
 }
 
 Safe Function list Tokenize(SourceFile source, list diagnostics)
@@ -377,7 +377,7 @@ Safe Function list Tokenize(SourceFile source, list diagnostics)
         string token = "";
         If ([int](current) == 0)
         {
-            token = IO.Kinal.Compiler.Lex.Token.Encode([int](TokenKind.Eof), "", line, column);
+            token = IO.Kinal.Compiler.Lex.Token.Encode(TokenKind.Eof, "", line, column);
         }
         ElseIf (IsIdentifierStart(current))
         {
@@ -400,19 +400,19 @@ Safe Function list Tokenize(SourceFile source, list diagnostics)
             token = ReadSymbol(state, line, column);
         }
         tokens.Add(token);
-        If (IO.Kinal.Compiler.Lex.Token.Kind(token) == [int](TokenKind.BadString))
+        If (IO.Kinal.Compiler.Lex.Token.Kind(token) == TokenKind.BadString)
         {
             IO.Kinal.Compiler.Core.Diagnostics.Add(diagnostics, source, "Lexer", "Unterminated string",
                 IO.Kinal.Compiler.Lex.Token.Text(token), IO.Kinal.Compiler.Lex.Token.Line(token),
                 IO.Kinal.Compiler.Lex.Token.Column(token), 1);
         }
-        ElseIf (IO.Kinal.Compiler.Lex.Token.Kind(token) == [int](TokenKind.BadCharacter))
+        ElseIf (IO.Kinal.Compiler.Lex.Token.Kind(token) == TokenKind.BadCharacter)
         {
             IO.Kinal.Compiler.Core.Diagnostics.Add(diagnostics, source, "Parser", "Invalid Character Literal",
                 IO.Kinal.Compiler.Lex.Token.Text(token), IO.Kinal.Compiler.Lex.Token.Line(token),
                 IO.Kinal.Compiler.Lex.Token.Column(token), 1);
         }
-        If (IO.Kinal.Compiler.Lex.Token.Kind(token) == [int](TokenKind.Eof)) Break;
+        If (IO.Kinal.Compiler.Lex.Token.Kind(token) == TokenKind.Eof) Break;
     }
     Return tokens;
 }

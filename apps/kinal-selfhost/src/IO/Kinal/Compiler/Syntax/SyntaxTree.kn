@@ -1,6 +1,7 @@
 Unit IO.Kinal.Compiler.Syntax.SyntaxTree;
 
 Get IO.Kinal.Compiler.Source.SourceFile;
+Get IO.Kinal.Compiler.Lex.TokenKind;
 Get IO.Kinal.Compiler.Syntax.Nodes;
 
 Class ImportDecl
@@ -248,7 +249,7 @@ Class EnumMemberDecl
 
 Class TypeDecl
 {
-    Public int Kind;
+    Public TokenKind Kind;
     Public string Name;
     Public string BaseName;
     Public bool IsStatic;
@@ -263,7 +264,7 @@ Class TypeDecl
     Public EnumMemberDecl LastEnumMember;
     Public TypeDecl Next;
 
-    Public Safe Constructor(int kind, string name, int line, int column)
+    Public Safe Constructor(TokenKind kind, string name, int line, int column)
     {
         This.Kind = kind;
         This.Name = name;

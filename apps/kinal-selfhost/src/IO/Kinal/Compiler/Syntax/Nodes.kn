@@ -1,5 +1,7 @@
 Unit IO.Kinal.Compiler.Syntax.Nodes;
 
+Get IO.Kinal.Compiler.Lex.TokenKind;
+
 Enum ExpressionKind By int
 {
     Missing = 0,
@@ -54,7 +56,7 @@ Class ExpressionNode
 {
     Public int Kind;
     Public string Text;
-    Public int Operator;
+    Public TokenKind Operator;
     Public bool IsPostfix;
     Public bool IsRawString;
     Public bool IsCharacterString;
@@ -74,7 +76,7 @@ Class ExpressionNode
     {
         This.Kind = kind;
         This.Text = text;
-        This.Operator = 0;
+        This.Operator = TokenKind.Eof;
         This.IsPostfix = false;
         This.IsRawString = false;
         This.IsCharacterString = false;
