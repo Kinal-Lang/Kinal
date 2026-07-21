@@ -28,22 +28,22 @@ Class LexerState
 
 Safe Function char Current(LexerState state)
 {
-    If (state.Position < 0 || state.Position >= state.Length) Return [char](0);
+    If (state.Position < 0 || state.Position >= state.Length) Return '\0';
     Return state.Chars[state.Position];
 }
 
 Safe Function char Peek(LexerState state)
 {
     int at = state.Position + 1;
-    If (at < 0 || at >= state.Length) Return [char](0);
+    If (at < 0 || at >= state.Length) Return '\0';
     Return state.Chars[at];
 }
 
 Safe Function void Advance(LexerState state)
 {
     char current = Current(state);
-    If ([int](current) == 0) Return;
-    If ([int](current) == 10)
+    If (current == '\0') Return;
+    If (current == '\n')
     {
         state.Line = state.Line + 1;
         state.Column = 1;
@@ -63,33 +63,30 @@ Safe Function void AdvanceTwice(LexerState state)
 
 Safe Function bool IsIdentifierStart(char value)
 {
-    int code = [int](value);
-    Return (code >= 97 && code <= 122) || (code >= 65 && code <= 90) || code == 95 || code >= 128;
+    Return (value >= 'a' && value <= 'z') ||
+           (value >= 'A' && value <= 'Z') || value == '_' || [int](value) >= 128;
 }
 
 Safe Function bool IsDigit(char value)
 {
-    int code = [int](value);
-    Return code >= 48 && code <= 57;
+    Return value >= '0' && value <= '9';
 }
 
 Safe Function bool IsHexDigit(char value)
 {
-    int code = [int](value);
-    Return IsDigit(value) || (code >= 97 && code <= 102) || (code >= 65 && code <= 70);
+    Return IsDigit(value) || (value >= 'a' && value <= 'f') ||
+           (value >= 'A' && value <= 'F');
 }
 
 Safe Function bool IsWhitespace(char value)
 {
-    int code = [int](value);
-    Return code == 32 || code == 9 || code == 10 || code == 13;
+    Return value == ' ' || value == '\t' || value == '\n' || value == '\r';
 }
 
 Safe Function bool IsCharacterEscape(char value)
 {
-    int code = [int](value);
-    Return code == 48 || code == 98 || code == 110 || code == 114 || code == 116 ||
-           code == 92 || code == 39 || code == 34;
+    Return value == '0' || value == 'b' || value == 'n' || value == 'r' ||
+           value == 't' || value == '\\' || value == '\'' || value == '"';
 }
 
 Safe Function TokenKind KeywordKind(string text)
@@ -180,18 +177,18 @@ Safe Function void SkipTrivia(LexerState state)
     While (true)
     {
         While (IsWhitespace(Current(state))) Advance(state);
-        If ([int](Current(state)) == 47 && [int](Peek(state)) == 47)
+        If (Current(state) == '/' && Peek(state) == '/')
         {
             AdvanceTwice(state);
-            While ([int](Current(state)) != 0 && [int](Current(state)) != 10) Advance(state);
+            While (Current(state) != '\0' && Current(state) != '\n') Advance(state);
             Continue;
         }
-        If ([int](Current(state)) == 47 && [int](Peek(state)) == 42)
+        If (Current(state) == '/' && Peek(state) == '*')
         {
             AdvanceTwice(state);
-            While ([int](Current(state)) != 0)
+            While (Current(state) != '\0')
             {
-                If ([int](Current(state)) == 42 && [int](Peek(state)) == 47)
+                If (Current(state) == '*' && Peek(state) == '/')
                 {
                     AdvanceTwice(state);
                     Break;
@@ -220,7 +217,7 @@ Safe Function string ReadIdentifier(LexerState state, int line, int column)
 Safe Function string ReadNumber(LexerState state, int line, int column)
 {
     int start = state.Position;
-    If ([int](Current(state)) == 48 && ([int](Peek(state)) == 120 || [int](Peek(state)) == 88))
+    If (Current(state) == '0' && (Peek(state) == 'x' || Peek(state) == 'X'))
     {
         AdvanceTwice(state);
         While (IsHexDigit(Current(state))) Advance(state);
@@ -228,13 +225,13 @@ Safe Function string ReadNumber(LexerState state, int line, int column)
     Else
     {
         While (IsDigit(Current(state))) Advance(state);
-        If ([int](Current(state)) == 46 && IsDigit(Peek(state)))
+        If (Current(state) == '.' && IsDigit(Peek(state)))
         {
             Advance(state);
             While (IsDigit(Current(state))) Advance(state);
         }
     }
-    If ([int](Current(state)) == 102 || [int](Current(state)) == 70) Advance(state);
+    If (Current(state) == 'f' || Current(state) == 'F') Advance(state);
     Return MakeToken(state, TokenKind.Number, start, line, column);
 }
 
@@ -246,33 +243,33 @@ Safe Function string ReadString(LexerState state, int line, int column)
     bool escaped = false;
     While (scan < state.Length)
     {
-        int value = [int](state.Chars[scan]);
-        If (value == 10 || value == 13) Break;
-        If (!escaped && value == 34)
+        char value = state.Chars[scan];
+        If (value == '\n' || value == '\r') Break;
+        If (!escaped && value == '"')
         {
             hasClosingQuote = true;
             Break;
         }
-        If (!escaped && value == 92) escaped = true; Else escaped = false;
+        If (!escaped && value == '\\') escaped = true; Else escaped = false;
         scan = scan + 1;
     }
     Advance(state);
     bool terminated = false;
-    While ([int](Current(state)) != 0)
+    While (Current(state) != '\0')
     {
-        If (hasClosingQuote && [int](Current(state)) == 34)
+        If (hasClosingQuote && Current(state) == '"')
         {
             Advance(state);
             terminated = true;
             Break;
         }
-        If (!hasClosingQuote && ([int](Current(state)) == 10 || [int](Current(state)) == 13 ||
-            [int](Current(state)) == 41 || [int](Current(state)) == 59 || [int](Current(state)) == 125)) Break;
-        If ([int](Current(state)) == 10 || [int](Current(state)) == 13) Break;
-        If ([int](Current(state)) == 92)
+        If (!hasClosingQuote && (Current(state) == '\n' || Current(state) == '\r' ||
+            Current(state) == ')' || Current(state) == ';' || Current(state) == '}')) Break;
+        If (Current(state) == '\n' || Current(state) == '\r') Break;
+        If (Current(state) == '\\')
         {
             Advance(state);
-            If ([int](Current(state)) != 0) Advance(state);
+            If (Current(state) != '\0') Advance(state);
             Continue;
         }
         Advance(state);
@@ -287,16 +284,16 @@ Safe Function string ReadCharacter(LexerState state, int line, int column)
     bool valid = true;
     bool closed = false;
     Advance(state);
-    While ([int](Current(state)) != 0 && [int](Current(state)) != 10 && [int](Current(state)) != 13)
+    While (Current(state) != '\0' && Current(state) != '\n' && Current(state) != '\r')
     {
-        If ([int](Current(state)) == 39)
+        If (Current(state) == '\'')
         {
             Advance(state);
             closed = true;
             Break;
         }
         values = values + 1;
-        If ([int](Current(state)) == 92)
+        If (Current(state) == '\\')
         {
             Advance(state);
             If (!IsCharacterEscape(Current(state))) valid = false;
@@ -315,49 +312,49 @@ Safe Function string SymbolToken(LexerState state, TokenKind kind, string text, 
 
 Safe Function string ReadSymbol(LexerState state, int line, int column)
 {
-    int current = [int](Current(state));
-    int next = [int](Peek(state));
-    If (current == 61 && next == 61) Return SymbolToken(state, TokenKind.Equal, "==", line, column, true);
-    If (current == 33 && next == 61) Return SymbolToken(state, TokenKind.NotEqual, "!=", line, column, true);
-    If (current == 60 && next == 61) Return SymbolToken(state, TokenKind.LessEqual, "<=", line, column, true);
-    If (current == 62 && next == 61) Return SymbolToken(state, TokenKind.GreaterEqual, ">=", line, column, true);
-    If (current == 60 && next == 60) Return SymbolToken(state, TokenKind.ShiftLeft, "<<", line, column, true);
-    If (current == 62 && next == 62) Return SymbolToken(state, TokenKind.ShiftRight, ">>", line, column, true);
-    If (current == 38 && next == 38) Return SymbolToken(state, TokenKind.AndAnd, "&&", line, column, true);
-    If (current == 124 && next == 124) Return SymbolToken(state, TokenKind.OrOr, "||", line, column, true);
-    If (current == 43 && next == 43) Return SymbolToken(state, TokenKind.PlusPlus, "++", line, column, true);
-    If (current == 45 && next == 45) Return SymbolToken(state, TokenKind.MinusMinus, "--", line, column, true);
-    If (current == 43 && next == 61) Return SymbolToken(state, TokenKind.PlusAssign, "+=", line, column, true);
-    If (current == 45 && next == 61) Return SymbolToken(state, TokenKind.MinusAssign, "-=", line, column, true);
-    If (current == 42 && next == 61) Return SymbolToken(state, TokenKind.StarAssign, "*=", line, column, true);
-    If (current == 47 && next == 61) Return SymbolToken(state, TokenKind.SlashAssign, "/=", line, column, true);
-    If (current == 37 && next == 61) Return SymbolToken(state, TokenKind.PercentAssign, "%=", line, column, true);
+    char current = Current(state);
+    char next = Peek(state);
+    If (current == '=' && next == '=') Return SymbolToken(state, TokenKind.Equal, "==", line, column, true);
+    If (current == '!' && next == '=') Return SymbolToken(state, TokenKind.NotEqual, "!=", line, column, true);
+    If (current == '<' && next == '=') Return SymbolToken(state, TokenKind.LessEqual, "<=", line, column, true);
+    If (current == '>' && next == '=') Return SymbolToken(state, TokenKind.GreaterEqual, ">=", line, column, true);
+    If (current == '<' && next == '<') Return SymbolToken(state, TokenKind.ShiftLeft, "<<", line, column, true);
+    If (current == '>' && next == '>') Return SymbolToken(state, TokenKind.ShiftRight, ">>", line, column, true);
+    If (current == '&' && next == '&') Return SymbolToken(state, TokenKind.AndAnd, "&&", line, column, true);
+    If (current == '|' && next == '|') Return SymbolToken(state, TokenKind.OrOr, "||", line, column, true);
+    If (current == '+' && next == '+') Return SymbolToken(state, TokenKind.PlusPlus, "++", line, column, true);
+    If (current == '-' && next == '-') Return SymbolToken(state, TokenKind.MinusMinus, "--", line, column, true);
+    If (current == '+' && next == '=') Return SymbolToken(state, TokenKind.PlusAssign, "+=", line, column, true);
+    If (current == '-' && next == '=') Return SymbolToken(state, TokenKind.MinusAssign, "-=", line, column, true);
+    If (current == '*' && next == '=') Return SymbolToken(state, TokenKind.StarAssign, "*=", line, column, true);
+    If (current == '/' && next == '=') Return SymbolToken(state, TokenKind.SlashAssign, "/=", line, column, true);
+    If (current == '%' && next == '=') Return SymbolToken(state, TokenKind.PercentAssign, "%=", line, column, true);
 
-    If (current == 40) Return SymbolToken(state, TokenKind.LeftParen, "(", line, column, false);
-    If (current == 41) Return SymbolToken(state, TokenKind.RightParen, ")", line, column, false);
-    If (current == 123) Return SymbolToken(state, TokenKind.LeftBrace, "{", line, column, false);
-    If (current == 125) Return SymbolToken(state, TokenKind.RightBrace, "}", line, column, false);
-    If (current == 91) Return SymbolToken(state, TokenKind.LeftBracket, "[", line, column, false);
-    If (current == 93) Return SymbolToken(state, TokenKind.RightBracket, "]", line, column, false);
-    If (current == 44) Return SymbolToken(state, TokenKind.Comma, ",", line, column, false);
-    If (current == 59) Return SymbolToken(state, TokenKind.Semicolon, ";", line, column, false);
-    If (current == 46) Return SymbolToken(state, TokenKind.Dot, ".", line, column, false);
-    If (current == 58) Return SymbolToken(state, TokenKind.Colon, ":", line, column, false);
-    If (current == 63) Return SymbolToken(state, TokenKind.Question, "?", line, column, false);
-    If (current == 64) Return SymbolToken(state, TokenKind.At, "@", line, column, false);
-    If (current == 43) Return SymbolToken(state, TokenKind.Plus, "+", line, column, false);
-    If (current == 45) Return SymbolToken(state, TokenKind.Minus, "-", line, column, false);
-    If (current == 42) Return SymbolToken(state, TokenKind.Star, "*", line, column, false);
-    If (current == 47) Return SymbolToken(state, TokenKind.Slash, "/", line, column, false);
-    If (current == 37) Return SymbolToken(state, TokenKind.Percent, "%", line, column, false);
-    If (current == 61) Return SymbolToken(state, TokenKind.Assign, "=", line, column, false);
-    If (current == 60) Return SymbolToken(state, TokenKind.Less, "<", line, column, false);
-    If (current == 62) Return SymbolToken(state, TokenKind.Greater, ">", line, column, false);
-    If (current == 33) Return SymbolToken(state, TokenKind.Not, "!", line, column, false);
-    If (current == 38) Return SymbolToken(state, TokenKind.Ampersand, "&", line, column, false);
-    If (current == 124) Return SymbolToken(state, TokenKind.BitOr, "|", line, column, false);
-    If (current == 94) Return SymbolToken(state, TokenKind.Xor, "^", line, column, false);
-    If (current == 126) Return SymbolToken(state, TokenKind.Tilde, "~", line, column, false);
+    If (current == '(') Return SymbolToken(state, TokenKind.LeftParen, "(", line, column, false);
+    If (current == ')') Return SymbolToken(state, TokenKind.RightParen, ")", line, column, false);
+    If (current == '{') Return SymbolToken(state, TokenKind.LeftBrace, "{", line, column, false);
+    If (current == '}') Return SymbolToken(state, TokenKind.RightBrace, "}", line, column, false);
+    If (current == '[') Return SymbolToken(state, TokenKind.LeftBracket, "[", line, column, false);
+    If (current == ']') Return SymbolToken(state, TokenKind.RightBracket, "]", line, column, false);
+    If (current == ',') Return SymbolToken(state, TokenKind.Comma, ",", line, column, false);
+    If (current == ';') Return SymbolToken(state, TokenKind.Semicolon, ";", line, column, false);
+    If (current == '.') Return SymbolToken(state, TokenKind.Dot, ".", line, column, false);
+    If (current == ':') Return SymbolToken(state, TokenKind.Colon, ":", line, column, false);
+    If (current == '?') Return SymbolToken(state, TokenKind.Question, "?", line, column, false);
+    If (current == '@') Return SymbolToken(state, TokenKind.At, "@", line, column, false);
+    If (current == '+') Return SymbolToken(state, TokenKind.Plus, "+", line, column, false);
+    If (current == '-') Return SymbolToken(state, TokenKind.Minus, "-", line, column, false);
+    If (current == '*') Return SymbolToken(state, TokenKind.Star, "*", line, column, false);
+    If (current == '/') Return SymbolToken(state, TokenKind.Slash, "/", line, column, false);
+    If (current == '%') Return SymbolToken(state, TokenKind.Percent, "%", line, column, false);
+    If (current == '=') Return SymbolToken(state, TokenKind.Assign, "=", line, column, false);
+    If (current == '<') Return SymbolToken(state, TokenKind.Less, "<", line, column, false);
+    If (current == '>') Return SymbolToken(state, TokenKind.Greater, ">", line, column, false);
+    If (current == '!') Return SymbolToken(state, TokenKind.Not, "!", line, column, false);
+    If (current == '&') Return SymbolToken(state, TokenKind.Ampersand, "&", line, column, false);
+    If (current == '|') Return SymbolToken(state, TokenKind.BitOr, "|", line, column, false);
+    If (current == '^') Return SymbolToken(state, TokenKind.Xor, "^", line, column, false);
+    If (current == '~') Return SymbolToken(state, TokenKind.Tilde, "~", line, column, false);
 
     string unknown = [string](Current(state));
     Advance(state);
@@ -375,7 +372,7 @@ Safe Function list Tokenize(SourceFile source, list diagnostics)
         int column = state.Column;
         char current = Current(state);
         string token = "";
-        If ([int](current) == 0)
+        If (current == '\0')
         {
             token = IO.Kinal.Compiler.Lex.Token.Encode(TokenKind.Eof, "", line, column);
         }
@@ -387,11 +384,11 @@ Safe Function list Tokenize(SourceFile source, list diagnostics)
         {
             token = ReadNumber(state, line, column);
         }
-        ElseIf ([int](current) == 34)
+        ElseIf (current == '"')
         {
             token = ReadString(state, line, column);
         }
-        ElseIf ([int](current) == 39)
+        ElseIf (current == '\'')
         {
             token = ReadCharacter(state, line, column);
         }
