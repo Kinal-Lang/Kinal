@@ -42,5 +42,16 @@
       "--emit",
       "obj"
     ]
+  },
+  {
+    "name": "freestanding_frontend_core",
+    "file": "tests/common/freestanding_frontend_core.kn",
+    "compile_only": true,
+    "output_ext": ".obj",
+    "compiler_args": [
+      "--freestanding",
+      "--emit",
+      "obj"
+    ]
   }
 ]

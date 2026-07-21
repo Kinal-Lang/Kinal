@@ -1,0 +1,45 @@
+Unit Tests.Freestanding.FrontendCore;
+
+Enum BootState By int
+{
+    Start = 0,
+    Ready = 1,
+    Done = 2
+}
+
+Safe Function BootState NextState(BootState state)
+{
+    Return Switch (state)
+    {
+        Case(BootState.Start)
+        {
+            BootState.Ready;
+        }
+        Case(BootState.Ready)
+        {
+            BootState.Done;
+        }
+        Case(default)
+        {
+            BootState.Done;
+        }
+    };
+}
+
+Safe Function char EchoChar(char value)
+{
+    Return value;
+}
+
+Trusted Static Function void KMain()
+{
+    BootState state = NextState(BootState.Start);
+    char marker = EchoChar('+');
+    If (state == BootState.Ready && marker == '+')
+    {
+        Return;
+    }
+    While (true)
+    {
+    }
+}

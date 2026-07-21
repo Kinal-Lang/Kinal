@@ -650,6 +650,17 @@ def run_driver_integration_tests(compiler: Path, out_dir: Path) -> int:
         return 1
     print("[OK] knc_vm_char_literals")
 
+    if run_knc_case("knc_vm_frontend_char_semantics", "frontend_char_semantics.kn", "ok\n") != 0:
+        return 1
+    if run_knc_case("knc_vm_frontend_enum_semantics", "frontend_enum_semantics.kn", "ok\n") != 0:
+        return 1
+    if run_knc_case(
+        "knc_vm_frontend_block_jump_state_machine",
+        "frontend_block_jump_state_machine.kn",
+        "336\n",
+    ) != 0:
+        return 1
+
     knc_char_str_fx = ROOT / "tests" / "common" / "char_to_string.kn"
     knc_char_str = out_dir / "char_to_string.knc"
     run([str(compiler), "vm", "build", "--no-module-discovery", str(knc_char_str_fx), "-o", str(knc_char_str)], cwd=ROOT)

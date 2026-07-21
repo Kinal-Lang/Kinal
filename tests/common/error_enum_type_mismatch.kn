@@ -1,0 +1,18 @@
+Unit Tests.Frontend.ErrorEnumTypeMismatch;
+
+Enum LeftKind
+{
+    Value
+}
+
+Enum RightKind
+{
+    Value
+}
+
+Static Safe Function int Main()
+{
+    LeftKind left = LeftKind.Value;
+    RightKind right = RightKind.Value;
+    Return left == right ? 0 : 1;
+}

@@ -1,0 +1,61 @@
+Unit Tests.Frontend.EnumSemantics;
+
+Get IO.Console;
+
+Enum TokenState By int
+{
+    Start = 0,
+    KwFunction = 1,
+    KwClass = 2,
+    Done = 3
+}
+
+Class TokenBox
+{
+    Public TokenState Kind;
+
+    Public Safe Constructor(TokenState kind)
+    {
+        This.Kind = kind;
+    }
+}
+
+Safe Function TokenState EchoState(TokenState kind)
+{
+    Return kind;
+}
+
+Safe Function int StateValue(TokenState kind)
+{
+    Return Switch (kind)
+    {
+        Case(TokenState.KwFunction)
+        {
+            10;
+        }
+        Case(TokenState.KwClass)
+        {
+            20;
+        }
+        Case(default)
+        {
+            30;
+        }
+    };
+}
+
+Static Safe Function int Main()
+{
+    TokenState kind = TokenState.KwFunction;
+    TokenBox box = New TokenBox(EchoState(kind));
+    int encoded = [int](box.Kind);
+    TokenState decoded = [TokenState](encoded);
+
+    bool ok = box.Kind == TokenState.KwFunction &&
+        box.Kind != TokenState.KwClass && decoded == TokenState.KwFunction;
+    ok = ok && StateValue(box.Kind) == 10 &&
+        StateValue(TokenState.KwClass) == 20 && StateValue(TokenState.Done) == 30;
+
+    IO.Console.PrintLine(ok ? "ok" : "bad");
+    Return ok ? 0 : 1;
+}

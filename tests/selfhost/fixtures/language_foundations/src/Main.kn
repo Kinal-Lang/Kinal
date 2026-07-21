@@ -1,0 +1,111 @@
+Unit Tests.Selfhost.LanguageFoundations;
+
+Get IO.Console;
+
+Enum FoundationKind By int
+{
+    Start = 0,
+    Function = 1,
+    Class = 2
+}
+
+Class FoundationBox
+{
+    Public FoundationKind Kind;
+    Public char Marker;
+
+    Public Safe Constructor(FoundationKind kind, char marker)
+    {
+        This.Kind = kind;
+        This.Marker = marker;
+    }
+}
+
+Safe Function FoundationKind EchoKind(FoundationKind kind)
+{
+    Return kind;
+}
+
+Safe Function char EchoChar(char value)
+{
+    Return value;
+}
+
+Safe Function int KindScore(FoundationKind kind)
+{
+    Return Switch (kind)
+    {
+        Case(FoundationKind.Function)
+        {
+            10;
+        }
+        Case(FoundationKind.Class)
+        {
+            20;
+        }
+        Case(default)
+        {
+            30;
+        }
+    };
+}
+
+Safe Function int CharScore(char value)
+{
+    Return Switch (value)
+    {
+        Case('+')
+        {
+            1;
+        }
+        Case('=')
+        {
+            2;
+        }
+        Case(default)
+        {
+            3;
+        }
+    };
+}
+
+Static Function int Main()
+{
+    FoundationKind kind = EchoKind(FoundationKind.Function);
+    FoundationKind decoded = [FoundationKind]([int](kind));
+    char[] values = { '+', '=', '\n', '\\', '\'', '\0' };
+    FoundationBox box = New FoundationBox(decoded, EchoChar(values[0]));
+
+    bool enumOk = box.Kind == FoundationKind.Function &&
+        box.Kind != FoundationKind.Class && KindScore(box.Kind) == 10;
+    bool charOk = box.Marker == '+' && values[1] == '=' && values[2] == '\n' &&
+        values[3] == '\\' && values[4] == '\'' && values[5] == '\0' &&
+        box.Marker >= '!' && box.Marker <= '~' && CharScore(box.Marker) == 1;
+
+    int cursor = 0;
+    int evenVisits = 0;
+    int oddVisits = 0;
+    int result = 0;
+    Block Machine< /
+        Record Dispatch
+        If (cursor >= 6) { Jump Done; }
+        If (cursor % 2 == 0) { Jump Even; }
+        Jump Odd;
+        Record Even
+        evenVisits = evenVisits + 1;
+        cursor = cursor + 1;
+        Jump Dispatch;
+        Record Odd
+        oddVisits = oddVisits + 1;
+        cursor = cursor + 1;
+        Jump Dispatch;
+        Record Done
+        result = cursor + evenVisits * 10 + oddVisits * 100;
+    / >
+    Machine.Run();
+
+    IO.Console.PrintLine(enumOk ? "ok" : "bad");
+    IO.Console.PrintLine(charOk ? "ok" : "bad");
+    IO.Console.PrintLine([string](result));
+    Return enumOk && charOk && result == 336 ? 0 : 1;
+}

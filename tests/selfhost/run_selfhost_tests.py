@@ -435,6 +435,34 @@ def main() -> int:
     )
     results.append({"name": "switch_statement", "ok": True})
 
+    language_foundations_project = (
+        root / "tests" / "selfhost" / "fixtures" / "language_foundations" / "kinal.knproj"
+    )
+    language_foundations_executable = out_dir / f"language-foundations{executable_suffix}"
+    language_foundations_build = run(
+        [
+            str(compiler),
+            "build",
+            str(language_foundations_project),
+            str(language_foundations_executable),
+            "test",
+        ],
+        cwd=root,
+    )
+    require(
+        language_foundations_build.returncode == 0,
+        "stage1 language-foundations fixture build failed",
+        language_foundations_build,
+    )
+    language_foundations_run = run([str(language_foundations_executable)], cwd=root)
+    require(
+        language_foundations_run.returncode == 0 and
+        language_foundations_run.stdout.replace("\r\n", "\n") == "ok\nok\n336\n",
+        "stage1 language-foundations fixture output differs",
+        language_foundations_run,
+    )
+    results.append({"name": "language_foundations", "ok": True})
+
     implicit_unit_project = root / "tests" / "selfhost" / "fixtures" / "implicit_unit" / "kinal.knproj"
     implicit_unit_executable = out_dir / f"implicit-unit{executable_suffix}"
     implicit_unit_build = run(

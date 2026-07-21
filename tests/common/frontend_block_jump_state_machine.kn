@@ -1,0 +1,41 @@
+Unit Tests.Frontend.BlockJumpStateMachine;
+
+Get IO.Console;
+
+Static Function int Main()
+{
+    int cursor = 0;
+    int evenVisits = 0;
+    int oddVisits = 0;
+    int result = 0;
+
+    Block Machine< /
+        Record Dispatch
+        If (cursor >= 6)
+        {
+            Jump Done;
+        }
+        If (cursor % 2 == 0)
+        {
+            Jump Even;
+        }
+        Jump Odd;
+
+        Record Even
+        evenVisits = evenVisits + 1;
+        cursor = cursor + 1;
+        Jump Dispatch;
+
+        Record Odd
+        oddVisits = oddVisits + 1;
+        cursor = cursor + 1;
+        Jump Dispatch;
+
+        Record Done
+        result = cursor + evenVisits * 10 + oddVisits * 100;
+    / >
+
+    Machine.Run();
+    IO.Console.PrintLine([string](result));
+    Return result == 336 ? 0 : 1;
+}

@@ -1,0 +1,58 @@
+Unit Tests.Frontend.CharSemantics;
+
+Get IO.Console;
+
+Class CharBox
+{
+    Public char Value;
+
+    Public Safe Constructor(char value)
+    {
+        This.Value = value;
+    }
+}
+
+Safe Function char EchoChar(char value)
+{
+    Return value;
+}
+
+Safe Function int ClassifyChar(char value)
+{
+    Return Switch (value)
+    {
+        Case('+')
+        {
+            1;
+        }
+        Case('=')
+        {
+            2;
+        }
+        Case(default)
+        {
+            3;
+        }
+    };
+}
+
+Static Safe Function int Main()
+{
+    char plus = '+';
+    char equal = '=';
+    char newline = '\n';
+    char slash = '\\';
+    char quote = '\'';
+    char zero = '\0';
+    char[] values = { plus, equal, newline, slash, quote, zero };
+    CharBox box = New CharBox(EchoChar(values[0]));
+
+    bool ok = box.Value == '+' && equal != '-' && newline == '\n' &&
+        slash == '\\' && quote == '\'' && zero == '\0';
+    ok = ok && values[5] == '\0' && plus >= '!' && plus <= '~';
+    ok = ok && ClassifyChar(plus) == 1 && ClassifyChar(equal) == 2 &&
+        ClassifyChar('x') == 3;
+
+    IO.Console.PrintLine(ok ? "ok" : "bad");
+    Return ok ? 0 : 1;
+}

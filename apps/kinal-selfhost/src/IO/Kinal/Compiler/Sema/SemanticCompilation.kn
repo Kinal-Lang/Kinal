@@ -1319,9 +1319,6 @@ Class SemanticCompilation
              source.Kind == [int](TypeKind.PointerType))) Return true;
         If (target.Kind == [int](TypeKind.IntegerType) &&
             source.Kind == [int](TypeKind.IntegerType)) Return true;
-        If (target.Kind == [int](TypeKind.NamedType) && target.Declaration != null &&
-            target.Declaration.Kind == [int](TokenKind.KwEnum) &&
-            source.Kind == [int](TypeKind.IntegerType)) Return true;
         If (target.Kind == [int](TypeKind.FloatType) &&
             (source.Kind == [int](TypeKind.FloatType) ||
              source.Kind == [int](TypeKind.IntegerType))) Return true;
@@ -3093,6 +3090,17 @@ Class SemanticCompilation
                     This.Report(syntax, "Type Mismatch", "Assignment types do not match",
                         expression.Line, expression.Column);
             }
+            If ((expression.Operator == [int](TokenKind.Equal) ||
+                 expression.Operator == [int](TokenKind.NotEqual)) &&
+                ((left.Type.Kind == [int](TypeKind.NamedType) &&
+                  left.Type.Declaration != null &&
+                  left.Type.Declaration.Kind == [int](TokenKind.KwEnum)) ||
+                 (right.Type.Kind == [int](TypeKind.NamedType) &&
+                  right.Type.Declaration != null &&
+                  right.Type.Declaration.Kind == [int](TokenKind.KwEnum))) &&
+                !This.SameType(left.Type, right.Type))
+                This.Report(syntax, "Type Mismatch", "Enum types do not match",
+                    expression.Line, expression.Column);
             If ((expression.Operator == [int](TokenKind.Equal) ||
                  expression.Operator == [int](TokenKind.NotEqual)) &&
                 (left.Type.Kind == [int](TypeKind.ArrayType) ||

@@ -5114,6 +5114,17 @@ static KncValue compile_expr(KncFuncState *st, Expr *e)
                 out.type = e->type;
                 return out;
             }
+            if (type_is_integerish(value.type))
+            {
+                /* KNC stores every non-char integer and enum in the same Int
+                   register representation.  An explicit cast still needs a
+                   distinct result register, but no numeric opcode is needed. */
+                emit_u8(st->code, KNC_OP_MOVE);
+                emit_u8(st->code, out.reg);
+                emit_u8(st->code, value.reg);
+                out.type = e->type;
+                return out;
+            }
         }
 
         if (type_is_floatish(e->type))

@@ -109,6 +109,21 @@
     "expected": "A\n65\n10\n8\n39\n"
   },
   {
+    "name": "frontend_char_semantics",
+    "file": "tests/common/frontend_char_semantics.kn",
+    "expected": "ok\n"
+  },
+  {
+    "name": "frontend_enum_semantics",
+    "file": "tests/common/frontend_enum_semantics.kn",
+    "expected": "ok\n"
+  },
+  {
+    "name": "frontend_block_jump_state_machine",
+    "file": "tests/common/frontend_block_jump_state_machine.kn",
+    "expected": "336\n"
+  },
+  {
     "name": "string_escapes",
     "file": "tests/common/string_escapes.kn",
     "expected": "line1\nline2\nquote:\"\nslash:\\\ntick:'\n8\n10\n"
@@ -914,6 +929,16 @@
     "name": "error_invalid_char_literal",
     "file": "tests/common/error_invalid_char_literal.kn",
     "expect_error": "[Parser] Invalid Character Literal"
+  },
+  {
+    "name": "error_enum_type_mismatch",
+    "file": "tests/common/error_enum_type_mismatch.kn",
+    "expect_error": "[Sema] Type Mismatch"
+  },
+  {
+    "name": "error_enum_implicit_int",
+    "file": "tests/common/error_enum_implicit_int.kn",
+    "expect_error": "[Sema] Type Mismatch"
   },
   {
     "name": "error_var_decl_eof",

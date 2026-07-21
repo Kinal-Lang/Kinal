@@ -1,0 +1,12 @@
+Unit Tests.Frontend.ErrorEnumImplicitInt;
+
+Enum State
+{
+    Ready = 1
+}
+
+Static Safe Function int Main()
+{
+    State state = 1;
+    Return [int](state);
+}
