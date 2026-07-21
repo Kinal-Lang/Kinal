@@ -23,6 +23,18 @@ Enum TypeKind By int
     PackageType
 }
 
+Class PackageElementType
+{
+    Public TypeSymbol Type;
+    Public PackageElementType Next;
+
+    Public Safe Constructor(TypeSymbol type)
+    {
+        This.Type = type;
+        This.Next = null;
+    }
+}
+
 Class TypeSymbol
 {
     Public int Kind;
@@ -30,6 +42,9 @@ Class TypeSymbol
     Public string UnitName;
     Public TypeSymbol ElementType;
     Public TypeSymbol BaseType;
+    Public PackageElementType FirstPackageElement;
+    Public PackageElementType LastPackageElement;
+    Public int PackageCount;
     Public TypeDecl Declaration;
     Public SyntaxTree Syntax;
     Public TypeSymbol Next;
@@ -41,6 +56,9 @@ Class TypeSymbol
         This.UnitName = "";
         This.ElementType = null;
         This.BaseType = null;
+        This.FirstPackageElement = null;
+        This.LastPackageElement = null;
+        This.PackageCount = 0;
         This.Declaration = null;
         This.Syntax = null;
         This.Next = null;
@@ -50,5 +68,35 @@ Class TypeSymbol
     {
         If (This.UnitName == "") Return This.Name;
         Return This.UnitName + "." + This.Name;
+    }
+
+    Public Safe Function void AddPackageElement(TypeSymbol type)
+    {
+        PackageElementType element = New PackageElementType(type);
+        If (This.FirstPackageElement == null)
+        {
+            This.FirstPackageElement = element;
+            This.LastPackageElement = element;
+        }
+        Else
+        {
+            This.LastPackageElement.Next = element;
+            This.LastPackageElement = element;
+        }
+        This.PackageCount = This.PackageCount + 1;
+    }
+
+    Public Safe Function TypeSymbol PackageElement(int index)
+    {
+        If (index < 0) Return null;
+        PackageElementType element = This.FirstPackageElement;
+        int current = 0;
+        While (element != null)
+        {
+            If (current == index) Return element.Type;
+            current = current + 1;
+            element = element.Next;
+        }
+        Return null;
     }
 }

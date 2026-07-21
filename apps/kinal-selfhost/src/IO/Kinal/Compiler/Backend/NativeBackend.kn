@@ -949,10 +949,23 @@ Class NativeBackend
     Public Safe Function bool SameType(TypeSymbol left, TypeSymbol right)
     {
         If (left == right) Return true;
-        If (left == null || right == null || left.Kind != right.Kind || left.Name != right.Name) Return false;
-        If (left.Kind == [int](TypeKind.ArrayType) || left.Kind == [int](TypeKind.PackageType))
+        If (left == null || right == null || left.Kind != right.Kind) Return false;
+        If (left.Kind == [int](TypeKind.ArrayType) || left.Kind == [int](TypeKind.PointerType))
             Return This.SameType(left.ElementType, right.ElementType);
-        Return true;
+        If (left.Kind == [int](TypeKind.PackageType))
+        {
+            If (left.PackageCount != right.PackageCount) Return false;
+            PackageElementType leftElement = left.FirstPackageElement;
+            PackageElementType rightElement = right.FirstPackageElement;
+            While (leftElement != null && rightElement != null)
+            {
+                If (!This.SameType(leftElement.Type, rightElement.Type)) Return false;
+                leftElement = leftElement.Next;
+                rightElement = rightElement.Next;
+            }
+            Return leftElement == null && rightElement == null;
+        }
+        Return left.Name == right.Name && left.UnitName == right.UnitName;
     }
 
     Public Safe Function bool IsIntegerLike(TypeSymbol type)
@@ -1085,12 +1098,6 @@ Class NativeBackend
         If (value.Type.Kind == [int](TypeKind.AnyType) && target.Kind == [int](TypeKind.StringType))
             Return This.AnyToString(value, target);
         If (value.Type.Kind == [int](TypeKind.AnyType)) Return This.UnboxAny(value, target);
-        If ((value.Type.Kind == [int](TypeKind.PackageType) &&
-             target.Kind == [int](TypeKind.ArrayType) && target.ElementType.Kind == [int](TypeKind.AnyType)) ||
-            (value.Type.Kind == [int](TypeKind.ArrayType) &&
-             value.Type.ElementType.Kind == [int](TypeKind.AnyType) &&
-             target.Kind == [int](TypeKind.PackageType)))
-            Return New LlvmValue(value.Handle, target);
         If (value.Type.Kind == [int](TypeKind.NullType)) Return This.DefaultValue(target);
 
         If (target.Kind == [int](TypeKind.StringType))
@@ -1362,6 +1369,23 @@ Class NativeBackend
                     This.Types1(indexValue.Handle), true, This.Unique("string_character"));
         }
         Return null;
+    }
+
+    Public Trusted Function LlvmValue EmitPackageIndex(LlvmFunctionContext context,
+                                                         HirExpression expression)
+    {
+        LlvmValue receiver = This.EmitExpression(context, expression.Left);
+        LlvmValue indexValue = This.CastValue(This.EmitExpression(context, expression.Right),
+            This.Semantics.Primitive("int"));
+        byte* data = This.Module.ExtractValue(receiver.Handle, 0, This.Unique("package_data"));
+        byte* address = This.Module.Gep(This.AnyType, data, This.Types1(indexValue.Handle), true,
+            This.Unique("package_element"));
+        LlvmValue boxed = New LlvmValue(This.Module.Load(This.AnyType, address,
+            This.Unique("package_any")), This.Semantics.Primitive("any"));
+        LlvmValue result = expression.Type.Kind == [int](TypeKind.AnyType) ? boxed :
+            This.CastValue(boxed, expression.Type);
+        result.Address = address;
+        Return result;
     }
 
     Public Safe Function int HirArgumentCount(HirExpression expression)
@@ -1915,6 +1939,60 @@ Class NativeBackend
         value = This.Module.InsertValue(value, data, 0, "");
         value = This.Module.InsertValue(value, length, 1, "");
         Return New LlvmValue(value, arrayType);
+    }
+
+    Public Trusted Function LlvmValue EmitPackageArrayCast(LlvmFunctionContext context,
+                                                             LlvmValue packageValue,
+                                                             TypeSymbol arrayType)
+    {
+        byte* sourceData = This.Module.ExtractValue(packageValue.Handle, 0,
+            This.Unique("package_data"));
+        byte* length = This.Module.ExtractValue(packageValue.Handle, 1,
+            This.Unique("package_length"));
+        TypeSymbol elementType = arrayType.ElementType;
+        byte* elementHandle = This.TypeHandle(elementType);
+        byte* bytes = This.Module.Multiply(length, This.Module.SizeOf(elementHandle),
+            This.Unique("package_array_bytes"));
+        byte* memory = This.CallRuntime("__kn_gc_alloc", This.Types1(bytes),
+            This.Unique("package_array_memory"));
+        byte* targetData = This.Module.BitCast(memory, This.Module.PointerType(elementHandle),
+            This.Unique("package_array_data"));
+
+        byte* indexAddress = This.Module.Alloca(This.Module.IntType(64),
+            This.Unique("package_array_index"));
+        This.Module.Store(This.Module.ConstInt(This.Module.IntType(64), 0), indexAddress);
+        byte* conditionBlock = This.Module.AppendBlock(context.Binding.Function,
+            This.Unique("package_array_condition"));
+        byte* bodyBlock = This.Module.AppendBlock(context.Binding.Function,
+            This.Unique("package_array_body"));
+        byte* doneBlock = This.Module.AppendBlock(context.Binding.Function,
+            This.Unique("package_array_done"));
+        This.Module.Branch(conditionBlock);
+        This.Module.PositionAtEnd(conditionBlock);
+        byte* index = This.Module.Load(This.Module.IntType(64), indexAddress,
+            This.Unique("package_array_i"));
+        byte* more = This.Module.Compare([int](LlvmIntPredicate.UnsignedLess), index, length,
+            This.Unique("package_array_more"));
+        This.Module.ConditionalBranch(more, bodyBlock, doneBlock);
+        This.Module.PositionAtEnd(bodyBlock);
+        byte* sourceAddress = This.Module.Gep(This.AnyType, sourceData, This.Types1(index), true,
+            This.Unique("package_array_source"));
+        LlvmValue boxed = New LlvmValue(This.Module.Load(This.AnyType, sourceAddress,
+            This.Unique("package_array_any")), This.Semantics.Primitive("any"));
+        LlvmValue converted = elementType.Kind == [int](TypeKind.AnyType) ? boxed :
+            This.CastValue(boxed, elementType);
+        byte* targetAddress = This.Module.Gep(elementHandle, targetData, This.Types1(index), true,
+            This.Unique("package_array_target"));
+        This.Module.Store(converted.Handle, targetAddress);
+        This.Module.Store(This.Module.Add(index, This.Module.ConstInt(This.Module.IntType(64), 1),
+            This.Unique("package_array_next")), indexAddress);
+        This.Module.Branch(conditionBlock);
+        This.Module.PositionAtEnd(doneBlock);
+
+        byte* result = This.Module.ConstUndef(This.TypeHandle(arrayType));
+        result = This.Module.InsertValue(result, targetData, 0, "");
+        result = This.Module.InsertValue(result, length, 1, "");
+        Return New LlvmValue(result, arrayType);
     }
 
     Public Trusted Function LlvmValue EmitArrayAdd(LlvmFunctionContext context, LlvmValue receiver,
@@ -2484,6 +2562,9 @@ Class NativeBackend
             operatorKind == [int](TokenKind.PercentAssign);
         If (assignment)
         {
+            bool packageElement = expression.Left.Kind == [int](HirExpressionKind.Index) &&
+                expression.Left.Left != null &&
+                expression.Left.Left.Type.Kind == [int](TypeKind.PackageType);
             byte* address = This.EmitAddress(context, expression.Left);
             LlvmValue right = null;
             If (expression.Left.Kind == [int](HirExpressionKind.Delegate) &&
@@ -2506,7 +2587,15 @@ Class NativeBackend
             Else right = This.CastValue(This.EmitExpression(context, expression.Right), expression.Left.Type);
             If (operatorKind != [int](TokenKind.Assign))
             {
-                LlvmValue left = New LlvmValue(This.Module.Load(This.TypeHandle(expression.Left.Type), address,
+                LlvmValue left = null;
+                If (packageElement)
+                {
+                    LlvmValue boxedLeft = New LlvmValue(This.Module.Load(This.AnyType, address,
+                        This.Unique("assignment_any")), This.Semantics.Primitive("any"));
+                    left = expression.Left.Type.Kind == [int](TypeKind.AnyType) ? boxedLeft :
+                        This.CastValue(boxedLeft, expression.Left.Type);
+                }
+                Else left = New LlvmValue(This.Module.Load(This.TypeHandle(expression.Left.Type), address,
                     This.Unique("assignment_left")), expression.Left.Type);
                 If (operatorKind == [int](TokenKind.PlusAssign) && left.Type.Kind == [int](TypeKind.StringType))
                     right = New LlvmValue(This.CallRuntime("kn_sh_rt_string_concat",
@@ -2544,6 +2633,7 @@ Class NativeBackend
                 This.Fail("assignment target has no address: " + expression.Left.Target +
                     " kind=" + [string](expression.Left.Kind) + " in " +
                     context.Binding.Symbol.QualifiedName());
+            ElseIf (packageElement) This.Module.Store(This.BoxAny(right).Handle, address);
             Else This.Module.Store(right.Handle, address);
             Return right;
         }
@@ -2920,6 +3010,9 @@ Class NativeBackend
             }
             Return New LlvmValue(This.EmitCallableObject(context, function), expression.Type);
         }
+        If (expression.Kind == [int](HirExpressionKind.Index) && expression.Left != null &&
+            expression.Left.Type.Kind == [int](TypeKind.PackageType))
+            Return This.EmitPackageIndex(context, expression);
         If (expression.Kind == [int](HirExpressionKind.Field) ||
             expression.Kind == [int](HirExpressionKind.Index))
         {
@@ -2950,6 +3043,11 @@ Class NativeBackend
                 Return This.EmitArrayValue(context, expression.Type, expression.Left.FirstArgument,
                     This.Module.ConstInt(This.Module.IntType(64),
                         This.HirArgumentCount(expression.Left)));
+            If (expression.Left != null &&
+                expression.Left.Type.Kind == [int](TypeKind.PackageType) &&
+                expression.Type.Kind == [int](TypeKind.ArrayType))
+                Return This.EmitPackageArrayCast(context,
+                    This.EmitExpression(context, expression.Left), expression.Type);
             Return This.CastValue(This.EmitExpression(context, expression.Left), expression.Type);
         }
         If (expression.Kind == [int](HirExpressionKind.Call))
@@ -3003,6 +3101,27 @@ Class NativeBackend
         byte* rootAddress = This.Module.BitCast(address, bytePointer, This.Unique("gc_root"));
         This.CallRuntime("__kn_gc_add_root",
             This.Types3(context.GcFrame, rootAddress, This.Module.SizeOf(This.TypeHandle(type))), "");
+    }
+
+    Public Trusted Function byte* AllocateVariableAddress(LlvmFunctionContext context,
+                                                            ValueSymbol symbol,
+                                                            TypeSymbol type,
+                                                            string name)
+    {
+        If (symbol == null || !symbol.IsCaptured)
+            Return This.Module.Alloca(This.TypeHandle(type), name);
+
+        byte* bytePointer = This.Module.PointerType(This.Module.IntType(8));
+        byte* storage = This.CallRuntime("__kn_gc_alloc",
+            This.Types1(This.Module.SizeOf(This.TypeHandle(type))), This.Unique("captured_storage"));
+        byte* address = This.Module.BitCast(storage,
+            This.Module.PointerType(This.TypeHandle(type)), This.Unique("captured_address"));
+
+        // Keep the cell itself alive until the callable environment owns it.
+        byte* rootSlot = This.Module.Alloca(bytePointer, This.Unique("captured_root"));
+        This.Module.Store(storage, rootSlot);
+        This.AddGcRoot(context, This.Semantics.MakePointerType(type), rootSlot);
+        Return address;
     }
 
     Public Trusted Function void PopGcFrame(LlvmFunctionContext context)
@@ -3179,8 +3298,8 @@ Class NativeBackend
         If (statement.Kind == [int](StatementKind.Record)) Return;
         If (statement.Kind == [int](StatementKind.Variable))
         {
-            byte* address = This.Module.Alloca(This.TypeHandle(statement.DeclaredType),
-                This.Sanitize(statement.Name));
+            byte* address = This.AllocateVariableAddress(context, statement.DeclaredSymbol,
+                statement.DeclaredType, This.Sanitize(statement.Name));
             LlvmVariable variable = New LlvmVariable(statement.Name, statement.DeclaredSymbol,
                 statement.DeclaredType, address);
             context.AddVariable(variable);
@@ -3377,7 +3496,8 @@ Class NativeBackend
             (!binding.Symbol.Declaration.IsStatic || binding.Symbol.Declaration.IsConstructor);
         If (hasReceiver)
         {
-            byte* address = This.Module.Alloca(This.TypeHandle(binding.Symbol.OwnerType), "This");
+            byte* address = This.AllocateVariableAddress(context, binding.Symbol.Receiver,
+                binding.Symbol.OwnerType, "This");
             This.Module.Store(This.Module.Parameter(binding.Function, parameterIndex), address);
             context.AddVariable(New LlvmVariable("This", binding.Symbol.Receiver,
                 binding.Symbol.OwnerType, address));
@@ -3387,7 +3507,8 @@ Class NativeBackend
         ParameterSymbol parameter = binding.Symbol.FirstParameter;
         While (parameter != null)
         {
-            byte* address = This.Module.Alloca(This.TypeHandle(parameter.Type), This.Sanitize(parameter.Name));
+            byte* address = This.AllocateVariableAddress(context, parameter.Value,
+                parameter.Type, This.Sanitize(parameter.Name));
             This.Module.Store(This.Module.Parameter(binding.Function, parameterIndex), address);
             context.AddVariable(New LlvmVariable(parameter.Name, parameter.Value, parameter.Type, address));
             This.AddGcRoot(context, parameter.Type, address);

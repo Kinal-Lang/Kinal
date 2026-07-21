@@ -7,6 +7,16 @@ Function int Add(int left, int right)
     Return left + right;
 }
 
+Function IO.Type.Object.Function MakeCounter(int start)
+{
+    int value = start;
+    Return Function int(int delta)
+    {
+        value = value + delta;
+        Return value;
+    };
+}
+
 Static Function int Main()
 {
     IO.Type.Object.Function function = Add;
@@ -27,5 +37,9 @@ Static Function int Main()
     IO.Console.PrintLine(closure(5));
     IO.Console.PrintLine(first);
     IO.Console.PrintLine(second);
+
+    IO.Type.Object.Function counter = MakeCounter(10);
+    IO.Console.PrintLine(counter(1));
+    IO.Console.PrintLine(counter(2));
     Return 0;
 }

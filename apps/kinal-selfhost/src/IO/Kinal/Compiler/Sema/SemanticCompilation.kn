@@ -338,6 +338,103 @@ Class SemanticCompilation
         Return null;
     }
 
+    Public Safe Function bool IsDecimalText(string value)
+    {
+        If (IO.Text.IsEmpty(value)) Return false;
+        char[] characters = value.ToChars();
+        int index = 0;
+        While (index < characters.Length())
+        {
+            int code = [int](characters[index]);
+            If (code < 48 || code > 57) Return false;
+            index = index + 1;
+        }
+        Return true;
+    }
+
+    Public Safe Function int PackageRepeatOpen(string value)
+    {
+        If (!IO.Text.EndsWith(value, ")")) Return -1;
+        char[] characters = value.ToChars();
+        int depth = 0;
+        int index = characters.Length() - 1;
+        While (index >= 0)
+        {
+            int code = [int](characters[index]);
+            If (code == 41) depth = depth + 1;
+            ElseIf (code == 40)
+            {
+                depth = depth - 1;
+                If (depth == 0) Return index;
+            }
+            index = index - 1;
+        }
+        Return -1;
+    }
+
+    Public Safe Function TypeSymbol ResolvePackageType(SyntaxTree syntax,
+                                                         FunctionSymbol function,
+                                                         string rawName)
+    {
+        string name = This.CanonicalTypeName(rawName);
+        int length = IO.Text.Length(name);
+        If (length < 3 || !IO.Text.StartsWith(name, "<") ||
+            !IO.Text.EndsWith(name, ">")) Return null;
+
+        TypeSymbol packageType = New TypeSymbol([int](TypeKind.PackageType), name);
+        packageType.ElementType = This.Primitive("any");
+        char[] characters = name.ToChars();
+        int start = 1;
+        int angleDepth = 0;
+        int parenDepth = 0;
+        int index = 1;
+        string identity = "<";
+        While (index < length)
+        {
+            int code = [int](characters[index]);
+            If (code == 60) angleDepth = angleDepth + 1;
+            ElseIf (code == 62 && angleDepth > 0) angleDepth = angleDepth - 1;
+            ElseIf (code == 40) parenDepth = parenDepth + 1;
+            ElseIf (code == 41 && parenDepth > 0) parenDepth = parenDepth - 1;
+
+            bool delimiter = (code == 44 && angleDepth == 0 && parenDepth == 0) ||
+                (index == length - 1 && code == 62 && angleDepth == 0 && parenDepth == 0);
+            If (delimiter)
+            {
+                string itemName = IO.Text.Slice(name, start, index - start);
+                If (IO.Text.IsEmpty(itemName)) Return null;
+                int repeat = 1;
+                int repeatOpen = This.PackageRepeatOpen(itemName);
+                If (repeatOpen > 0)
+                {
+                    string repeatText = IO.Text.Slice(itemName, repeatOpen + 1,
+                        IO.Text.Length(itemName) - repeatOpen - 2);
+                    If (!This.IsDecimalText(repeatText)) Return null;
+                    repeat = [int](repeatText);
+                    itemName = IO.Text.Slice(itemName, 0, repeatOpen);
+                    If (repeat <= 0 || IO.Text.IsEmpty(itemName)) Return null;
+                }
+                TypeSymbol itemType = function == null ?
+                    This.ResolveType(syntax, itemName) :
+                    This.ResolveFunctionType(syntax, function, itemName);
+                If (itemType == null || itemType.Kind == [int](TypeKind.VoidType)) Return null;
+                int repeated = 0;
+                While (repeated < repeat)
+                {
+                    packageType.AddPackageElement(itemType);
+                    If (packageType.PackageCount > 1) identity = identity + ",";
+                    identity = identity + This.TypeIdentity(itemType);
+                    repeated = repeated + 1;
+                }
+                start = index + 1;
+            }
+            index = index + 1;
+        }
+        If (packageType.PackageCount == 0) Return null;
+        packageType.Name = identity + ">";
+        Return packageType;
+    }
+
     Public Safe Function TypeSymbol ResolveType(SyntaxTree syntax, string rawName)
     {
         string name = This.CanonicalTypeName(rawName);
@@ -346,11 +443,7 @@ Class SemanticCompilation
         ElseIf (name == "Object.Block") name = "IO.Type.Object.Block";
         ElseIf (name == "Object.Package") name = "IO.Type.Object.Package";
         If (IO.Text.StartsWith(name, "<") && IO.Text.EndsWith(name, ">"))
-        {
-            TypeSymbol packageType = New TypeSymbol([int](TypeKind.PackageType), name);
-            packageType.ElementType = This.Primitive("any");
-            Return packageType;
-        }
+            Return This.ResolvePackageType(syntax, null, name);
         int fixedOpen = IO.Text.IndexOf(name, "[");
         If (fixedOpen > 0 && IO.Text.EndsWith(name, "]"))
         {
@@ -438,6 +531,8 @@ Class SemanticCompilation
                                                          FunctionSymbol function, string rawName)
     {
         string name = This.CanonicalTypeName(rawName);
+        If (IO.Text.StartsWith(name, "<") && IO.Text.EndsWith(name, ">"))
+            Return This.ResolvePackageType(syntax, function, name);
         If (IO.Text.EndsWith(name, "*"))
         {
             TypeSymbol element = This.ResolveFunctionType(syntax, function,
@@ -938,9 +1033,76 @@ Class SemanticCompilation
     {
         If (type == null) Return "?";
         If (type.Kind == [int](TypeKind.ArrayType)) Return This.TypeIdentity(type.ElementType) + "[]";
-        If (type.Kind == [int](TypeKind.PackageType)) Return type.Name;
+        If (type.Kind == [int](TypeKind.PackageType))
+        {
+            If (type.PackageCount == 0) Return type.Name;
+            string packageName = "<";
+            PackageElementType element = type.FirstPackageElement;
+            int index = 0;
+            While (element != null)
+            {
+                If (index > 0) packageName = packageName + ",";
+                packageName = packageName + This.TypeIdentity(element.Type);
+                index = index + 1;
+                element = element.Next;
+            }
+            Return packageName + ">";
+        }
         If (type.Kind == [int](TypeKind.PointerType)) Return This.TypeIdentity(type.ElementType) + "*";
         Return type.QualifiedName();
+    }
+
+    Public Safe Function bool SameType(TypeSymbol left, TypeSymbol right)
+    {
+        If (left == right) Return true;
+        If (left == null || right == null || left.Kind != right.Kind) Return false;
+        If (left.Kind == [int](TypeKind.ArrayType) ||
+            left.Kind == [int](TypeKind.PointerType))
+            Return This.SameType(left.ElementType, right.ElementType);
+        If (left.Kind == [int](TypeKind.PackageType))
+        {
+            If (left.PackageCount != right.PackageCount) Return false;
+            PackageElementType leftElement = left.FirstPackageElement;
+            PackageElementType rightElement = right.FirstPackageElement;
+            While (leftElement != null && rightElement != null)
+            {
+                If (!This.SameType(leftElement.Type, rightElement.Type)) Return false;
+                leftElement = leftElement.Next;
+                rightElement = rightElement.Next;
+            }
+            Return leftElement == null && rightElement == null;
+        }
+        Return left.QualifiedName() == right.QualifiedName();
+    }
+
+    Public Safe Function bool IsAssignable(TypeSymbol target, TypeSymbol source)
+    {
+        If (target == null || source == null) Return false;
+        If (This.SameType(target, source) || target.Kind == [int](TypeKind.AnyType)) Return true;
+        If (target.Kind == [int](TypeKind.IntegerType) &&
+            source.Kind == [int](TypeKind.IntegerType)) Return true;
+        If (target.Kind == [int](TypeKind.FloatType) &&
+            (source.Kind == [int](TypeKind.FloatType) ||
+             source.Kind == [int](TypeKind.IntegerType))) Return true;
+        If (source.Kind == [int](TypeKind.NullType) &&
+            (target.Kind == [int](TypeKind.StringType) ||
+             target.Kind == [int](TypeKind.ListType) ||
+             target.Kind == [int](TypeKind.DictType) ||
+             target.Kind == [int](TypeKind.SetType) ||
+             target.Kind == [int](TypeKind.ArrayType) ||
+             target.Kind == [int](TypeKind.PointerType) ||
+             target.Kind == [int](TypeKind.NamedType))) Return true;
+        If (target.Kind == [int](TypeKind.NamedType) &&
+            source.Kind == [int](TypeKind.NamedType))
+        {
+            TypeSymbol current = source.BaseType;
+            While (current != null)
+            {
+                If (This.SameType(target, current)) Return true;
+                current = current.BaseType;
+            }
+        }
+        Return false;
     }
 
     Public Safe Function FunctionSymbol FindGenericInstance(FunctionSymbol definition, string key)
@@ -1615,10 +1777,12 @@ Class SemanticCompilation
             {
                 If ([string](labels.Fetch(labelIndex)) == expression.Text)
                 {
+                    TypeSymbol elementType = receiver.Type.PackageElement(labelIndex);
+                    If (elementType == null) elementType = This.Primitive("any");
                     ExpressionNode indexSyntax = New ExpressionNode([int](ExpressionKind.Number),
                         [string](labelIndex), expression.Line, expression.Column);
                     HirExpression result = New HirExpression([int](HirExpressionKind.Index),
-                        expression, receiver.Type.ElementType);
+                        expression, elementType);
                     result.Left = receiver;
                     result.Right = New HirExpression([int](HirExpressionKind.Constant),
                         indexSyntax, This.Primitive("int"));
@@ -1758,6 +1922,92 @@ Class SemanticCompilation
         bool equal = left == right;
         If (expression.Operator == [int](TokenKind.NotEqual)) equal = !equal;
         Return equal ? 1 : 0;
+    }
+
+    Public Safe Function int ConstantInteger(SyntaxTree syntax, ExpressionNode expression)
+    {
+        int invalid = -2147483647;
+        If (expression == null) Return invalid;
+        If (expression.Kind == [int](ExpressionKind.Number)) Return [int](expression.Text);
+        If (expression.Kind == [int](ExpressionKind.Name))
+        {
+            GlobalSymbol global = This.FindVisibleGlobal(syntax, expression.Text);
+            If (global == null || !global.Declaration.IsConst ||
+                global.Declaration.Initializer == expression) Return invalid;
+            Return This.ConstantInteger(syntax, global.Declaration.Initializer);
+        }
+        If (expression.Kind == [int](ExpressionKind.Unary))
+        {
+            int operand = This.ConstantInteger(syntax, expression.Left);
+            If (operand == invalid) Return invalid;
+            If (expression.Operator == [int](TokenKind.Plus)) Return operand;
+            If (expression.Operator == [int](TokenKind.Minus)) Return -operand;
+            If (expression.Operator == [int](TokenKind.Tilde)) Return ~operand;
+            Return invalid;
+        }
+        If (expression.Kind == [int](ExpressionKind.Binary))
+        {
+            int left = This.ConstantInteger(syntax, expression.Left);
+            int right = This.ConstantInteger(syntax, expression.Right);
+            If (left == invalid || right == invalid) Return invalid;
+            If (expression.Operator == [int](TokenKind.Plus)) Return left + right;
+            If (expression.Operator == [int](TokenKind.Minus)) Return left - right;
+            If (expression.Operator == [int](TokenKind.Star)) Return left * right;
+            If (expression.Operator == [int](TokenKind.Slash))
+                Return right == 0 ? invalid : left / right;
+            If (expression.Operator == [int](TokenKind.Percent))
+                Return right == 0 ? invalid : left % right;
+            If (expression.Operator == [int](TokenKind.Ampersand)) Return left & right;
+            If (expression.Operator == [int](TokenKind.BitOr)) Return left | right;
+            If (expression.Operator == [int](TokenKind.Xor)) Return left ^ right;
+            If (expression.Operator == [int](TokenKind.ShiftLeft)) Return left << right;
+            If (expression.Operator == [int](TokenKind.ShiftRight)) Return left >> right;
+        }
+        Return invalid;
+    }
+
+    Public Safe Function bool PackageCanMaterialize(TypeSymbol packageType,
+                                                      TypeSymbol elementType)
+    {
+        If (packageType == null || packageType.Kind != [int](TypeKind.PackageType) ||
+            packageType.PackageCount <= 0) Return false;
+        PackageElementType element = packageType.FirstPackageElement;
+        While (element != null)
+        {
+            If (!This.IsAssignable(elementType, element.Type)) Return false;
+            element = element.Next;
+        }
+        Return true;
+    }
+
+    Public Safe Function void ValidatePackageAliases(SyntaxTree syntax,
+                                                       StatementNode statement,
+                                                       TypeSymbol packageType)
+    {
+        If (statement.PackageLabels == "") Return;
+        list labels = IO.Text.Split(statement.PackageLabels, ",");
+        If (packageType == null || packageType.Kind != [int](TypeKind.PackageType))
+        {
+            This.Report(syntax, "Invalid Package Fields",
+                "Package field names require a Package value", statement.Line, statement.Column);
+            Return;
+        }
+        If (labels.Count() != packageType.PackageCount)
+            This.Report(syntax, "Package Field Count", "Package field count mismatch",
+                statement.Line, statement.Column);
+        int index = 0;
+        While (index < labels.Count())
+        {
+            int other = index + 1;
+            While (other < labels.Count())
+            {
+                If ([string](labels.Fetch(index)) == [string](labels.Fetch(other)))
+                    This.Report(syntax, "Duplicate Package Field",
+                        "Package field names cannot repeat", statement.Line, statement.Column);
+                other = other + 1;
+            }
+            index = index + 1;
+        }
     }
 
     Public Safe Function HirExpression BindExpression(SyntaxTree syntax, FunctionSymbol function,
@@ -1926,6 +2176,16 @@ Class SemanticCompilation
             If (type == null) Return This.InvalidExpression(syntax, expression, "Unknown cast type", expression.Text);
             HirExpression result = New HirExpression([int](HirExpressionKind.Cast), expression, type);
             result.Left = This.BindExpression(syntax, function, scope, expression.Left);
+            If (result.Left != null && result.Left.Type.Kind == [int](TypeKind.PackageType) &&
+                (type.Kind != [int](TypeKind.ArrayType) ||
+                 !This.PackageCanMaterialize(result.Left.Type, type.ElementType)))
+                This.Report(syntax, "Invalid Cast",
+                    "Package elements are not assignable to the target array element type",
+                    expression.Line, expression.Column);
+            ElseIf (result.Left != null && type.Kind == [int](TypeKind.PackageType) &&
+                result.Left.Type.Kind != [int](TypeKind.PackageType))
+                This.Report(syntax, "Invalid Cast", "Only Package values can convert to Package",
+                    expression.Line, expression.Column);
             Return result;
         }
         If (expression.Kind == [int](ExpressionKind.FunctionLiteral) ||
@@ -1968,9 +2228,15 @@ Class SemanticCompilation
             ExpressionNode item = expression.FirstArgument;
             While (item != null)
             {
-                result.AddArgument(This.BindExpression(syntax, function, scope, item));
+                HirExpression boundItem = This.BindExpression(syntax, function, scope, item);
+                result.AddArgument(boundItem);
+                If (boundItem != null) packageType.AddPackageElement(boundItem.Type);
                 item = item.Next;
             }
+            If (packageType.PackageCount == 0)
+                This.Report(syntax, "Invalid Package Literal", "Empty Package literal is not supported",
+                    expression.Line, expression.Column);
+            packageType.Name = This.TypeIdentity(packageType);
             Return result;
         }
         If (expression.Kind == [int](ExpressionKind.DictLiteral))
@@ -2016,16 +2282,34 @@ Class SemanticCompilation
         {
             HirExpression receiver = This.BindExpression(syntax, function, scope, expression.Left);
             TypeSymbol type = receiver.Type.Kind == [int](TypeKind.ArrayType) ||
-                receiver.Type.Kind == [int](TypeKind.PackageType) ||
                 receiver.Type.Kind == [int](TypeKind.PointerType) ?
                 receiver.Type.ElementType : This.Primitive("any");
             If (receiver.Type.Kind == [int](TypeKind.StringType)) type = This.Primitive("char");
+            int packageIndex = -2147483647;
+            If (receiver.Type.Kind == [int](TypeKind.PackageType))
+            {
+                packageIndex = This.ConstantInteger(syntax, expression.Right);
+                If (packageIndex == -2147483647)
+                    This.Report(syntax, "Invalid Package Index",
+                        "Package index must be a compile-time constant",
+                        expression.Line, expression.Column);
+                ElseIf (packageIndex < 0 || packageIndex >= receiver.Type.PackageCount)
+                    This.Report(syntax, "Invalid Package Index", "Package index out of range",
+                        expression.Line, expression.Column);
+                Else type = receiver.Type.PackageElement(packageIndex);
+            }
             HirExpression result = New HirExpression([int](HirExpressionKind.Index), expression, type);
             result.Left = receiver;
-            result.Right = This.BindExpression(syntax, function, scope, expression.Right);
-            If (receiver.Symbol != null && expression.Right != null &&
-                expression.Right.Kind == [int](ExpressionKind.Number))
-                result.Function = receiver.Symbol.CallableElement([int](expression.Right.Text));
+            If (packageIndex != -2147483647)
+            {
+                ExpressionNode constantIndex = New ExpressionNode([int](ExpressionKind.Number),
+                    [string](packageIndex), expression.Line, expression.Column);
+                result.Right = New HirExpression([int](HirExpressionKind.Constant),
+                    constantIndex, This.Primitive("int"));
+            }
+            Else result.Right = This.BindExpression(syntax, function, scope, expression.Right);
+            If (receiver.Symbol != null && packageIndex >= 0)
+                result.Function = receiver.Symbol.CallableElement(packageIndex);
             Return result;
         }
         If (expression.Kind == [int](ExpressionKind.Unary))
@@ -2202,6 +2486,43 @@ Class SemanticCompilation
                     statement.Line, statement.Column);
                 result.DeclaredType = This.Primitive("any");
             }
+            If (result.DeclaredType.Kind == [int](TypeKind.PackageType))
+            {
+                TypeSymbol initializerType = result.Expression == null ? null : result.Expression.Type;
+                If (result.DeclaredType.PackageCount == 0)
+                {
+                    If (initializerType == null)
+                        This.Report(syntax, "Type Inference Failed",
+                            "Object.Package requires initializer", statement.Line, statement.Column);
+                    ElseIf (initializerType.Kind != [int](TypeKind.PackageType) ||
+                        initializerType.PackageCount == 0)
+                        This.Report(syntax, "Type Inference Failed",
+                            "Object.Package initializer must be a Package value",
+                            statement.Line, statement.Column);
+                    Else result.DeclaredType = initializerType;
+                }
+                ElseIf (initializerType != null &&
+                    initializerType.Kind == [int](TypeKind.PackageType))
+                {
+                    If (result.DeclaredType.PackageCount != initializerType.PackageCount)
+                        This.Report(syntax, "Package Element Count",
+                            "Package initializer element count does not match target type",
+                            statement.Line, statement.Column);
+                    Else
+                    {
+                        int packageIndex = 0;
+                        While (packageIndex < result.DeclaredType.PackageCount)
+                        {
+                            If (!This.IsAssignable(result.DeclaredType.PackageElement(packageIndex),
+                                initializerType.PackageElement(packageIndex)))
+                                This.Report(syntax, "Type Mismatch",
+                                    "Package initializer element type does not match target type",
+                                    statement.Line, statement.Column);
+                            packageIndex = packageIndex + 1;
+                        }
+                    }
+                }
+            }
             If (result.DeclaredType.Kind == [int](TypeKind.DictType) &&
                 statement.Expression != null &&
                 statement.Expression.Kind == [int](ExpressionKind.ArrayLiteral) &&
@@ -2210,6 +2531,7 @@ Class SemanticCompilation
                     statement.Expression, result.DeclaredType);
             result.DeclaredSymbol = New ValueSymbol(statement.Name, result.DeclaredType, false);
             result.DeclaredSymbol.PackageLabels = statement.PackageLabels;
+            This.ValidatePackageAliases(syntax, statement, result.DeclaredType);
             If (result.Expression != null &&
                 result.Expression.Kind == [int](HirExpressionKind.FunctionReference))
             {

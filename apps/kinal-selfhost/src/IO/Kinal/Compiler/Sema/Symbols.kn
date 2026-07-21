@@ -149,6 +149,7 @@ Class FunctionSymbol
             If (current.Source == source || current.Name == source.Name) Return;
             current = current.Next;
         }
+        source.IsCaptured = true;
         CaptureSymbol capture = New CaptureSymbol(source, This.CaptureCount());
         capture.Next = This.FirstCapture;
         This.FirstCapture = capture;
@@ -206,6 +207,7 @@ Class ValueSymbol
     Public string Name;
     Public TypeSymbol Type;
     Public bool IsParameter;
+    Public bool IsCaptured;
     Public string PackageLabels;
     Public string BlockRecords;
     Public FunctionSymbol CallableFunction;
@@ -217,6 +219,7 @@ Class ValueSymbol
         This.Name = name;
         This.Type = type;
         This.IsParameter = isParameter;
+        This.IsCaptured = false;
         This.PackageLabels = "";
         This.BlockRecords = "";
         This.CallableFunction = null;

@@ -40,9 +40,14 @@ Static Function int Main()
 
     any[] statusItems = [any[]](status);
     IO.Console.PrintLine(statusItems.Length());
+    statusItems[0] = 999;
+    IO.Console.PrintLine(status.code);
+    IO.Console.PrintLine(statusItems[0]);
 
     int[] numbers = [int[]](<1, 2, 3>);
     IO.Console.PrintLine(numbers.Length());
     IO.Console.PrintLine(numbers[2]);
+    status.code += 1;
+    IO.Console.PrintLine(status.code);
     Return 0;
 }

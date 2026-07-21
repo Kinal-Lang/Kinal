@@ -282,7 +282,7 @@ def main() -> int:
     closure_run = run([str(closure_executable)], cwd=root)
     require(closure_run.returncode == 0, "stage1 closure fixture execution failed", closure_run)
     require(
-        closure_run.stdout.replace("\r\n", "\n").strip() == "5\n25\n15\n21",
+        closure_run.stdout.replace("\r\n", "\n").strip() == "5\n25\n15\n21\n11\n13",
         "stage1 closure fixture output differs",
         closure_run,
     )
@@ -299,11 +299,29 @@ def main() -> int:
     require(package_run.returncode == 0, "stage1 package-value fixture execution failed", package_run)
     require(
         package_run.stdout.replace("\r\n", "\n").strip() ==
-        "200\n200\nOK\nOK\n3\n1\n200\n2\nb\n2\n3\n3",
+        "200\n200\nOK\nOK\n3\n1\n200\n2\nb\n2\n200\n999\n3\n3\n201",
         "stage1 package-value fixture output differs",
         package_run,
     )
     results.append({"name": "package_values", "ok": True})
+
+    package_errors = (
+        ("error_package_index_runtime.kn", "[Sema] Invalid Package Index"),
+        ("error_package_field_count.kn", "[Sema] Package Field Count"),
+        ("error_package_array_cast.kn", "[Sema] Invalid Cast"),
+    )
+    for source_name, expected_error in package_errors:
+        package_error = run(
+            [str(compiler), "check-source", str(root / "tests" / "common" / source_name)],
+            cwd=root,
+        )
+        require(package_error.returncode != 0, f"stage1 accepted {source_name}", package_error)
+        require(
+            expected_error in (package_error.stdout + package_error.stderr),
+            f"stage1 diagnostic differs for {source_name}",
+            package_error,
+        )
+    results.append({"name": "package_diagnostics", "ok": True})
 
     block_project = root / "tests" / "selfhost" / "fixtures" / "block_features" / "kinal.knproj"
     block_executable = out_dir / f"block-features{executable_suffix}"
