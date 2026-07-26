@@ -510,9 +510,16 @@ Safe Function bool ParseStatement(ParseCursor cursor, list diagnostics, SourceFi
 
 Safe Function bool IsFunctionModifier(TokenKind kind)
 {
-    Return kind == TokenKind.KwStatic || kind == TokenKind.KwSafe ||
-           kind == TokenKind.KwTrusted || kind == TokenKind.KwUnsafe ||
-           kind == TokenKind.KwAsync || kind == TokenKind.KwExtern;
+    Return Switch (kind)
+    {
+        Case(TokenKind.KwStatic) { true; }
+        Case(TokenKind.KwSafe) { true; }
+        Case(TokenKind.KwTrusted) { true; }
+        Case(TokenKind.KwUnsafe) { true; }
+        Case(TokenKind.KwAsync) { true; }
+        Case(TokenKind.KwExtern) { true; }
+        Case(default) { false; }
+    };
 }
 
 Safe Function int FindFunctionNamePosition(ParseCursor cursor, int start)
@@ -784,11 +791,20 @@ Safe Function bool ParseMeta(ParseCursor cursor, list diagnostics, SourceFile so
 
 Safe Function bool IsTypeStart(TokenKind kind)
 {
-    Return kind == TokenKind.KwClass || kind == TokenKind.KwInterface ||
-           kind == TokenKind.KwStruct || kind == TokenKind.KwEnum ||
-           kind == TokenKind.KwPublic || kind == TokenKind.KwPrivate ||
-           kind == TokenKind.KwProtected || kind == TokenKind.KwInternal ||
-           kind == TokenKind.KwAbstract || kind == TokenKind.KwSealed;
+    Return Switch (kind)
+    {
+        Case(TokenKind.KwClass) { true; }
+        Case(TokenKind.KwInterface) { true; }
+        Case(TokenKind.KwStruct) { true; }
+        Case(TokenKind.KwEnum) { true; }
+        Case(TokenKind.KwPublic) { true; }
+        Case(TokenKind.KwPrivate) { true; }
+        Case(TokenKind.KwProtected) { true; }
+        Case(TokenKind.KwInternal) { true; }
+        Case(TokenKind.KwAbstract) { true; }
+        Case(TokenKind.KwSealed) { true; }
+        Case(default) { false; }
+    };
 }
 
 Safe Function bool IsStaticTypeStart(ParseCursor cursor)
@@ -971,23 +987,36 @@ Safe Function void SkipBalancedUnchecked(ParseCursor cursor, TokenKind openKind,
 
 Safe Function int BinaryPrecedence(TokenKind kind)
 {
-    If (kind == TokenKind.Assign || kind == TokenKind.PlusAssign ||
-        kind == TokenKind.MinusAssign || kind == TokenKind.StarAssign ||
-        kind == TokenKind.SlashAssign || kind == TokenKind.PercentAssign) Return 1;
-    If (kind == TokenKind.OrOr) Return 3;
-    If (kind == TokenKind.AndAnd) Return 4;
-    If (kind == TokenKind.BitOr) Return 5;
-    If (kind == TokenKind.Xor) Return 6;
-    If (kind == TokenKind.Ampersand) Return 7;
-    If (kind == TokenKind.Equal || kind == TokenKind.NotEqual) Return 8;
-    If (kind == TokenKind.Less || kind == TokenKind.LessEqual ||
-        kind == TokenKind.Greater || kind == TokenKind.GreaterEqual ||
-        kind == TokenKind.KwIs || kind == TokenKind.KwIn) Return 9;
-    If (kind == TokenKind.ShiftLeft || kind == TokenKind.ShiftRight) Return 10;
-    If (kind == TokenKind.Plus || kind == TokenKind.Minus) Return 11;
-    If (kind == TokenKind.Star || kind == TokenKind.Slash ||
-        kind == TokenKind.Percent) Return 12;
-    Return 0;
+    Return Switch (kind)
+    {
+        Case(TokenKind.Assign) { 1; }
+        Case(TokenKind.PlusAssign) { 1; }
+        Case(TokenKind.MinusAssign) { 1; }
+        Case(TokenKind.StarAssign) { 1; }
+        Case(TokenKind.SlashAssign) { 1; }
+        Case(TokenKind.PercentAssign) { 1; }
+        Case(TokenKind.OrOr) { 3; }
+        Case(TokenKind.AndAnd) { 4; }
+        Case(TokenKind.BitOr) { 5; }
+        Case(TokenKind.Xor) { 6; }
+        Case(TokenKind.Ampersand) { 7; }
+        Case(TokenKind.Equal) { 8; }
+        Case(TokenKind.NotEqual) { 8; }
+        Case(TokenKind.Less) { 9; }
+        Case(TokenKind.LessEqual) { 9; }
+        Case(TokenKind.Greater) { 9; }
+        Case(TokenKind.GreaterEqual) { 9; }
+        Case(TokenKind.KwIs) { 9; }
+        Case(TokenKind.KwIn) { 9; }
+        Case(TokenKind.ShiftLeft) { 10; }
+        Case(TokenKind.ShiftRight) { 10; }
+        Case(TokenKind.Plus) { 11; }
+        Case(TokenKind.Minus) { 11; }
+        Case(TokenKind.Star) { 12; }
+        Case(TokenKind.Slash) { 12; }
+        Case(TokenKind.Percent) { 12; }
+        Case(default) { 0; }
+    };
 }
 
 Safe Function bool IsRightAssociative(TokenKind kind)
@@ -1883,125 +1912,160 @@ Safe Function StatementNode ParseAstStatement(ParseCursor cursor)
     TokenKind kind = CurrentKind(cursor);
     int line = IO.Kinal.Compiler.Lex.Token.Line(token);
     int column = IO.Kinal.Compiler.Lex.Token.Column(token);
-    If (kind == TokenKind.LeftBrace) Return ParseAstBlock(cursor);
-    If (kind == TokenKind.Semicolon)
+    Switch (kind)
     {
-        Advance(cursor);
-        Return New StatementNode([int](StatementKind.Empty), line, column);
-    }
-    If (kind == TokenKind.KwReturn)
-    {
-        Advance(cursor);
-        StatementNode value = New StatementNode([int](StatementKind.Return), line, column);
-        If (CurrentKind(cursor) != TokenKind.Semicolon) value.Expression = ParseExpression(cursor, 1);
-        Match(cursor, TokenKind.Semicolon);
-        Return value;
-    }
-    If (kind == TokenKind.KwIf || kind == TokenKind.KwElseIf)
-    {
-        Advance(cursor);
-        StatementNode value = New StatementNode([int](StatementKind.If), line, column);
-        Match(cursor, TokenKind.LeftParen);
-        value.Expression = ParseExpression(cursor, 1);
-        If (value.Expression != null && value.Expression.Kind == [int](ExpressionKind.Binary) &&
-            value.Expression.Operator == TokenKind.KwIs &&
-            CurrentKind(cursor) == TokenKind.Identifier)
+        Case(TokenKind.LeftBrace)
         {
-            value.Expression.Third = NewExpression([int](ExpressionKind.Name), CurrentToken(cursor));
+            Return ParseAstBlock(cursor);
+        }
+        Case(TokenKind.Semicolon)
+        {
             Advance(cursor);
+            Return New StatementNode([int](StatementKind.Empty), line, column);
         }
-        Match(cursor, TokenKind.RightParen);
-        value.FirstChild = ParseAstStatement(cursor);
-        If (Match(cursor, TokenKind.KwElse))
+        Case(TokenKind.KwReturn)
         {
-            value.ElseBranch = ParseAstStatement(cursor);
+            Advance(cursor);
+            StatementNode value = New StatementNode([int](StatementKind.Return), line, column);
+            If (CurrentKind(cursor) != TokenKind.Semicolon) value.Expression = ParseExpression(cursor, 1);
+            Match(cursor, TokenKind.Semicolon);
+            Return value;
         }
-        ElseIf (CurrentKind(cursor) == TokenKind.KwElseIf) value.ElseBranch = ParseAstStatement(cursor);
-        Return value;
-    }
-    If (kind == TokenKind.KwWhile)
-    {
-        Advance(cursor);
-        StatementNode value = New StatementNode([int](StatementKind.While), line, column);
-        Match(cursor, TokenKind.LeftParen);
-        value.Expression = ParseExpression(cursor, 1);
-        Match(cursor, TokenKind.RightParen);
-        value.FirstChild = ParseAstStatement(cursor);
-        Return value;
-    }
-    If (kind == TokenKind.KwFor) Return ParseAstFor(cursor);
-    If (kind == TokenKind.KwForeach) Return ParseAstForeach(cursor);
-    If (kind == TokenKind.KwSwitch) Return ParseAstSwitch(cursor);
-    If (kind == TokenKind.KwTry) Return ParseAstTry(cursor);
-    If (kind == TokenKind.KwThrow)
-    {
-        Advance(cursor);
-        StatementNode value = New StatementNode([int](StatementKind.Throw), line, column);
-        If (CurrentKind(cursor) != TokenKind.Semicolon) value.Expression = ParseExpression(cursor, 1);
-        Match(cursor, TokenKind.Semicolon);
-        Return value;
-    }
-    If (kind == TokenKind.KwUnsafe &&
-        KindAt(cursor, cursor.Position + 1) == TokenKind.KwBlock)
-        Return ParseAstUnsafeBlock(cursor);
-    If (kind == TokenKind.KwBlock &&
-        KindAt(cursor, cursor.Position + 1) == TokenKind.Identifier &&
-        KindAt(cursor, cursor.Position + 2) == TokenKind.Less)
-        Return ParseAstUnsafeBlock(cursor);
-    If (kind == TokenKind.KwFunction) Return ParseLocalFunctionStatement(cursor);
-    If (kind == TokenKind.KwClass || kind == TokenKind.KwStruct ||
-        kind == TokenKind.KwEnum || kind == TokenKind.KwInterface)
-        Return ParseLocalTypeStatement(cursor);
-    If (kind == TokenKind.KwRecord)
-    {
-        Advance(cursor);
-        StatementNode value = New StatementNode([int](StatementKind.Record), line, column);
-        value.Name = IO.Kinal.Compiler.Lex.Token.Text(CurrentToken(cursor));
-        Advance(cursor);
-        If (CurrentKind(cursor) == TokenKind.LeftBrace)
+        Case(TokenKind.KwIf)
         {
-            value.FirstChild = ParseAstBlock(cursor);
-            value.LastChild = value.FirstChild;
-        }
-        ElseIf (!(CurrentKind(cursor) == TokenKind.Slash &&
-                 KindAt(cursor, cursor.Position + 1) == TokenKind.Greater))
-        {
+            Advance(cursor);
+            StatementNode value = New StatementNode([int](StatementKind.If), line, column);
+            Match(cursor, TokenKind.LeftParen);
+            value.Expression = ParseExpression(cursor, 1);
+            If (value.Expression != null && value.Expression.Kind == [int](ExpressionKind.Binary) &&
+                value.Expression.Operator == TokenKind.KwIs &&
+                CurrentKind(cursor) == TokenKind.Identifier)
+            {
+                value.Expression.Third = NewExpression([int](ExpressionKind.Name), CurrentToken(cursor));
+                Advance(cursor);
+            }
+            Match(cursor, TokenKind.RightParen);
             value.FirstChild = ParseAstStatement(cursor);
-            value.LastChild = value.FirstChild;
+            If (Match(cursor, TokenKind.KwElse)) value.ElseBranch = ParseAstStatement(cursor);
+            ElseIf (CurrentKind(cursor) == TokenKind.KwElseIf)
+                value.ElseBranch = ParseAstStatement(cursor);
+            Return value;
         }
-        Return value;
-    }
-    If (kind == TokenKind.KwJump)
-    {
-        Advance(cursor);
-        StatementNode value = New StatementNode([int](StatementKind.Jump), line, column);
-        If (CurrentKind(cursor) == TokenKind.Identifier &&
-            KindAt(cursor, cursor.Position + 1) == TokenKind.Semicolon)
+        Case(TokenKind.KwElseIf)
         {
+            Advance(cursor);
+            StatementNode value = New StatementNode([int](StatementKind.If), line, column);
+            Match(cursor, TokenKind.LeftParen);
+            value.Expression = ParseExpression(cursor, 1);
+            If (value.Expression != null && value.Expression.Kind == [int](ExpressionKind.Binary) &&
+                value.Expression.Operator == TokenKind.KwIs &&
+                CurrentKind(cursor) == TokenKind.Identifier)
+            {
+                value.Expression.Third = NewExpression([int](ExpressionKind.Name), CurrentToken(cursor));
+                Advance(cursor);
+            }
+            Match(cursor, TokenKind.RightParen);
+            value.FirstChild = ParseAstStatement(cursor);
+            If (Match(cursor, TokenKind.KwElse)) value.ElseBranch = ParseAstStatement(cursor);
+            ElseIf (CurrentKind(cursor) == TokenKind.KwElseIf)
+                value.ElseBranch = ParseAstStatement(cursor);
+            Return value;
+        }
+        Case(TokenKind.KwWhile)
+        {
+            Advance(cursor);
+            StatementNode value = New StatementNode([int](StatementKind.While), line, column);
+            Match(cursor, TokenKind.LeftParen);
+            value.Expression = ParseExpression(cursor, 1);
+            Match(cursor, TokenKind.RightParen);
+            value.FirstChild = ParseAstStatement(cursor);
+            Return value;
+        }
+        Case(TokenKind.KwFor) { Return ParseAstFor(cursor); }
+        Case(TokenKind.KwForeach) { Return ParseAstForeach(cursor); }
+        Case(TokenKind.KwSwitch) { Return ParseAstSwitch(cursor); }
+        Case(TokenKind.KwTry) { Return ParseAstTry(cursor); }
+        Case(TokenKind.KwThrow)
+        {
+            Advance(cursor);
+            StatementNode value = New StatementNode([int](StatementKind.Throw), line, column);
+            If (CurrentKind(cursor) != TokenKind.Semicolon) value.Expression = ParseExpression(cursor, 1);
+            Match(cursor, TokenKind.Semicolon);
+            Return value;
+        }
+        Case(TokenKind.KwUnsafe)
+        {
+            If (KindAt(cursor, cursor.Position + 1) == TokenKind.KwBlock)
+                Return ParseAstUnsafeBlock(cursor);
+        }
+        Case(TokenKind.KwBlock)
+        {
+            If (KindAt(cursor, cursor.Position + 1) == TokenKind.Identifier &&
+                KindAt(cursor, cursor.Position + 2) == TokenKind.Less)
+                Return ParseAstUnsafeBlock(cursor);
+        }
+        Case(TokenKind.KwFunction) { Return ParseLocalFunctionStatement(cursor); }
+        Case(TokenKind.KwClass) { Return ParseLocalTypeStatement(cursor); }
+        Case(TokenKind.KwStruct) { Return ParseLocalTypeStatement(cursor); }
+        Case(TokenKind.KwEnum) { Return ParseLocalTypeStatement(cursor); }
+        Case(TokenKind.KwInterface) { Return ParseLocalTypeStatement(cursor); }
+        Case(TokenKind.KwRecord)
+        {
+            Advance(cursor);
+            StatementNode value = New StatementNode([int](StatementKind.Record), line, column);
             value.Name = IO.Kinal.Compiler.Lex.Token.Text(CurrentToken(cursor));
             Advance(cursor);
+            If (CurrentKind(cursor) == TokenKind.LeftBrace)
+            {
+                value.FirstChild = ParseAstBlock(cursor);
+                value.LastChild = value.FirstChild;
+            }
+            ElseIf (!(CurrentKind(cursor) == TokenKind.Slash &&
+                     KindAt(cursor, cursor.Position + 1) == TokenKind.Greater))
+            {
+                value.FirstChild = ParseAstStatement(cursor);
+                value.LastChild = value.FirstChild;
+            }
+            Return value;
         }
-        Else value.Expression = ParseExpression(cursor, 1);
-        Match(cursor, TokenKind.Semicolon);
-        Return value;
-    }
-    If (kind == TokenKind.KwBreak || kind == TokenKind.KwContinue)
-    {
-        Advance(cursor);
-        Match(cursor, TokenKind.Semicolon);
-        Return New StatementNode(kind == TokenKind.KwBreak ?
-            [int](StatementKind.Break) : [int](StatementKind.Continue), line, column);
-    }
-    If (kind == TokenKind.KwVar)
-    {
-        Advance(cursor);
-        StatementNode declaration = New StatementNode([int](StatementKind.Variable), line, column);
-        declaration.TypeName = "Var";
-        declaration.Name = IO.Kinal.Compiler.Lex.Token.Text(CurrentToken(cursor));
-        Advance(cursor);
-        If (Match(cursor, TokenKind.Assign)) declaration.Expression = ParseExpression(cursor, 1);
-        Match(cursor, TokenKind.Semicolon);
-        Return declaration;
+        Case(TokenKind.KwJump)
+        {
+            Advance(cursor);
+            StatementNode value = New StatementNode([int](StatementKind.Jump), line, column);
+            If (CurrentKind(cursor) == TokenKind.Identifier &&
+                KindAt(cursor, cursor.Position + 1) == TokenKind.Semicolon)
+            {
+                value.Name = IO.Kinal.Compiler.Lex.Token.Text(CurrentToken(cursor));
+                Advance(cursor);
+            }
+            Else value.Expression = ParseExpression(cursor, 1);
+            Match(cursor, TokenKind.Semicolon);
+            Return value;
+        }
+        Case(TokenKind.KwBreak)
+        {
+            Advance(cursor);
+            Match(cursor, TokenKind.Semicolon);
+            Return New StatementNode([int](StatementKind.Break), line, column);
+        }
+        Case(TokenKind.KwContinue)
+        {
+            Advance(cursor);
+            Match(cursor, TokenKind.Semicolon);
+            Return New StatementNode([int](StatementKind.Continue), line, column);
+        }
+        Case(TokenKind.KwVar)
+        {
+            Advance(cursor);
+            StatementNode declaration = New StatementNode([int](StatementKind.Variable), line, column);
+            declaration.TypeName = "Var";
+            declaration.Name = IO.Kinal.Compiler.Lex.Token.Text(CurrentToken(cursor));
+            Advance(cursor);
+            If (Match(cursor, TokenKind.Assign)) declaration.Expression = ParseExpression(cursor, 1);
+            Match(cursor, TokenKind.Semicolon);
+            Return declaration;
+        }
+        Case(default) { }
     }
     int declarationName = FindDeclarationName(cursor, false);
     If (declarationName > cursor.Position)
@@ -2049,11 +2113,14 @@ Safe Function StatementNode ParseAstStatement(ParseCursor cursor)
 
 Safe Function int AccessFromModifier(TokenKind kind)
 {
-    If (kind == TokenKind.KwPublic) Return 1;
-    If (kind == TokenKind.KwPrivate) Return 2;
-    If (kind == TokenKind.KwProtected) Return 3;
-    If (kind == TokenKind.KwInternal) Return 4;
-    Return 0;
+    Return Switch (kind)
+    {
+        Case(TokenKind.KwPublic) { 1; }
+        Case(TokenKind.KwPrivate) { 2; }
+        Case(TokenKind.KwProtected) { 3; }
+        Case(TokenKind.KwInternal) { 4; }
+        Case(default) { 0; }
+    };
 }
 
 Safe Function FunctionDecl ReadFunctionNode(ParseCursor cursor, bool constructor,
@@ -2141,8 +2208,12 @@ Safe Function void ReadTypeMembers(ParseCursor cursor, TypeDecl type, SyntaxTree
         Return;
     }
     If (!Match(cursor, TokenKind.LeftBrace)) Return;
-    While (!IsEnd(cursor) && CurrentKind(cursor) != TokenKind.RightBrace)
-    {
+    Block TypeMemberDispatch< /
+        Record Dispatch
+        If (IsEnd(cursor) || CurrentKind(cursor) == TokenKind.RightBrace)
+        {
+            Jump Done;
+        }
         SyntaxAttribute attributes = ReadAttributes(cursor);
         int access = 0;
         bool isStatic = false;
@@ -2157,60 +2228,28 @@ Safe Function void ReadTypeMembers(ParseCursor cursor, TypeDecl type, SyntaxTree
         {
             TokenKind modifier = CurrentKind(cursor);
             int modifierAccess = AccessFromModifier(modifier);
+            bool consumed = modifierAccess != 0;
             If (modifierAccess != 0)
             {
                 access = modifierAccess;
-                Advance(cursor);
-            }
-            ElseIf (modifier == TokenKind.KwStatic)
-            {
-                isStatic = true;
-                Advance(cursor);
-            }
-            ElseIf (modifier == TokenKind.KwAsync)
-            {
-                isAsync = true;
-                Advance(cursor);
-            }
-            ElseIf (modifier == TokenKind.KwExtern)
-            {
-                isExtern = true;
-                Advance(cursor);
-            }
-            ElseIf (modifier == TokenKind.KwAbstract)
-            {
-                isAbstract = true;
-                Advance(cursor);
-            }
-            ElseIf (modifier == TokenKind.KwVirtual)
-            {
-                isVirtual = true;
-                Advance(cursor);
-            }
-            ElseIf (modifier == TokenKind.KwOverride)
-            {
-                isOverride = true;
-                Advance(cursor);
-            }
-            ElseIf (modifier == TokenKind.KwSafe)
-            {
-                safety = 1;
-                Advance(cursor);
-            }
-            ElseIf (modifier == TokenKind.KwTrusted)
-            {
-                safety = 2;
-                Advance(cursor);
-            }
-            ElseIf (modifier == TokenKind.KwUnsafe)
-            {
-                safety = 3;
-                Advance(cursor);
             }
             Else
             {
-                readingModifiers = false;
+                Switch (modifier)
+                {
+                    Case(TokenKind.KwStatic) { isStatic = true; consumed = true; }
+                    Case(TokenKind.KwAsync) { isAsync = true; consumed = true; }
+                    Case(TokenKind.KwExtern) { isExtern = true; consumed = true; }
+                    Case(TokenKind.KwAbstract) { isAbstract = true; consumed = true; }
+                    Case(TokenKind.KwVirtual) { isVirtual = true; consumed = true; }
+                    Case(TokenKind.KwOverride) { isOverride = true; consumed = true; }
+                    Case(TokenKind.KwSafe) { safety = 1; consumed = true; }
+                    Case(TokenKind.KwTrusted) { safety = 2; consumed = true; }
+                    Case(TokenKind.KwUnsafe) { safety = 3; consumed = true; }
+                    Case(default) { }
+                }
             }
+            If (consumed) Advance(cursor); Else readingModifiers = false;
         }
 
         If (CurrentKind(cursor) == TokenKind.KwClass ||
@@ -2238,7 +2277,7 @@ Safe Function void ReadTypeMembers(ParseCursor cursor, TypeDecl type, SyntaxTree
             nested.FirstAttribute = attributes;
             ReadTypeMembers(cursor, nested, tree);
             tree.AddType(nested);
-            Continue;
+            Jump Dispatch;
         }
 
         If (CurrentKind(cursor) == TokenKind.KwConstructor)
@@ -2250,7 +2289,7 @@ Safe Function void ReadTypeMembers(ParseCursor cursor, TypeDecl type, SyntaxTree
             constructor.IsOverride = isOverride;
             constructor.FirstAttribute = attributes;
             type.AddMethod(constructor);
-            Continue;
+            Jump Dispatch;
         }
         If (CurrentKind(cursor) == TokenKind.KwFunction)
         {
@@ -2267,7 +2306,7 @@ Safe Function void ReadTypeMembers(ParseCursor cursor, TypeDecl type, SyntaxTree
             method.IsOverride = isOverride;
             method.FirstAttribute = attributes;
             type.AddMethod(method);
-            Continue;
+            Jump Dispatch;
         }
         If (CurrentKind(cursor) == TokenKind.KwProperty)
         {
@@ -2292,7 +2331,7 @@ Safe Function void ReadTypeMembers(ParseCursor cursor, TypeDecl type, SyntaxTree
             cursor.Position = bodyStart;
             If (!Match(cursor, TokenKind.Semicolon))
                 SkipBalancedUnchecked(cursor, TokenKind.LeftBrace, TokenKind.RightBrace);
-            Continue;
+            Jump Dispatch;
         }
 
         int fieldStart = cursor.Position;
@@ -2310,11 +2349,15 @@ Safe Function void ReadTypeMembers(ParseCursor cursor, TypeDecl type, SyntaxTree
             If (Match(cursor, TokenKind.Assign)) field.Initializer = ParseExpression(cursor, 1);
             Match(cursor, TokenKind.Semicolon);
             type.AddField(field);
-            Continue;
+            Jump Dispatch;
         }
 
         Advance(cursor);
-    }
+        Jump Dispatch;
+
+        Record Done
+    / >
+    TypeMemberDispatch.Run();
     Match(cursor, TokenKind.RightBrace);
 }
 
@@ -2399,8 +2442,12 @@ Safe Function SyntaxTree Build(SourceFile source, list tokens, list diagnostics)
     }
     SyntaxTree tree = New SyntaxTree(source, unitName);
 
-    While (!IsEnd(cursor))
-    {
+    Block TopLevelDispatch< /
+        Record Dispatch
+        If (IsEnd(cursor))
+        {
+            Jump Done;
+        }
         SyntaxAttribute attributes = ReadAttributes(cursor);
         TokenKind kind = CurrentKind(cursor);
         If (IsContextual(cursor, "Meta"))
@@ -2423,7 +2470,7 @@ Safe Function SyntaxTree Build(SourceFile source, list tokens, list diagnostics)
                 }
             }
             tree.AddMeta(meta);
-            Continue;
+            Jump Dispatch;
         }
         If (kind == TokenKind.KwGet)
         {
@@ -2446,7 +2493,7 @@ Safe Function SyntaxTree Build(SourceFile source, list tokens, list diagnostics)
                 }
                 Match(cursor, TokenKind.RightBrace);
                 Match(cursor, TokenKind.Semicolon);
-                Continue;
+                Jump Dispatch;
             }
             string target = name;
             bool isAlias = Match(cursor, TokenKind.KwBy);
@@ -2456,7 +2503,7 @@ Safe Function SyntaxTree Build(SourceFile source, list tokens, list diagnostics)
                 IO.Kinal.Compiler.Lex.Token.Line(location), IO.Kinal.Compiler.Lex.Token.Column(location));
             imported.Kind = isAlias ? 1 : 0;
             tree.AddImport(imported);
-            Continue;
+            Jump Dispatch;
         }
         If (kind == TokenKind.KwAlias)
         {
@@ -2471,7 +2518,7 @@ Safe Function SyntaxTree Build(SourceFile source, list tokens, list diagnostics)
                 IO.Kinal.Compiler.Lex.Token.Line(location), IO.Kinal.Compiler.Lex.Token.Column(location));
             symbolAlias.Kind = 3;
             tree.AddImport(symbolAlias);
-            Continue;
+            Jump Dispatch;
         }
         If (kind == TokenKind.KwDelegate)
         {
@@ -2480,7 +2527,7 @@ Safe Function SyntaxTree Build(SourceFile source, list tokens, list diagnostics)
             delegate.IsDelegate = true;
             delegate.FirstAttribute = attributes;
             tree.AddFunction(delegate);
-            Continue;
+            Jump Dispatch;
         }
 
         If (IsGlobalStart(kind))
@@ -2489,7 +2536,7 @@ Safe Function SyntaxTree Build(SourceFile source, list tokens, list diagnostics)
             If (global != null)
             {
                 tree.AddGlobal(global);
-                Continue;
+                Jump Dispatch;
             }
         }
 
@@ -2500,12 +2547,16 @@ Safe Function SyntaxTree Build(SourceFile source, list tokens, list diagnostics)
         While (IsFunctionModifier(CurrentKind(cursor)))
         {
             TokenKind modifier = CurrentKind(cursor);
-            If (modifier == TokenKind.KwStatic) isStatic = true;
-            If (modifier == TokenKind.KwAsync) isAsync = true;
-            If (modifier == TokenKind.KwExtern) isExtern = true;
-            If (modifier == TokenKind.KwSafe) safety = 1;
-            If (modifier == TokenKind.KwTrusted) safety = 2;
-            If (modifier == TokenKind.KwUnsafe) safety = 3;
+            Switch (modifier)
+            {
+                Case(TokenKind.KwStatic) { isStatic = true; }
+                Case(TokenKind.KwAsync) { isAsync = true; }
+                Case(TokenKind.KwExtern) { isExtern = true; }
+                Case(TokenKind.KwSafe) { safety = 1; }
+                Case(TokenKind.KwTrusted) { safety = 2; }
+                Case(TokenKind.KwUnsafe) { safety = 3; }
+                Case(default) { }
+            }
             Advance(cursor);
         }
         If (CurrentKind(cursor) == TokenKind.KwFunction)
@@ -2513,7 +2564,7 @@ Safe Function SyntaxTree Build(SourceFile source, list tokens, list diagnostics)
             FunctionDecl function = ReadFunctionNode(cursor, false, isStatic, isAsync, isExtern, safety);
             function.FirstAttribute = attributes;
             tree.AddFunction(function);
-            Continue;
+            Jump Dispatch;
         }
 
         If (!IsTypeStart(CurrentKind(cursor)))
@@ -2521,7 +2572,7 @@ Safe Function SyntaxTree Build(SourceFile source, list tokens, list diagnostics)
             // Validation already reported structural errors. Keep AST construction
             // forward-progressing if an expression parser leaves a recovery token.
             Advance(cursor);
-            Continue;
+            Jump Dispatch;
         }
 
         While (CurrentKind(cursor) == TokenKind.KwPublic ||
@@ -2547,6 +2598,10 @@ Safe Function SyntaxTree Build(SourceFile source, list tokens, list diagnostics)
         type.FirstAttribute = attributes;
         ReadTypeMembers(cursor, type, tree);
         tree.AddType(type);
-    }
+        Jump Dispatch;
+
+        Record Done
+    / >
+    TopLevelDispatch.Run();
     Return tree;
 }
