@@ -1,0 +1,13 @@
+Unit Tests.ErrorTopLevelGetAfterDecl;
+
+Static Function int First()
+{
+    Return 0;
+}
+
+Get IO.Console;
+
+Static Function int Main()
+{
+    Return First();
+}

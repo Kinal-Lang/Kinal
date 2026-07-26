@@ -1082,6 +1082,16 @@
     "expect_error": "[Parser] Invalid Get Position"
   },
   {
+    "name": "error_top_level_get_after_decl",
+    "file": "tests/common/error_top_level_get_after_decl.kn",
+    "expect_error": "[Parser] Invalid Get Position"
+  },
+  {
+    "name": "error_top_level_alias_after_decl",
+    "file": "tests/common/error_top_level_alias_after_decl.kn",
+    "expect_error": "[Parser] Invalid Alias Position"
+  },
+  {
     "name": "error_global_modifier",
     "file": "tests/common/error_global_modifier.kn",
     "expect_error": "[Parser] Invalid Global Modifier"

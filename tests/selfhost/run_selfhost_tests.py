@@ -19,6 +19,17 @@ def require(condition: bool, message: str, proc: subprocess.CompletedProcess[str
     raise SystemExit(message)
 
 
+def parser_diagnostic_titles(proc: subprocess.CompletedProcess[str]) -> list[str]:
+    output = (proc.stdout or "") + (proc.stderr or "")
+    titles: list[str] = []
+    for line in output.splitlines():
+        if not line.startswith("[Parser]") or "[warning]" in line:
+            continue
+        message = line[line.rfind("] ") + 2 :]
+        titles.append(message.split(":", 1)[0])
+    return titles
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--stage0", type=Path, required=True)
@@ -348,6 +359,62 @@ def main() -> int:
             "name": "builder_failure_diagnostics",
             "ok": True,
             "files": len(builder_diagnostic_fixtures),
+        }
+    )
+
+    single_pass_fixtures = [
+        root / "tests" / "common" / "error_builder_field_semicolon.kn",
+        root / "tests" / "common" / "error_builder_method_right_paren.kn",
+        root / "tests" / "common" / "error_parser_recovery_multiple.kn",
+        root / "tests" / "common" / "error_top_level_get_after_decl.kn",
+        root / "tests" / "common" / "error_top_level_alias_after_decl.kn",
+        root / "tests" / "common" / "error_meta_lowercase_on.kn",
+        root / "tests" / "common" / "error_incomplete_block_body.kn",
+    ]
+    for single_pass_fixture in single_pass_fixtures:
+        stage0_single_pass = run(
+            [
+                str(stage0),
+                "build",
+                "--no-module-discovery",
+                "--color",
+                "never",
+                "--emit",
+                "check",
+                str(single_pass_fixture),
+                "-o",
+                str(out_dir / f"{single_pass_fixture.stem}-single-pass-stage0.kcheck"),
+            ],
+            cwd=root,
+        )
+        stage1_parse = run([str(compiler), "parse", str(single_pass_fixture)], cwd=root)
+        stage1_ast = run([str(compiler), "ast", str(single_pass_fixture)], cwd=root)
+        stage1_check = run([str(compiler), "check-source", str(single_pass_fixture)], cwd=root)
+        expected_titles = parser_diagnostic_titles(stage0_single_pass)
+        require(expected_titles, f"stage0 emitted no Parser diagnostic: {single_pass_fixture}")
+        for command_name, stage1_result in (
+            ("parse", stage1_parse),
+            ("ast", stage1_ast),
+            ("check-source", stage1_check),
+        ):
+            require(
+                stage1_result.returncode != 0,
+                f"stage1 {command_name} accepted invalid source: {single_pass_fixture}",
+                stage1_result,
+            )
+            require(
+                parser_diagnostic_titles(stage1_result) == expected_titles,
+                f"stage1 {command_name} Parser diagnostics differ from stage0: "
+                f"{single_pass_fixture}; expected={expected_titles}, "
+                f"actual={parser_diagnostic_titles(stage1_result)}",
+                stage1_result,
+            )
+    results.append(
+        {
+            "name": "single_pass_parser_consistency",
+            "ok": True,
+            "files": len(single_pass_fixtures),
+            "commands": 3,
         }
     )
 
@@ -1513,6 +1580,8 @@ def main() -> int:
             str(root / "tests" / "selfhost" / "audit_manifest_diagnostics.py"),
             "--compiler",
             str(compiler),
+            "--stage0",
+            str(stage0),
             "--root",
             str(root),
             "--baseline",

@@ -1,0 +1,13 @@
+Unit Tests.ErrorTopLevelAliasAfterDecl;
+
+Static Function int First()
+{
+    Return 0;
+}
+
+Alias Later By Tests.ErrorTopLevelAliasAfterDecl.First;
+
+Static Function int Main()
+{
+    Return First();
+}
