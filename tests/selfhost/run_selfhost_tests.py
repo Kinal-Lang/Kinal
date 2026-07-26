@@ -290,6 +290,67 @@ def main() -> int:
         {"name": "unknown_token_diagnostics", "ok": True, "files": len(unknown_token_fixtures)}
     )
 
+    builder_diagnostic_fixtures = [
+        (
+            root / "tests" / "common" / "error_builder_field_semicolon.kn",
+            "Expected Semicolon",
+        ),
+        (
+            root / "tests" / "common" / "error_builder_method_right_paren.kn",
+            "Expected ')'",
+        ),
+    ]
+    for builder_fixture, expected_title in builder_diagnostic_fixtures:
+        stage0_builder = run(
+            [
+                str(stage0),
+                "build",
+                "--no-module-discovery",
+                "--color",
+                "never",
+                "--emit",
+                "check",
+                str(builder_fixture),
+                "-o",
+                str(out_dir / f"{builder_fixture.stem}-stage0.kcheck"),
+            ],
+            cwd=root,
+        )
+        stage1_builder = run(
+            [str(compiler), "check-source", str(builder_fixture)],
+            cwd=root,
+        )
+        stage0_builder_output = (stage0_builder.stdout or "") + (stage0_builder.stderr or "")
+        stage1_builder_output = (stage1_builder.stdout or "") + (stage1_builder.stderr or "")
+        require(
+            stage0_builder.returncode != 0 and expected_title in stage0_builder_output,
+            f"stage0 builder-diagnostic fixture changed: {builder_fixture}",
+            stage0_builder,
+        )
+        require(
+            stage1_builder.returncode != 0 and expected_title in stage1_builder_output,
+            f"stage1 AST builder failed without a diagnostic: {builder_fixture}",
+            stage1_builder,
+        )
+        stage0_builder_count = sum(
+            1 for line in stage0_builder_output.splitlines() if line.startswith("[Parser]")
+        )
+        stage1_builder_count = sum(
+            1 for line in stage1_builder_output.splitlines() if line.startswith("[Parser]")
+        )
+        require(
+            stage0_builder_count == stage1_builder_count,
+            f"builder diagnostic count differs: {builder_fixture}",
+            stage1_builder,
+        )
+    results.append(
+        {
+            "name": "builder_failure_diagnostics",
+            "ok": True,
+            "files": len(builder_diagnostic_fixtures),
+        }
+    )
+
     switch_fixture = root / "tests" / "selfhost" / "fixtures" / "switch_expression.kn"
     switch_stage0_path = out_dir / "switch-expression-stage0.kast"
     switch_stage0 = run(

@@ -1,0 +1,14 @@
+Unit Tests.ErrorBuilderMethodRightParen;
+
+Class Sample
+{
+    Function int Value(int input
+    {
+        Return input;
+    }
+}
+
+Static Function int Main()
+{
+    Return 0;
+}

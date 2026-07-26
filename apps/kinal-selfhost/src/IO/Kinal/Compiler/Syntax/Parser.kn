@@ -392,6 +392,12 @@ Safe Function void Report(ParseCursor cursor, list diagnostics, SourceFile sourc
     ReportToken(diagnostics, source, CurrentToken(cursor), title, detail);
 }
 
+Safe Function bool BuilderExpect(ParseCursor cursor, TokenKind kind,
+                                 string title, string detail)
+{
+    Return Expect(cursor, cursor.Diagnostics, cursor.Source, kind, title, detail);
+}
+
 Safe Function bool Expect(ParseCursor cursor, list diagnostics, SourceFile source,
                           TokenKind kind, string title, string detail)
 {
@@ -1229,14 +1235,16 @@ Safe Function ExpressionNode NewExpression(int kind, string token)
 
 Safe Function void ReadArguments(ParseCursor cursor, ExpressionNode call)
 {
-    If (!Match(cursor, TokenKind.LeftParen)) Return;
+    If (!BuilderExpect(cursor, TokenKind.LeftParen, "Expected '('",
+                       "Missing '(' before argument list")) Return;
     While (!IsEnd(cursor) && CurrentKind(cursor) != TokenKind.RightParen)
     {
         ExpressionNode argument = ParseExpression(cursor, 1);
         call.AddArgument(argument);
         If (!Match(cursor, TokenKind.Comma)) Break;
     }
-    Match(cursor, TokenKind.RightParen);
+    BuilderExpect(cursor, TokenKind.RightParen, "Expected ')'",
+        "Missing ')' after argument list");
 }
 
 Safe Function bool IsGenericCallArgumentList(ParseCursor cursor)
@@ -1261,7 +1269,8 @@ Safe Function bool IsGenericCallArgumentList(ParseCursor cursor)
 
 Safe Function void ReadTypeArguments(ParseCursor cursor, ExpressionNode call)
 {
-    If (!Match(cursor, TokenKind.Less)) Return;
+    If (!BuilderExpect(cursor, TokenKind.Less, "Expected '<'",
+                       "Missing '<' before generic type arguments")) Return;
     While (!IsEnd(cursor) && CurrentKind(cursor) != TokenKind.Greater)
     {
         int start = cursor.Position;
@@ -1285,7 +1294,8 @@ Safe Function void ReadTypeArguments(ParseCursor cursor, ExpressionNode call)
             IO.Kinal.Compiler.Lex.Token.Column(location)));
         If (!Match(cursor, TokenKind.Comma)) Break;
     }
-    Match(cursor, TokenKind.Greater);
+    BuilderExpect(cursor, TokenKind.Greater, "Expected '>'",
+        "Missing '>' after generic type arguments");
 }
 
 Safe Function ExpressionNode ParseArrayLiteral(ParseCursor cursor)
@@ -1309,7 +1319,8 @@ Safe Function ExpressionNode ParseArrayLiteral(ParseCursor cursor)
         Else collection.AddArgument(first);
         If (!Match(cursor, TokenKind.Comma)) Break;
     }
-    Match(cursor, TokenKind.RightBrace);
+    BuilderExpect(cursor, TokenKind.RightBrace, "Expected '}'",
+        "Array or dictionary literal is not closed");
     Return collection;
 }
 
@@ -1326,7 +1337,8 @@ Safe Function ExpressionNode ParsePackageLiteral(ParseCursor cursor)
         package.AddArgument(ParseExpression(cursor, 10));
         If (!Match(cursor, TokenKind.Comma)) Break;
     }
-    Match(cursor, TokenKind.Greater);
+    BuilderExpect(cursor, TokenKind.Greater, "Expected '>'",
+        "Package literal is not closed");
     Return package;
 }
 
@@ -1336,36 +1348,46 @@ Safe Function ExpressionNode ParseSwitchExpression(ParseCursor cursor)
     Advance(cursor);
     ExpressionNode value = New ExpressionNode([int](ExpressionKind.Switch), "",
         IO.Kinal.Compiler.Lex.Token.Line(token), IO.Kinal.Compiler.Lex.Token.Column(token));
-    Match(cursor, TokenKind.LeftParen);
+    BuilderExpect(cursor, TokenKind.LeftParen, "Expected '('",
+        "Switch expression requires a selector");
     value.Left = ParseExpression(cursor, 1);
-    Match(cursor, TokenKind.RightParen);
-    Match(cursor, TokenKind.LeftBrace);
+    BuilderExpect(cursor, TokenKind.RightParen, "Expected ')'",
+        "Switch selector is not closed");
+    BuilderExpect(cursor, TokenKind.LeftBrace, "Expected '{'",
+        "Switch expression body is missing");
     While (!IsEnd(cursor) && CurrentKind(cursor) != TokenKind.RightBrace)
     {
         string caseToken = CurrentToken(cursor);
         If (!Match(cursor, TokenKind.KwCase))
         {
+            Report(cursor, cursor.Diagnostics, cursor.Source, "Expected Case",
+                "Switch expression body only accepts Case clauses");
             Advance(cursor);
             Continue;
         }
         ExpressionNode item = New ExpressionNode([int](ExpressionKind.SwitchCase), "",
             IO.Kinal.Compiler.Lex.Token.Line(caseToken),
             IO.Kinal.Compiler.Lex.Token.Column(caseToken));
-        Match(cursor, TokenKind.LeftParen);
+        BuilderExpect(cursor, TokenKind.LeftParen, "Expected '('",
+            "Case matcher is missing");
         If (CurrentKind(cursor) == TokenKind.KwDefault)
         {
             item.Text = "default";
             Advance(cursor);
         }
         Else item.Left = ParseExpression(cursor, 1);
-        Match(cursor, TokenKind.RightParen);
-        Match(cursor, TokenKind.LeftBrace);
+        BuilderExpect(cursor, TokenKind.RightParen, "Expected ')'",
+            "Case matcher is not closed");
+        BuilderExpect(cursor, TokenKind.LeftBrace, "Expected '{'",
+            "Case expression body is missing");
         item.Right = ParseExpression(cursor, 1);
         Match(cursor, TokenKind.Semicolon);
-        Match(cursor, TokenKind.RightBrace);
+        BuilderExpect(cursor, TokenKind.RightBrace, "Expected '}'",
+            "Case expression body is not closed");
         value.AddArgument(item);
     }
-    Match(cursor, TokenKind.RightBrace);
+    BuilderExpect(cursor, TokenKind.RightBrace, "Expected '}'",
+        "Switch expression body is not closed");
     Return value;
 }
 
@@ -1375,18 +1397,25 @@ Safe Function ExpressionNode ParseIfExpression(ParseCursor cursor)
     Advance(cursor);
     ExpressionNode value = New ExpressionNode([int](ExpressionKind.Conditional), "",
         IO.Kinal.Compiler.Lex.Token.Line(token), IO.Kinal.Compiler.Lex.Token.Column(token));
-    Match(cursor, TokenKind.LeftParen);
+    BuilderExpect(cursor, TokenKind.LeftParen, "Expected '('",
+        "If expression requires a condition");
     value.Left = ParseExpression(cursor, 1);
-    Match(cursor, TokenKind.RightParen);
-    Match(cursor, TokenKind.LeftBrace);
+    BuilderExpect(cursor, TokenKind.RightParen, "Expected ')'",
+        "If expression condition is not closed");
+    BuilderExpect(cursor, TokenKind.LeftBrace, "Expected '{'",
+        "If expression true branch is missing");
     value.Right = ParseExpression(cursor, 1);
     Match(cursor, TokenKind.Semicolon);
-    Match(cursor, TokenKind.RightBrace);
-    Match(cursor, TokenKind.KwElse);
-    Match(cursor, TokenKind.LeftBrace);
+    BuilderExpect(cursor, TokenKind.RightBrace, "Expected '}'",
+        "If expression true branch is not closed");
+    BuilderExpect(cursor, TokenKind.KwElse, "Expected Else",
+        "If expression requires an Else branch");
+    BuilderExpect(cursor, TokenKind.LeftBrace, "Expected '{'",
+        "If expression Else branch is missing");
     value.Third = ParseExpression(cursor, 1);
     Match(cursor, TokenKind.Semicolon);
-    Match(cursor, TokenKind.RightBrace);
+    BuilderExpect(cursor, TokenKind.RightBrace, "Expected '}'",
+        "If expression Else branch is not closed");
     Return value;
 }
 
@@ -1405,6 +1434,9 @@ Safe Function int FindParameterDeclarationEnd(ParseCursor cursor, int start)
         If (topLevel && (kind == TokenKind.Assign ||
                          kind == TokenKind.Comma ||
                          kind == TokenKind.RightParen ||
+                         kind == TokenKind.LeftBrace ||
+                         kind == TokenKind.RightBrace ||
+                         kind == TokenKind.Semicolon ||
                          kind == TokenKind.Eof)) Return index;
 
         If (kind == TokenKind.LeftParen) parenDepth = parenDepth + 1;
@@ -1453,7 +1485,8 @@ Safe Function ExpressionNode ParseFunctionLiteral(ParseCursor cursor)
     ExpressionNode value = New ExpressionNode([int](ExpressionKind.FunctionLiteral),
         JoinTokenText(cursor, typeStart, cursor.Position),
         IO.Kinal.Compiler.Lex.Token.Line(token), IO.Kinal.Compiler.Lex.Token.Column(token));
-    Match(cursor, TokenKind.LeftParen);
+    If (!BuilderExpect(cursor, TokenKind.LeftParen, "Expected '('",
+                       "Anonymous function parameter list is missing")) Return value;
     While (!IsEnd(cursor) && CurrentKind(cursor) != TokenKind.RightParen)
     {
         int parameterStart = cursor.Position;
@@ -1473,7 +1506,8 @@ Safe Function ExpressionNode ParseFunctionLiteral(ParseCursor cursor)
         cursor.Position = parameterEnd;
         If (!Match(cursor, TokenKind.Comma)) Break;
     }
-    Match(cursor, TokenKind.RightParen);
+    BuilderExpect(cursor, TokenKind.RightParen, "Expected ')'",
+        "Anonymous function parameter list is not closed");
     value.Body = ParseAstBlock(cursor);
     Return value;
 }
@@ -1489,16 +1523,20 @@ Safe Function ExpressionNode ParseBlockLiteral(ParseCursor cursor)
         blockName = IO.Kinal.Compiler.Lex.Token.Text(CurrentToken(cursor));
         Advance(cursor);
     }
-    Match(cursor, TokenKind.Less);
-    Match(cursor, TokenKind.Slash);
+    BuilderExpect(cursor, TokenKind.Less, "Expected '<'",
+        "Missing '</' before Block body");
+    BuilderExpect(cursor, TokenKind.Slash, "Expected '/'",
+        "Missing '</' before Block body");
     ExpressionNode value = New ExpressionNode([int](ExpressionKind.BlockLiteral), blockName,
         IO.Kinal.Compiler.Lex.Token.Line(token), IO.Kinal.Compiler.Lex.Token.Column(token));
     StatementNode body = New StatementNode([int](StatementKind.Block), value.Line, value.Column);
     While (!IsEnd(cursor) && !(CurrentKind(cursor) == TokenKind.Slash &&
            KindAt(cursor, cursor.Position + 1) == TokenKind.Greater))
         body.AddChild(ParseAstStatement(cursor));
-    Match(cursor, TokenKind.Slash);
-    Match(cursor, TokenKind.Greater);
+    BuilderExpect(cursor, TokenKind.Slash, "Expected '/'",
+        "Missing '/>' after Block body");
+    BuilderExpect(cursor, TokenKind.Greater, "Expected '>'",
+        "Missing '/>' after Block body");
     value.Body = body;
     Return value;
 }
@@ -1667,7 +1705,8 @@ Safe Function ExpressionNode ParsePrimary(ParseCursor cursor)
     {
         Advance(cursor);
         ExpressionNode nested = ParseExpression(cursor, 1);
-        Match(cursor, TokenKind.RightParen);
+        BuilderExpect(cursor, TokenKind.RightParen, "Expected ')'",
+            "Parenthesized expression is not closed");
         Return nested;
     }
     If (kind == TokenKind.LeftBrace) Return ParseArrayLiteral(cursor);
@@ -1693,14 +1732,16 @@ Safe Function ExpressionNode ParsePrimary(ParseCursor cursor)
             Advance(cursor);
         }
         string typeName = JoinTokenText(cursor, typeStart, cursor.Position);
-        Match(cursor, TokenKind.RightBracket);
+        BuilderExpect(cursor, TokenKind.RightBracket, "Expected ']'",
+            "Cast or string-prefix list is not closed");
         If (IsStringPrefix(typeName)) Return ParsePrefixedString(cursor, typeName, token);
         ExpressionNode cast = New ExpressionNode([int](ExpressionKind.Cast), typeName,
             IO.Kinal.Compiler.Lex.Token.Line(token), IO.Kinal.Compiler.Lex.Token.Column(token));
         If (Match(cursor, TokenKind.LeftParen))
         {
             cast.Left = ParseExpression(cursor, 1);
-            Match(cursor, TokenKind.RightParen);
+            BuilderExpect(cursor, TokenKind.RightParen, "Expected ')'",
+                "Cast expression is not closed");
         }
         Return cast;
     }
@@ -1867,88 +1908,70 @@ Safe Function SyntaxAttribute ReadAttributes(ParseCursor cursor)
 Safe Function int FindDeclarationName(ParseCursor cursor, bool allowContextualName)
 {
     TokenKind firstKind = CurrentKind(cursor);
+    int index = cursor.Position;
     If (firstKind == TokenKind.Less)
     {
         int depth = 0;
-        int packageIndex = cursor.Position;
-        While (packageIndex < cursor.Tokens.Count())
+        While (index < cursor.Tokens.Count())
         {
-            TokenKind packageKind = KindAt(cursor, packageIndex);
+            TokenKind packageKind = KindAt(cursor, index);
             If (packageKind == TokenKind.Less) depth = depth + 1;
             ElseIf (packageKind == TokenKind.Greater)
             {
                 depth = depth - 1;
                 If (depth == 0)
                 {
-                    int candidate = packageIndex + 1;
-                    If (KindAt(cursor, candidate) == TokenKind.Identifier &&
-                        (KindAt(cursor, candidate + 1) == TokenKind.Assign ||
-                         KindAt(cursor, candidate + 1) == TokenKind.Semicolon ||
-                         KindAt(cursor, candidate + 1) == TokenKind.LeftBracket))
-                        Return candidate;
-                    Return -1;
+                    index = index + 1;
+                    Break;
                 }
             }
-            packageIndex = packageIndex + 1;
+            index = index + 1;
         }
-        Return -1;
+        If (depth != 0) Return -1;
     }
-    bool validStart = firstKind == TokenKind.Identifier ||
-        IsPrimitiveTypeToken(firstKind);
-    If (!validStart) Return -1;
-    int index = cursor.Position + 1;
-    While (index < cursor.Tokens.Count())
+    Else
     {
-        TokenKind kind = KindAt(cursor, index);
-        bool contextualName = kind == TokenKind.Identifier ||
-            (allowContextualName && IsNameToken(kind));
-        If (contextualName &&
-            (KindAt(cursor, index + 1) == TokenKind.Assign ||
-             KindAt(cursor, index + 1) == TokenKind.Semicolon) &&
-            KindAt(cursor, index - 1) != TokenKind.Dot) Return index;
-        If (contextualName && KindAt(cursor, index + 1) == TokenKind.LeftBracket &&
-            KindAt(cursor, index - 1) != TokenKind.Dot) Return index;
-        If (contextualName && KindAt(cursor, index + 1) == TokenKind.Less &&
-            KindAt(cursor, index - 1) != TokenKind.Dot)
-        {
-            int labelDepth = 0;
-            int labelIndex = index + 1;
-            While (labelIndex < cursor.Tokens.Count())
-            {
-                TokenKind labelKind = KindAt(cursor, labelIndex);
-                If (labelKind == TokenKind.Less) labelDepth = labelDepth + 1;
-                ElseIf (labelKind == TokenKind.Greater)
-                {
-                    labelDepth = labelDepth - 1;
-                    If (labelDepth == 0)
-                    {
-                        TokenKind afterLabels = KindAt(cursor, labelIndex + 1);
-                        If (afterLabels == TokenKind.Assign ||
-                            afterLabels == TokenKind.Semicolon) Return index;
-                        Break;
-                    }
-                }
-                labelIndex = labelIndex + 1;
-            }
-        }
-        bool typeSyntax = IsNameToken(kind) ||
-            kind == TokenKind.Dot || kind == TokenKind.LeftBracket ||
-            kind == TokenKind.RightBracket || kind == TokenKind.Star;
-        If (!typeSyntax) Return -1;
+        bool validStart = firstKind == TokenKind.Identifier ||
+            IsPrimitiveTypeToken(firstKind);
+        If (!validStart) Return -1;
         index = index + 1;
+        While (KindAt(cursor, index) == TokenKind.Dot)
+        {
+            If (!IsNameToken(KindAt(cursor, index + 1))) Return -1;
+            index = index + 2;
+        }
+        While (KindAt(cursor, index) == TokenKind.Star) index = index + 1;
+        While (KindAt(cursor, index) == TokenKind.LeftBracket)
+        {
+            int bracketDepth = 1;
+            index = index + 1;
+            While (index < cursor.Tokens.Count() && bracketDepth > 0)
+            {
+                TokenKind bracketKind = KindAt(cursor, index);
+                If (bracketKind == TokenKind.LeftBracket) bracketDepth = bracketDepth + 1;
+                ElseIf (bracketKind == TokenKind.RightBracket) bracketDepth = bracketDepth - 1;
+                index = index + 1;
+            }
+            If (bracketDepth != 0) Return -1;
+        }
     }
+    TokenKind candidate = KindAt(cursor, index);
+    If (candidate == TokenKind.Identifier ||
+        (allowContextualName && IsNameToken(candidate))) Return index;
     Return -1;
 }
 
 Safe Function StatementNode ParseAstBlock(ParseCursor cursor)
 {
     string token = CurrentToken(cursor);
-    Match(cursor, TokenKind.LeftBrace);
+    BuilderExpect(cursor, TokenKind.LeftBrace, "Expected '{'",
+        "Statement block is missing");
     StatementNode block = New StatementNode([int](StatementKind.Block),
         IO.Kinal.Compiler.Lex.Token.Line(token), IO.Kinal.Compiler.Lex.Token.Column(token));
     While (!IsEnd(cursor) && CurrentKind(cursor) != TokenKind.RightBrace)
         block.AddChild(ParseAstStatement(cursor));
-    Match(cursor, TokenKind.RightBrace);
+    BuilderExpect(cursor, TokenKind.RightBrace, "Expected '}'",
+        "Statement block is not closed");
     Return block;
 }
 
@@ -1958,7 +1981,8 @@ Safe Function StatementNode ParseAstFor(ParseCursor cursor)
     StatementNode value = New StatementNode([int](StatementKind.For),
         IO.Kinal.Compiler.Lex.Token.Line(token), IO.Kinal.Compiler.Lex.Token.Column(token));
     Advance(cursor);
-    Match(cursor, TokenKind.LeftParen);
+    BuilderExpect(cursor, TokenKind.LeftParen, "Expected '('",
+        "For statement requires a header");
     If (CurrentKind(cursor) == TokenKind.Semicolon)
     {
         Advance(cursor);
@@ -1967,10 +1991,12 @@ Safe Function StatementNode ParseAstFor(ParseCursor cursor)
     Else value.Initializer = ParseAstStatement(cursor);
     If (CurrentKind(cursor) != TokenKind.Semicolon)
         value.Expression = ParseExpression(cursor, 1);
-    Match(cursor, TokenKind.Semicolon);
+    BuilderExpect(cursor, TokenKind.Semicolon, "Expected Semicolon",
+        "For condition must end with ';'");
     If (CurrentKind(cursor) != TokenKind.RightParen)
         value.SecondExpression = ParseExpression(cursor, 1);
-    Match(cursor, TokenKind.RightParen);
+    BuilderExpect(cursor, TokenKind.RightParen, "Expected ')'",
+        "For header is not closed");
     value.FirstChild = ParseAstStatement(cursor);
     value.LastChild = value.FirstChild;
     Return value;
@@ -1982,7 +2008,8 @@ Safe Function StatementNode ParseAstForeach(ParseCursor cursor)
     StatementNode value = New StatementNode([int](StatementKind.Foreach),
         IO.Kinal.Compiler.Lex.Token.Line(token), IO.Kinal.Compiler.Lex.Token.Column(token));
     Advance(cursor);
-    Match(cursor, TokenKind.LeftParen);
+    BuilderExpect(cursor, TokenKind.LeftParen, "Expected '('",
+        "Foreach statement requires a header");
     int declarationStart = cursor.Position;
     int separator = declarationStart;
     While (!IsEnd(cursor) && KindAt(cursor, separator) != TokenKind.KwIn &&
@@ -1995,7 +2022,8 @@ Safe Function StatementNode ParseAstForeach(ParseCursor cursor)
     If (CurrentKind(cursor) == TokenKind.KwIn ||
         CurrentKind(cursor) == TokenKind.KwIs) Advance(cursor);
     value.Expression = ParseExpression(cursor, 1);
-    Match(cursor, TokenKind.RightParen);
+    BuilderExpect(cursor, TokenKind.RightParen, "Expected ')'",
+        "Foreach header is not closed");
     value.FirstChild = ParseAstStatement(cursor);
     value.LastChild = value.FirstChild;
     Return value;
@@ -2007,34 +2035,42 @@ Safe Function StatementNode ParseAstSwitch(ParseCursor cursor)
     StatementNode value = New StatementNode([int](StatementKind.Switch),
         IO.Kinal.Compiler.Lex.Token.Line(token), IO.Kinal.Compiler.Lex.Token.Column(token));
     Advance(cursor);
-    Match(cursor, TokenKind.LeftParen);
+    BuilderExpect(cursor, TokenKind.LeftParen, "Expected '('",
+        "Switch statement requires a selector");
     value.Expression = ParseExpression(cursor, 1);
-    Match(cursor, TokenKind.RightParen);
-    Match(cursor, TokenKind.LeftBrace);
+    BuilderExpect(cursor, TokenKind.RightParen, "Expected ')'",
+        "Switch selector is not closed");
+    BuilderExpect(cursor, TokenKind.LeftBrace, "Expected '{'",
+        "Switch statement body is missing");
     While (!IsEnd(cursor) && CurrentKind(cursor) != TokenKind.RightBrace)
     {
         string caseToken = CurrentToken(cursor);
         If (!Match(cursor, TokenKind.KwCase))
         {
+            Report(cursor, cursor.Diagnostics, cursor.Source, "Expected Case",
+                "Switch statement body only accepts Case clauses");
             Advance(cursor);
             Continue;
         }
         StatementNode item = New StatementNode([int](StatementKind.Case),
             IO.Kinal.Compiler.Lex.Token.Line(caseToken),
             IO.Kinal.Compiler.Lex.Token.Column(caseToken));
-        Match(cursor, TokenKind.LeftParen);
+        BuilderExpect(cursor, TokenKind.LeftParen, "Expected '('",
+            "Case matcher is missing");
         If (CurrentKind(cursor) == TokenKind.KwDefault)
         {
             item.Name = "default";
             Advance(cursor);
         }
         Else item.Expression = ParseExpression(cursor, 1);
-        Match(cursor, TokenKind.RightParen);
+        BuilderExpect(cursor, TokenKind.RightParen, "Expected ')'",
+            "Case matcher is not closed");
         item.FirstChild = ParseAstBlock(cursor);
         item.LastChild = item.FirstChild;
         value.AddChild(item);
     }
-    Match(cursor, TokenKind.RightBrace);
+    BuilderExpect(cursor, TokenKind.RightBrace, "Expected '}'",
+        "Switch statement body is not closed");
     Return value;
 }
 
@@ -2067,7 +2103,8 @@ Safe Function StatementNode ParseAstTry(ParseCursor cursor)
                 handler.TypeName = JoinTokenText(cursor, start, nameIndex);
                 handler.Name = IO.Kinal.Compiler.Lex.Token.Text(RawAt(cursor, nameIndex));
             }
-            Match(cursor, TokenKind.RightParen);
+            BuilderExpect(cursor, TokenKind.RightParen, "Expected ')'",
+                "Catch parameter is not closed");
         }
         handler.FirstChild = ParseAstStatement(cursor);
         handler.LastChild = handler.FirstChild;
@@ -2084,17 +2121,23 @@ Safe Function StatementNode ParseAstUnsafeBlock(ParseCursor cursor)
         IO.Kinal.Compiler.Lex.Token.Line(token), IO.Kinal.Compiler.Lex.Token.Column(token));
     value.IsUnsafe = isUnsafe;
     Advance(cursor);
-    Match(cursor, TokenKind.KwBlock);
+    If (isUnsafe)
+        BuilderExpect(cursor, TokenKind.KwBlock, "Expected Block",
+            "Unsafe Block statement requires Block");
     value.Name = IO.Kinal.Compiler.Lex.Token.Text(CurrentToken(cursor));
     Advance(cursor);
-    Match(cursor, TokenKind.Less);
-    Match(cursor, TokenKind.Slash);
+    BuilderExpect(cursor, TokenKind.Less, "Expected '<'",
+        "Missing '</' before Block body");
+    BuilderExpect(cursor, TokenKind.Slash, "Expected '/'",
+        "Missing '</' before Block body");
     While (!IsEnd(cursor) &&
            !(CurrentKind(cursor) == TokenKind.Slash &&
              KindAt(cursor, cursor.Position + 1) == TokenKind.Greater))
         value.AddChild(ParseAstStatement(cursor));
-    Match(cursor, TokenKind.Slash);
-    Match(cursor, TokenKind.Greater);
+    BuilderExpect(cursor, TokenKind.Slash, "Expected '/'",
+        "Missing '/>' after Block body");
+    BuilderExpect(cursor, TokenKind.Greater, "Expected '>'",
+        "Missing '/>' after Block body");
     Return value;
 }
 
@@ -2114,7 +2157,8 @@ Safe Function StatementNode ParseLocalFunctionStatement(ParseCursor cursor)
     ExpressionNode function = New ExpressionNode([int](ExpressionKind.FunctionLiteral),
         JoinTokenText(cursor, declarationStart, nameIndex), declaration.Line, declaration.Column);
     cursor.Position = open;
-    Match(cursor, TokenKind.LeftParen);
+    BuilderExpect(cursor, TokenKind.LeftParen, "Expected '('",
+        "Local function parameter list is missing");
     While (!IsEnd(cursor) && CurrentKind(cursor) != TokenKind.RightParen)
     {
         int parameterStart = cursor.Position;
@@ -2135,7 +2179,8 @@ Safe Function StatementNode ParseLocalFunctionStatement(ParseCursor cursor)
         cursor.Position = parameterEnd;
         If (!Match(cursor, TokenKind.Comma)) Break;
     }
-    Match(cursor, TokenKind.RightParen);
+    BuilderExpect(cursor, TokenKind.RightParen, "Expected ')'",
+        "Local function parameter list is not closed");
     function.Body = ParseAstBlock(cursor);
     declaration.Expression = function;
     Return declaration;
@@ -2177,14 +2222,16 @@ Safe Function StatementNode ParseAstStatement(ParseCursor cursor)
             Advance(cursor);
             StatementNode value = New StatementNode([int](StatementKind.Return), line, column);
             If (CurrentKind(cursor) != TokenKind.Semicolon) value.Expression = ParseExpression(cursor, 1);
-            Match(cursor, TokenKind.Semicolon);
+            BuilderExpect(cursor, TokenKind.Semicolon, "Expected Semicolon",
+                "Return statement must end with ';'");
             Return value;
         }
         Case(TokenKind.KwIf)
         {
             Advance(cursor);
             StatementNode value = New StatementNode([int](StatementKind.If), line, column);
-            Match(cursor, TokenKind.LeftParen);
+            BuilderExpect(cursor, TokenKind.LeftParen, "Expected '('",
+                "If statement requires a condition");
             value.Expression = ParseExpression(cursor, 1);
             If (value.Expression != null && value.Expression.Kind == [int](ExpressionKind.Binary) &&
                 value.Expression.Operator == TokenKind.KwIs &&
@@ -2193,7 +2240,8 @@ Safe Function StatementNode ParseAstStatement(ParseCursor cursor)
                 value.Expression.Third = NewExpression([int](ExpressionKind.Name), CurrentToken(cursor));
                 Advance(cursor);
             }
-            Match(cursor, TokenKind.RightParen);
+            BuilderExpect(cursor, TokenKind.RightParen, "Expected ')'",
+                "If condition is not closed");
             value.FirstChild = ParseAstStatement(cursor);
             If (Match(cursor, TokenKind.KwElse)) value.ElseBranch = ParseAstStatement(cursor);
             ElseIf (CurrentKind(cursor) == TokenKind.KwElseIf)
@@ -2204,7 +2252,8 @@ Safe Function StatementNode ParseAstStatement(ParseCursor cursor)
         {
             Advance(cursor);
             StatementNode value = New StatementNode([int](StatementKind.If), line, column);
-            Match(cursor, TokenKind.LeftParen);
+            BuilderExpect(cursor, TokenKind.LeftParen, "Expected '('",
+                "ElseIf statement requires a condition");
             value.Expression = ParseExpression(cursor, 1);
             If (value.Expression != null && value.Expression.Kind == [int](ExpressionKind.Binary) &&
                 value.Expression.Operator == TokenKind.KwIs &&
@@ -2213,7 +2262,8 @@ Safe Function StatementNode ParseAstStatement(ParseCursor cursor)
                 value.Expression.Third = NewExpression([int](ExpressionKind.Name), CurrentToken(cursor));
                 Advance(cursor);
             }
-            Match(cursor, TokenKind.RightParen);
+            BuilderExpect(cursor, TokenKind.RightParen, "Expected ')'",
+                "ElseIf condition is not closed");
             value.FirstChild = ParseAstStatement(cursor);
             If (Match(cursor, TokenKind.KwElse)) value.ElseBranch = ParseAstStatement(cursor);
             ElseIf (CurrentKind(cursor) == TokenKind.KwElseIf)
@@ -2224,9 +2274,11 @@ Safe Function StatementNode ParseAstStatement(ParseCursor cursor)
         {
             Advance(cursor);
             StatementNode value = New StatementNode([int](StatementKind.While), line, column);
-            Match(cursor, TokenKind.LeftParen);
+            BuilderExpect(cursor, TokenKind.LeftParen, "Expected '('",
+                "While statement requires a condition");
             value.Expression = ParseExpression(cursor, 1);
-            Match(cursor, TokenKind.RightParen);
+            BuilderExpect(cursor, TokenKind.RightParen, "Expected ')'",
+                "While condition is not closed");
             value.FirstChild = ParseAstStatement(cursor);
             Return value;
         }
@@ -2239,7 +2291,8 @@ Safe Function StatementNode ParseAstStatement(ParseCursor cursor)
             Advance(cursor);
             StatementNode value = New StatementNode([int](StatementKind.Throw), line, column);
             If (CurrentKind(cursor) != TokenKind.Semicolon) value.Expression = ParseExpression(cursor, 1);
-            Match(cursor, TokenKind.Semicolon);
+            BuilderExpect(cursor, TokenKind.Semicolon, "Expected Semicolon",
+                "Throw statement must end with ';'");
             Return value;
         }
         Case(TokenKind.KwUnsafe)
@@ -2288,19 +2341,22 @@ Safe Function StatementNode ParseAstStatement(ParseCursor cursor)
                 Advance(cursor);
             }
             Else value.Expression = ParseExpression(cursor, 1);
-            Match(cursor, TokenKind.Semicolon);
+            BuilderExpect(cursor, TokenKind.Semicolon, "Expected Semicolon",
+                "Jump statement must end with ';'");
             Return value;
         }
         Case(TokenKind.KwBreak)
         {
             Advance(cursor);
-            Match(cursor, TokenKind.Semicolon);
+            BuilderExpect(cursor, TokenKind.Semicolon, "Expected Semicolon",
+                "Break statement must end with ';'");
             Return New StatementNode([int](StatementKind.Break), line, column);
         }
         Case(TokenKind.KwContinue)
         {
             Advance(cursor);
-            Match(cursor, TokenKind.Semicolon);
+            BuilderExpect(cursor, TokenKind.Semicolon, "Expected Semicolon",
+                "Continue statement must end with ';'");
             Return New StatementNode([int](StatementKind.Continue), line, column);
         }
         Case(TokenKind.KwVar)
@@ -2311,7 +2367,8 @@ Safe Function StatementNode ParseAstStatement(ParseCursor cursor)
             declaration.Name = IO.Kinal.Compiler.Lex.Token.Text(CurrentToken(cursor));
             Advance(cursor);
             If (Match(cursor, TokenKind.Assign)) declaration.Expression = ParseExpression(cursor, 1);
-            Match(cursor, TokenKind.Semicolon);
+            BuilderExpect(cursor, TokenKind.Semicolon, "Expected Semicolon",
+                "Variable declaration must end with ';'");
             Return declaration;
         }
         Case(default) { }
@@ -2333,7 +2390,8 @@ Safe Function StatementNode ParseAstStatement(ParseCursor cursor)
                 Advance(cursor);
                 If (!Match(cursor, TokenKind.Comma)) Break;
             }
-            Match(cursor, TokenKind.Greater);
+            BuilderExpect(cursor, TokenKind.Greater, "Expected '>'",
+                "Package field labels are not closed");
         }
         // C-style local arrays place dimensions after the variable name.
         // Normalize the type to the canonical T[] form while preserving the
@@ -2345,18 +2403,21 @@ Safe Function StatementNode ParseAstStatement(ParseCursor cursor)
                 declaration.SecondExpression = ParseExpression(cursor, 1);
             ElseIf (CurrentKind(cursor) != TokenKind.RightBracket)
                 ParseExpression(cursor, 1);
-            Match(cursor, TokenKind.RightBracket);
+            BuilderExpect(cursor, TokenKind.RightBracket, "Expected ']'",
+                "Array declarator is not closed");
             declaration.TypeName = declaration.TypeName + "[]";
         }
         If (Match(cursor, TokenKind.Assign)) declaration.Expression = ParseExpression(cursor, 1);
-        Match(cursor, TokenKind.Semicolon);
+        BuilderExpect(cursor, TokenKind.Semicolon, "Expected Semicolon",
+            "Variable declaration must end with ';'");
         Return declaration;
     }
     int start = cursor.Position;
     StatementNode expression = New StatementNode([int](StatementKind.Expression), line, column);
     expression.Expression = ParseExpression(cursor, 1);
     If (cursor.Position == start) Advance(cursor);
-    Match(cursor, TokenKind.Semicolon);
+    BuilderExpect(cursor, TokenKind.Semicolon, "Expected Semicolon",
+        "Expression statement must end with ';'");
     Return expression;
 }
 
@@ -2398,6 +2459,8 @@ Safe Function FunctionDecl ReadFunctionNode(ParseCursor cursor, bool constructor
     If (nameIndex < returnStart)
     {
         string invalidToken = RawAt(cursor, returnStart);
+        Report(cursor, cursor.Diagnostics, cursor.Source, "Expected function name",
+            "Missing function name before parameter list");
         FunctionDecl invalid = New FunctionDecl("", "",
             IO.Kinal.Compiler.Lex.Token.Line(invalidToken),
             IO.Kinal.Compiler.Lex.Token.Column(invalidToken));
@@ -2428,7 +2491,8 @@ Safe Function FunctionDecl ReadFunctionNode(ParseCursor cursor, bool constructor
             Advance(cursor);
             If (!Match(cursor, TokenKind.Comma)) Break;
         }
-        Match(cursor, TokenKind.Greater);
+        BuilderExpect(cursor, TokenKind.Greater, "Expected '>'",
+            "Generic type parameter list is not closed");
     }
     ReadParameters(cursor, value);
     If (Match(cursor, TokenKind.KwBy)) value.Abi = ReadQualifiedName(cursor);
@@ -2440,7 +2504,8 @@ Safe Function void ReadTypeMembers(ParseCursor cursor, TypeDecl type, SyntaxTree
 {
     If (type.Kind == TokenKind.KwEnum)
     {
-        If (!Match(cursor, TokenKind.LeftBrace)) Return;
+        If (!BuilderExpect(cursor, TokenKind.LeftBrace, "Expected '{'",
+                           "Enum body is missing")) Return;
         int ordinal = 0;
         While (!IsEnd(cursor) && CurrentKind(cursor) != TokenKind.RightBrace)
         {
@@ -2462,10 +2527,12 @@ Safe Function void ReadTypeMembers(ParseCursor cursor, TypeDecl type, SyntaxTree
             ordinal = ordinal + 1;
             If (!Match(cursor, TokenKind.Comma)) Break;
         }
-        Match(cursor, TokenKind.RightBrace);
+        BuilderExpect(cursor, TokenKind.RightBrace, "Expected '}'",
+            "Enum body is not closed");
         Return;
     }
-    If (!Match(cursor, TokenKind.LeftBrace)) Return;
+    If (!BuilderExpect(cursor, TokenKind.LeftBrace, "Expected '{'",
+                       "Type body is missing")) Return;
     Block TypeMemberDispatch< /
         Record Dispatch
         If (IsEnd(cursor) || CurrentKind(cursor) == TokenKind.RightBrace)
@@ -2605,7 +2672,8 @@ Safe Function void ReadTypeMembers(ParseCursor cursor, TypeDecl type, SyntaxTree
             field.FirstAttribute = attributes;
             cursor.Position = fieldName + 1;
             If (Match(cursor, TokenKind.Assign)) field.Initializer = ParseExpression(cursor, 1);
-            Match(cursor, TokenKind.Semicolon);
+            BuilderExpect(cursor, TokenKind.Semicolon, "Expected Semicolon",
+                "Missing ';' after field");
             type.AddField(field);
             Jump Dispatch;
         }
@@ -2620,18 +2688,23 @@ Safe Function void ReadTypeMembers(ParseCursor cursor, TypeDecl type, SyntaxTree
         Record Done
     / >
     TypeMemberDispatch.Run();
-    Match(cursor, TokenKind.RightBrace);
+    BuilderExpect(cursor, TokenKind.RightBrace, "Expected '}'",
+        "Type body is not closed");
 }
 
 Safe Function void ReadParameters(ParseCursor cursor, FunctionDecl function)
 {
-    If (!Match(cursor, TokenKind.LeftParen)) Return;
+    If (!BuilderExpect(cursor, TokenKind.LeftParen, "Expected '('",
+                       "Function parameter list is missing")) Return;
     While (!IsEnd(cursor) && CurrentKind(cursor) != TokenKind.RightParen)
     {
         int start = cursor.Position;
         int declarationEnd = FindParameterDeclarationEnd(cursor, start);
         bool hasDefault = KindAt(cursor, declarationEnd) == TokenKind.Assign;
         int nameIndex = FindParameterName(cursor, start, declarationEnd);
+        If (nameIndex < start)
+            Report(cursor, cursor.Diagnostics, cursor.Source, "Expected Identifier",
+                "Expected parameter name");
         If (nameIndex >= start)
         {
             string name = IO.Kinal.Compiler.Lex.Token.Text(RawAt(cursor, nameIndex));
@@ -2649,7 +2722,8 @@ Safe Function void ReadParameters(ParseCursor cursor, FunctionDecl function)
         If (!hasDefault) cursor.Position = declarationEnd;
         If (!Match(cursor, TokenKind.Comma)) Break;
     }
-    Match(cursor, TokenKind.RightParen);
+    BuilderExpect(cursor, TokenKind.RightParen, "Expected ')'",
+        "Function parameter list is not closed");
 }
 
 Safe Function FieldDecl ReadGlobalNode(ParseCursor cursor, SyntaxAttribute attributes)
@@ -2657,7 +2731,12 @@ Safe Function FieldDecl ReadGlobalNode(ParseCursor cursor, SyntaxAttribute attri
     bool isConst = Match(cursor, TokenKind.KwConst);
     int declarationStart = cursor.Position;
     int declarationName = FindDeclarationName(cursor, true);
-    If (declarationName <= declarationStart) Return null;
+    If (declarationName <= declarationStart)
+    {
+        Report(cursor, cursor.Diagnostics, cursor.Source, "Expected Identifier",
+            "Expected global variable name");
+        Return null;
+    }
     string nameToken = RawAt(cursor, declarationName);
     FieldDecl global = New FieldDecl(IO.Kinal.Compiler.Lex.Token.Text(nameToken),
         JoinTokenText(cursor, declarationStart, declarationName),
@@ -2666,7 +2745,8 @@ Safe Function FieldDecl ReadGlobalNode(ParseCursor cursor, SyntaxAttribute attri
     global.FirstAttribute = attributes;
     cursor.Position = declarationName + 1;
     If (Match(cursor, TokenKind.Assign)) global.Initializer = ParseExpression(cursor, 1);
-    Match(cursor, TokenKind.Semicolon);
+    BuilderExpect(cursor, TokenKind.Semicolon, "Expected Semicolon",
+        "Missing ';' after global variable");
     Return global;
 }
 
@@ -2680,7 +2760,8 @@ Safe Function SyntaxTree Build(SourceFile source, list tokens, list diagnostics)
     If (Match(cursor, TokenKind.KwUnit))
     {
         unitName = ReadQualifiedName(cursor);
-        Match(cursor, TokenKind.Semicolon);
+        BuilderExpect(cursor, TokenKind.Semicolon, "Expected Semicolon",
+            "Missing ';' after Unit");
     }
     SyntaxTree tree = New SyntaxTree(source, unitName);
 
@@ -2733,14 +2814,17 @@ Safe Function SyntaxTree Build(SourceFile source, list tokens, list diagnostics)
                     tree.AddImport(selective);
                     If (!Match(cursor, TokenKind.Comma)) Break;
                 }
-                Match(cursor, TokenKind.RightBrace);
-                Match(cursor, TokenKind.Semicolon);
+                BuilderExpect(cursor, TokenKind.RightBrace, "Expected '}'",
+                    "Selective Get list is not closed");
+                BuilderExpect(cursor, TokenKind.Semicolon, "Expected Semicolon",
+                    "Missing ';' after Get");
                 Jump Dispatch;
             }
             string target = name;
             bool isAlias = Match(cursor, TokenKind.KwBy);
             If (isAlias) target = ReadQualifiedName(cursor);
-            Match(cursor, TokenKind.Semicolon);
+            BuilderExpect(cursor, TokenKind.Semicolon, "Expected Semicolon",
+                "Missing ';' after Get");
             ImportDecl imported = New ImportDecl(name, target,
                 IO.Kinal.Compiler.Lex.Token.Line(location), IO.Kinal.Compiler.Lex.Token.Column(location));
             imported.Kind = isAlias ? 1 : 0;
@@ -2753,9 +2837,11 @@ Safe Function SyntaxTree Build(SourceFile source, list tokens, list diagnostics)
             Advance(cursor);
             string name = IO.Kinal.Compiler.Lex.Token.Text(CurrentToken(cursor));
             Advance(cursor);
-            Match(cursor, TokenKind.KwBy);
+            BuilderExpect(cursor, TokenKind.KwBy, "Expected By",
+                "Alias requires a target after By");
             string target = ReadQualifiedName(cursor);
-            Match(cursor, TokenKind.Semicolon);
+            BuilderExpect(cursor, TokenKind.Semicolon, "Expected Semicolon",
+                "Missing ';' after Alias");
             ImportDecl symbolAlias = New ImportDecl(name, target,
                 IO.Kinal.Compiler.Lex.Token.Line(location), IO.Kinal.Compiler.Lex.Token.Column(location));
             symbolAlias.Kind = 3;

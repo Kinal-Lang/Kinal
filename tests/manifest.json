@@ -1122,6 +1122,16 @@
     "expect_error": "[Parser] Expected Identifier"
   },
   {
+    "name": "error_builder_field_semicolon",
+    "file": "tests/common/error_builder_field_semicolon.kn",
+    "expect_error": "[Parser] Expected Semicolon"
+  },
+  {
+    "name": "error_builder_method_right_paren",
+    "file": "tests/common/error_builder_method_right_paren.kn",
+    "expect_error": "[Parser] Expected ')'"
+  },
+  {
     "name": "error_get_alias_reversed",
     "file": "tests/common/error_get_alias_reversed.kn",
     "expect_error": "[Parser] Invalid Get Alias"

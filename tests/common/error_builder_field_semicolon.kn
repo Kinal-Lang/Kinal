@@ -1,0 +1,12 @@
+Unit Tests.ErrorBuilderFieldSemicolon;
+
+Class Sample
+{
+    int first
+    int second;
+}
+
+Static Function int Main()
+{
+    Return 0;
+}
