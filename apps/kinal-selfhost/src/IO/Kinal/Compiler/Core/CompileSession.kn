@@ -50,7 +50,7 @@ Class CompileSession
 
     Public Safe Function bool HasErrors()
     {
-        Return This.Diagnostics.Count() > 0;
+        Return IO.Kinal.Compiler.Core.Diagnostics.HasAny(This.Diagnostics);
     }
 
     Public Safe Function void ReportProject(string title, string detail)

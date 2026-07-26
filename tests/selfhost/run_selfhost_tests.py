@@ -1528,6 +1528,8 @@ def main() -> int:
             str(root / "tests" / "selfhost" / "audit_manifest_parser.py"),
             "--compiler",
             str(compiler),
+            "--stage0",
+            str(stage0),
             "--root",
             str(root),
             "--baseline",

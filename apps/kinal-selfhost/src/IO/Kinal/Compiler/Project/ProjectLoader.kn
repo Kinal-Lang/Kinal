@@ -270,7 +270,7 @@ Class ProjectReader
     Public Safe Function ProjectConfig Read()
     {
         ProjectConfig project = New ProjectConfig(This.Source.Path);
-        If (This.Diagnostics.Count() > 0) Return project;
+        If (IO.Kinal.Compiler.Core.Diagnostics.HasAny(This.Diagnostics)) Return project;
         If (!This.ExpectText("Project", "Expected Project", "manifest must start with Project")) Return project;
         project.Name = This.ReadScalar();
         If (!This.ExpectKind(TokenKind.LeftBrace, "Expected '{'", "Project body is missing")) Return project;

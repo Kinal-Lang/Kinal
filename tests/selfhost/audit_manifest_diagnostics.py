@@ -48,6 +48,16 @@ def parser_diagnostic_titles(output: str) -> list[str]:
     return titles
 
 
+def parser_warning_titles(output: str) -> list[str]:
+    titles: list[str] = []
+    for line in output.splitlines():
+        if not line.startswith("[Parser]") or "[warning]" not in line:
+            continue
+        message = line[line.rfind("] ") + 2 :]
+        titles.append(message.split(":", 1)[0])
+    return titles
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--compiler", type=Path, required=True)
@@ -65,6 +75,7 @@ def main() -> int:
     failures: list[str] = []
     diagnostics: dict[str, str] = {}
     parser_mismatches: dict[str, dict[str, list[str]]] = {}
+    warning_mismatches: dict[str, dict[str, list[str]]] = {}
     stage0_out = (
         (args.output.resolve().parent if args.output else root / "out" / "selfhost")
         / "manifest-diagnostics-stage0"
@@ -117,6 +128,13 @@ def main() -> int:
                     "stage0": expected_parser,
                     "stage1": actual_parser,
                 }
+            expected_warnings = parser_warning_titles(stage0_output)
+            actual_warnings = parser_warning_titles(output)
+            if actual_warnings != expected_warnings:
+                warning_mismatches[name] = {
+                    "stage0": expected_warnings,
+                    "stage1": actual_warnings,
+                }
 
     report = {
         "format": "kinal-selfhost-manifest-diagnostics-v1",
@@ -129,6 +147,7 @@ def main() -> int:
         "diagnostics": diagnostics,
         "parser_differential_cases": len(cases) if stage0 else 0,
         "parser_mismatches": parser_mismatches,
+        "warning_mismatches": warning_mismatches,
     }
     if args.output:
         args.output.resolve().write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
@@ -144,6 +163,11 @@ def main() -> int:
     if parser_mismatches:
         print("manifest Parser diagnostics differ from stage0")
         for name, mismatch in sorted(parser_mismatches.items()):
+            print(f"{name}: stage0={mismatch['stage0']} stage1={mismatch['stage1']}")
+        return 1
+    if warning_mismatches:
+        print("manifest Parser warnings differ from stage0")
+        for name, mismatch in sorted(warning_mismatches.items()):
             print(f"{name}: stage0={mismatch['stage0']} stage1={mismatch['stage1']}")
         return 1
     print(f"[OK] manifest diagnostics: {report['passed']}/{report['cases']} ({report['coverage']:.1%})")

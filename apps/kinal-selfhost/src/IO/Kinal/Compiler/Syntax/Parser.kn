@@ -104,6 +104,17 @@ Safe Function void ReportToken(list diagnostics, SourceFile source, string token
         IO.Kinal.Compiler.Lex.Token.Column(token), length);
 }
 
+Safe Function void ReportWarningToken(list diagnostics, SourceFile source, string token,
+                                      string title, string detail)
+{
+    string text = IO.Kinal.Compiler.Lex.Token.Text(token);
+    int length = IO.Text.Length(text);
+    If (length < 1) length = 1;
+    IO.Kinal.Compiler.Core.Diagnostics.AddWarning(diagnostics, source, "Parser",
+        title, detail, IO.Kinal.Compiler.Lex.Token.Line(token),
+        IO.Kinal.Compiler.Lex.Token.Column(token), length);
+}
+
 Safe Function bool IsUnsafeAliasLiteral(TokenKind kind)
 {
     Return Switch (kind)
@@ -1129,6 +1140,37 @@ Safe Function int FindParameterName(ParseCursor cursor, int start, int declarati
     Return nameIndex;
 }
 
+Safe Function void WarnLegacyArraySuffixes(ParseCursor cursor, int start, int end)
+{
+    int index = start;
+    While (index < end)
+    {
+        If (KindAt(cursor, index) == TokenKind.LeftBracket)
+            ReportWarningToken(cursor.Diagnostics, cursor.Source, RawAt(cursor, index),
+                "Legacy Array Syntax",
+                "Use 'Type[] name' instead of 'Type name[]'");
+        index = index + 1;
+    }
+}
+
+Safe Function string ReadLegacyArrayTypeSuffixes(ParseCursor cursor, string typeName)
+{
+    While (Match(cursor, TokenKind.LeftBracket))
+    {
+        ReportWarningToken(cursor.Diagnostics, cursor.Source,
+            RawAt(cursor, cursor.Position - 1), "Legacy Array Syntax",
+            "Use 'Type[] name' instead of 'Type name[]'");
+        int start = cursor.Position;
+        While (!IsEnd(cursor) && CurrentKind(cursor) != TokenKind.RightBracket)
+            Advance(cursor);
+        string length = JoinTokenText(cursor, start, cursor.Position);
+        BuilderExpect(cursor, TokenKind.RightBracket, "Expected ']'",
+            "Array declarator is not closed");
+        typeName = typeName + "[" + length + "]";
+    }
+    Return typeName;
+}
+
 Safe Function ExpressionNode ParseFunctionLiteral(ParseCursor cursor)
 {
     string token = CurrentToken(cursor);
@@ -1233,7 +1275,7 @@ Safe Function ExpressionNode ParseFormattedFragment(string text, int line, int c
     SourceFile source = New SourceFile("<formatted-string>", text);
     list diagnostics = list.Create();
     list tokens = IO.Kinal.Compiler.Lex.Lexer.Tokenize(source, diagnostics);
-    If (diagnostics.Count() != 0)
+    If (IO.Kinal.Compiler.Core.Diagnostics.HasAny(diagnostics))
         Return New ExpressionNode([int](ExpressionKind.Missing), text, line, column);
     ParseCursor fragment = New ParseCursor(tokens, source, diagnostics);
     Return ParseExpression(fragment, 1);
@@ -2172,6 +2214,9 @@ Safe Function StatementNode ParseAstStatementCore(ParseCursor cursor)
         // outer fixed length for backend allocation.
         While (Match(cursor, TokenKind.LeftBracket))
         {
+            ReportWarningToken(cursor.Diagnostics, cursor.Source,
+                RawAt(cursor, cursor.Position - 1), "Legacy Array Syntax",
+                "Use 'Type[] name' instead of 'Type name[]'");
             If (CurrentKind(cursor) != TokenKind.RightBracket &&
                 declaration.SecondExpression == null)
                 declaration.SecondExpression = ParseExpression(cursor, 1);
@@ -2410,9 +2455,13 @@ Safe Function void ReadTypeMembers(ParseCursor cursor, TypeDecl type, SyntaxTree
         }
         If (CurrentKind(cursor) == TokenKind.KwFunction)
         {
+            string methodToken = CurrentToken(cursor);
             FunctionDecl method = ReadFunctionNode(cursor, false, isStatic, isAsync, isExtern, safety);
             If (method.ReturnType == "" && method.Name == type.Name)
             {
+                ReportWarningToken(cursor.Diagnostics, cursor.Source, methodToken,
+                    "Legacy Constructor Syntax",
+                    "Use 'Constructor(...)' instead of 'Function ClassName(...)'");
                 method.Name = "Constructor";
                 method.ReturnType = "void";
                 method.IsConstructor = true;
@@ -2465,6 +2514,7 @@ Safe Function void ReadTypeMembers(ParseCursor cursor, TypeDecl type, SyntaxTree
             field.IsStatic = isStatic || type.IsStatic;
             field.FirstAttribute = attributes;
             cursor.Position = fieldName + 1;
+            field.TypeName = ReadLegacyArrayTypeSuffixes(cursor, field.TypeName);
             If (Match(cursor, TokenKind.Assign)) field.Initializer = ParseExpression(cursor, 1);
             BuilderExpect(cursor, TokenKind.Semicolon, "Expected Semicolon",
                 "Missing ';' after field");
@@ -2508,6 +2558,7 @@ Safe Function void ReadParameters(ParseCursor cursor, FunctionDecl function)
                 "Expected parameter name");
         If (nameIndex >= start)
         {
+            WarnLegacyArraySuffixes(cursor, nameIndex + 1, declarationEnd);
             string name = IO.Kinal.Compiler.Lex.Token.Text(RawAt(cursor, nameIndex));
             string typeName = JoinTokenText(cursor, start, nameIndex);
             If (nameIndex + 1 < declarationEnd)
@@ -2561,6 +2612,7 @@ Safe Function void ReadMetaParameters(ParseCursor cursor, MetaDecl meta)
         int nameIndex = FindParameterName(cursor, start, declarationEnd);
         If (nameIndex >= start)
         {
+            WarnLegacyArraySuffixes(cursor, nameIndex + 1, declarationEnd);
             string name = IO.Kinal.Compiler.Lex.Token.Text(RawAt(cursor, nameIndex));
             string typeName = JoinTokenText(cursor, start, nameIndex);
             If (nameIndex + 1 < declarationEnd)
@@ -2709,6 +2761,7 @@ Safe Function FieldDecl ReadGlobalNode(ParseCursor cursor, SyntaxAttribute attri
     global.IsConst = isConst;
     global.FirstAttribute = attributes;
     cursor.Position = declarationName + 1;
+    global.TypeName = ReadLegacyArrayTypeSuffixes(cursor, global.TypeName);
     If (Match(cursor, TokenKind.Assign))
     {
         If (IsEnd(cursor))
@@ -2803,7 +2856,7 @@ Safe Function void ReadAliasDeclaration(ParseCursor cursor, SyntaxTree tree)
 
 Safe Function SyntaxTree Build(SourceFile source, list tokens, list diagnostics)
 {
-    int diagnosticsBefore = diagnostics.Count();
+    int errorsBefore = IO.Kinal.Compiler.Core.Diagnostics.ErrorCount(diagnostics);
     PreparedTokenStream prepared = PrepareTokens(source, tokens, diagnostics);
     ParseCursor cursor = New ParseCursor(prepared.Tokens, source, diagnostics);
     string unitName = "";
@@ -2988,5 +3041,6 @@ Safe Function SyntaxTree Build(SourceFile source, list tokens, list diagnostics)
         Record Done
     / >
     TopLevelDispatch.Run();
-    Return diagnostics.Count() == diagnosticsBefore ? tree : null;
+    Return IO.Kinal.Compiler.Core.Diagnostics.ErrorCount(diagnostics) == errorsBefore ?
+        tree : null;
 }

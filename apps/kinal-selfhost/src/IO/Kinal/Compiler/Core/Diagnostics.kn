@@ -16,8 +16,9 @@ Safe Function string Repeat(string text, int count)
     Return result;
 }
 
-Safe Function void Add(list diagnostics, SourceFile source, string stage,
-                       string title, string detail, int line, int column, int length)
+Safe Function void AddCore(list diagnostics, SourceFile source, string stage,
+                           string title, string detail, int line, int column,
+                           int length, bool isWarning)
 {
     int safeLine = line < 1 ? 1 : line;
     int safeColumn = column < 1 ? 1 : column;
@@ -25,7 +26,9 @@ Safe Function void Add(list diagnostics, SourceFile source, string stage,
     string lineText = source.GetLine(safeLine);
     string lineNumber = [string](safeLine);
     string prefix = Repeat(" ", IO.Text.Length(lineNumber) + 3 + safeColumn - 1);
-    string message = "[" + stage + "] " + title;
+    string message = "[" + stage + "]";
+    If (isWarning) message = message + "[warning]";
+    message = message + " " + title;
     If (!IO.Text.IsEmpty(detail))
     {
         message = message + ": " + detail;
@@ -38,6 +41,18 @@ Safe Function void Add(list diagnostics, SourceFile source, string stage,
     diagnostics.Add(message);
 }
 
+Safe Function void Add(list diagnostics, SourceFile source, string stage,
+                       string title, string detail, int line, int column, int length)
+{
+    AddCore(diagnostics, source, stage, title, detail, line, column, length, false);
+}
+
+Safe Function void AddWarning(list diagnostics, SourceFile source, string stage,
+                              string title, string detail, int line, int column, int length)
+{
+    AddCore(diagnostics, source, stage, title, detail, line, column, length, true);
+}
+
 Safe Function void PrintAll(list diagnostics)
 {
     int i = 0;
@@ -48,7 +63,32 @@ Safe Function void PrintAll(list diagnostics)
     }
 }
 
+Safe Function bool IsWarningMessage(string message)
+{
+    Return IO.Text.Contains(message, "][warning] ");
+}
+
 Safe Function bool HasAny(list diagnostics)
 {
-    Return diagnostics.Count() > 0;
+    int i = 0;
+    While (i < diagnostics.Count())
+    {
+        string diagnostic = [string](diagnostics.Fetch(i));
+        If (!IsWarningMessage(diagnostic)) Return true;
+        i = i + 1;
+    }
+    Return false;
+}
+
+Safe Function int ErrorCount(list diagnostics)
+{
+    int count = 0;
+    int i = 0;
+    While (i < diagnostics.Count())
+    {
+        string diagnostic = [string](diagnostics.Fetch(i));
+        If (!IsWarningMessage(diagnostic)) count = count + 1;
+        i = i + 1;
+    }
+    Return count;
 }

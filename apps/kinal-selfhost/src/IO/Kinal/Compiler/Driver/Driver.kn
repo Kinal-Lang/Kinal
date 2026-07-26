@@ -68,7 +68,7 @@ Safe Function SyntaxTree ProbeSyntax(string path)
     SourceFile source = New SourceFile(IO.Path.Normalize(path), IO.File.ReadAllText(path));
     list diagnostics = list.Create();
     list tokens = IO.Kinal.Compiler.Lex.Lexer.Tokenize(source, diagnostics);
-    If (diagnostics.Count() != 0) Return null;
+    If (IO.Kinal.Compiler.Core.Diagnostics.HasAny(diagnostics)) Return null;
     Return IO.Kinal.Compiler.Syntax.Parser.Build(source, tokens, diagnostics);
 }
 
@@ -419,17 +419,17 @@ Safe Function int Run(string[] args)
             If (command == "tokens") IO.Console.PrintLine(IO.Kinal.Compiler.Lex.Token.MachineDump(token));
             i = i + 1;
         }
-        If (diagnostics.Count() == 0 && command == "parse")
+        If (!IO.Kinal.Compiler.Core.Diagnostics.HasAny(diagnostics) && command == "parse")
         {
             IO.Kinal.Compiler.Syntax.Parser.Validate(source, tokens, diagnostics);
         }
-        If (diagnostics.Count() == 0 && command == "ast")
+        If (!IO.Kinal.Compiler.Core.Diagnostics.HasAny(diagnostics) && command == "ast")
         {
             SyntaxTree tree = IO.Kinal.Compiler.Syntax.Parser.Build(source, tokens, diagnostics);
             If (tree != null) IO.Console.PrintLine(tree.Summary());
         }
         IO.Kinal.Compiler.Core.Diagnostics.PrintAll(diagnostics);
-        Return diagnostics.Count() == 0 ? 0 : 1;
+        Return IO.Kinal.Compiler.Core.Diagnostics.HasAny(diagnostics) ? 1 : 0;
     }
 
     IO.Console.PrintLine("unknown command: " + command);
