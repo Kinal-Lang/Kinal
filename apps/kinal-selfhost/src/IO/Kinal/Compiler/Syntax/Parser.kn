@@ -13,11 +13,15 @@ Class ParseCursor
 {
     Public list Tokens;
     Public int Position;
+    Public SourceFile Source;
+    Public list Diagnostics;
 
-    Public Safe Constructor(list tokens)
+    Public Safe Constructor(list tokens, SourceFile source, list diagnostics)
     {
         This.Tokens = tokens;
         This.Position = 0;
+        This.Source = source;
+        This.Diagnostics = diagnostics;
     }
 }
 
@@ -1053,7 +1057,7 @@ Safe Function bool ParseGlobal(ParseCursor cursor, list diagnostics, SourceFile 
 Safe Function bool ValidatePrepared(SourceFile source, list tokens, bool hasUnsafeAlias,
                                    bool hasPreparationError, list diagnostics)
 {
-    ParseCursor cursor = New ParseCursor(tokens);
+    ParseCursor cursor = New ParseCursor(tokens, source, diagnostics);
     If (hasPreparationError)
     {
         If (!IsEnd(cursor))
@@ -1534,7 +1538,7 @@ Safe Function ExpressionNode ParseFormattedFragment(string text, int line, int c
     list tokens = IO.Kinal.Compiler.Lex.Lexer.Tokenize(source, diagnostics);
     If (diagnostics.Count() != 0)
         Return New ExpressionNode([int](ExpressionKind.Missing), text, line, column);
-    ParseCursor fragment = New ParseCursor(tokens);
+    ParseCursor fragment = New ParseCursor(tokens, source, diagnostics);
     Return ParseExpression(fragment, 1);
 }
 
@@ -1711,7 +1715,15 @@ Safe Function ExpressionNode ParsePrimary(ParseCursor cursor)
         ReadArguments(cursor, value);
         Return value;
     }
-    Advance(cursor);
+    If (kind == TokenKind.Eof)
+        Report(cursor, cursor.Diagnostics, cursor.Source, "Unexpected End Of File",
+            "Unexpected end of file while parsing expression");
+    Else
+    {
+        Report(cursor, cursor.Diagnostics, cursor.Source, "Unexpected Token",
+            "Unexpected token in expression");
+        Advance(cursor);
+    }
     Return NewExpression([int](ExpressionKind.Missing), token);
 }
 
@@ -2432,6 +2444,15 @@ Safe Function void ReadTypeMembers(ParseCursor cursor, TypeDecl type, SyntaxTree
         int ordinal = 0;
         While (!IsEnd(cursor) && CurrentKind(cursor) != TokenKind.RightBrace)
         {
+            If (!IsNameToken(CurrentKind(cursor)))
+            {
+                Report(cursor, cursor.Diagnostics, cursor.Source, "Expected Identifier",
+                    "Expected enum member");
+                While (!IsEnd(cursor) && CurrentKind(cursor) != TokenKind.Comma &&
+                       CurrentKind(cursor) != TokenKind.RightBrace) Advance(cursor);
+                Match(cursor, TokenKind.Comma);
+                Continue;
+            }
             string nameToken = CurrentToken(cursor);
             Advance(cursor);
             EnumMemberDecl member = New EnumMemberDecl(
@@ -2589,7 +2610,11 @@ Safe Function void ReadTypeMembers(ParseCursor cursor, TypeDecl type, SyntaxTree
             Jump Dispatch;
         }
 
-        Advance(cursor);
+        Report(cursor, cursor.Diagnostics, cursor.Source, "Expected Identifier",
+            "Expected field or type member declaration");
+        While (!IsEnd(cursor) && CurrentKind(cursor) != TokenKind.Semicolon &&
+               CurrentKind(cursor) != TokenKind.RightBrace) Advance(cursor);
+        Match(cursor, TokenKind.Semicolon);
         Jump Dispatch;
 
         Record Done
@@ -2650,7 +2675,7 @@ Safe Function SyntaxTree Build(SourceFile source, list tokens, list diagnostics)
     PreparedTokenStream prepared = PrepareTokens(source, tokens, diagnostics);
     If (!ValidatePrepared(source, prepared.Tokens, prepared.HasUnsafeAlias,
                           prepared.HasPreparationError, diagnostics)) Return null;
-    ParseCursor cursor = New ParseCursor(prepared.Tokens);
+    ParseCursor cursor = New ParseCursor(prepared.Tokens, source, diagnostics);
     string unitName = "";
     If (Match(cursor, TokenKind.KwUnit))
     {
@@ -2786,8 +2811,8 @@ Safe Function SyntaxTree Build(SourceFile source, list tokens, list diagnostics)
 
         If (!IsTypeStart(CurrentKind(cursor)))
         {
-            // Validation already reported structural errors. Keep AST construction
-            // forward-progressing if an expression parser leaves a recovery token.
+            Report(cursor, diagnostics, source, "Unexpected Top-Level Token",
+                "Expected a top-level declaration");
             Advance(cursor);
             Jump Dispatch;
         }

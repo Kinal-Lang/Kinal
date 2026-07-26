@@ -1112,6 +1112,16 @@
     "expect_error": "[Parser] Unexpected Token"
   },
   {
+    "name": "error_unknown_statement_token",
+    "file": "tests/common/error_unknown_statement_token.kn",
+    "expect_error": "[Parser] Unexpected Token"
+  },
+  {
+    "name": "error_unknown_type_member",
+    "file": "tests/common/error_unknown_type_member.kn",
+    "expect_error": "[Parser] Expected Identifier"
+  },
+  {
     "name": "error_get_alias_reversed",
     "file": "tests/common/error_get_alias_reversed.kn",
     "expect_error": "[Parser] Invalid Get Alias"

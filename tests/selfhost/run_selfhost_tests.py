@@ -231,6 +231,65 @@ def main() -> int:
         }
     )
 
+    unknown_token_fixtures = [
+        (
+            root / "tests" / "common" / "error_unknown_statement_token.kn",
+            "Unexpected Token",
+        ),
+        (
+            root / "tests" / "common" / "error_unknown_type_member.kn",
+            "Expected Identifier",
+        ),
+    ]
+    for unknown_token_fixture, expected_title in unknown_token_fixtures:
+        stage0_unknown = run(
+            [
+                str(stage0),
+                "build",
+                "--no-module-discovery",
+                "--color",
+                "never",
+                "--emit",
+                "check",
+                str(unknown_token_fixture),
+                "-o",
+                str(out_dir / f"{unknown_token_fixture.stem}-stage0.kcheck"),
+            ],
+            cwd=root,
+        )
+        stage1_unknown = run(
+            [str(compiler), "check-source", str(unknown_token_fixture)],
+            cwd=root,
+        )
+        stage0_unknown_output = (stage0_unknown.stdout or "") + (stage0_unknown.stderr or "")
+        stage1_unknown_output = (stage1_unknown.stdout or "") + (stage1_unknown.stderr or "")
+        require(
+            stage0_unknown.returncode != 0
+            and expected_title in stage0_unknown_output,
+            f"stage0 unknown-token diagnostic changed: {unknown_token_fixture}",
+            stage0_unknown,
+        )
+        require(
+            stage1_unknown.returncode != 0
+            and expected_title in stage1_unknown_output,
+            f"stage1 silently accepted an unknown token: {unknown_token_fixture}",
+            stage1_unknown,
+        )
+        stage0_unknown_count = sum(
+            1 for line in stage0_unknown_output.splitlines() if line.startswith("[Parser]")
+        )
+        stage1_unknown_count = sum(
+            1 for line in stage1_unknown_output.splitlines() if line.startswith("[Parser]")
+        )
+        require(
+            stage0_unknown_count == stage1_unknown_count,
+            f"unknown-token diagnostic count differs: {unknown_token_fixture}",
+            stage1_unknown,
+        )
+    results.append(
+        {"name": "unknown_token_diagnostics", "ok": True, "files": len(unknown_token_fixtures)}
+    )
+
     switch_fixture = root / "tests" / "selfhost" / "fixtures" / "switch_expression.kn"
     switch_stage0_path = out_dir / "switch-expression-stage0.kast"
     switch_stage0 = run(

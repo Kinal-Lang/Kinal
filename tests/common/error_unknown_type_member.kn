@@ -1,0 +1,12 @@
+Unit Tests.ErrorUnknownTypeMember;
+
+Class Sample
+{
+    @;
+    int value;
+}
+
+Static Function int Main()
+{
+    Return 0;
+}

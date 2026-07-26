@@ -1,0 +1,7 @@
+Unit Tests.ErrorUnknownStatementToken;
+
+Static Function int Main()
+{
+    @;
+    Return 0;
+}
