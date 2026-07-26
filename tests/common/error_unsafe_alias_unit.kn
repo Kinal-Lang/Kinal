@@ -1,0 +1,8 @@
+Unsafe Alias fn By Function;
+
+Unit Tests.InvalidUnsafeAliasUnit;
+
+Static fn int Main()
+{
+    Return 0;
+}

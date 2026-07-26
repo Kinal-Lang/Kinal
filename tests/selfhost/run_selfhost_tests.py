@@ -128,6 +128,49 @@ def main() -> int:
         )
     results.append({"name": "unsafe_alias_syntax", "ok": True, "files": len(unsafe_alias_fixtures)})
 
+    unsafe_alias_unit_fixture = root / "tests" / "common" / "error_unsafe_alias_unit.kn"
+    unsafe_alias_unit_stage0 = run(
+        [
+            str(stage0),
+            "build",
+            "--no-module-discovery",
+            "--color",
+            "never",
+            "--emit",
+            "check",
+            str(unsafe_alias_unit_fixture),
+            "-o",
+            str(out_dir / "unsafe-alias-unit-stage0.kcheck"),
+        ],
+        cwd=root,
+    )
+    unsafe_alias_unit_stage1 = run(
+        [str(compiler), "check-source", str(unsafe_alias_unit_fixture)],
+        cwd=root,
+    )
+    unsafe_alias_unit_title = "Invalid Unit With Unsafe Alias"
+    unsafe_alias_unit_stage0_output = (
+        (unsafe_alias_unit_stage0.stdout or "") + (unsafe_alias_unit_stage0.stderr or "")
+    )
+    unsafe_alias_unit_stage1_output = (
+        (unsafe_alias_unit_stage1.stdout or "") + (unsafe_alias_unit_stage1.stderr or "")
+    )
+    require(
+        unsafe_alias_unit_stage0.returncode != 0
+        and "[Parser]" in unsafe_alias_unit_stage0_output
+        and unsafe_alias_unit_title in unsafe_alias_unit_stage0_output,
+        "stage0 did not reject Unit after Unsafe Alias",
+        unsafe_alias_unit_stage0,
+    )
+    require(
+        unsafe_alias_unit_stage1.returncode != 0
+        and "[Parser]" in unsafe_alias_unit_stage1_output
+        and unsafe_alias_unit_title in unsafe_alias_unit_stage1_output,
+        "stage1 did not match the stage0 Unsafe Alias + Unit diagnostic",
+        unsafe_alias_unit_stage1,
+    )
+    results.append({"name": "unsafe_alias_unit_diagnostic", "ok": True})
+
     switch_fixture = root / "tests" / "selfhost" / "fixtures" / "switch_expression.kn"
     switch_stage0_path = out_dir / "switch-expression-stage0.kast"
     switch_stage0 = run(

@@ -1082,6 +1082,11 @@
     "expect_error": "[Parser] Invalid Unsafe Alias Position"
   },
   {
+    "name": "error_unsafe_alias_unit",
+    "file": "tests/common/error_unsafe_alias_unit.kn",
+    "expect_error": "[Parser] Invalid Unit With Unsafe Alias"
+  },
+  {
     "name": "error_bare_function_expr",
     "file": "tests/common/error_bare_function_expr.kn",
     "expect_error": "[Parser] Unexpected Token"
