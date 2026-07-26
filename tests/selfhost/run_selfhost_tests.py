@@ -799,6 +799,34 @@ def main() -> int:
     )
     results.append({"name": "generic_function_instances", "ok": True})
 
+    parameter_commas_project = (
+        root / "tests" / "selfhost" / "fixtures" / "parameter_nested_commas" / "kinal.knproj"
+    )
+    parameter_commas_executable = out_dir / f"parameter-nested-commas{executable_suffix}"
+    parameter_commas_build = run(
+        [
+            str(compiler),
+            "build",
+            str(parameter_commas_project),
+            str(parameter_commas_executable),
+            "test",
+        ],
+        cwd=root,
+    )
+    require(
+        parameter_commas_build.returncode == 0,
+        "stage1 nested-parameter-comma fixture build failed",
+        parameter_commas_build,
+    )
+    parameter_commas_run = run([str(parameter_commas_executable)], cwd=root)
+    require(
+        parameter_commas_run.returncode == 0
+        and parameter_commas_run.stdout.replace("\r\n", "\n") == "7\n5\n",
+        "stage1 nested-parameter-comma fixture output differs",
+        parameter_commas_run,
+    )
+    results.append({"name": "parameter_nested_commas", "ok": True})
+
     missing_generic_project = (
         root / "tests" / "selfhost" / "fixtures" / "generic_missing_args" / "kinal.knproj"
     )

@@ -842,6 +842,11 @@
     "expected": "3\n3\n102\n2\n6\n2\n3\n11\n"
   },
   {
+    "name": "parameter_nested_commas",
+    "file": "tests/common/parameter_nested_commas.kn",
+    "expected": "7\n5\n"
+  },
+  {
     "name": "generic_basic",
     "file": "tests/common/generic_basic.kn",
     "expected": "7\nok\n3\n"

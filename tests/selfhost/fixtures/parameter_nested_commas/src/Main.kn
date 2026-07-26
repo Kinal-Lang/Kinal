@@ -1,0 +1,25 @@
+Unit Tests.Selfhost.ParameterNestedCommas;
+
+Get IO.Console;
+
+Function int Add(int left, int right)
+{
+    Return left + right;
+}
+
+Function int ReadCode(<int, string> value)
+{
+    Return value[0];
+}
+
+Function int WithDefault(int value = Add(2, 3))
+{
+    Return value;
+}
+
+Static Function int Main()
+{
+    IO.Console.PrintLine(ReadCode(<7, "nested">));
+    IO.Console.PrintLine(WithDefault());
+    Return 0;
+}

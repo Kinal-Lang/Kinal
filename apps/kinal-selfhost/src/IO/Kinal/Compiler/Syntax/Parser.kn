@@ -1386,6 +1386,60 @@ Safe Function ExpressionNode ParseIfExpression(ParseCursor cursor)
     Return value;
 }
 
+Safe Function int FindParameterDeclarationEnd(ParseCursor cursor, int start)
+{
+    int parenDepth = 0;
+    int bracketDepth = 0;
+    int braceDepth = 0;
+    int angleDepth = 0;
+    int index = start;
+    While (index < cursor.Tokens.Count())
+    {
+        TokenKind kind = KindAt(cursor, index);
+        bool topLevel = parenDepth == 0 && bracketDepth == 0 &&
+            braceDepth == 0 && angleDepth == 0;
+        If (topLevel && (kind == TokenKind.Assign ||
+                         kind == TokenKind.Comma ||
+                         kind == TokenKind.RightParen ||
+                         kind == TokenKind.Eof)) Return index;
+
+        If (kind == TokenKind.LeftParen) parenDepth = parenDepth + 1;
+        ElseIf (kind == TokenKind.RightParen && parenDepth > 0)
+            parenDepth = parenDepth - 1;
+        ElseIf (kind == TokenKind.LeftBracket) bracketDepth = bracketDepth + 1;
+        ElseIf (kind == TokenKind.RightBracket && bracketDepth > 0)
+            bracketDepth = bracketDepth - 1;
+        ElseIf (kind == TokenKind.LeftBrace) braceDepth = braceDepth + 1;
+        ElseIf (kind == TokenKind.RightBrace && braceDepth > 0)
+            braceDepth = braceDepth - 1;
+        ElseIf (kind == TokenKind.Less) angleDepth = angleDepth + 1;
+        ElseIf (kind == TokenKind.Greater && angleDepth > 0)
+            angleDepth = angleDepth - 1;
+        index = index + 1;
+    }
+    Return index;
+}
+
+Safe Function int FindParameterName(ParseCursor cursor, int start, int declarationEnd)
+{
+    int nameIndex = -1;
+    int scan = start;
+    While (scan < declarationEnd)
+    {
+        TokenKind kind = KindAt(cursor, scan);
+        TokenKind next = KindAt(cursor, scan + 1);
+        If (kind == TokenKind.Identifier &&
+            KindAt(cursor, scan - 1) != TokenKind.Dot &&
+            (scan + 1 == declarationEnd || next == TokenKind.LeftBracket))
+        {
+            nameIndex = scan;
+            Break;
+        }
+        scan = scan + 1;
+    }
+    Return nameIndex;
+}
+
 Safe Function ExpressionNode ParseFunctionLiteral(ParseCursor cursor)
 {
     string token = CurrentToken(cursor);
@@ -1399,12 +1453,8 @@ Safe Function ExpressionNode ParseFunctionLiteral(ParseCursor cursor)
     While (!IsEnd(cursor) && CurrentKind(cursor) != TokenKind.RightParen)
     {
         int parameterStart = cursor.Position;
-        int parameterEnd = parameterStart;
-        While (KindAt(cursor, parameterEnd) != TokenKind.Comma &&
-               KindAt(cursor, parameterEnd) != TokenKind.RightParen &&
-               KindAt(cursor, parameterEnd) != TokenKind.Eof)
-            parameterEnd = parameterEnd + 1;
-        int nameIndex = parameterEnd - 1;
+        int parameterEnd = FindParameterDeclarationEnd(cursor, parameterStart);
+        int nameIndex = FindParameterName(cursor, parameterStart, parameterEnd);
         If (nameIndex >= parameterStart)
         {
             string nameToken = RawAt(cursor, nameIndex);
@@ -2056,12 +2106,8 @@ Safe Function StatementNode ParseLocalFunctionStatement(ParseCursor cursor)
     While (!IsEnd(cursor) && CurrentKind(cursor) != TokenKind.RightParen)
     {
         int parameterStart = cursor.Position;
-        int parameterEnd = parameterStart;
-        While (KindAt(cursor, parameterEnd) != TokenKind.Comma &&
-               KindAt(cursor, parameterEnd) != TokenKind.RightParen &&
-               KindAt(cursor, parameterEnd) != TokenKind.Eof)
-            parameterEnd = parameterEnd + 1;
-        int parameterNameIndex = parameterEnd - 1;
+        int parameterEnd = FindParameterDeclarationEnd(cursor, parameterStart);
+        int parameterNameIndex = FindParameterName(cursor, parameterStart, parameterEnd);
         If (parameterNameIndex >= parameterStart)
         {
             string nameToken = RawAt(cursor, parameterNameIndex);
@@ -2558,30 +2604,9 @@ Safe Function void ReadParameters(ParseCursor cursor, FunctionDecl function)
     While (!IsEnd(cursor) && CurrentKind(cursor) != TokenKind.RightParen)
     {
         int start = cursor.Position;
-        int comma = start;
-        While (KindAt(cursor, comma) != TokenKind.Comma &&
-               KindAt(cursor, comma) != TokenKind.RightParen &&
-               KindAt(cursor, comma) != TokenKind.Eof) comma = comma + 1;
-        int declarationEnd = comma;
-        int assign = start;
-        While (assign < comma && KindAt(cursor, assign) != TokenKind.Assign)
-            assign = assign + 1;
-        If (assign < comma) declarationEnd = assign;
-        int nameIndex = -1;
-        int scan = start;
-        While (scan < declarationEnd)
-        {
-            TokenKind kind = KindAt(cursor, scan);
-            TokenKind next = KindAt(cursor, scan + 1);
-            If (kind == TokenKind.Identifier &&
-                KindAt(cursor, scan - 1) != TokenKind.Dot &&
-                (scan + 1 == declarationEnd || next == TokenKind.LeftBracket))
-            {
-                nameIndex = scan;
-                Break;
-            }
-            scan = scan + 1;
-        }
+        int declarationEnd = FindParameterDeclarationEnd(cursor, start);
+        bool hasDefault = KindAt(cursor, declarationEnd) == TokenKind.Assign;
+        int nameIndex = FindParameterName(cursor, start, declarationEnd);
         If (nameIndex >= start)
         {
             string name = IO.Kinal.Compiler.Lex.Token.Text(RawAt(cursor, nameIndex));
@@ -2589,14 +2614,14 @@ Safe Function void ReadParameters(ParseCursor cursor, FunctionDecl function)
             If (nameIndex + 1 < declarationEnd)
                 typeName = typeName + " " + JoinTokenText(cursor, nameIndex + 1, declarationEnd);
             ParameterDecl parameter = New ParameterDecl(name, typeName);
-            If (assign < comma)
+            If (hasDefault)
             {
-                cursor.Position = assign + 1;
+                cursor.Position = declarationEnd + 1;
                 parameter.DefaultValue = ParseExpression(cursor, 1);
             }
             function.AddParameter(parameter);
         }
-        cursor.Position = comma;
+        If (!hasDefault) cursor.Position = declarationEnd;
         If (!Match(cursor, TokenKind.Comma)) Break;
     }
     Match(cursor, TokenKind.RightParen);
