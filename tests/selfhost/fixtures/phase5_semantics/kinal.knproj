@@ -16,6 +16,20 @@ Project SelfhostPhase5Semantics
         RequireUnit = true;
     }
 
+    SourceSet "package_contextual_default"
+    {
+        Roots = ["../../../common"];
+        Include = ["package_contextual_default.kn"];
+        RequireUnit = true;
+    }
+
+    SourceSet "package_const_index"
+    {
+        Roots = ["../../../common"];
+        Include = ["package_const_index.kn"];
+        RequireUnit = true;
+    }
+
     SourceSet "literal_ids"
     {
         Roots = ["src"];
@@ -54,6 +68,40 @@ Project SelfhostPhase5Semantics
             Backend = Native;
             Environment = Hosted;
             Output = "../../../../out/selfhost/tests/package-expression-depth.exe";
+        }
+    }
+
+    Profile "package_contextual_default"
+    {
+        Source
+        {
+            Entry = "../../../common/package_contextual_default.kn";
+            Sets = ["package_contextual_default"];
+            Mode = AllSources;
+        }
+
+        Build
+        {
+            Backend = Native;
+            Environment = Hosted;
+            Output = "../../../../out/selfhost/tests/package-contextual-default.exe";
+        }
+    }
+
+    Profile "package_const_index"
+    {
+        Source
+        {
+            Entry = "../../../common/package_const_index.kn";
+            Sets = ["package_const_index"];
+            Mode = AllSources;
+        }
+
+        Build
+        {
+            Backend = Native;
+            Environment = Hosted;
+            Output = "../../../../out/selfhost/tests/package-const-index.exe";
         }
     }
 

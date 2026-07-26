@@ -1,0 +1,27 @@
+Unit Tests.PackageConstIndex;
+
+Get IO.Console;
+
+Static Function int Main()
+{
+    <int, int, int, int> values = <10, 20, 30, 40>;
+    Const int zero = 'A' - 'A';
+    Const Var one = 1;
+    Const int two = one + 1;
+    Const int three = two + one;
+
+    IO.Console.PrintLine(values[zero]);
+    IO.Console.PrintLine(values[one]);
+    IO.Console.PrintLine(values[one + 1]);
+    IO.Console.PrintLine(values[three]);
+    IO.Console.PrintLine(values[three & 1]);
+    IO.Console.PrintLine(values[one | 2]);
+    IO.Console.PrintLine(values[three ^ 1]);
+    IO.Console.PrintLine(values[one << 1]);
+    IO.Console.PrintLine(values[8 >> 2]);
+    IO.Console.PrintLine(values[5 % 4]);
+    IO.Console.PrintLine(values[-(-1)]);
+    IO.Console.PrintLine(values[6 / 3]);
+    IO.Console.PrintLine(values[2 * one]);
+    Return 0;
+}

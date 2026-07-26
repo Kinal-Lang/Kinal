@@ -24,6 +24,18 @@ Class UnitSymbol
     }
 }
 
+Class ConstantIntegerValue
+{
+    Public bool IsValid;
+    Public i64 Value;
+
+    Public Safe Constructor(bool isValid, i64 value)
+    {
+        This.IsValid = isValid;
+        This.Value = value;
+    }
+}
+
 Class SemanticCompilation
 {
     Public CompileSession Session;
@@ -1663,6 +1675,22 @@ Class SemanticCompilation
             source.Type = target;
             Return true;
         }
+        If (target.Kind == [int](TypeKind.PackageType) &&
+            source.Kind == [int](HirExpressionKind.PackageLiteral))
+        {
+            If (target.PackageCount != source.Type.PackageCount) Return false;
+            PackageElementType expected = target.FirstPackageElement;
+            HirExpression actual = source.FirstArgument;
+            bool assignable = true;
+            While (expected != null && actual != null)
+            {
+                If (!This.IsHirAssignable(expected.Type, actual)) assignable = false;
+                expected = expected.Next;
+                actual = actual.Next;
+            }
+            If (assignable) source.Type = target;
+            Return assignable;
+        }
         If (This.IsAssignable(target, source.Type)) Return true;
         If ((target.Name == "IO.Type.Object.Function" || target.Name == "Object.Function") &&
             source.Kind == [int](HirExpressionKind.Namespace) &&
@@ -2973,46 +3001,118 @@ Class SemanticCompilation
         Return equal ? 1 : 0;
     }
 
-    Public Safe Function int ConstantInteger(SyntaxTree syntax, ExpressionNode expression)
+    Public Safe Function i64 CharacterConstant(string raw)
     {
-        int invalid = -2147483647;
-        If (expression == null) Return invalid;
-        If (expression.Kind == [int](ExpressionKind.Number)) Return [int](expression.Text);
+        int length = IO.Text.Length(raw);
+        string body = length >= 2 && IO.Text.StartsWith(raw, "'") &&
+            IO.Text.EndsWith(raw, "'") ? IO.Text.Slice(raw, 1, length - 2) : raw;
+        char[] characters = body.ToChars();
+        If (characters.Length() == 0) Return 0;
+        If (characters[0] != '\\' || characters.Length() < 2) Return [int](characters[0]);
+        char escaped = characters[1];
+        If (escaped == '0') Return 0;
+        If (escaped == 'b') Return 8;
+        If (escaped == 'n') Return 10;
+        If (escaped == 'r') Return 13;
+        If (escaped == 't') Return 9;
+        Return [int](escaped);
+    }
+
+    Public Safe Function ConstantIntegerValue ConstantIntegerCore(
+        SyntaxTree syntax, BindingScope scope, ExpressionNode expression, int depth)
+    {
+        If (expression == null || depth > 192) Return New ConstantIntegerValue(false, 0);
+        If (expression.Kind == [int](ExpressionKind.Number))
+            Return New ConstantIntegerValue(true, [i64](expression.Text));
+        If (expression.Kind == [int](ExpressionKind.Character))
+            Return New ConstantIntegerValue(true, This.CharacterConstant(expression.Text));
+        If (expression.Kind == [int](ExpressionKind.Boolean))
+            Return New ConstantIntegerValue(true,
+                expression.Text == "true" || expression.Text == "True" ? 1 : 0);
         If (expression.Kind == [int](ExpressionKind.Name))
         {
+            ValueSymbol local = scope == null ? null : scope.Find(expression.Text);
+            If (local != null)
+            {
+                If (!local.IsConst || local.ConstantOrigin == null)
+                    Return New ConstantIntegerValue(false, 0);
+                Return This.ConstantIntegerCore(
+                    syntax, scope, local.ConstantOrigin, depth + 1);
+            }
             GlobalSymbol global = This.FindVisibleGlobal(syntax, expression.Text);
             If (global == null || !global.Declaration.IsConst ||
-                global.Declaration.Initializer == expression) Return invalid;
-            Return This.ConstantInteger(syntax, global.Declaration.Initializer);
+                global.Declaration.Initializer == expression)
+                Return New ConstantIntegerValue(false, 0);
+            Return This.ConstantIntegerCore(
+                syntax, scope, global.Declaration.Initializer, depth + 1);
         }
         If (expression.Kind == [int](ExpressionKind.Unary))
         {
-            int operand = This.ConstantInteger(syntax, expression.Left);
-            If (operand == invalid) Return invalid;
-            If (expression.Operator == TokenKind.Plus) Return operand;
-            If (expression.Operator == TokenKind.Minus) Return -operand;
-            If (expression.Operator == TokenKind.Tilde) Return ~operand;
-            Return invalid;
+            ConstantIntegerValue operand = This.ConstantIntegerCore(
+                syntax, scope, expression.Left, depth + 1);
+            If (!operand.IsValid) Return operand;
+            If (expression.Operator == TokenKind.Minus)
+                Return New ConstantIntegerValue(true, -operand.Value);
+            If (expression.Operator == TokenKind.Not)
+                Return New ConstantIntegerValue(true, operand.Value == 0 ? 1 : 0);
+            Return New ConstantIntegerValue(false, 0);
         }
         If (expression.Kind == [int](ExpressionKind.Binary))
         {
-            int left = This.ConstantInteger(syntax, expression.Left);
-            int right = This.ConstantInteger(syntax, expression.Right);
-            If (left == invalid || right == invalid) Return invalid;
-            If (expression.Operator == TokenKind.Plus) Return left + right;
-            If (expression.Operator == TokenKind.Minus) Return left - right;
-            If (expression.Operator == TokenKind.Star) Return left * right;
+            ConstantIntegerValue left = This.ConstantIntegerCore(
+                syntax, scope, expression.Left, depth + 1);
+            ConstantIntegerValue right = This.ConstantIntegerCore(
+                syntax, scope, expression.Right, depth + 1);
+            If (!left.IsValid || !right.IsValid)
+                Return New ConstantIntegerValue(false, 0);
+            If (expression.Operator == TokenKind.Plus)
+                Return New ConstantIntegerValue(true, left.Value + right.Value);
+            If (expression.Operator == TokenKind.Minus)
+                Return New ConstantIntegerValue(true, left.Value - right.Value);
+            If (expression.Operator == TokenKind.Star)
+                Return New ConstantIntegerValue(true, left.Value * right.Value);
             If (expression.Operator == TokenKind.Slash)
-                Return right == 0 ? invalid : left / right;
+                Return right.Value == 0 ? New ConstantIntegerValue(false, 0) :
+                    New ConstantIntegerValue(true, left.Value / right.Value);
             If (expression.Operator == TokenKind.Percent)
-                Return right == 0 ? invalid : left % right;
-            If (expression.Operator == TokenKind.Ampersand) Return left & right;
-            If (expression.Operator == TokenKind.BitOr) Return left | right;
-            If (expression.Operator == TokenKind.Xor) Return left ^ right;
-            If (expression.Operator == TokenKind.ShiftLeft) Return left << right;
-            If (expression.Operator == TokenKind.ShiftRight) Return left >> right;
+                Return right.Value == 0 ? New ConstantIntegerValue(false, 0) :
+                    New ConstantIntegerValue(true, left.Value % right.Value);
+            If (expression.Operator == TokenKind.Equal)
+                Return New ConstantIntegerValue(true, left.Value == right.Value ? 1 : 0);
+            If (expression.Operator == TokenKind.NotEqual)
+                Return New ConstantIntegerValue(true, left.Value != right.Value ? 1 : 0);
+            If (expression.Operator == TokenKind.Less)
+                Return New ConstantIntegerValue(true, left.Value < right.Value ? 1 : 0);
+            If (expression.Operator == TokenKind.LessEqual)
+                Return New ConstantIntegerValue(true, left.Value <= right.Value ? 1 : 0);
+            If (expression.Operator == TokenKind.Greater)
+                Return New ConstantIntegerValue(true, left.Value > right.Value ? 1 : 0);
+            If (expression.Operator == TokenKind.GreaterEqual)
+                Return New ConstantIntegerValue(true, left.Value >= right.Value ? 1 : 0);
+            If (expression.Operator == TokenKind.AndAnd)
+                Return New ConstantIntegerValue(true,
+                    left.Value != 0 && right.Value != 0 ? 1 : 0);
+            If (expression.Operator == TokenKind.OrOr)
+                Return New ConstantIntegerValue(true,
+                    left.Value != 0 || right.Value != 0 ? 1 : 0);
+            If (expression.Operator == TokenKind.Ampersand)
+                Return New ConstantIntegerValue(true, left.Value & right.Value);
+            If (expression.Operator == TokenKind.BitOr)
+                Return New ConstantIntegerValue(true, left.Value | right.Value);
+            If (expression.Operator == TokenKind.Xor)
+                Return New ConstantIntegerValue(true, left.Value ^ right.Value);
+            If (expression.Operator == TokenKind.ShiftLeft)
+                Return New ConstantIntegerValue(true, left.Value << right.Value);
+            If (expression.Operator == TokenKind.ShiftRight)
+                Return New ConstantIntegerValue(true, left.Value >> right.Value);
         }
-        Return invalid;
+        Return New ConstantIntegerValue(false, 0);
+    }
+
+    Public Safe Function ConstantIntegerValue ConstantInteger(
+        SyntaxTree syntax, BindingScope scope, ExpressionNode expression)
+    {
+        Return This.ConstantIntegerCore(syntax, scope, expression, 0);
     }
 
     Public Safe Function bool PackageCanMaterialize(TypeSymbol packageType,
@@ -3377,35 +3477,48 @@ Class SemanticCompilation
         If (expression.Kind == [int](ExpressionKind.Index))
         {
             HirExpression receiver = This.BindExpression(syntax, function, scope, expression.Left);
+            HirExpression boundIndex = This.BindExpression(
+                syntax, function, scope, expression.Right);
             TypeSymbol type = receiver.Type.Kind == [int](TypeKind.ArrayType) ||
                 receiver.Type.Kind == [int](TypeKind.PointerType) ?
                 receiver.Type.ElementType : This.Primitive("any");
             If (receiver.Type.Kind == [int](TypeKind.StringType)) type = This.Primitive("char");
-            int packageIndex = -2147483647;
+            ConstantIntegerValue packageIndex = New ConstantIntegerValue(false, 0);
             If (receiver.Type.Kind == [int](TypeKind.PackageType))
             {
-                packageIndex = This.ConstantInteger(syntax, expression.Right);
-                If (packageIndex == -2147483647)
+                If (boundIndex == null ||
+                    boundIndex.Type.Kind != [int](TypeKind.IntegerType))
+                    This.Report(syntax, "Type Mismatch", "Index requires integer type",
+                        expression.Line, expression.Column);
+                packageIndex = This.ConstantInteger(syntax, scope, expression.Right);
+                If (!packageIndex.IsValid)
+                {
                     This.Report(syntax, "Invalid Package Index",
                         "Package index must be a compile-time constant",
                         expression.Line, expression.Column);
-                ElseIf (packageIndex < 0 || packageIndex >= receiver.Type.PackageCount)
+                    type = New TypeSymbol([int](TypeKind.Unknown), "unknown");
+                }
+                ElseIf (packageIndex.Value < 0 ||
+                    packageIndex.Value >= receiver.Type.PackageCount)
+                {
                     This.Report(syntax, "Invalid Package Index", "Package index out of range",
                         expression.Line, expression.Column);
-                Else type = receiver.Type.PackageElement(packageIndex);
+                    type = New TypeSymbol([int](TypeKind.Unknown), "unknown");
+                }
+                Else type = receiver.Type.PackageElement([int](packageIndex.Value));
             }
             HirExpression result = New HirExpression([int](HirExpressionKind.Index), expression, type);
             result.Left = receiver;
-            If (packageIndex != -2147483647)
+            If (packageIndex.IsValid)
             {
                 ExpressionNode constantIndex = New ExpressionNode([int](ExpressionKind.Number),
-                    [string](packageIndex), expression.Line, expression.Column);
+                    [string](packageIndex.Value), expression.Line, expression.Column);
                 result.Right = New HirExpression([int](HirExpressionKind.Constant),
                     constantIndex, This.Primitive("int"));
             }
-            Else result.Right = This.BindExpression(syntax, function, scope, expression.Right);
-            If (receiver.Symbol != null && packageIndex >= 0)
-                result.Function = receiver.Symbol.CallableElement(packageIndex);
+            Else result.Right = boundIndex;
+            If (receiver.Symbol != null && packageIndex.IsValid && packageIndex.Value >= 0)
+                result.Function = receiver.Symbol.CallableElement([int](packageIndex.Value));
             Return result;
         }
         If (expression.Kind == [int](ExpressionKind.Unary))
@@ -3442,6 +3555,9 @@ Class SemanticCompilation
                 expression.Operator == TokenKind.PercentAssign;
             If (assignment)
             {
+                If (left.Symbol != null && left.Symbol.IsConst)
+                    This.Report(syntax, "Const Assignment", "Cannot assign to const variable",
+                        expression.Left.Line, expression.Left.Column);
                 bool delegateAssignment = left.Kind == [int](HirExpressionKind.Delegate) &&
                     right.Kind == [int](HirExpressionKind.FunctionReference);
                 If (delegateAssignment && !This.SameFunctionSignature(left.Function, right.Function))
@@ -3539,8 +3655,8 @@ Class SemanticCompilation
                     statement.Line, statement.Column);
             ElseIf (result.Expression != null &&
                 !This.IsHirAssignable(function.ReturnType, result.Expression))
-                This.Report(syntax, "Type Mismatch", "Return value does not match function type",
-                    statement.Line, statement.Column);
+                This.Report(syntax, "Return Type", "Return value does not match function type",
+                    statement.Expression.Line, statement.Expression.Column);
             result.Next = This.BindStatement(syntax, function, scope, statement.Next);
             Return result;
         }
@@ -3647,6 +3763,9 @@ Class SemanticCompilation
                 }
             }
             result.Expression = This.BindExpression(syntax, function, scope, statement.Expression);
+            If (statement.IsConst && statement.Expression == null)
+                This.Report(syntax, "Const Requires Init",
+                    "Const variable must have initializer", statement.Line, statement.Column);
             If (statement.TypeName == "Var")
                 result.DeclaredType = result.Expression == null ?
                     This.Primitive("any") : result.Expression.Type;
@@ -3661,6 +3780,12 @@ Class SemanticCompilation
             If (result.DeclaredType.Kind == [int](TypeKind.PackageType))
             {
                 TypeSymbol initializerType = result.Expression == null ? null : result.Expression.Type;
+                If (result.DeclaredType.PackageCount > 0 && result.Expression != null &&
+                    result.Expression.Kind == [int](HirExpressionKind.PackageLiteral))
+                {
+                    This.IsHirAssignable(result.DeclaredType, result.Expression);
+                    initializerType = result.Expression.Type;
+                }
                 If (result.DeclaredType.PackageCount == 0)
                 {
                     If (initializerType == null)
@@ -3712,13 +3837,17 @@ Class SemanticCompilation
                         statement.Line, statement.Column);
                 If (result.DeclaredType.Name == "byte" && statement.Expression != null)
                 {
-                    int byteValue = This.ConstantInteger(syntax, statement.Expression);
-                    If (byteValue != -2147483647 && (byteValue < 0 || byteValue > 255))
+                    ConstantIntegerValue byteValue = This.ConstantInteger(
+                        syntax, scope, statement.Expression);
+                    If (byteValue.IsValid &&
+                        (byteValue.Value < 0 || byteValue.Value > 255))
                         This.Report(syntax, "Byte Overflow", "byte literal is outside 0..255",
                             statement.Line, statement.Column);
                 }
             }
             result.DeclaredSymbol = New ValueSymbol(statement.Name, result.DeclaredType, false);
+            result.DeclaredSymbol.IsConst = statement.IsConst;
+            result.DeclaredSymbol.ConstantOrigin = statement.Expression;
             result.DeclaredSymbol.PackageLabels = statement.PackageLabels;
             This.ValidatePackageAliases(syntax, statement, result.DeclaredType);
             If (result.Expression != null &&

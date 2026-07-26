@@ -30,6 +30,23 @@ def parser_diagnostic_titles(proc: subprocess.CompletedProcess[str]) -> list[str
     return titles
 
 
+def compiler_diagnostic_titles(proc: subprocess.CompletedProcess[str]) -> list[str]:
+    output = (proc.stdout or "") + (proc.stderr or "")
+    titles: list[str] = []
+    for line in output.splitlines():
+        if not line.startswith("[") or "[warning]" in line:
+            continue
+        stage_end = line.find("]")
+        if stage_end < 0:
+            continue
+        stage = line[1:stage_end]
+        if stage not in {"Lexer", "Parser", "Sema", "Project", "Driver", "Link", "KNC", "Native"}:
+            continue
+        message = line[line.rfind("] ") + 2 :]
+        titles.append(f"{stage}:{message.split(':', 1)[0]}")
+    return titles
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--stage0", type=Path, required=True)
@@ -876,18 +893,51 @@ def main() -> int:
 
     package_errors = (
         ("error_package_index_runtime.kn", "[Sema] Invalid Package Index"),
+        ("error_package_index_bool_constant.kn", "[Sema] Type Mismatch"),
+        ("error_package_index_large_constant.kn", "[Sema] Invalid Package Index"),
+        ("error_local_const_assignment.kn", "[Sema] Const Assignment"),
+        ("error_local_const_missing_init.kn", "[Sema] Const Requires Init"),
         ("error_package_field_count.kn", "[Sema] Package Field Count"),
         ("error_package_array_cast.kn", "[Sema] Invalid Cast"),
     )
     for source_name, expected_error in package_errors:
+        source = root / "tests" / "common" / source_name
         package_error = run(
-            [str(compiler), "check-source", str(root / "tests" / "common" / source_name)],
+            [str(compiler), "check-source", str(source)],
             cwd=root,
         )
         require(package_error.returncode != 0, f"stage1 accepted {source_name}", package_error)
         require(
             expected_error in (package_error.stdout + package_error.stderr),
             f"stage1 diagnostic differs for {source_name}",
+            package_error,
+        )
+        stage0_package_error = run(
+            [
+                str(stage0),
+                "build",
+                "--no-module-discovery",
+                "--color",
+                "never",
+                "--emit",
+                "check",
+                str(source),
+                "-o",
+                str(out_dir / f"{source.stem}-stage0.kcheck"),
+            ],
+            cwd=root,
+        )
+        require(
+            stage0_package_error.returncode != 0,
+            f"stage0 accepted {source_name}",
+            stage0_package_error,
+        )
+        require(
+            compiler_diagnostic_titles(package_error)
+            == compiler_diagnostic_titles(stage0_package_error),
+            f"stage0/stage1 diagnostic sequence differs for {source_name}: "
+            f"stage0={compiler_diagnostic_titles(stage0_package_error)} "
+            f"stage1={compiler_diagnostic_titles(package_error)}",
             package_error,
         )
     results.append({"name": "package_diagnostics", "ok": True})
@@ -938,6 +988,16 @@ def main() -> int:
     phase5_profiles = [
         ("custom_cast", "custom-cast-simple", "42\n"),
         ("package_expression", "package-expression-depth", "true\nfalse\n14\n"),
+        (
+            "package_contextual_default",
+            "package-contextual-default",
+            "0\ntrue\nfalse\n0\ntrue\nfalse\n",
+        ),
+        (
+            "package_const_index",
+            "package-const-index",
+            "10\n20\n30\n40\n20\n40\n30\n30\n30\n20\n20\n30\n30\n",
+        ),
         ("literal_ids", "literal-ids", "42\n"),
     ]
     for profile, output_name, expected_output in phase5_profiles:

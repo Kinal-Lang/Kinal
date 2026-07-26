@@ -170,6 +170,7 @@ Class StatementNode
     Public string Name;
     Public string TypeName;
     Public string PackageLabels;
+    Public bool IsConst;
     Public bool IsUnsafe;
     Public int Line;
     Public int Column;
@@ -188,6 +189,7 @@ Class StatementNode
         This.Name = "";
         This.TypeName = "";
         This.PackageLabels = "";
+        This.IsConst = false;
         This.IsUnsafe = false;
         This.Line = line;
         This.Column = column;

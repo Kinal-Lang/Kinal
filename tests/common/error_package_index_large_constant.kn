@@ -1,0 +1,7 @@
+Unit Tests.ErrorPackageIndexLargeConstant;
+
+Static Function int Main()
+{
+    <int, int> values = <10, 20>;
+    Return values[4294967296];
+}

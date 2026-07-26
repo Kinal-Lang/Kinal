@@ -1563,7 +1563,7 @@ Safe Function ExpressionNode ParsePostfix(ParseCursor cursor)
         {
             Advance(cursor);
             ExpressionNode index = New ExpressionNode([int](ExpressionKind.Index), "",
-                IO.Kinal.Compiler.Lex.Token.Line(token), IO.Kinal.Compiler.Lex.Token.Column(token));
+                value.Line, value.Column);
             index.Left = value;
             index.Right = ParseExpression(cursor, 1);
             Match(cursor, TokenKind.RightBracket);
@@ -1978,6 +1978,61 @@ Safe Function StatementNode ParseLocalTypeStatement(ParseCursor cursor)
         IO.Kinal.Compiler.Lex.Token.Line(token), IO.Kinal.Compiler.Lex.Token.Column(token));
 }
 
+Safe Function StatementNode ParseVariableStatement(ParseCursor cursor, int line, int column,
+                                                   bool isConst, bool inferred)
+{
+    StatementNode declaration = New StatementNode([int](StatementKind.Variable), line, column);
+    declaration.IsConst = isConst;
+    If (inferred)
+    {
+        declaration.TypeName = "Var";
+        declaration.Name = IO.Kinal.Compiler.Lex.Token.Text(CurrentToken(cursor));
+        Advance(cursor);
+    }
+    Else
+    {
+        int declarationName = FindDeclarationName(cursor, false);
+        If (declarationName <= cursor.Position) Return null;
+        declaration.TypeName = JoinTokenText(cursor, cursor.Position, declarationName);
+        declaration.Name = IO.Kinal.Compiler.Lex.Token.Text(RawAt(cursor, declarationName));
+        cursor.Position = declarationName + 1;
+    }
+    If (Match(cursor, TokenKind.Less))
+    {
+        While (!IsEnd(cursor) && CurrentKind(cursor) != TokenKind.Greater)
+        {
+            string label = IO.Kinal.Compiler.Lex.Token.Text(CurrentToken(cursor));
+            If (declaration.PackageLabels == "") declaration.PackageLabels = label;
+            Else declaration.PackageLabels = declaration.PackageLabels + "," + label;
+            Advance(cursor);
+            If (!Match(cursor, TokenKind.Comma)) Break;
+        }
+        BuilderExpect(cursor, TokenKind.Greater, "Expected '>'",
+            "Package field labels are not closed");
+    }
+    // C-style local arrays place dimensions after the variable name.
+    // Normalize the type to the canonical T[] form while preserving the
+    // outer fixed length for backend allocation.
+    While (Match(cursor, TokenKind.LeftBracket))
+    {
+        ReportWarningToken(cursor.Diagnostics, cursor.Source,
+            RawAt(cursor, cursor.Position - 1), "Legacy Array Syntax",
+            "Use 'Type[] name' instead of 'Type name[]'");
+        If (CurrentKind(cursor) != TokenKind.RightBracket &&
+            declaration.SecondExpression == null)
+            declaration.SecondExpression = ParseExpression(cursor, 1);
+        ElseIf (CurrentKind(cursor) != TokenKind.RightBracket)
+            ParseExpression(cursor, 1);
+        BuilderExpect(cursor, TokenKind.RightBracket, "Expected ']'",
+            "Array declarator is not closed");
+        declaration.TypeName = declaration.TypeName + "[]";
+    }
+    If (Match(cursor, TokenKind.Assign)) declaration.Expression = ParseExpression(cursor, 1);
+    BuilderExpect(cursor, TokenKind.Semicolon, "Expected Semicolon",
+        "Variable declaration must end with ';'");
+    Return declaration;
+}
+
 Safe Function StatementNode ParseAstStatementCore(ParseCursor cursor)
 {
     string token = CurrentToken(cursor);
@@ -2178,59 +2233,22 @@ Safe Function StatementNode ParseAstStatementCore(ParseCursor cursor)
         Case(TokenKind.KwVar)
         {
             Advance(cursor);
-            StatementNode declaration = New StatementNode([int](StatementKind.Variable), line, column);
-            declaration.TypeName = "Var";
-            declaration.Name = IO.Kinal.Compiler.Lex.Token.Text(CurrentToken(cursor));
+            Return ParseVariableStatement(cursor, line, column, false, true);
+        }
+        Case(TokenKind.KwConst)
+        {
             Advance(cursor);
-            If (Match(cursor, TokenKind.Assign)) declaration.Expression = ParseExpression(cursor, 1);
-            BuilderExpect(cursor, TokenKind.Semicolon, "Expected Semicolon",
-                "Variable declaration must end with ';'");
-            Return declaration;
+            bool inferred = Match(cursor, TokenKind.KwVar);
+            StatementNode declaration = ParseVariableStatement(
+                cursor, line, column, true, inferred);
+            If (declaration != null) Return declaration;
+            Report(cursor, cursor.Diagnostics, cursor.Source,
+                "Expected Declaration", "Const requires a variable declaration");
         }
         Case(default) { }
     }
-    int declarationName = FindDeclarationName(cursor, false);
-    If (declarationName > cursor.Position)
-    {
-        StatementNode declaration = New StatementNode([int](StatementKind.Variable), line, column);
-        declaration.TypeName = JoinTokenText(cursor, cursor.Position, declarationName);
-        declaration.Name = IO.Kinal.Compiler.Lex.Token.Text(RawAt(cursor, declarationName));
-        cursor.Position = declarationName + 1;
-        If (Match(cursor, TokenKind.Less))
-        {
-            While (!IsEnd(cursor) && CurrentKind(cursor) != TokenKind.Greater)
-            {
-                string label = IO.Kinal.Compiler.Lex.Token.Text(CurrentToken(cursor));
-                If (declaration.PackageLabels == "") declaration.PackageLabels = label;
-                Else declaration.PackageLabels = declaration.PackageLabels + "," + label;
-                Advance(cursor);
-                If (!Match(cursor, TokenKind.Comma)) Break;
-            }
-            BuilderExpect(cursor, TokenKind.Greater, "Expected '>'",
-                "Package field labels are not closed");
-        }
-        // C-style local arrays place dimensions after the variable name.
-        // Normalize the type to the canonical T[] form while preserving the
-        // outer fixed length for backend allocation.
-        While (Match(cursor, TokenKind.LeftBracket))
-        {
-            ReportWarningToken(cursor.Diagnostics, cursor.Source,
-                RawAt(cursor, cursor.Position - 1), "Legacy Array Syntax",
-                "Use 'Type[] name' instead of 'Type name[]'");
-            If (CurrentKind(cursor) != TokenKind.RightBracket &&
-                declaration.SecondExpression == null)
-                declaration.SecondExpression = ParseExpression(cursor, 1);
-            ElseIf (CurrentKind(cursor) != TokenKind.RightBracket)
-                ParseExpression(cursor, 1);
-            BuilderExpect(cursor, TokenKind.RightBracket, "Expected ']'",
-                "Array declarator is not closed");
-            declaration.TypeName = declaration.TypeName + "[]";
-        }
-        If (Match(cursor, TokenKind.Assign)) declaration.Expression = ParseExpression(cursor, 1);
-        BuilderExpect(cursor, TokenKind.Semicolon, "Expected Semicolon",
-            "Variable declaration must end with ';'");
-        Return declaration;
-    }
+    StatementNode declaration = ParseVariableStatement(cursor, line, column, false, false);
+    If (declaration != null) Return declaration;
     int start = cursor.Position;
     StatementNode expression = New StatementNode([int](StatementKind.Expression), line, column);
     expression.Expression = ParseExpression(cursor, 1);

@@ -79,6 +79,16 @@
     "expected": "200\n200\nOK\nOK\n3\n1\n200\n2\nb\n2\n3\n3\n"
   },
   {
+    "name": "package_contextual_default",
+    "file": "tests/common/package_contextual_default.kn",
+    "expected": "0\ntrue\nfalse\n0\ntrue\nfalse\n"
+  },
+  {
+    "name": "package_const_index",
+    "file": "tests/common/package_const_index.kn",
+    "expected": "10\n20\n30\n40\n20\n40\n30\n30\n30\n20\n20\n30\n30\n"
+  },
+  {
     "name": "package_expression_depth",
     "file": "tests/common/package_expression_depth.kn",
     "expected": "true\nfalse\n14\n"
@@ -1025,6 +1035,26 @@
     "name": "error_package_index_runtime",
     "file": "tests/common/error_package_index_runtime.kn",
     "expect_error": "[Sema] Invalid Package Index"
+  },
+  {
+    "name": "error_package_index_bool_constant",
+    "file": "tests/common/error_package_index_bool_constant.kn",
+    "expect_error": "[Sema] Type Mismatch"
+  },
+  {
+    "name": "error_package_index_large_constant",
+    "file": "tests/common/error_package_index_large_constant.kn",
+    "expect_error": "[Sema] Invalid Package Index"
+  },
+  {
+    "name": "error_local_const_assignment",
+    "file": "tests/common/error_local_const_assignment.kn",
+    "expect_error": "[Sema] Const Assignment"
+  },
+  {
+    "name": "error_local_const_missing_init",
+    "file": "tests/common/error_local_const_missing_init.kn",
+    "expect_error": "[Sema] Const Requires Init"
   },
   {
     "name": "error_package_field_count",

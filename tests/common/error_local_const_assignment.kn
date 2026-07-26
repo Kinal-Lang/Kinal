@@ -1,0 +1,8 @@
+Unit Tests.ErrorLocalConstAssignment;
+
+Static Function int Main()
+{
+    Const int value = 1;
+    value = 2;
+    Return value;
+}

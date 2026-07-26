@@ -1,0 +1,7 @@
+Unit Tests.ErrorPackageIndexBoolConstant;
+
+Static Function int Main()
+{
+    <int, int> values = <10, 20>;
+    Return values[!false];
+}

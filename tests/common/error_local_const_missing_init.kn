@@ -1,0 +1,7 @@
+Unit Tests.ErrorLocalConstMissingInit;
+
+Static Function int Main()
+{
+    Const int value;
+    Return value;
+}

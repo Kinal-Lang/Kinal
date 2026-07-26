@@ -1,6 +1,7 @@
 Unit IO.Kinal.Compiler.Sema.Symbols;
 
 Get IO.Kinal.Compiler.Syntax.SyntaxTree;
+Get IO.Kinal.Compiler.Syntax.Nodes;
 Get IO.Kinal.Compiler.Types.TypeSymbol;
 
 Class ParameterSymbol
@@ -207,7 +208,9 @@ Class ValueSymbol
     Public string Name;
     Public TypeSymbol Type;
     Public bool IsParameter;
+    Public bool IsConst;
     Public bool IsCaptured;
+    Public ExpressionNode ConstantOrigin;
     Public string PackageLabels;
     Public string BlockRecords;
     Public FunctionSymbol CallableFunction;
@@ -219,7 +222,9 @@ Class ValueSymbol
         This.Name = name;
         This.Type = type;
         This.IsParameter = isParameter;
+        This.IsConst = false;
         This.IsCaptured = false;
+        This.ConstantOrigin = null;
         This.PackageLabels = "";
         This.BlockRecords = "";
         This.CallableFunction = null;
@@ -272,6 +277,8 @@ Class GlobalSymbol
         This.UnitName = unitName;
         This.Declaration = declaration;
         This.Value = New ValueSymbol(declaration.Name, type, false);
+        This.Value.IsConst = declaration.IsConst;
+        This.Value.ConstantOrigin = declaration.Initializer;
         This.Next = null;
     }
 

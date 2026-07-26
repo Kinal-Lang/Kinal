@@ -1,0 +1,22 @@
+Unit Tests.PackageContextualDefault;
+
+Get IO.Console;
+
+Function <int, string, bool> Defaults()
+{
+    Return <default, default, default>;
+}
+
+Static Function int Main()
+{
+    <int, string, bool> local = <default, default, default>;
+    IO.Console.PrintLine(local[0]);
+    IO.Console.PrintLine(local[1] == null);
+    IO.Console.PrintLine(local[2]);
+
+    <int, string, bool> returned = Defaults();
+    IO.Console.PrintLine(returned[0]);
+    IO.Console.PrintLine(returned[1] == null);
+    IO.Console.PrintLine(returned[2]);
+    Return 0;
+}

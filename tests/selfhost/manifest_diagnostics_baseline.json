@@ -1,5 +1,5 @@
 {
   "platform": "windows",
-  "negative_cases": 89,
+  "negative_cases": 93,
   "unsupported_cases": []
 }
