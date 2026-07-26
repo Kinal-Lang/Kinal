@@ -60,6 +60,7 @@ Class ExpressionNode
     Public bool IsPostfix;
     Public bool IsRawString;
     Public bool IsCharacterString;
+    Public int LiteralId;
     Public int Line;
     Public int Column;
     Public ExpressionNode Left;
@@ -80,6 +81,7 @@ Class ExpressionNode
         This.IsPostfix = false;
         This.IsRawString = false;
         This.IsCharacterString = false;
+        This.LiteralId = -1;
         This.Line = line;
         This.Column = column;
         This.Left = null;

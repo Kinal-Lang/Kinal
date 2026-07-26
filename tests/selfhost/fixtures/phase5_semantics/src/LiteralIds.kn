@@ -1,0 +1,19 @@
+Unit Tests.Selfhost.LiteralIds;
+
+Get IO.Console;
+
+Static Function int Main()
+{
+    IO.Type.Object.Function first = Function int()
+    {
+        Return 20;
+    };
+    IO.Type.Object.Function second = Function int()
+    {
+        Return 22;
+    };
+    Var left = first();
+    Var right = second();
+    IO.Console.PrintLine(left + right);
+    Return 0;
+}

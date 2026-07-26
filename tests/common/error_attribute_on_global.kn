@@ -1,0 +1,9 @@
+Unit Tests.ErrorAttributeOnGlobal;
+
+[Docs("Global variables cannot carry attributes")]
+int Value = 1;
+
+Static Function int Main()
+{
+    Return Value;
+}

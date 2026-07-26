@@ -1,0 +1,7 @@
+Unit Tests.ErrorBlockContextJump;
+
+Static Function int Main()
+{
+    Jump Outside;
+    Return 0;
+}

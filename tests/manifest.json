@@ -79,6 +79,11 @@
     "expected": "200\n200\nOK\nOK\n3\n1\n200\n2\nb\n2\n3\n3\n"
   },
   {
+    "name": "package_expression_depth",
+    "file": "tests/common/package_expression_depth.kn",
+    "expected": "true\nfalse\n14\n"
+  },
+  {
     "name": "array_contextual",
     "file": "tests/common/array_contextual.kn",
     "expected": "2\n2\n7\n"
@@ -237,6 +242,11 @@
     "file": "tests/common/custom_cast_json.kn",
     "expected": "kinal\n9\nlang\n7\ntrue\n",
     "auto_link": true
+  },
+  {
+    "name": "custom_cast_simple",
+    "file": "tests/common/custom_cast_simple.kn",
+    "expected": "42\n"
   },
   {
     "name": "overload_functions",
@@ -1302,6 +1312,36 @@
     "name": "error_meta_repeatable",
     "file": "tests/common/error_meta_repeatable.kn",
     "expect_error": "[Sema] Invalid Attribute"
+  },
+  {
+    "name": "error_meta_wrong_target",
+    "file": "tests/common/error_meta_wrong_target.kn",
+    "expect_error": "[Sema] Invalid Attribute"
+  },
+  {
+    "name": "error_attribute_on_meta",
+    "file": "tests/common/error_attribute_on_meta.kn",
+    "expect_error": "[Parser] Invalid Attribute"
+  },
+  {
+    "name": "error_attribute_on_global",
+    "file": "tests/common/error_attribute_on_global.kn",
+    "expect_error": "[Parser] Invalid Attribute"
+  },
+  {
+    "name": "error_invalid_cast_method",
+    "file": "tests/common/error_invalid_cast_method.kn",
+    "expect_error": "[Sema] Invalid Cast Method"
+  },
+  {
+    "name": "error_block_context_record",
+    "file": "tests/common/error_block_context_record.kn",
+    "expect_error": "[Parser] Unexpected Token"
+  },
+  {
+    "name": "error_block_context_jump",
+    "file": "tests/common/error_block_context_jump.kn",
+    "expect_error": "[Parser] Unexpected Token"
   },
   {
     "name": "error_meta_missing_keep",

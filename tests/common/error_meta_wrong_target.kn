@@ -1,0 +1,17 @@
+Unit Tests.ErrorMetaWrongTarget;
+
+Meta FunctionOnly(string value)
+{
+    On@function;
+    Keep@compile;
+}
+
+[FunctionOnly("class")]
+Class InvalidTarget
+{
+}
+
+Static Function int Main()
+{
+    Return 0;
+}

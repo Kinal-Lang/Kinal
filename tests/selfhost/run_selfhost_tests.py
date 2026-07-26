@@ -516,6 +516,119 @@ def main() -> int:
         }
     )
 
+    phase5_diagnostic_fixtures = [
+        ("error_meta_missing_keep.kn", "Parser", ("Missing Meta Clause",)),
+        ("error_meta_lowercase_on.kn", "Parser", ("Invalid Meta Clause",)),
+        ("error_meta_lowercase_keep.kn", "Parser", ("Invalid Meta Clause",)),
+        ("error_meta_lowercase_repeatable.kn", "Parser", ("Invalid Meta Clause",)),
+        ("error_meta_old_target_syntax.kn", "Parser", ("Invalid Meta Target",)),
+        ("error_meta_old_keep_syntax.kn", "Parser", ("Invalid Meta Keep",)),
+        ("error_attribute_on_meta.kn", "Parser", ("Invalid Attribute",)),
+        ("error_attribute_on_global.kn", "Parser", ("Invalid Attribute",)),
+        ("error_block_context_record.kn", "Parser", ("Unexpected Token", "Expected Semicolon")),
+        ("error_block_context_jump.kn", "Parser", ("Unexpected Token", "Expected Semicolon")),
+        ("error_meta_unknown_attribute.kn", "Sema", ("Unknown Attribute",)),
+        ("error_meta_repeatable.kn", "Sema", ("Invalid Attribute",)),
+        ("error_meta_wrong_target.kn", "Sema", ("Invalid Attribute",)),
+        ("error_invalid_cast_method.kn", "Sema", ("Invalid Cast Method",)),
+        ("error_cast_duplicate.kn", "Sema", ("Ambiguous Cast", "Invalid Cast")),
+    ]
+    for source_name, stage, expected_titles in phase5_diagnostic_fixtures:
+        source = root / "tests" / "common" / source_name
+        stage0_diagnostic = run(
+            [
+                str(stage0),
+                "build",
+                "--no-module-discovery",
+                "--color",
+                "never",
+                "--emit",
+                "check",
+                str(source),
+                "-o",
+                str(out_dir / f"{source.stem}-stage0.kcheck"),
+            ],
+            cwd=root,
+        )
+        stage1_diagnostic = run(
+            [str(compiler), "check-source", str(source)],
+            cwd=root,
+        )
+        stage0_output = (stage0_diagnostic.stdout or "") + (stage0_diagnostic.stderr or "")
+        stage1_output = (stage1_diagnostic.stdout or "") + (stage1_diagnostic.stderr or "")
+        require(
+            stage0_diagnostic.returncode != 0,
+            f"stage0 unexpectedly accepted phase-5 diagnostic fixture: {source}",
+            stage0_diagnostic,
+        )
+        require(
+            stage1_diagnostic.returncode != 0,
+            f"stage1 unexpectedly accepted phase-5 diagnostic fixture: {source}",
+            stage1_diagnostic,
+        )
+        for expected_title in expected_titles:
+            require(
+                expected_title in stage0_output and expected_title in stage1_output,
+                f"phase-5 diagnostic title differs: {source}: {expected_title}",
+                stage1_diagnostic,
+            )
+        stage0_count = sum(
+            1 for line in stage0_output.splitlines() if line.startswith(f"[{stage}]")
+        )
+        stage1_count = sum(
+            1 for line in stage1_output.splitlines() if line.startswith(f"[{stage}]")
+        )
+        require(
+            stage0_count == stage1_count,
+            f"phase-5 diagnostic count differs: {source}",
+            stage1_diagnostic,
+        )
+    results.append(
+        {
+            "name": "meta_attribute_cast_scope_diagnostics",
+            "ok": True,
+            "files": len(phase5_diagnostic_fixtures),
+        }
+    )
+
+    phase5_syntax_fixtures = [
+        root / "tests" / "common" / "custom_cast_simple.kn",
+        root / "tests" / "common" / "package_expression_depth.kn",
+        root / "tests" / "common" / "nested_types_in_class.kn",
+    ]
+    for index, source in enumerate(phase5_syntax_fixtures):
+        stage0_ast_path = out_dir / f"phase5-{index}-stage0.kast"
+        stage0_ast = run(
+            [
+                str(stage0),
+                "build",
+                "--no-module-discovery",
+                "--color",
+                "never",
+                "--emit",
+                "ast",
+                str(source),
+                "-o",
+                str(stage0_ast_path),
+            ],
+            cwd=root,
+        )
+        stage1_ast = run([str(compiler), "ast", str(source)], cwd=root)
+        require(stage0_ast.returncode == 0, f"stage0 phase-5 AST failed: {source}", stage0_ast)
+        require(stage1_ast.returncode == 0, f"stage1 phase-5 AST failed: {source}", stage1_ast)
+        require(
+            stage0_ast_path.read_text(encoding="utf-8").replace("\r\n", "\n").strip()
+            == stage1_ast.stdout.replace("\r\n", "\n").strip(),
+            f"stage0/stage1 phase-5 syntax mismatch: {source}",
+        )
+    results.append(
+        {
+            "name": "meta_attribute_cast_scope_syntax",
+            "ok": True,
+            "files": len(phase5_syntax_fixtures),
+        }
+    )
+
     switch_fixture = root / "tests" / "selfhost" / "fixtures" / "switch_expression.kn"
     switch_stage0_path = out_dir / "switch-expression-stage0.kast"
     switch_stage0 = run(
@@ -727,7 +840,79 @@ def main() -> int:
         "stage1 Block fixture output differs",
         block_run,
     )
+    block_stage0_executable = out_dir / f"block-features-stage0{executable_suffix}"
+    block_stage0_build = run(
+        [
+            str(stage0),
+            "build",
+            "--project",
+            str(block_project.parent),
+            "--profile",
+            "test",
+            "-o",
+            str(block_stage0_executable),
+        ],
+        cwd=root,
+    )
+    require(block_stage0_build.returncode == 0, "stage0 Block fixture build failed", block_stage0_build)
+    block_stage0_run = run([str(block_stage0_executable)], cwd=root)
+    require(
+        block_stage0_run.returncode == 0
+        and block_stage0_run.stdout.replace("\r\n", "\n")
+        == block_run.stdout.replace("\r\n", "\n"),
+        "stage0/stage1 Block/local-declaration behavior differs",
+        block_stage0_run,
+    )
     results.append({"name": "block_features", "ok": True})
+
+    phase5_project = (
+        root / "tests" / "selfhost" / "fixtures" / "phase5_semantics" / "kinal.knproj"
+    )
+    phase5_profiles = [
+        ("custom_cast", "custom-cast-simple", "42\n"),
+        ("package_expression", "package-expression-depth", "true\nfalse\n14\n"),
+        ("literal_ids", "literal-ids", "42\n"),
+    ]
+    for profile, output_name, expected_output in phase5_profiles:
+        stage1_executable = out_dir / f"{output_name}{executable_suffix}"
+        stage0_executable = out_dir / f"{output_name}-stage0{executable_suffix}"
+        stage1_build = run(
+            [str(compiler), "build", str(phase5_project), str(stage1_executable), profile],
+            cwd=root,
+        )
+        stage0_build = run(
+            [
+                str(stage0),
+                "build",
+                "--project",
+                str(phase5_project.parent),
+                "--profile",
+                profile,
+                "-o",
+                str(stage0_executable),
+            ],
+            cwd=root,
+        )
+        require(stage1_build.returncode == 0, f"stage1 {profile} build failed", stage1_build)
+        require(stage0_build.returncode == 0, f"stage0 {profile} build failed", stage0_build)
+        stage1_run = run([str(stage1_executable)], cwd=root)
+        stage0_run = run([str(stage0_executable)], cwd=root)
+        require(stage1_run.returncode == 0, f"stage1 {profile} execution failed", stage1_run)
+        require(stage0_run.returncode == 0, f"stage0 {profile} execution failed", stage0_run)
+        require(
+            stage1_run.stdout.replace("\r\n", "\n") == expected_output
+            and stage0_run.stdout.replace("\r\n", "\n")
+            == stage1_run.stdout.replace("\r\n", "\n"),
+            f"stage0/stage1 {profile} behavior differs",
+            stage1_run,
+        )
+    results.append(
+        {
+            "name": "custom_cast_and_package_expression_runtime",
+            "ok": True,
+            "profiles": len(phase5_profiles),
+        }
+    )
 
     globals_project = root / "tests" / "selfhost" / "fixtures" / "global_variables" / "kinal.knproj"
     globals_executable = out_dir / f"global-variables{executable_suffix}"

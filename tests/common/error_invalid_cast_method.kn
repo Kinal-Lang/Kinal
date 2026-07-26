@@ -1,0 +1,15 @@
+Unit Tests.ErrorInvalidCastMethod;
+
+Class NumberBox
+{
+    [Cast]
+    Function NumberBox FromInt(int value)
+    {
+        Return New NumberBox();
+    }
+}
+
+Static Function int Main()
+{
+    Return 0;
+}

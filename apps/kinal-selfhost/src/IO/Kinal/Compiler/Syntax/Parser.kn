@@ -17,6 +17,10 @@ Class ParseCursor
     Public list Diagnostics;
     Public int StatementDepth;
     Public bool SawStatementDepthLimit;
+    Public int PackageLiteralDepth;
+    Public int BlockLiteralDepth;
+    Public int NextAnonymousFunctionId;
+    Public int NextBlockId;
 
     Public Safe Constructor(list tokens, SourceFile source, list diagnostics)
     {
@@ -26,6 +30,10 @@ Class ParseCursor
         This.Diagnostics = diagnostics;
         This.StatementDepth = 0;
         This.SawStatementDepthLimit = false;
+        This.PackageLiteralDepth = 0;
+        This.BlockLiteralDepth = 0;
+        This.NextAnonymousFunctionId = 0;
+        This.NextBlockId = 0;
     }
 }
 
@@ -1086,6 +1094,7 @@ Safe Function bool ParseMetaTarget(ParseCursor cursor, list diagnostics, SourceF
     }
     Report(cursor, diagnostics, source, "Invalid Meta Target",
            "unsupported Meta target constant");
+    Advance(cursor);
     Return false;
 }
 
@@ -1103,11 +1112,13 @@ Safe Function bool ParseMetaKeep(ParseCursor cursor, list diagnostics, SourceFil
     }
     Report(cursor, diagnostics, source, "Invalid Meta Keep",
            "supported Meta keep modes are @source, @compile, and @runtime");
+    Advance(cursor);
     Return false;
 }
 
 Safe Function bool ParseMeta(ParseCursor cursor, list diagnostics, SourceFile source)
 {
+    string metaToken = CurrentToken(cursor);
     Advance(cursor);
     If (!Expect(cursor, diagnostics, source, TokenKind.Identifier,
                 "Expected identifier", "expected Meta name")) Return false;
@@ -1127,16 +1138,15 @@ Safe Function bool ParseMeta(ParseCursor cursor, list diagnostics, SourceFile so
             {
                 Report(cursor, diagnostics, source, "Duplicate Meta clause",
                        "Meta declaration can only define one On clause");
-                Return false;
             }
             sawOn = true;
             While (true)
             {
-                If (!ParseMetaTarget(cursor, diagnostics, source)) Return false;
+                ParseMetaTarget(cursor, diagnostics, source);
                 If (!Match(cursor, TokenKind.Comma)) Break;
             }
-            If (!Expect(cursor, diagnostics, source, TokenKind.Semicolon,
-                        "Expected semicolon", "missing ';' after Meta On clause")) Return false;
+            Expect(cursor, diagnostics, source, TokenKind.Semicolon,
+                   "Expected semicolon", "missing ';' after Meta On clause");
             Continue;
         }
         If (MatchContextual(cursor, "Keep"))
@@ -1145,12 +1155,11 @@ Safe Function bool ParseMeta(ParseCursor cursor, list diagnostics, SourceFile so
             {
                 Report(cursor, diagnostics, source, "Duplicate Meta clause",
                        "Meta declaration can only define one Keep clause");
-                Return false;
             }
             sawKeep = true;
-            If (!ParseMetaKeep(cursor, diagnostics, source)) Return false;
-            If (!Expect(cursor, diagnostics, source, TokenKind.Semicolon,
-                        "Expected semicolon", "missing ';' after Meta Keep clause")) Return false;
+            ParseMetaKeep(cursor, diagnostics, source);
+            Expect(cursor, diagnostics, source, TokenKind.Semicolon,
+                   "Expected semicolon", "missing ';' after Meta Keep clause");
             Continue;
         }
         If (MatchContextual(cursor, "Repeatable"))
@@ -1159,26 +1168,25 @@ Safe Function bool ParseMeta(ParseCursor cursor, list diagnostics, SourceFile so
             {
                 Report(cursor, diagnostics, source, "Duplicate Meta clause",
                        "Meta declaration can only define Repeatable once");
-                Return false;
             }
             sawRepeatable = true;
-            If (!Expect(cursor, diagnostics, source, TokenKind.Semicolon,
-                        "Expected semicolon", "missing ';' after Repeatable")) Return false;
+            Expect(cursor, diagnostics, source, TokenKind.Semicolon,
+                   "Expected semicolon", "missing ';' after Repeatable");
             Continue;
         }
         Report(cursor, diagnostics, source, "Invalid Meta Clause",
                "Meta body only supports On, Keep, and Repeatable clauses");
-        Return false;
+        Advance(cursor);
     }
-    If (!Expect(cursor, diagnostics, source, TokenKind.RightBrace,
-                "Expected right brace", "Meta declaration body is not closed")) Return false;
-    If (!sawOn || !sawKeep)
-    {
-        Report(cursor, diagnostics, source, "Missing Meta Clause",
-               "Meta declaration requires both On and Keep clauses");
-        Return false;
-    }
-    Return true;
+    bool closed = Expect(cursor, diagnostics, source, TokenKind.RightBrace,
+                         "Expected right brace", "Meta declaration body is not closed");
+    If (!sawOn)
+        ReportToken(diagnostics, source, metaToken, "Missing Meta Clause",
+            "Meta declaration requires an On clause");
+    If (!sawKeep)
+        ReportToken(diagnostics, source, metaToken, "Missing Meta Clause",
+            "Meta declaration requires a Keep clause");
+    Return closed;
 }
 
 Safe Function bool IsTypeStart(TokenKind kind)
@@ -1313,8 +1321,10 @@ Safe Function bool ValidatePrepared(SourceFile source, list tokens, bool hasUnsa
         int declarationStart = cursor.Position;
         int declarationLine = IO.Kinal.Compiler.Lex.Token.Line(CurrentToken(cursor));
         bool declarationValid = true;
+        bool hasAttributes = false;
         While (CurrentKind(cursor) == TokenKind.LeftBracket)
         {
+            hasAttributes = true;
             If (!SkipBalanced(cursor, diagnostics, source, TokenKind.LeftBracket,
                               TokenKind.RightBracket, "Expected attribute"))
             {
@@ -1331,6 +1341,9 @@ Safe Function bool ValidatePrepared(SourceFile source, list tokens, bool hasUnsa
         TokenKind kind = CurrentKind(cursor);
         If (IsContextual(cursor, "Meta"))
         {
+            If (hasAttributes)
+                Report(cursor, diagnostics, source, "Invalid Attribute",
+                    "Attributes are not supported on Meta declarations");
             declarationValid = ParseMeta(cursor, diagnostics, source);
         }
         ElseIf (kind == TokenKind.KwGet)
@@ -1378,6 +1391,9 @@ Safe Function bool ValidatePrepared(SourceFile source, list tokens, bool hasUnsa
         }
         ElseIf (IsGlobalStart(kind))
         {
+            If (hasAttributes)
+                Report(cursor, diagnostics, source, "Invalid Attribute",
+                    "Attributes are not supported on global variables");
             declarationValid = ParseGlobal(cursor, diagnostics, source);
         }
         Else
@@ -1573,13 +1589,16 @@ Safe Function ExpressionNode ParsePackageLiteral(ParseCursor cursor)
     Advance(cursor);
     ExpressionNode package = New ExpressionNode([int](ExpressionKind.PackageLiteral), "",
         IO.Kinal.Compiler.Lex.Token.Line(token), IO.Kinal.Compiler.Lex.Token.Column(token));
+    If (CurrentKind(cursor) == TokenKind.Greater)
+        Report(cursor, cursor.Diagnostics, cursor.Source, "Invalid Package Literal",
+            "Empty Package literal is not supported");
+    cursor.PackageLiteralDepth = cursor.PackageLiteralDepth + 1;
     While (!IsEnd(cursor) && CurrentKind(cursor) != TokenKind.Greater)
     {
-        // Relational operators share the closing token used by packages. Starting
-        // above their precedence preserves arithmetic in each package element.
-        package.AddArgument(ParseExpression(cursor, 10));
+        package.AddArgument(ParseExpression(cursor, 1));
         If (!Match(cursor, TokenKind.Comma)) Break;
     }
+    cursor.PackageLiteralDepth = cursor.PackageLiteralDepth - 1;
     BuilderExpect(cursor, TokenKind.Greater, "Expected '>'",
         "Package literal is not closed");
     Return package;
@@ -1728,6 +1747,8 @@ Safe Function ExpressionNode ParseFunctionLiteral(ParseCursor cursor)
     ExpressionNode value = New ExpressionNode([int](ExpressionKind.FunctionLiteral),
         JoinTokenText(cursor, typeStart, cursor.Position),
         IO.Kinal.Compiler.Lex.Token.Line(token), IO.Kinal.Compiler.Lex.Token.Column(token));
+    value.LiteralId = cursor.NextAnonymousFunctionId;
+    cursor.NextAnonymousFunctionId = cursor.NextAnonymousFunctionId + 1;
     If (!BuilderExpect(cursor, TokenKind.LeftParen, "Expected '('",
                        "Anonymous function parameter list is missing")) Return value;
     While (!IsEnd(cursor) && CurrentKind(cursor) != TokenKind.RightParen)
@@ -1772,10 +1793,14 @@ Safe Function ExpressionNode ParseBlockLiteral(ParseCursor cursor)
         "Missing '</' before Block body");
     ExpressionNode value = New ExpressionNode([int](ExpressionKind.BlockLiteral), blockName,
         IO.Kinal.Compiler.Lex.Token.Line(token), IO.Kinal.Compiler.Lex.Token.Column(token));
+    value.LiteralId = cursor.NextBlockId;
+    cursor.NextBlockId = cursor.NextBlockId + 1;
     StatementNode body = New StatementNode([int](StatementKind.Block), value.Line, value.Column);
+    cursor.BlockLiteralDepth = cursor.BlockLiteralDepth + 1;
     While (!IsEnd(cursor) && !(CurrentKind(cursor) == TokenKind.Slash &&
            KindAt(cursor, cursor.Position + 1) == TokenKind.Greater))
         body.AddChild(ParseAstStatement(cursor));
+    cursor.BlockLiteralDepth = cursor.BlockLiteralDepth - 1;
     BuilderExpect(cursor, TokenKind.Slash, "Expected '/'",
         "Missing '/>' after Block body");
     BuilderExpect(cursor, TokenKind.Greater, "Expected '>'",
@@ -2097,6 +2122,8 @@ Safe Function ExpressionNode ParseExpression(ParseCursor cursor, int minimumPrec
     While (!IsEnd(cursor))
     {
         TokenKind operatorKind = CurrentKind(cursor);
+        If (cursor.PackageLiteralDepth > 0 &&
+            operatorKind == TokenKind.Greater) Break;
         int precedence = BinaryPrecedence(operatorKind);
         If (precedence < minimumPrecedence || precedence == 0) Break;
         string operatorToken = CurrentToken(cursor);
@@ -2378,10 +2405,12 @@ Safe Function StatementNode ParseAstUnsafeBlock(ParseCursor cursor)
         "Missing '</' before Block body");
     BuilderExpect(cursor, TokenKind.Slash, "Expected '/'",
         "Missing '</' before Block body");
+    cursor.BlockLiteralDepth = cursor.BlockLiteralDepth + 1;
     While (!IsEnd(cursor) &&
            !(CurrentKind(cursor) == TokenKind.Slash &&
              KindAt(cursor, cursor.Position + 1) == TokenKind.Greater))
         value.AddChild(ParseAstStatement(cursor));
+    cursor.BlockLiteralDepth = cursor.BlockLiteralDepth - 1;
     BuilderExpect(cursor, TokenKind.Slash, "Expected '/'",
         "Missing '/>' after Block body");
     BuilderExpect(cursor, TokenKind.Greater, "Expected '>'",
@@ -2404,6 +2433,8 @@ Safe Function StatementNode ParseLocalFunctionStatement(ParseCursor cursor)
         IO.Kinal.Compiler.Lex.Token.Text(RawAt(cursor, nameIndex)) : "";
     ExpressionNode function = New ExpressionNode([int](ExpressionKind.FunctionLiteral),
         JoinTokenText(cursor, declarationStart, nameIndex), declaration.Line, declaration.Column);
+    function.LiteralId = cursor.NextAnonymousFunctionId;
+    cursor.NextAnonymousFunctionId = cursor.NextAnonymousFunctionId + 1;
     cursor.Position = open;
     BuilderExpect(cursor, TokenKind.LeftParen, "Expected '('",
         "Local function parameter list is missing");
@@ -2554,44 +2585,70 @@ Safe Function StatementNode ParseAstStatementCore(ParseCursor cursor)
                 KindAt(cursor, cursor.Position + 2) == TokenKind.Less)
                 Return ParseAstUnsafeBlock(cursor);
         }
-        Case(TokenKind.KwFunction) { Return ParseLocalFunctionStatement(cursor); }
-        Case(TokenKind.KwClass) { Return ParseLocalTypeStatement(cursor); }
-        Case(TokenKind.KwStruct) { Return ParseLocalTypeStatement(cursor); }
-        Case(TokenKind.KwEnum) { Return ParseLocalTypeStatement(cursor); }
-        Case(TokenKind.KwInterface) { Return ParseLocalTypeStatement(cursor); }
+        Case(TokenKind.KwFunction)
+        {
+            If (cursor.BlockLiteralDepth > 0)
+                Return ParseLocalFunctionStatement(cursor);
+        }
+        Case(TokenKind.KwClass)
+        {
+            If (cursor.BlockLiteralDepth > 0)
+                Return ParseLocalTypeStatement(cursor);
+        }
+        Case(TokenKind.KwStruct)
+        {
+            If (cursor.BlockLiteralDepth > 0)
+                Return ParseLocalTypeStatement(cursor);
+        }
+        Case(TokenKind.KwEnum)
+        {
+            If (cursor.BlockLiteralDepth > 0)
+                Return ParseLocalTypeStatement(cursor);
+        }
+        Case(TokenKind.KwInterface)
+        {
+            If (cursor.BlockLiteralDepth > 0)
+                Return ParseLocalTypeStatement(cursor);
+        }
         Case(TokenKind.KwRecord)
         {
-            Advance(cursor);
-            StatementNode value = New StatementNode([int](StatementKind.Record), line, column);
-            value.Name = IO.Kinal.Compiler.Lex.Token.Text(CurrentToken(cursor));
-            Advance(cursor);
-            If (CurrentKind(cursor) == TokenKind.LeftBrace)
+            If (cursor.BlockLiteralDepth > 0)
             {
-                value.FirstChild = ParseAstBlock(cursor);
-                value.LastChild = value.FirstChild;
+                Advance(cursor);
+                StatementNode value = New StatementNode([int](StatementKind.Record), line, column);
+                value.Name = IO.Kinal.Compiler.Lex.Token.Text(CurrentToken(cursor));
+                Advance(cursor);
+                If (CurrentKind(cursor) == TokenKind.LeftBrace)
+                {
+                    value.FirstChild = ParseAstBlock(cursor);
+                    value.LastChild = value.FirstChild;
+                }
+                ElseIf (!(CurrentKind(cursor) == TokenKind.Slash &&
+                         KindAt(cursor, cursor.Position + 1) == TokenKind.Greater))
+                {
+                    value.FirstChild = ParseAstStatement(cursor);
+                    value.LastChild = value.FirstChild;
+                }
+                Return value;
             }
-            ElseIf (!(CurrentKind(cursor) == TokenKind.Slash &&
-                     KindAt(cursor, cursor.Position + 1) == TokenKind.Greater))
-            {
-                value.FirstChild = ParseAstStatement(cursor);
-                value.LastChild = value.FirstChild;
-            }
-            Return value;
         }
         Case(TokenKind.KwJump)
         {
-            Advance(cursor);
-            StatementNode value = New StatementNode([int](StatementKind.Jump), line, column);
-            If (CurrentKind(cursor) == TokenKind.Identifier &&
-                KindAt(cursor, cursor.Position + 1) == TokenKind.Semicolon)
+            If (cursor.BlockLiteralDepth > 0)
             {
-                value.Name = IO.Kinal.Compiler.Lex.Token.Text(CurrentToken(cursor));
                 Advance(cursor);
+                StatementNode value = New StatementNode([int](StatementKind.Jump), line, column);
+                If (CurrentKind(cursor) == TokenKind.Identifier &&
+                    KindAt(cursor, cursor.Position + 1) == TokenKind.Semicolon)
+                {
+                    value.Name = IO.Kinal.Compiler.Lex.Token.Text(CurrentToken(cursor));
+                    Advance(cursor);
+                }
+                Else value.Expression = ParseExpression(cursor, 1);
+                BuilderExpect(cursor, TokenKind.Semicolon, "Expected Semicolon",
+                    "Jump statement must end with ';'");
+                Return value;
             }
-            Else value.Expression = ParseExpression(cursor, 1);
-            BuilderExpect(cursor, TokenKind.Semicolon, "Expected Semicolon",
-                "Jump statement must end with ';'");
-            Return value;
         }
         Case(TokenKind.KwBreak)
         {
@@ -2809,6 +2866,7 @@ Safe Function void ReadTypeMembers(ParseCursor cursor, TypeDecl type, SyntaxTree
         bool isAbstract = false;
         bool isVirtual = false;
         bool isOverride = false;
+        bool isSealed = false;
         int safety = 0;
         bool readingModifiers = true;
         While (readingModifiers)
@@ -2830,6 +2888,7 @@ Safe Function void ReadTypeMembers(ParseCursor cursor, TypeDecl type, SyntaxTree
                     Case(TokenKind.KwAbstract) { isAbstract = true; consumed = true; }
                     Case(TokenKind.KwVirtual) { isVirtual = true; consumed = true; }
                     Case(TokenKind.KwOverride) { isOverride = true; consumed = true; }
+                    Case(TokenKind.KwSealed) { isSealed = true; consumed = true; }
                     Case(TokenKind.KwSafe) { safety = 1; consumed = true; }
                     Case(TokenKind.KwTrusted) { safety = 2; consumed = true; }
                     Case(TokenKind.KwUnsafe) { safety = 3; consumed = true; }
@@ -2870,10 +2929,12 @@ Safe Function void ReadTypeMembers(ParseCursor cursor, TypeDecl type, SyntaxTree
         If (CurrentKind(cursor) == TokenKind.KwConstructor)
         {
             FunctionDecl constructor = ReadFunctionNode(cursor, true, isStatic, isAsync, isExtern, safety);
+            constructor.Access = access;
             constructor.IsStatic = constructor.IsStatic || type.IsStatic;
             constructor.IsAbstract = isAbstract;
             constructor.IsVirtual = isVirtual;
             constructor.IsOverride = isOverride;
+            constructor.IsSealed = isSealed;
             constructor.FirstAttribute = attributes;
             type.AddMethod(constructor);
             Jump Dispatch;
@@ -2888,9 +2949,11 @@ Safe Function void ReadTypeMembers(ParseCursor cursor, TypeDecl type, SyntaxTree
                 method.IsConstructor = true;
             }
             method.IsStatic = method.IsStatic || type.IsStatic;
+            method.Access = access;
             method.IsAbstract = isAbstract;
             method.IsVirtual = isVirtual;
             method.IsOverride = isOverride;
+            method.IsSealed = isSealed;
             method.FirstAttribute = attributes;
             type.AddMethod(method);
             Jump Dispatch;
@@ -2986,6 +3049,115 @@ Safe Function void ReadParameters(ParseCursor cursor, FunctionDecl function)
         "Function parameter list is not closed");
 }
 
+Safe Function int MetaTargetMask(string name)
+{
+    If (name == "function") Return 1;
+    If (name == "extern_function") Return 2;
+    If (name == "delegate_function") Return 4;
+    If (name == "class") Return 8;
+    If (name == "struct") Return 16;
+    If (name == "enum") Return 32;
+    If (name == "interface") Return 64;
+    If (name == "method") Return 128;
+    If (name == "field") Return 256;
+    Return 0;
+}
+
+Safe Function int MetaKeepKind(string name)
+{
+    If (name == "source") Return 1;
+    If (name == "compile") Return 2;
+    If (name == "runtime") Return 3;
+    Return 0;
+}
+
+Safe Function void ReadMetaParameters(ParseCursor cursor, MetaDecl meta)
+{
+    If (!BuilderExpect(cursor, TokenKind.LeftParen, "Expected '('",
+                       "Meta parameter list is missing")) Return;
+    While (!IsEnd(cursor) && CurrentKind(cursor) != TokenKind.RightParen)
+    {
+        int start = cursor.Position;
+        int declarationEnd = FindParameterDeclarationEnd(cursor, start);
+        bool hasDefault = KindAt(cursor, declarationEnd) == TokenKind.Assign;
+        int nameIndex = FindParameterName(cursor, start, declarationEnd);
+        If (nameIndex >= start)
+        {
+            string name = IO.Kinal.Compiler.Lex.Token.Text(RawAt(cursor, nameIndex));
+            string typeName = JoinTokenText(cursor, start, nameIndex);
+            If (nameIndex + 1 < declarationEnd)
+                typeName = typeName + " " +
+                    JoinTokenText(cursor, nameIndex + 1, declarationEnd);
+            ParameterDecl parameter = New ParameterDecl(name, typeName);
+            If (hasDefault)
+            {
+                cursor.Position = declarationEnd + 1;
+                parameter.DefaultValue = ParseExpression(cursor, 1);
+            }
+            meta.AddParameter(parameter);
+        }
+        If (!hasDefault) cursor.Position = declarationEnd;
+        If (!Match(cursor, TokenKind.Comma)) Break;
+    }
+    BuilderExpect(cursor, TokenKind.RightParen, "Expected ')'",
+        "Meta parameter list is not closed");
+}
+
+Safe Function MetaDecl ReadMetaNode(ParseCursor cursor)
+{
+    string metaToken = CurrentToken(cursor);
+    Advance(cursor);
+    string nameToken = CurrentToken(cursor);
+    string name = IO.Kinal.Compiler.Lex.Token.Text(nameToken);
+    Advance(cursor);
+    MetaDecl meta = New MetaDecl(name,
+        IO.Kinal.Compiler.Lex.Token.Line(metaToken),
+        IO.Kinal.Compiler.Lex.Token.Column(metaToken));
+    ReadMetaParameters(cursor, meta);
+    If (!BuilderExpect(cursor, TokenKind.LeftBrace, "Expected '{'",
+                       "Meta declaration body is missing")) Return meta;
+    While (!IsEnd(cursor) && CurrentKind(cursor) != TokenKind.RightBrace)
+    {
+        If (MatchContextual(cursor, "On"))
+        {
+            While (true)
+            {
+                BuilderExpect(cursor, TokenKind.At, "Invalid Meta Target",
+                    "Meta targets must use built-in constants");
+                meta.TargetMask = meta.TargetMask |
+                    MetaTargetMask(IO.Kinal.Compiler.Lex.Token.Text(CurrentToken(cursor)));
+                Advance(cursor);
+                If (!Match(cursor, TokenKind.Comma)) Break;
+            }
+            BuilderExpect(cursor, TokenKind.Semicolon, "Expected Semicolon",
+                "Missing ';' after Meta On clause");
+            Continue;
+        }
+        If (MatchContextual(cursor, "Keep"))
+        {
+            BuilderExpect(cursor, TokenKind.At, "Invalid Meta Keep",
+                "Meta keep mode must use a built-in constant");
+            meta.KeepKind = MetaKeepKind(
+                IO.Kinal.Compiler.Lex.Token.Text(CurrentToken(cursor)));
+            Advance(cursor);
+            BuilderExpect(cursor, TokenKind.Semicolon, "Expected Semicolon",
+                "Missing ';' after Meta Keep clause");
+            Continue;
+        }
+        If (MatchContextual(cursor, "Repeatable"))
+        {
+            meta.IsRepeatable = true;
+            BuilderExpect(cursor, TokenKind.Semicolon, "Expected Semicolon",
+                "Missing ';' after Repeatable");
+            Continue;
+        }
+        Advance(cursor);
+    }
+    BuilderExpect(cursor, TokenKind.RightBrace, "Expected '}'",
+        "Meta declaration body is not closed");
+    Return meta;
+}
+
 Safe Function FieldDecl ReadGlobalNode(ParseCursor cursor, SyntaxAttribute attributes)
 {
     bool isConst = Match(cursor, TokenKind.KwConst);
@@ -3035,24 +3207,7 @@ Safe Function SyntaxTree Build(SourceFile source, list tokens, list diagnostics)
         TokenKind kind = CurrentKind(cursor);
         If (IsContextual(cursor, "Meta"))
         {
-            Advance(cursor);
-            string metaName = IO.Kinal.Compiler.Lex.Token.Text(CurrentToken(cursor));
-            Advance(cursor);
-            MetaDecl meta = New MetaDecl(metaName);
-            SkipBalancedUnchecked(cursor, TokenKind.LeftParen, TokenKind.RightParen);
-            If (Match(cursor, TokenKind.LeftBrace))
-            {
-                int depth = 1;
-                While (!IsEnd(cursor) && depth > 0)
-                {
-                    If (depth == 1 && IsContextual(cursor, "Repeatable"))
-                        meta.IsRepeatable = true;
-                    If (CurrentKind(cursor) == TokenKind.LeftBrace) depth = depth + 1;
-                    ElseIf (CurrentKind(cursor) == TokenKind.RightBrace) depth = depth - 1;
-                    Advance(cursor);
-                }
-            }
-            tree.AddMeta(meta);
+            tree.AddMeta(ReadMetaNode(cursor));
             Jump Dispatch;
         }
         If (kind == TokenKind.KwGet)

@@ -1,0 +1,76 @@
+Project SelfhostPhase5Semantics
+{
+    DefaultProfile = "custom_cast";
+
+    SourceSet "custom_cast"
+    {
+        Roots = ["../../../common"];
+        Include = ["custom_cast_simple.kn"];
+        RequireUnit = true;
+    }
+
+    SourceSet "package_expression"
+    {
+        Roots = ["../../../common"];
+        Include = ["package_expression_depth.kn"];
+        RequireUnit = true;
+    }
+
+    SourceSet "literal_ids"
+    {
+        Roots = ["src"];
+        Include = ["LiteralIds.kn"];
+        RequireUnit = true;
+    }
+
+    Profile "custom_cast"
+    {
+        Source
+        {
+            Entry = "../../../common/custom_cast_simple.kn";
+            Sets = ["custom_cast"];
+            Mode = AllSources;
+        }
+
+        Build
+        {
+            Backend = Native;
+            Environment = Hosted;
+            Output = "../../../../out/selfhost/tests/custom-cast-simple.exe";
+        }
+    }
+
+    Profile "package_expression"
+    {
+        Source
+        {
+            Entry = "../../../common/package_expression_depth.kn";
+            Sets = ["package_expression"];
+            Mode = AllSources;
+        }
+
+        Build
+        {
+            Backend = Native;
+            Environment = Hosted;
+            Output = "../../../../out/selfhost/tests/package-expression-depth.exe";
+        }
+    }
+
+    Profile "literal_ids"
+    {
+        Source
+        {
+            Entry = "src/LiteralIds.kn";
+            Sets = ["literal_ids"];
+            Mode = AllSources;
+        }
+
+        Build
+        {
+            Backend = Native;
+            Environment = Hosted;
+            Output = "../../../../out/selfhost/tests/literal-ids.exe";
+        }
+    }
+}

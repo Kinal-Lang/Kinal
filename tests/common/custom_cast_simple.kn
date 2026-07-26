@@ -1,0 +1,26 @@
+Unit Tests.CustomCastSimple;
+
+Get IO.Console;
+
+Class NumberBox
+{
+    Public int Value;
+
+    Public Constructor(int value)
+    {
+        Value = value;
+    }
+
+    [Cast]
+    Public Static Function NumberBox FromInt(int value)
+    {
+        Return New NumberBox(value + 1);
+    }
+}
+
+Static Function int Main()
+{
+    NumberBox value = [NumberBox](41);
+    IO.Console.PrintLine(value.Value);
+    Return 0;
+}

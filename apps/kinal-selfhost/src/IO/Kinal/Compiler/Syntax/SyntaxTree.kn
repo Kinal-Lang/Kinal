@@ -28,14 +28,64 @@ Class ImportDecl
 Class MetaDecl
 {
     Public string Name;
+    Public int TargetMask;
+    Public int KeepKind;
     Public bool IsRepeatable;
+    Public int Line;
+    Public int Column;
+    Public ParameterDecl FirstParameter;
+    Public ParameterDecl LastParameter;
     Public MetaDecl Next;
 
-    Public Safe Constructor(string name)
+    Public Safe Constructor(string name, int line, int column)
     {
         This.Name = name;
+        This.TargetMask = 0;
+        This.KeepKind = 0;
         This.IsRepeatable = false;
+        This.Line = line;
+        This.Column = column;
+        This.FirstParameter = null;
+        This.LastParameter = null;
         This.Next = null;
+    }
+
+    Public Safe Function void AddParameter(ParameterDecl parameter)
+    {
+        If (This.FirstParameter == null)
+        {
+            This.FirstParameter = parameter;
+            This.LastParameter = parameter;
+        }
+        Else
+        {
+            This.LastParameter.Next = parameter;
+            This.LastParameter = parameter;
+        }
+    }
+
+    Public Safe Function int ParameterCount()
+    {
+        int count = 0;
+        ParameterDecl parameter = This.FirstParameter;
+        While (parameter != null)
+        {
+            count = count + 1;
+            parameter = parameter.Next;
+        }
+        Return count;
+    }
+
+    Public Safe Function int RequiredParameterCount()
+    {
+        int count = 0;
+        ParameterDecl parameter = This.FirstParameter;
+        While (parameter != null)
+        {
+            If (parameter.DefaultValue == null) count = count + 1;
+            parameter = parameter.Next;
+        }
+        Return count;
     }
 }
 
@@ -117,6 +167,7 @@ Class FunctionDecl
 {
     Public string Name;
     Public string ReturnType;
+    Public int Access;
     Public int Safety;
     Public bool IsStatic;
     Public bool IsAsync;
@@ -126,6 +177,7 @@ Class FunctionDecl
     Public bool IsAbstract;
     Public bool IsVirtual;
     Public bool IsOverride;
+    Public bool IsSealed;
     Public string Abi;
     Public int Line;
     Public int Column;
@@ -141,6 +193,7 @@ Class FunctionDecl
     {
         This.Name = name;
         This.ReturnType = returnType;
+        This.Access = 0;
         This.Safety = 0;
         This.IsStatic = false;
         This.IsAsync = false;
@@ -150,6 +203,7 @@ Class FunctionDecl
         This.IsAbstract = false;
         This.IsVirtual = false;
         This.IsOverride = false;
+        This.IsSealed = false;
         This.Abi = "Kinal";
         This.Line = line;
         This.Column = column;

@@ -1,0 +1,7 @@
+Unit Tests.ErrorBlockContextRecord;
+
+Static Function int Main()
+{
+    Record Outside;
+    Return 0;
+}

@@ -1,0 +1,12 @@
+Unit Tests.PackageExpressionDepth;
+
+Get IO.Console;
+
+Static Function int Main()
+{
+    <bool, bool, int> values = <1 == 1, true && false, 2 + 3 * 4>;
+    IO.Console.PrintLine(values[0]);
+    IO.Console.PrintLine(values[1]);
+    IO.Console.PrintLine(values[2]);
+    Return 0;
+}

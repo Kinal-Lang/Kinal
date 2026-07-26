@@ -1,0 +1,13 @@
+Unit Tests.ErrorAttributeOnMeta;
+
+[Docs("Meta declarations cannot carry attributes")]
+Meta Demo(string value)
+{
+    On@function;
+    Keep@compile;
+}
+
+Static Function int Main()
+{
+    Return 0;
+}

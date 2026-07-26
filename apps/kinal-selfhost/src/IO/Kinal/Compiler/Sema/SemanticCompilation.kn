@@ -171,7 +171,11 @@ Class SemanticCompilation
                                                                     BindingScope outerScope)
     {
         This.LocalLiteralCount = This.LocalLiteralCount + 1;
-        string name = "__local_literal_" + [string](This.LocalLiteralCount);
+        string literalKind = expression.Kind == [int](ExpressionKind.BlockLiteral) ?
+            "__local_block_" : "__local_function_";
+        int literalId = expression.LiteralId >= 0 ?
+            expression.LiteralId : This.LocalLiteralCount;
+        string name = literalKind + [string](literalId);
         string returnType = expression.Kind == [int](ExpressionKind.BlockLiteral) ?
             "void" : expression.Text;
         FunctionDecl literal = New FunctionDecl(name, returnType,
@@ -1164,6 +1168,30 @@ Class SemanticCompilation
         Return false;
     }
 
+    Public Safe Function bool IsObjectSchemaType(TypeSymbol type)
+    {
+        If (type == null || type.Kind != [int](TypeKind.NamedType))
+            Return false;
+        TypeSymbol resolved = type.Declaration == null ?
+            This.FindExactType(type.QualifiedName()) : type;
+        If (resolved == null || resolved.Declaration == null)
+        {
+            TypeSymbol candidate = This.FirstType;
+            While (candidate != null)
+            {
+                If (candidate.Declaration != null &&
+                    candidate.Declaration.Kind == TokenKind.KwEnum &&
+                    (candidate.Name == type.Name ||
+                     candidate.QualifiedName() == type.Name ||
+                     IO.Text.EndsWith(candidate.QualifiedName(),
+                         "." + type.Name))) Return false;
+                candidate = candidate.Next;
+            }
+        }
+        Return resolved == null || resolved.Declaration == null ||
+            resolved.Declaration.Kind != TokenKind.KwEnum;
+    }
+
     Public Safe Function bool SameFunctionSignature(FunctionSymbol left, FunctionSymbol right)
     {
         If (left == null || right == null || !This.SameType(left.ReturnType, right.ReturnType))
@@ -1181,47 +1209,321 @@ Class SemanticCompilation
 
     Public Safe Function bool IsBuiltinAttribute(string name)
     {
-        Return name == "Cast" || name == "Docs" || name == "Deprecated" ||
-            name == "Since" || name == "Example" || name == "Experimental" ||
+        string shortName = This.AttributeShortName(name);
+        Return shortName == "Cast" || shortName == "Docs" || shortName == "Deprecated" ||
+            shortName == "Since" || shortName == "Example" || shortName == "Experimental" ||
             name == "IO.Web.Route" ||
-            name == "Overload" || name == "SymbolName" || name == "LinkName" ||
-            name == "LinkLib" || name == "LinkFile" || name == "LinkLibTarget" ||
-            name == "LinkFileTarget";
+            shortName == "Overload" || shortName == "SymbolName" ||
+            shortName == "LinkName" || shortName == "LinkLib" ||
+            shortName == "LinkFile" || shortName == "LinkLibTarget" ||
+            shortName == "LinkFileTarget";
+    }
+
+    Public Safe Function string AttributeShortName(string name)
+    {
+        int separator = IO.Text.LastIndexOf(name, ".");
+        If (separator < 0) Return name;
+        Return IO.Text.Slice(name, separator + 1,
+            IO.Text.Length(name) - separator - 1);
     }
 
     Public Safe Function MetaDecl FindMeta(SyntaxTree syntax, string name)
     {
-        MetaDecl meta = syntax.FirstMeta;
-        While (meta != null)
+        string shortName = This.AttributeShortName(name);
+        bool qualified = shortName != name;
+        UnitSymbol unit = This.FirstUnit;
+        MetaDecl fallback = null;
+        While (unit != null)
         {
-            If (meta.Name == name) Return meta;
-            meta = meta.Next;
+            MetaDecl meta = unit.Syntax.FirstMeta;
+            While (meta != null)
+            {
+                If (qualified)
+                {
+                    If (unit.Name + "." + meta.Name == name) Return meta;
+                }
+                ElseIf (meta.Name == name)
+                {
+                    If (unit.Syntax == syntax) Return meta;
+                    If (fallback == null) fallback = meta;
+                }
+                meta = meta.Next;
+            }
+            unit = unit.Next;
         }
-        Return null;
+        Return fallback;
+    }
+
+    Public Safe Function int BuiltinAttributeTargetMask(string name)
+    {
+        string shortName = This.AttributeShortName(name);
+        If (shortName == "LinkName" || shortName == "LinkLib" ||
+            shortName == "LinkFile" || shortName == "LinkLibTarget" ||
+            shortName == "LinkFileTarget") Return 2;
+        If (shortName == "SymbolName") Return 1 | 4 | 128;
+        If (shortName == "Overload") Return 1 | 128;
+        If (shortName == "Cast") Return 128;
+        Return 511;
+    }
+
+    Public Safe Function bool AttributeTargetMatches(int targetMask, int ownerMask)
+    {
+        If (ownerMask == 2) Return (targetMask & (1 | 2)) != 0;
+        If (ownerMask == 4) Return (targetMask & (1 | 4)) != 0;
+        Return (targetMask & ownerMask) != 0;
+    }
+
+    Public Safe Function bool AttributeIsRepeatable(string name, MetaDecl meta)
+    {
+        If (meta != null) Return meta.IsRepeatable;
+        string shortName = This.AttributeShortName(name);
+        Return shortName == "LinkLib" || shortName == "LinkFile" ||
+            shortName == "LinkLibTarget" || shortName == "LinkFileTarget";
+    }
+
+    Public Safe Function bool MetaArgumentMatches(string typeName, ExpressionNode argument)
+    {
+        If (argument == null) Return false;
+        string canonical = This.CanonicalTypeName(typeName);
+        If (canonical == "string")
+            Return argument.Kind == [int](ExpressionKind.String);
+        If (canonical == "bool")
+            Return argument.Kind == [int](ExpressionKind.Boolean);
+        If (canonical == "char")
+            Return argument.Kind == [int](ExpressionKind.Character);
+        If (canonical == "byte" || canonical == "int" ||
+            canonical == "i8" || canonical == "i16" ||
+            canonical == "i32" || canonical == "i64" ||
+            canonical == "u8" || canonical == "u16" ||
+            canonical == "u32" || canonical == "u64" ||
+            canonical == "isize" || canonical == "usize" ||
+            canonical == "float" || canonical == "f16" ||
+            canonical == "f32" || canonical == "f64" ||
+            canonical == "f128")
+            Return argument.Kind == [int](ExpressionKind.Number);
+        Return argument.Kind == [int](ExpressionKind.Member);
+    }
+
+    Public Safe Function void ValidateAttributeArguments(SyntaxTree syntax,
+                                                          SyntaxAttribute attribute,
+                                                          MetaDecl meta,
+                                                          int line, int column)
+    {
+        int count = 0;
+        ExpressionNode argument = attribute.FirstArgument;
+        While (argument != null)
+        {
+            count = count + 1;
+            argument = argument.Next;
+        }
+        string shortName = This.AttributeShortName(attribute.Name);
+        If (meta != null)
+        {
+            If (count < meta.RequiredParameterCount() ||
+                count > meta.ParameterCount())
+            {
+                This.Report(syntax, "Invalid Attribute",
+                    "Meta argument count does not match declaration", line, column);
+                Return;
+            }
+            ParameterDecl parameter = meta.FirstParameter;
+            argument = attribute.FirstArgument;
+            While (argument != null && parameter != null)
+            {
+                If (!This.MetaArgumentMatches(parameter.TypeName, argument))
+                    This.Report(syntax, "Invalid Attribute",
+                        "Meta argument type does not match declaration", line, column);
+                argument = argument.Next;
+                parameter = parameter.Next;
+            }
+            Return;
+        }
+        If (attribute.Name == "IO.Web.Route") Return;
+        If (shortName == "Cast" || shortName == "Overload")
+        {
+            If (count != 0)
+                This.Report(syntax, "Invalid Attribute",
+                    shortName + " requires no arguments", line, column);
+            Return;
+        }
+        int minimum = 1;
+        bool unbounded = shortName == "LinkLib" || shortName == "LinkFile";
+        If (shortName == "LinkLibTarget" || shortName == "LinkFileTarget")
+        {
+            minimum = 2;
+            unbounded = true;
+        }
+        If (count < minimum || (!unbounded && count != minimum))
+        {
+            This.Report(syntax, "Invalid Attribute",
+                "Built-in Meta argument count does not match declaration",
+                line, column);
+            Return;
+        }
+        argument = attribute.FirstArgument;
+        While (argument != null)
+        {
+            If (argument.Kind != [int](ExpressionKind.String))
+                This.Report(syntax, "Invalid Attribute",
+                    "Built-in Meta requires string literal arguments",
+                    line, column);
+            argument = argument.Next;
+        }
+    }
+
+    Public Safe Function void ValidateAttributeList(SyntaxTree syntax,
+                                                     SyntaxAttribute first,
+                                                     int ownerMask,
+                                                     int line, int column)
+    {
+        SyntaxAttribute attribute = first;
+        While (attribute != null)
+        {
+            MetaDecl meta = This.FindMeta(syntax, attribute.Name);
+            bool builtin = This.IsBuiltinAttribute(attribute.Name);
+            If (!builtin && meta == null)
+                This.Report(syntax, "Unknown Attribute", "Meta not declared",
+                    line, column);
+            Else
+            {
+                int targetMask = meta == null ?
+                    This.BuiltinAttributeTargetMask(attribute.Name) : meta.TargetMask;
+                If (!This.AttributeTargetMatches(targetMask, ownerMask))
+                    This.Report(syntax, "Invalid Attribute",
+                        This.AttributeShortName(attribute.Name) +
+                            " is not valid on this declaration",
+                        line, column);
+                Else This.ValidateAttributeArguments(
+                    syntax, attribute, meta, line, column);
+                SyntaxAttribute previous = first;
+                While (previous != attribute)
+                {
+                    If (This.AttributeShortName(previous.Name) ==
+                            This.AttributeShortName(attribute.Name) &&
+                        !This.AttributeIsRepeatable(attribute.Name, meta))
+                    {
+                        This.Report(syntax, "Invalid Attribute",
+                            "Meta is not Repeatable on this declaration",
+                            line, column);
+                        Break;
+                    }
+                    previous = previous.Next;
+                }
+            }
+            attribute = attribute.Next;
+        }
     }
 
     Public Safe Function void ValidateAttributes(FunctionSymbol function)
     {
-        SyntaxAttribute attribute = function.Declaration.FirstAttribute;
-        While (attribute != null)
+        int ownerMask = function.OwnerType != null ? 128 :
+            (function.Declaration.IsExtern ? 2 :
+             (function.Declaration.IsDelegate ? 4 : 1));
+        This.ValidateAttributeList(function.Syntax,
+            function.Declaration.FirstAttribute, ownerMask,
+            function.Declaration.Line, function.Declaration.Column);
+    }
+
+    Public Safe Function bool MetaParameterTypeSupported(string typeName)
+    {
+        string canonical = This.CanonicalTypeName(typeName);
+        If (canonical == "bool" || canonical == "char" ||
+            canonical == "string" || canonical == "byte" ||
+            canonical == "int" || canonical == "i8" ||
+            canonical == "i16" || canonical == "i32" ||
+            canonical == "i64" || canonical == "u8" ||
+            canonical == "u16" || canonical == "u32" ||
+            canonical == "u64" || canonical == "isize" ||
+            canonical == "usize" || canonical == "float" ||
+            canonical == "f16" || canonical == "f32" ||
+            canonical == "f64" || canonical == "f128") Return true;
+        TypeSymbol type = This.FindExactType(canonical);
+        Return type != null && type.Declaration != null &&
+            type.Declaration.Kind == TokenKind.KwEnum;
+    }
+
+    Public Safe Function void ValidateMetaDeclarations()
+    {
+        UnitSymbol unit = This.FirstUnit;
+        While (unit != null)
         {
-            MetaDecl meta = This.FindMeta(function.Syntax, attribute.Name);
-            If (!This.IsBuiltinAttribute(attribute.Name) && meta == null)
-                This.Report(function.Syntax, "Unknown Attribute", attribute.Name,
-                    function.Declaration.Line, function.Declaration.Column);
-            SyntaxAttribute previous = function.Declaration.FirstAttribute;
-            While (previous != attribute)
+            MetaDecl meta = unit.Syntax.FirstMeta;
+            While (meta != null)
             {
-                If (previous.Name == attribute.Name && meta != null && !meta.IsRepeatable)
+                If (This.IsBuiltinAttribute(meta.Name))
+                    This.Report(unit.Syntax, "Invalid Meta",
+                        "Built-in Meta names cannot be redefined",
+                        meta.Line, meta.Column);
+                If (meta.TargetMask == 0)
+                    This.Report(unit.Syntax, "Invalid Meta",
+                        "Meta declaration must define at least one On target",
+                        meta.Line, meta.Column);
+                If (meta.KeepKind == 0)
+                    This.Report(unit.Syntax, "Invalid Meta",
+                        "Meta declaration must define a Keep mode",
+                        meta.Line, meta.Column);
+                ParameterDecl parameter = meta.FirstParameter;
+                While (parameter != null)
                 {
-                    This.Report(function.Syntax, "Invalid Attribute",
-                        attribute.Name + " is not repeatable",
-                        function.Declaration.Line, function.Declaration.Column);
-                    Break;
+                    If (!This.MetaParameterTypeSupported(parameter.TypeName))
+                        This.Report(unit.Syntax, "Invalid Meta",
+                            "Meta parameters only support literal-friendly types",
+                            meta.Line, meta.Column);
+                    ParameterDecl previous = meta.FirstParameter;
+                    While (previous != parameter)
+                    {
+                        If (previous.Name == parameter.Name)
+                        {
+                            This.Report(unit.Syntax, "Duplicate Parameter",
+                                "Meta parameter already defined",
+                                meta.Line, meta.Column);
+                            Break;
+                        }
+                        previous = previous.Next;
+                    }
+                    If (parameter.DefaultValue != null &&
+                        !This.MetaArgumentMatches(
+                            parameter.TypeName, parameter.DefaultValue))
+                        This.Report(unit.Syntax, "Invalid Attribute",
+                            "Meta default value must be a matching literal",
+                            meta.Line, meta.Column);
+                    parameter = parameter.Next;
                 }
-                previous = previous.Next;
+                meta = meta.Next;
             }
-            attribute = attribute.Next;
+            unit = unit.Next;
+        }
+    }
+
+    Public Safe Function int TypeAttributeTargetMask(TypeDecl declaration)
+    {
+        If (declaration.Kind == TokenKind.KwClass) Return 8;
+        If (declaration.Kind == TokenKind.KwStruct) Return 16;
+        If (declaration.Kind == TokenKind.KwEnum) Return 32;
+        If (declaration.Kind == TokenKind.KwInterface) Return 64;
+        Return 0;
+    }
+
+    Public Safe Function void ValidateTypeAndFieldAttributes()
+    {
+        UnitSymbol unit = This.FirstUnit;
+        While (unit != null)
+        {
+            TypeDecl type = unit.Syntax.FirstType;
+            While (type != null)
+            {
+                This.ValidateAttributeList(unit.Syntax, type.FirstAttribute,
+                    This.TypeAttributeTargetMask(type), type.Line, type.Column);
+                FieldDecl field = type.FirstField;
+                While (field != null)
+                {
+                    This.ValidateAttributeList(unit.Syntax, field.FirstAttribute,
+                        256, field.Line, field.Column);
+                    field = field.Next;
+                }
+                type = type.Next;
+            }
+            unit = unit.Next;
         }
     }
 
@@ -1230,6 +1532,11 @@ Class SemanticCompilation
     {
         If (function.OwnerType != target || !function.Declaration.IsStatic ||
             This.FindAttribute(function.Declaration, "Cast") == null ||
+            function.Declaration.Access != 1 || function.Declaration.IsAsync ||
+            function.Declaration.IsVirtual || function.Declaration.IsOverride ||
+            function.Declaration.IsAbstract || function.Declaration.IsSealed ||
+            function.Declaration.IsConstructor ||
+            !This.SameType(function.ReturnType, target) ||
             function.FirstParameter == null || function.FirstParameter.Next != null)
             Return false;
         Return This.IsHirAssignable(function.FirstParameter.Type, source);
@@ -1391,7 +1698,7 @@ Class SemanticCompilation
         SyntaxAttribute attribute = declaration.FirstAttribute;
         While (attribute != null)
         {
-            If (attribute.Name == name) Return attribute;
+            If (This.AttributeShortName(attribute.Name) == name) Return attribute;
             attribute = attribute.Next;
         }
         Return null;
@@ -1417,6 +1724,7 @@ Class SemanticCompilation
         SyntaxAttribute symbolName = This.FindAttribute(declaration, "SymbolName");
         SyntaxAttribute linkName = This.FindAttribute(declaration, "LinkName");
         SyntaxAttribute linkLib = This.FindAttribute(declaration, "LinkLib");
+        SyntaxAttribute cast = This.FindAttribute(declaration, "Cast");
         If (overload != null && symbolName == null)
             This.Report(syntax, "Invalid Overload", "Overload requires SymbolName",
                 declaration.Line, declaration.Column);
@@ -1431,6 +1739,38 @@ Class SemanticCompilation
             linkName.FirstArgument.Kind != [int](ExpressionKind.String)))
             This.Report(syntax, "Invalid Attribute", "LinkName requires a string argument",
                 declaration.Line, declaration.Column);
+        If (cast != null && function.OwnerType != null)
+        {
+            If (declaration.IsConstructor)
+                This.Report(syntax, "Invalid Cast Method",
+                    "Cast method cannot be a constructor",
+                    declaration.Line, declaration.Column);
+            ElseIf (!declaration.IsStatic)
+                This.Report(syntax, "Invalid Cast Method",
+                    "Cast method must be static",
+                    declaration.Line, declaration.Column);
+            ElseIf (declaration.Access != 1)
+                This.Report(syntax, "Invalid Cast Method",
+                    "Cast method must be public",
+                    declaration.Line, declaration.Column);
+            ElseIf (declaration.IsAsync)
+                This.Report(syntax, "Invalid Cast Method",
+                    "Cast method cannot be async",
+                    declaration.Line, declaration.Column);
+            ElseIf (declaration.IsVirtual || declaration.IsOverride ||
+                declaration.IsAbstract || declaration.IsSealed)
+                This.Report(syntax, "Invalid Cast Method",
+                    "Cast method cannot be virtual, override, abstract, or sealed",
+                    declaration.Line, declaration.Column);
+            ElseIf (function.ParameterCount() != 1)
+                This.Report(syntax, "Invalid Cast Method",
+                    "Cast method must declare exactly one parameter",
+                    declaration.Line, declaration.Column);
+            ElseIf (!This.SameType(function.ReturnType, function.OwnerType))
+                This.Report(syntax, "Invalid Cast Method",
+                    "Cast method must return its owning class",
+                    declaration.Line, declaration.Column);
+        }
 
         If (declaration.IsExtern && declaration.Abi == "C")
         {
@@ -2450,7 +2790,9 @@ Class SemanticCompilation
                 labelIndex = labelIndex + 1;
             }
         }
-        If (receiver.Type.Kind == [int](TypeKind.NamespaceType))
+        // Type names use Namespace HIR expressions even when their semantic
+        // type is NamedType. Use the expression role so nested types resolve.
+        If (receiver.Kind == [int](HirExpressionKind.Namespace))
         {
             string combined = receiver.Target + "." + expression.Text;
             TypeSymbol named = This.ResolveType(syntax, combined);
@@ -2906,10 +3248,29 @@ Class SemanticCompilation
                         "Safe function cannot cast pointer values",
                         expression.Line, expression.Column);
             }
-            If (result.Left != null && result.Left.Type.Kind == [int](TypeKind.NamedType) &&
-                type.Kind == [int](TypeKind.NamedType) &&
-                !This.RelatedNamedTypes(result.Left.Type, type) && customCastCount == 0)
+            bool targetObject = This.IsObjectSchemaType(type);
+            bool sourceObject = result.Left != null &&
+                This.IsObjectSchemaType(result.Left.Type);
+            bool relatedObjects = targetObject && sourceObject &&
+                This.RelatedNamedTypes(result.Left.Type, type);
+            bool rawFunctionPointer = result.Left != null &&
+                result.Left.Type.Kind == [int](TypeKind.PointerType) &&
+                (type.Name == "IO.Type.Object.Function" ||
+                 type.Name == "Object.Function");
+            If (targetObject && sourceObject && !relatedObjects &&
+                customCastCount == 0)
                 This.Report(syntax, "Invalid Cast", "Object types are unrelated",
+                    expression.Line, expression.Column);
+            If (targetObject && customCastCount != 1 && !relatedObjects &&
+                !rawFunctionPointer &&
+                (result.Left == null ||
+                 result.Left.Type.Kind != [int](TypeKind.NullType)))
+                This.Report(syntax, "Invalid Cast",
+                    "Cannot cast to Object types; use Object conversions instead",
+                    expression.Line, expression.Column);
+            If (sourceObject && !targetObject)
+                This.Report(syntax, "Invalid Cast",
+                    "Cannot cast Object values; use Object conversions instead",
                     expression.Line, expression.Column);
             If (result.Left != null && result.Left.Type.Kind == [int](TypeKind.PackageType) &&
                 (type.Kind != [int](TypeKind.ArrayType) ||
@@ -3538,6 +3899,8 @@ Class SemanticCompilation
     {
         This.IndexDeclarations();
         This.LinkBaseTypes();
+        This.ValidateMetaDeclarations();
+        This.ValidateTypeAndFieldAttributes();
         This.IndexGlobals();
         This.IndexFunctions();
         This.LinkGlobalLiteralFunctions();
