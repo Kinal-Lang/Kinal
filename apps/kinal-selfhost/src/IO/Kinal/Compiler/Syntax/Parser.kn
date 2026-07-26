@@ -15,6 +15,8 @@ Class ParseCursor
     Public int Position;
     Public SourceFile Source;
     Public list Diagnostics;
+    Public int StatementDepth;
+    Public bool SawStatementDepthLimit;
 
     Public Safe Constructor(list tokens, SourceFile source, list diagnostics)
     {
@@ -22,6 +24,8 @@ Class ParseCursor
         This.Position = 0;
         This.Source = source;
         This.Diagnostics = diagnostics;
+        This.StatementDepth = 0;
+        This.SawStatementDepthLimit = false;
     }
 }
 
@@ -544,6 +548,50 @@ Safe Function void SynchronizeStatement(ParseCursor cursor, int startPosition)
     }
 }
 
+Safe Function void SkipToEnclosingBlockEnd(ParseCursor cursor)
+{
+    int nestedBraces = 0;
+    While (!IsEnd(cursor))
+    {
+        TokenKind kind = CurrentKind(cursor);
+        If (kind == TokenKind.LeftBrace)
+        {
+            nestedBraces = nestedBraces + 1;
+            Advance(cursor);
+            Continue;
+        }
+        If (kind == TokenKind.RightBrace)
+        {
+            If (nestedBraces == 0) Return;
+            nestedBraces = nestedBraces - 1;
+            Advance(cursor);
+            Continue;
+        }
+        Advance(cursor);
+    }
+}
+
+Safe Function bool EnterStatement(ParseCursor cursor)
+{
+    cursor.StatementDepth = cursor.StatementDepth + 1;
+    If (cursor.StatementDepth <= 192) Return true;
+    If (!cursor.SawStatementDepthLimit)
+    {
+        cursor.SawStatementDepthLimit = true;
+        Report(cursor, cursor.Diagnostics, cursor.Source, "Statement Too Deep",
+            "Statement nesting exceeds parser recursion limit");
+    }
+    SkipToEnclosingBlockEnd(cursor);
+    cursor.StatementDepth = cursor.StatementDepth - 1;
+    Return false;
+}
+
+Safe Function void LeaveStatement(ParseCursor cursor)
+{
+    If (cursor.StatementDepth > 0)
+        cursor.StatementDepth = cursor.StatementDepth - 1;
+}
+
 Safe Function bool IsPrimitiveTypeToken(TokenKind kind)
 {
     Return Switch (kind)
@@ -783,7 +831,7 @@ Safe Function bool ParseSwitchStatement(ParseCursor cursor, list diagnostics, So
                   "Expected right brace", "Switch body is not closed");
 }
 
-Safe Function bool ParseStatement(ParseCursor cursor, list diagnostics, SourceFile source)
+Safe Function bool ParseStatementCore(ParseCursor cursor, list diagnostics, SourceFile source)
 {
     TokenKind kind = CurrentKind(cursor);
     If (kind == TokenKind.LeftBrace) Return ParseBlock(cursor, diagnostics, source);
@@ -838,6 +886,18 @@ Safe Function bool ParseStatement(ParseCursor cursor, list diagnostics, SourceFi
             "Missing '/>' after block body", "Block body is not closed");
     Return SkipExpressionStatement(cursor, diagnostics, source,
         "Expected semicolon", "statement must end with ';'");
+}
+
+Safe Function bool ParseStatement(ParseCursor cursor, list diagnostics, SourceFile source)
+{
+    // C stage0 treats Foreach as an iterative parser entry rather than a
+    // recursion-depth frame of its own.
+    If (CurrentKind(cursor) == TokenKind.KwForeach)
+        Return ParseStatementCore(cursor, diagnostics, source);
+    If (!EnterStatement(cursor)) Return false;
+    bool valid = ParseStatementCore(cursor, diagnostics, source);
+    LeaveStatement(cursor);
+    Return valid;
 }
 
 Safe Function bool IsFunctionModifier(TokenKind kind)
@@ -2388,7 +2448,7 @@ Safe Function StatementNode ParseLocalTypeStatement(ParseCursor cursor)
         IO.Kinal.Compiler.Lex.Token.Line(token), IO.Kinal.Compiler.Lex.Token.Column(token));
 }
 
-Safe Function StatementNode ParseAstStatement(ParseCursor cursor)
+Safe Function StatementNode ParseAstStatementCore(ParseCursor cursor)
 {
     string token = CurrentToken(cursor);
     TokenKind kind = CurrentKind(cursor);
@@ -2607,6 +2667,20 @@ Safe Function StatementNode ParseAstStatement(ParseCursor cursor)
     BuilderExpect(cursor, TokenKind.Semicolon, "Expected Semicolon",
         "Expression statement must end with ';'");
     Return expression;
+}
+
+Safe Function StatementNode ParseAstStatement(ParseCursor cursor)
+{
+    string token = CurrentToken(cursor);
+    If (CurrentKind(cursor) == TokenKind.KwForeach)
+        Return ParseAstStatementCore(cursor);
+    If (!EnterStatement(cursor))
+        Return New StatementNode([int](StatementKind.Empty),
+            IO.Kinal.Compiler.Lex.Token.Line(token),
+            IO.Kinal.Compiler.Lex.Token.Column(token));
+    StatementNode statement = ParseAstStatementCore(cursor);
+    LeaveStatement(cursor);
+    Return statement;
 }
 
 Safe Function int AccessFromModifier(TokenKind kind)

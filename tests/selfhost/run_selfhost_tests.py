@@ -427,6 +427,95 @@ def main() -> int:
         }
     )
 
+    nested_statements = "\n".join("        If (true)" for _ in range(193))
+    statement_depth_fixtures = [
+        out_dir / "error-statement-depth-validator.kn",
+        out_dir / "error-statement-depth-builder.kn",
+    ]
+    statement_depth_fixtures[0].write_text(
+        "Unit Tests.ErrorStatementDepthValidator;\n\n"
+        "Static Function int Main()\n"
+        "{\n"
+        f"{nested_statements}\n"
+        "        Return 0;\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    statement_depth_fixtures[1].write_text(
+        "Unit Tests.ErrorStatementDepthBuilder;\n\n"
+        "Class Deep\n"
+        "{\n"
+        "    Function int Run()\n"
+        "    {\n"
+        f"{nested_statements}\n"
+        "        Return 0;\n"
+        "    }\n"
+        "}\n\n"
+        "Static Function int Main()\n"
+        "{\n"
+        "    Return 0;\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    for statement_depth_fixture in statement_depth_fixtures:
+        stage0_depth = run(
+            [
+                str(stage0),
+                "build",
+                "--no-module-discovery",
+                "--color",
+                "never",
+                "--emit",
+                "check",
+                str(statement_depth_fixture),
+                "-o",
+                str(out_dir / f"{statement_depth_fixture.stem}-stage0.kcheck"),
+            ],
+            cwd=root,
+        )
+        stage1_depth = run(
+            [str(compiler), "check-source", str(statement_depth_fixture)],
+            cwd=root,
+        )
+        stage0_depth_output = (stage0_depth.stdout or "") + (stage0_depth.stderr or "")
+        stage1_depth_output = (stage1_depth.stdout or "") + (stage1_depth.stderr or "")
+        require(
+            stage0_depth.returncode != 0
+            and "Statement Too Deep" in stage0_depth_output,
+            f"stage0 statement-depth fixture changed: {statement_depth_fixture}",
+            stage0_depth,
+        )
+        require(
+            stage1_depth.returncode != 0
+            and "Statement Too Deep" in stage1_depth_output,
+            f"stage1 did not enforce statement depth: {statement_depth_fixture}",
+            stage1_depth,
+        )
+        stage0_depth_count = sum(
+            1 for line in stage0_depth_output.splitlines() if line.startswith("[Parser]")
+        )
+        stage1_depth_count = sum(
+            1 for line in stage1_depth_output.splitlines() if line.startswith("[Parser]")
+        )
+        require(
+            stage0_depth_count == 1,
+            f"stage0 statement-depth diagnostic count changed: {statement_depth_fixture}",
+            stage0_depth,
+        )
+        require(
+            stage1_depth_count == stage0_depth_count,
+            f"statement-depth diagnostic count differs: {statement_depth_fixture}",
+            stage1_depth,
+        )
+    results.append(
+        {
+            "name": "statement_depth_limit",
+            "ok": True,
+            "limit": 192,
+            "files": len(statement_depth_fixtures),
+        }
+    )
+
     switch_fixture = root / "tests" / "selfhost" / "fixtures" / "switch_expression.kn"
     switch_stage0_path = out_dir / "switch-expression-stage0.kast"
     switch_stage0 = run(
