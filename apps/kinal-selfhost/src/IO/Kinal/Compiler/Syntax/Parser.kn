@@ -81,7 +81,6 @@ Safe Function int UnsafeAliasTerminator(list tokens, int start, int line)
 Safe Function list PrepareTokens(list tokens)
 {
     UnsafeAliasRule firstRule = null;
-    UnsafeAliasRule lastRule = null;
     int position = 0;
     While (position < tokens.Count())
     {
@@ -117,8 +116,10 @@ Safe Function list PrepareTokens(list tokens)
             index = index + 1;
         }
         If (!triple && (rule.SourceTokens.Count() != 1 || rule.TargetTokens.Count() != 1)) Break;
-        If (firstRule == null) firstRule = rule; Else lastRule.Next = rule;
-        lastRule = rule;
+        // C stage0 resolves overlapping aliases from the most recently
+        // declared rule to the oldest rule.
+        rule.Next = firstRule;
+        firstRule = rule;
         position = terminator + 1;
     }
 

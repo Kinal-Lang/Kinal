@@ -98,6 +98,7 @@ def main() -> int:
         root / "tests" / "common" / "localized_aliases.kn",
         root / "tests" / "common" / "unsafe_unsafe_unsafe_alias.kn",
         root / "tests" / "common" / "unsafe_unsafe_unsafe_alias_sequence.kn",
+        root / "tests" / "common" / "unsafe_alias_latest_wins.kn",
         root / "tests" / "common" / "unsafe_unsafe_unsafe_alias_semicolon_target.kn",
     ]
     for index, unsafe_alias_fixture in enumerate(unsafe_alias_fixtures):

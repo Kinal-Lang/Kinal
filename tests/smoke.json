@@ -162,6 +162,12 @@
     "auto_link": true
   },
   {
+    "name": "unsafe_alias_latest_wins",
+    "file": "tests/common/unsafe_alias_latest_wins.kn",
+    "expected": "latest\n",
+    "auto_link": true
+  },
+  {
     "name": "unsafe_unsafe_unsafe_alias_semicolon_target",
     "file": "tests/common/unsafe_unsafe_unsafe_alias_semicolon_target.kn",
     "expected": "Hello World\n",

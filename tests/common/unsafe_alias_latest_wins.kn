@@ -1,0 +1,11 @@
+Unsafe Unsafe Unsafe Alias marker By false;
+Unsafe Unsafe Unsafe Alias marker marker By true;
+
+Get IO.Console;
+
+Static Function int Main()
+{
+    If (marker marker)
+        IO.Console.PrintLine("latest");
+    Return 0;
+}
