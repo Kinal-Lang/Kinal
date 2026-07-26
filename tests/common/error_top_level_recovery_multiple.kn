@@ -1,0 +1,13 @@
+Unit Tests.ErrorTopLevelRecoveryMultiple;
+
+@
+Static Function int First()
+{
+    Return 1;
+}
+
+@
+Static Function int Main()
+{
+    Return First();
+}

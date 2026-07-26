@@ -392,6 +392,62 @@ Safe Function void Report(ParseCursor cursor, list diagnostics, SourceFile sourc
     ReportToken(diagnostics, source, CurrentToken(cursor), title, detail);
 }
 
+Safe Function bool IsStatementRecoveryStart(TokenKind kind)
+{
+    Return kind == TokenKind.KwReturn || kind == TokenKind.KwIf ||
+        kind == TokenKind.KwSwitch || kind == TokenKind.KwFor ||
+        kind == TokenKind.KwWhile || kind == TokenKind.KwBreak ||
+        kind == TokenKind.KwContinue ||
+        kind == TokenKind.KwTry || kind == TokenKind.KwThrow ||
+        kind == TokenKind.KwConst || kind == TokenKind.KwVar ||
+        kind == TokenKind.KwBlock || kind == TokenKind.KwClass ||
+        kind == TokenKind.KwStruct || kind == TokenKind.KwEnum ||
+        kind == TokenKind.KwInterface || kind == TokenKind.KwFunction ||
+        kind == TokenKind.KwExtern || kind == TokenKind.KwGet ||
+        kind == TokenKind.Identifier || IsPrimitiveTypeToken(kind);
+}
+
+Safe Function void RecoverAfterExpect(ParseCursor cursor, TokenKind expected)
+{
+    If (IsEnd(cursor)) Return;
+    If (expected == TokenKind.Semicolon)
+    {
+        While (!IsEnd(cursor) && CurrentKind(cursor) != TokenKind.Semicolon &&
+               CurrentKind(cursor) != TokenKind.RightBrace &&
+               !IsStatementRecoveryStart(CurrentKind(cursor)))
+            Advance(cursor);
+        Match(cursor, TokenKind.Semicolon);
+        Return;
+    }
+    If (expected == TokenKind.RightParen)
+    {
+        While (!IsEnd(cursor) && CurrentKind(cursor) != TokenKind.RightParen &&
+               CurrentKind(cursor) != TokenKind.Semicolon &&
+               CurrentKind(cursor) != TokenKind.LeftBrace &&
+               CurrentKind(cursor) != TokenKind.RightBrace)
+            Advance(cursor);
+        Match(cursor, TokenKind.RightParen);
+        Return;
+    }
+    If (expected == TokenKind.RightBracket)
+    {
+        While (!IsEnd(cursor) && CurrentKind(cursor) != TokenKind.RightBracket &&
+               CurrentKind(cursor) != TokenKind.Semicolon &&
+               CurrentKind(cursor) != TokenKind.RightBrace)
+            Advance(cursor);
+        Match(cursor, TokenKind.RightBracket);
+        Return;
+    }
+    If (expected == TokenKind.RightBrace)
+    {
+        While (!IsEnd(cursor) && CurrentKind(cursor) != TokenKind.RightBrace)
+            Advance(cursor);
+        Match(cursor, TokenKind.RightBrace);
+        Return;
+    }
+    Advance(cursor);
+}
+
 Safe Function bool BuilderExpect(ParseCursor cursor, TokenKind kind,
                                  string title, string detail)
 {
@@ -403,7 +459,89 @@ Safe Function bool Expect(ParseCursor cursor, list diagnostics, SourceFile sourc
 {
     If (Match(cursor, kind)) Return true;
     Report(cursor, diagnostics, source, title, detail);
+    RecoverAfterExpect(cursor, kind);
     Return false;
+}
+
+Safe Function bool IsTopLevelRecoveryStart(TokenKind kind)
+{
+    Return kind == TokenKind.KwEnum || kind == TokenKind.KwStruct ||
+        kind == TokenKind.KwInterface || kind == TokenKind.KwClass ||
+        kind == TokenKind.KwPublic || kind == TokenKind.KwPrivate ||
+        kind == TokenKind.KwProtected || kind == TokenKind.KwInternal ||
+        kind == TokenKind.KwStatic || kind == TokenKind.KwAbstract ||
+        kind == TokenKind.KwSealed || kind == TokenKind.KwConst ||
+        kind == TokenKind.KwVar || kind == TokenKind.Less ||
+        kind == TokenKind.KwExtern || kind == TokenKind.KwDelegate ||
+        kind == TokenKind.KwFunction || kind == TokenKind.KwSafe ||
+        kind == TokenKind.KwTrusted || kind == TokenKind.KwUnsafe ||
+        kind == TokenKind.KwAsync || kind == TokenKind.KwGet ||
+        kind == TokenKind.KwUnit;
+}
+
+Safe Function bool IsTypeMemberRecoveryStart(TokenKind kind)
+{
+    Return kind == TokenKind.LeftBracket || kind == TokenKind.KwConstructor ||
+        kind == TokenKind.KwFunction || kind == TokenKind.KwProperty ||
+        kind == TokenKind.KwClass || kind == TokenKind.KwInterface ||
+        kind == TokenKind.KwStruct || kind == TokenKind.KwEnum ||
+        kind == TokenKind.KwPublic || kind == TokenKind.KwPrivate ||
+        kind == TokenKind.KwProtected || kind == TokenKind.KwInternal ||
+        kind == TokenKind.KwStatic || kind == TokenKind.KwAbstract ||
+        kind == TokenKind.KwVirtual || kind == TokenKind.KwOverride ||
+        kind == TokenKind.KwSealed || kind == TokenKind.KwSafe ||
+        kind == TokenKind.KwTrusted || kind == TokenKind.KwUnsafe ||
+        kind == TokenKind.KwAsync || kind == TokenKind.KwExtern ||
+        kind == TokenKind.Identifier || kind == TokenKind.Less ||
+        IsPrimitiveTypeToken(kind);
+}
+
+Safe Function void SynchronizeTopLevel(ParseCursor cursor, int startPosition, int startLine)
+{
+    While (!IsEnd(cursor))
+    {
+        TokenKind kind = CurrentKind(cursor);
+        If (kind == TokenKind.Semicolon)
+        {
+            Advance(cursor);
+            Return;
+        }
+        If (cursor.Position > startPosition &&
+            (IsTopLevelRecoveryStart(kind) ||
+             (IO.Kinal.Compiler.Lex.Token.Line(CurrentToken(cursor)) > startLine &&
+              IO.Kinal.Compiler.Lex.Token.Column(CurrentToken(cursor)) == 1))) Return;
+        Advance(cursor);
+    }
+}
+
+Safe Function void SynchronizeTypeMember(ParseCursor cursor, int startPosition)
+{
+    While (!IsEnd(cursor) && CurrentKind(cursor) != TokenKind.RightBrace)
+    {
+        If (CurrentKind(cursor) == TokenKind.Semicolon)
+        {
+            Advance(cursor);
+            Return;
+        }
+        If (cursor.Position > startPosition &&
+            IsTypeMemberRecoveryStart(CurrentKind(cursor))) Return;
+        Advance(cursor);
+    }
+}
+
+Safe Function void SynchronizeStatement(ParseCursor cursor, int startPosition)
+{
+    While (!IsEnd(cursor) && CurrentKind(cursor) != TokenKind.RightBrace)
+    {
+        If (CurrentKind(cursor) == TokenKind.Semicolon)
+        {
+            Advance(cursor);
+            Return;
+        }
+        If (cursor.Position > startPosition &&
+            IsStatementRecoveryStart(CurrentKind(cursor))) Return;
+        Advance(cursor);
+    }
 }
 
 Safe Function bool IsPrimitiveTypeToken(TokenKind kind)
@@ -517,6 +655,7 @@ Safe Function bool ExpectName(ParseCursor cursor, list diagnostics, SourceFile s
         Return true;
     }
     Report(cursor, diagnostics, source, "Expected identifier", detail);
+    RecoverAfterExpect(cursor, TokenKind.Identifier);
     Return false;
 }
 
@@ -588,6 +727,7 @@ Safe Function bool SkipExpressionStatement(ParseCursor cursor, list diagnostics,
         Advance(cursor);
     }
     Report(cursor, diagnostics, source, title, detail);
+    RecoverAfterExpect(cursor, TokenKind.Semicolon);
     Return false;
 }
 
@@ -595,12 +735,19 @@ Safe Function bool ParseBlock(ParseCursor cursor, list diagnostics, SourceFile s
 {
     If (!Expect(cursor, diagnostics, source, TokenKind.LeftBrace,
                 "Expected left brace", "block must start with '{'")) Return false;
+    bool valid = true;
     While (!IsEnd(cursor) && CurrentKind(cursor) != TokenKind.RightBrace)
     {
-        If (!ParseStatement(cursor, diagnostics, source)) Return false;
+        int statementStart = cursor.Position;
+        If (!ParseStatement(cursor, diagnostics, source))
+        {
+            valid = false;
+            SynchronizeStatement(cursor, statementStart);
+        }
     }
-    Return Expect(cursor, diagnostics, source, TokenKind.RightBrace,
-                  "Expected right brace", "block is not closed");
+    bool closed = Expect(cursor, diagnostics, source, TokenKind.RightBrace,
+                         "Expected right brace", "block is not closed");
+    Return valid && closed;
 }
 
 Safe Function bool ParseIfTail(ParseCursor cursor, list diagnostics, SourceFile source)
@@ -1064,64 +1211,94 @@ Safe Function bool ValidatePrepared(SourceFile source, list tokens, bool hasUnsa
                                    bool hasPreparationError, list diagnostics)
 {
     ParseCursor cursor = New ParseCursor(tokens, source, diagnostics);
+    bool valid = true;
     If (hasPreparationError)
     {
         If (!IsEnd(cursor))
+        {
+            int recoveryStart = cursor.Position;
+            int recoveryLine = IO.Kinal.Compiler.Lex.Token.Line(CurrentToken(cursor));
             Report(cursor, diagnostics, source, "Unexpected Top-Level Token",
                 "Expected a top-level declaration after the invalid Unsafe Alias");
-        Return false;
+            SynchronizeTopLevel(cursor, recoveryStart, recoveryLine);
+        }
+        valid = false;
     }
     If (hasUnsafeAlias && CurrentKind(cursor) == TokenKind.KwUnit)
     {
         Report(cursor, diagnostics, source, "Invalid Unit With Unsafe Alias",
             "Files that use Unsafe Alias cannot declare Unit");
-        Return false;
+        While (!IsEnd(cursor) && CurrentKind(cursor) != TokenKind.Semicolon)
+            Advance(cursor);
+        Match(cursor, TokenKind.Semicolon);
+        valid = false;
     }
     If (!hasUnsafeAlias && Match(cursor, TokenKind.KwUnit))
     {
-        If (!ParseQualifiedName(cursor, diagnostics, source)) Return false;
+        int unitStart = cursor.Position - 1;
+        int unitLine = IO.Kinal.Compiler.Lex.Token.Line(RawAt(cursor, unitStart));
+        bool unitValid = ParseQualifiedName(cursor, diagnostics, source);
         If (!Expect(cursor, diagnostics, source, TokenKind.Semicolon,
-                    "Expected semicolon", "Unit declaration must end with ';'")) Return false;
+                    "Expected semicolon", "Unit declaration must end with ';'"))
+            unitValid = false;
+        If (!unitValid)
+        {
+            valid = false;
+            SynchronizeTopLevel(cursor, unitStart, unitLine);
+        }
     }
 
     While (!IsEnd(cursor))
     {
+        int declarationStart = cursor.Position;
+        int declarationLine = IO.Kinal.Compiler.Lex.Token.Line(CurrentToken(cursor));
+        bool declarationValid = true;
         While (CurrentKind(cursor) == TokenKind.LeftBracket)
         {
             If (!SkipBalanced(cursor, diagnostics, source, TokenKind.LeftBracket,
-                              TokenKind.RightBracket, "Expected attribute")) Return false;
+                              TokenKind.RightBracket, "Expected attribute"))
+            {
+                declarationValid = false;
+                Break;
+            }
+        }
+        If (!declarationValid)
+        {
+            valid = false;
+            SynchronizeTopLevel(cursor, declarationStart, declarationLine);
+            Continue;
         }
         TokenKind kind = CurrentKind(cursor);
         If (IsContextual(cursor, "Meta"))
         {
-            If (!ParseMeta(cursor, diagnostics, source)) Return false;
+            declarationValid = ParseMeta(cursor, diagnostics, source);
         }
         ElseIf (kind == TokenKind.KwGet)
         {
-            If (!ParseGet(cursor, diagnostics, source)) Return false;
+            declarationValid = ParseGet(cursor, diagnostics, source);
         }
         ElseIf (kind == TokenKind.KwAlias)
         {
-            If (!ParseAlias(cursor, diagnostics, source)) Return false;
+            declarationValid = ParseAlias(cursor, diagnostics, source);
         }
         ElseIf (kind == TokenKind.KwDelegate)
         {
-            If (!ParseDelegate(cursor, diagnostics, source)) Return false;
+            declarationValid = ParseDelegate(cursor, diagnostics, source);
         }
         ElseIf (IsStaticTypeStart(cursor))
         {
-            If (!ParseType(cursor, diagnostics, source)) Return false;
+            declarationValid = ParseType(cursor, diagnostics, source);
         }
         ElseIf (kind == TokenKind.KwUnsafe &&
             KindAt(cursor, cursor.Position + 1) == TokenKind.KwAlias)
         {
             Report(cursor, diagnostics, source, "Invalid Unsafe Alias Position",
                 "Unsafe Alias declarations are only valid in the file prologue");
-            Return false;
+            declarationValid = false;
         }
         ElseIf (kind == TokenKind.KwFunction)
         {
-            If (!ParseFunction(cursor, diagnostics, source)) Return false;
+            declarationValid = ParseFunction(cursor, diagnostics, source);
         }
         ElseIf (IsFunctionModifier(kind))
         {
@@ -1131,25 +1308,31 @@ Safe Function bool ValidatePrepared(SourceFile source, list tokens, bool hasUnsa
             {
                 Report(cursor, diagnostics, source, "Invalid Global Modifier",
                     "Function modifiers cannot be applied to globals");
-                Return false;
+                declarationValid = false;
             }
-            If (!ParseFunction(cursor, diagnostics, source)) Return false;
+            Else declarationValid = ParseFunction(cursor, diagnostics, source);
         }
         ElseIf (IsTypeStart(kind))
         {
-            If (!ParseType(cursor, diagnostics, source)) Return false;
+            declarationValid = ParseType(cursor, diagnostics, source);
         }
         ElseIf (IsGlobalStart(kind))
         {
-            If (!ParseGlobal(cursor, diagnostics, source)) Return false;
+            declarationValid = ParseGlobal(cursor, diagnostics, source);
         }
         Else
         {
-            Report(cursor, diagnostics, source, "Unexpected top-level token", "expected Get, global, Function, Class, Struct, Enum, or Interface");
-            Return false;
+            Report(cursor, diagnostics, source, "Unexpected Top-Level Token",
+                "expected Get, global, Function, Class, Struct, Enum, or Interface");
+            declarationValid = false;
+        }
+        If (!declarationValid)
+        {
+            valid = false;
+            SynchronizeTopLevel(cursor, declarationStart, declarationLine);
         }
     }
-    Return !IO.Kinal.Compiler.Core.Diagnostics.HasAny(diagnostics);
+    Return valid && !IO.Kinal.Compiler.Core.Diagnostics.HasAny(diagnostics);
 }
 
 Safe Function bool Validate(SourceFile source, list tokens, list diagnostics)
@@ -1969,7 +2152,12 @@ Safe Function StatementNode ParseAstBlock(ParseCursor cursor)
     StatementNode block = New StatementNode([int](StatementKind.Block),
         IO.Kinal.Compiler.Lex.Token.Line(token), IO.Kinal.Compiler.Lex.Token.Column(token));
     While (!IsEnd(cursor) && CurrentKind(cursor) != TokenKind.RightBrace)
+    {
+        int statementStart = cursor.Position;
         block.AddChild(ParseAstStatement(cursor));
+        If (cursor.Position <= statementStart)
+            SynchronizeStatement(cursor, statementStart);
+    }
     BuilderExpect(cursor, TokenKind.RightBrace, "Expected '}'",
         "Statement block is not closed");
     Return block;
@@ -2680,9 +2868,7 @@ Safe Function void ReadTypeMembers(ParseCursor cursor, TypeDecl type, SyntaxTree
 
         Report(cursor, cursor.Diagnostics, cursor.Source, "Expected Identifier",
             "Expected field or type member declaration");
-        While (!IsEnd(cursor) && CurrentKind(cursor) != TokenKind.Semicolon &&
-               CurrentKind(cursor) != TokenKind.RightBrace) Advance(cursor);
-        Match(cursor, TokenKind.Semicolon);
+        SynchronizeTypeMember(cursor, cursor.Position);
         Jump Dispatch;
 
         Record Done
@@ -2897,9 +3083,11 @@ Safe Function SyntaxTree Build(SourceFile source, list tokens, list diagnostics)
 
         If (!IsTypeStart(CurrentKind(cursor)))
         {
+            int recoveryStart = cursor.Position;
+            int recoveryLine = IO.Kinal.Compiler.Lex.Token.Line(CurrentToken(cursor));
             Report(cursor, diagnostics, source, "Unexpected Top-Level Token",
                 "Expected a top-level declaration");
-            Advance(cursor);
+            SynchronizeTopLevel(cursor, recoveryStart, recoveryLine);
             Jump Dispatch;
         }
 

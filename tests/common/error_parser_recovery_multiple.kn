@@ -1,0 +1,17 @@
+Unit Tests.ErrorParserRecoveryMultiple;
+
+Class Sample
+{
+    Function int Run()
+    {
+        int first = 1
+        int second = 2;
+        int third = 3
+        Return second;
+    }
+}
+
+Static Function int Main()
+{
+    Return 0;
+}

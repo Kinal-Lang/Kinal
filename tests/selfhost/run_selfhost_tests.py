@@ -351,6 +351,82 @@ def main() -> int:
         }
     )
 
+    recovery_fixtures = [
+        (
+            root / "tests" / "common" / "error_parser_recovery_multiple.kn",
+            "Expected Semicolon",
+        ),
+        (
+            root / "tests" / "common" / "error_top_level_recovery_multiple.kn",
+            "Unexpected Top-Level Token",
+        ),
+    ]
+    for recovery_fixture, expected_title in recovery_fixtures:
+        stage0_recovery = run(
+            [
+                str(stage0),
+                "build",
+                "--no-module-discovery",
+                "--color",
+                "never",
+                "--emit",
+                "check",
+                str(recovery_fixture),
+                "-o",
+                str(out_dir / f"{recovery_fixture.stem}-stage0.kcheck"),
+            ],
+            cwd=root,
+        )
+        stage1_recovery = run(
+            [str(compiler), "check-source", str(recovery_fixture)],
+            cwd=root,
+        )
+        stage0_recovery_output = (
+            (stage0_recovery.stdout or "") + (stage0_recovery.stderr or "")
+        )
+        stage1_recovery_output = (
+            (stage1_recovery.stdout or "") + (stage1_recovery.stderr or "")
+        )
+        require(
+            stage0_recovery.returncode != 0
+            and expected_title in stage0_recovery_output,
+            f"stage0 panic-recovery fixture changed: {recovery_fixture}",
+            stage0_recovery,
+        )
+        require(
+            stage1_recovery.returncode != 0
+            and expected_title in stage1_recovery_output,
+            f"stage1 panic recovery failed: {recovery_fixture}",
+            stage1_recovery,
+        )
+        stage0_recovery_count = sum(
+            1
+            for line in stage0_recovery_output.splitlines()
+            if line.startswith("[Parser]")
+        )
+        stage1_recovery_count = sum(
+            1
+            for line in stage1_recovery_output.splitlines()
+            if line.startswith("[Parser]")
+        )
+        require(
+            stage0_recovery_count == 2,
+            f"stage0 panic-recovery diagnostic count changed: {recovery_fixture}",
+            stage0_recovery,
+        )
+        require(
+            stage1_recovery_count == stage0_recovery_count,
+            f"panic-recovery diagnostic count differs: {recovery_fixture}",
+            stage1_recovery,
+        )
+    results.append(
+        {
+            "name": "parser_panic_recovery",
+            "ok": True,
+            "files": len(recovery_fixtures),
+        }
+    )
+
     switch_fixture = root / "tests" / "selfhost" / "fixtures" / "switch_expression.kn"
     switch_stage0_path = out_dir / "switch-expression-stage0.kast"
     switch_stage0 = run(

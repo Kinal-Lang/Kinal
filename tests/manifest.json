@@ -1132,6 +1132,16 @@
     "expect_error": "[Parser] Expected ')'"
   },
   {
+    "name": "error_parser_recovery_multiple",
+    "file": "tests/common/error_parser_recovery_multiple.kn",
+    "expect_error": "[Parser] Expected Semicolon"
+  },
+  {
+    "name": "error_top_level_recovery_multiple",
+    "file": "tests/common/error_top_level_recovery_multiple.kn",
+    "expect_error": "[Parser] Unexpected Top-Level Token"
+  },
+  {
     "name": "error_get_alias_reversed",
     "file": "tests/common/error_get_alias_reversed.kn",
     "expect_error": "[Parser] Invalid Get Alias"
