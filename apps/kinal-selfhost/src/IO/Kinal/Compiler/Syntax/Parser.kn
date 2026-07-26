@@ -56,11 +56,13 @@ Class PreparedTokenStream
 {
     Public list Tokens;
     Public bool HasUnsafeAlias;
+    Public bool HasPreparationError;
 
-    Public Safe Constructor(list tokens, bool hasUnsafeAlias)
+    Public Safe Constructor(list tokens, bool hasUnsafeAlias, bool hasPreparationError)
     {
         This.Tokens = tokens;
         This.HasUnsafeAlias = hasUnsafeAlias;
+        This.HasPreparationError = hasPreparationError;
     }
 }
 
@@ -75,25 +77,107 @@ Safe Function TokenKind ListTokenKindAt(list tokens, int index)
     Return IO.Kinal.Compiler.Lex.Token.Kind(ListTokenAt(tokens, index));
 }
 
-Safe Function int UnsafeAliasTerminator(list tokens, int start, int line)
+Safe Function void ReportToken(list diagnostics, SourceFile source, string token,
+                               string title, string detail)
 {
-    int terminator = -1;
-    int index = start;
-    While (index < tokens.Count())
-    {
-        string token = ListTokenAt(tokens, index);
-        If (IO.Kinal.Compiler.Lex.Token.Line(token) != line) Break;
-        If (IO.Kinal.Compiler.Lex.Token.Kind(token) == TokenKind.Semicolon)
-            terminator = index;
-        index = index + 1;
-    }
-    Return terminator;
+    string text = IO.Kinal.Compiler.Lex.Token.Text(token);
+    int length = IO.Text.Length(text);
+    If (length < 1) length = 1;
+    IO.Kinal.Compiler.Core.Diagnostics.Add(diagnostics, source, "Parser", title, detail,
+        IO.Kinal.Compiler.Lex.Token.Line(token),
+        IO.Kinal.Compiler.Lex.Token.Column(token), length);
 }
 
-Safe Function PreparedTokenStream PrepareTokens(list tokens)
+Safe Function bool IsUnsafeAliasLiteral(TokenKind kind)
+{
+    Return Switch (kind)
+    {
+        Case(TokenKind.Number) { true; }
+        Case(TokenKind.String) { true; }
+        Case(TokenKind.Character) { true; }
+        Case(TokenKind.KwTrue) { true; }
+        Case(TokenKind.KwFalse) { true; }
+        Case(TokenKind.KwNull) { true; }
+        Case(default) { false; }
+    };
+}
+
+Safe Function bool IsUnsafeAliasOperatorOrPunctuation(TokenKind kind)
+{
+    Return Switch (kind)
+    {
+        Case(TokenKind.LeftParen) { true; }
+        Case(TokenKind.RightParen) { true; }
+        Case(TokenKind.LeftBrace) { true; }
+        Case(TokenKind.RightBrace) { true; }
+        Case(TokenKind.LeftBracket) { true; }
+        Case(TokenKind.RightBracket) { true; }
+        Case(TokenKind.Comma) { true; }
+        Case(TokenKind.Semicolon) { true; }
+        Case(TokenKind.Dot) { true; }
+        Case(TokenKind.Colon) { true; }
+        Case(TokenKind.Question) { true; }
+        Case(TokenKind.At) { true; }
+        Case(TokenKind.Plus) { true; }
+        Case(TokenKind.Minus) { true; }
+        Case(TokenKind.Star) { true; }
+        Case(TokenKind.Slash) { true; }
+        Case(TokenKind.Percent) { true; }
+        Case(TokenKind.Assign) { true; }
+        Case(TokenKind.PlusPlus) { true; }
+        Case(TokenKind.MinusMinus) { true; }
+        Case(TokenKind.PlusAssign) { true; }
+        Case(TokenKind.MinusAssign) { true; }
+        Case(TokenKind.StarAssign) { true; }
+        Case(TokenKind.SlashAssign) { true; }
+        Case(TokenKind.PercentAssign) { true; }
+        Case(TokenKind.Equal) { true; }
+        Case(TokenKind.NotEqual) { true; }
+        Case(TokenKind.Less) { true; }
+        Case(TokenKind.LessEqual) { true; }
+        Case(TokenKind.Greater) { true; }
+        Case(TokenKind.GreaterEqual) { true; }
+        Case(TokenKind.AndAnd) { true; }
+        Case(TokenKind.OrOr) { true; }
+        Case(TokenKind.Not) { true; }
+        Case(TokenKind.Ampersand) { true; }
+        Case(TokenKind.BitOr) { true; }
+        Case(TokenKind.Xor) { true; }
+        Case(TokenKind.ShiftLeft) { true; }
+        Case(TokenKind.ShiftRight) { true; }
+        Case(TokenKind.Tilde) { true; }
+        Case(default) { false; }
+    };
+}
+
+Safe Function bool CanUseUnsafeAliasSource(TokenKind kind, bool allowTokens)
+{
+    If (kind == TokenKind.Identifier || IsUnsafeAliasLiteral(kind) ||
+        IsKeywordToken(kind) || IsPrimitiveTypeToken(kind)) Return true;
+    Return allowTokens && IsUnsafeAliasOperatorOrPunctuation(kind);
+}
+
+Safe Function bool CanUseUnsafeAliasTarget(TokenKind kind, bool allowTokens)
+{
+    If (IsUnsafeAliasLiteral(kind) || IsKeywordToken(kind) ||
+        IsPrimitiveTypeToken(kind)) Return true;
+    Return allowTokens && IsUnsafeAliasOperatorOrPunctuation(kind);
+}
+
+Safe Function bool IsUnsafeAliasTerminator(list tokens, int position)
+{
+    If (ListTokenKindAt(tokens, position) != TokenKind.Semicolon) Return false;
+    If (position + 1 >= tokens.Count()) Return true;
+    If (ListTokenKindAt(tokens, position + 1) == TokenKind.Eof) Return true;
+    Return IO.Kinal.Compiler.Lex.Token.Line(ListTokenAt(tokens, position + 1)) !=
+        IO.Kinal.Compiler.Lex.Token.Line(ListTokenAt(tokens, position));
+}
+
+Safe Function PreparedTokenStream PrepareTokens(SourceFile source, list tokens, list diagnostics)
 {
     UnsafeAliasRule firstRule = null;
     bool hasUnsafeAlias = false;
+    bool preparationError = false;
     int position = 0;
     While (position < tokens.Count())
     {
@@ -106,38 +190,116 @@ Safe Function PreparedTokenStream PrepareTokens(list tokens)
         If (!triple && !keyword) Break;
         hasUnsafeAlias = true;
 
-        int line = IO.Kinal.Compiler.Lex.Token.Line(ListTokenAt(tokens, position));
         int sourceStart = position + (triple ? 4 : 2);
-        int separator = sourceStart;
-        While (separator < tokens.Count() &&
-               ListTokenKindAt(tokens, separator) != TokenKind.KwBy &&
-               IO.Kinal.Compiler.Lex.Token.Line(ListTokenAt(tokens, separator)) == line)
-            separator = separator + 1;
-        int terminator = UnsafeAliasTerminator(tokens, separator + 1, line);
-        If (separator <= sourceStart || terminator <= separator + 1) Break;
-
         UnsafeAliasRule rule = New UnsafeAliasRule();
-        int index = sourceStart;
-        While (index < separator)
+        position = sourceStart;
+        bool invalid = false;
+        If (triple)
         {
-            rule.SourceTokens.Add(ListTokenAt(tokens, index));
-            index = index + 1;
+            string firstSource = ListTokenAt(tokens, position);
+            While (position < tokens.Count() &&
+                   ListTokenKindAt(tokens, position) != TokenKind.KwBy)
+            {
+                If (!CanUseUnsafeAliasSource(ListTokenKindAt(tokens, position), true))
+                {
+                    ReportToken(diagnostics, source, ListTokenAt(tokens, position),
+                        "Invalid Unsafe Alias",
+                        "Unsafe Unsafe Unsafe Alias requires token/literal/keyword source pieces");
+                    preparationError = true;
+                    invalid = true;
+                    Break;
+                }
+                rule.SourceTokens.Add(ListTokenAt(tokens, position));
+                position = position + 1;
+            }
+            If (invalid) Break;
+            If (rule.SourceTokens.Count() == 0)
+            {
+                ReportToken(diagnostics, source, firstSource, "Invalid Unsafe Alias",
+                    "Unsafe Unsafe Unsafe Alias requires a token/literal/keyword source");
+                preparationError = true;
+                Break;
+            }
+            If (ListTokenKindAt(tokens, position) != TokenKind.KwBy)
+            {
+                ReportToken(diagnostics, source, ListTokenAt(tokens, position),
+                    "Expected By", "Unsafe Alias requires 'By'");
+                preparationError = true;
+                Break;
+            }
+            position = position + 1;
+            While (position < tokens.Count() &&
+                   !IsUnsafeAliasTerminator(tokens, position))
+            {
+                If (!CanUseUnsafeAliasTarget(ListTokenKindAt(tokens, position), true))
+                {
+                    ReportToken(diagnostics, source, ListTokenAt(tokens, position),
+                        "Invalid Unsafe Alias",
+                        "Unsafe Unsafe Unsafe Alias requires token/literal/keyword target pieces");
+                    preparationError = true;
+                    invalid = true;
+                    Break;
+                }
+                rule.TargetTokens.Add(ListTokenAt(tokens, position));
+                position = position + 1;
+            }
+            If (invalid) Break;
+            If (rule.TargetTokens.Count() == 0)
+            {
+                ReportToken(diagnostics, source, ListTokenAt(tokens, position),
+                    "Invalid Unsafe Alias",
+                    "Unsafe Unsafe Unsafe Alias requires a token/literal/keyword target");
+                preparationError = true;
+                Break;
+            }
         }
-        index = separator + 1;
-        While (index < terminator)
+        Else
         {
-            rule.TargetTokens.Add(ListTokenAt(tokens, index));
-            index = index + 1;
+            string sourceToken = ListTokenAt(tokens, position);
+            position = position + 1;
+            If (!CanUseUnsafeAliasSource(IO.Kinal.Compiler.Lex.Token.Kind(sourceToken), false))
+            {
+                ReportToken(diagnostics, source, sourceToken, "Invalid Unsafe Alias",
+                    "Unsafe Alias only supports keyword or literal aliases");
+                preparationError = true;
+                Break;
+            }
+            rule.SourceTokens.Add(sourceToken);
+            If (ListTokenKindAt(tokens, position) != TokenKind.KwBy)
+            {
+                ReportToken(diagnostics, source, ListTokenAt(tokens, position),
+                    "Expected By", "Unsafe Alias requires 'By'");
+                preparationError = true;
+                Break;
+            }
+            position = position + 1;
+            string targetToken = ListTokenAt(tokens, position);
+            position = position + 1;
+            If (!CanUseUnsafeAliasTarget(IO.Kinal.Compiler.Lex.Token.Kind(targetToken), false))
+            {
+                ReportToken(diagnostics, source, targetToken, "Invalid Unsafe Alias",
+                    "Unsafe Alias only supports keyword or literal targets");
+                preparationError = true;
+                Break;
+            }
+            rule.TargetTokens.Add(targetToken);
         }
-        If (!triple && (rule.SourceTokens.Count() != 1 || rule.TargetTokens.Count() != 1)) Break;
+        If (ListTokenKindAt(tokens, position) != TokenKind.Semicolon)
+        {
+            ReportToken(diagnostics, source, ListTokenAt(tokens, position),
+                "Expected Semicolon", "Missing ';' after Unsafe Alias");
+            preparationError = true;
+            Break;
+        }
+        position = position + 1;
+
         // C stage0 resolves overlapping aliases from the most recently
         // declared rule to the oldest rule.
         rule.Next = firstRule;
         firstRule = rule;
-        position = terminator + 1;
     }
 
-    If (firstRule == null) Return New PreparedTokenStream(tokens, hasUnsafeAlias);
+    If (!hasUnsafeAlias) Return New PreparedTokenStream(tokens, false, false);
     list prepared = list.Create();
     While (position < tokens.Count())
     {
@@ -164,7 +326,10 @@ Safe Function PreparedTokenStream PrepareTokens(list tokens)
         }
         position = position + match.SourceTokens.Count();
     }
-    Return New PreparedTokenStream(prepared, hasUnsafeAlias);
+    If (prepared.Count() == 0 ||
+        ListTokenKindAt(prepared, prepared.Count() - 1) != TokenKind.Eof)
+        prepared.Add(ListTokenAt(tokens, tokens.Count() - 1));
+    Return New PreparedTokenStream(prepared, hasUnsafeAlias, preparationError);
 }
 
 Safe Function string RawAt(ParseCursor cursor, int index)
@@ -220,12 +385,7 @@ Safe Function bool MatchContextual(ParseCursor cursor, string text)
 
 Safe Function void Report(ParseCursor cursor, list diagnostics, SourceFile source, string title, string detail)
 {
-    string token = CurrentToken(cursor);
-    string text = IO.Kinal.Compiler.Lex.Token.Text(token);
-    int length = IO.Text.Length(text);
-    If (length < 1) length = 1;
-    IO.Kinal.Compiler.Core.Diagnostics.Add(diagnostics, source, "Parser", title, detail,
-        IO.Kinal.Compiler.Lex.Token.Line(token), IO.Kinal.Compiler.Lex.Token.Column(token), length);
+    ReportToken(diagnostics, source, CurrentToken(cursor), title, detail);
 }
 
 Safe Function bool Expect(ParseCursor cursor, list diagnostics, SourceFile source,
@@ -891,9 +1051,16 @@ Safe Function bool ParseGlobal(ParseCursor cursor, list diagnostics, SourceFile 
 }
 
 Safe Function bool ValidatePrepared(SourceFile source, list tokens, bool hasUnsafeAlias,
-                                   list diagnostics)
+                                   bool hasPreparationError, list diagnostics)
 {
     ParseCursor cursor = New ParseCursor(tokens);
+    If (hasPreparationError)
+    {
+        If (!IsEnd(cursor))
+            Report(cursor, diagnostics, source, "Unexpected Top-Level Token",
+                "Expected a top-level declaration after the invalid Unsafe Alias");
+        Return false;
+    }
     If (hasUnsafeAlias && CurrentKind(cursor) == TokenKind.KwUnit)
     {
         Report(cursor, diagnostics, source, "Invalid Unit With Unsafe Alias",
@@ -977,8 +1144,9 @@ Safe Function bool ValidatePrepared(SourceFile source, list tokens, bool hasUnsa
 
 Safe Function bool Validate(SourceFile source, list tokens, list diagnostics)
 {
-    PreparedTokenStream prepared = PrepareTokens(tokens);
-    Return ValidatePrepared(source, prepared.Tokens, prepared.HasUnsafeAlias, diagnostics);
+    PreparedTokenStream prepared = PrepareTokens(source, tokens, diagnostics);
+    Return ValidatePrepared(source, prepared.Tokens, prepared.HasUnsafeAlias,
+        prepared.HasPreparationError, diagnostics);
 }
 
 Safe Function string JoinTokenText(ParseCursor cursor, int first, int end)
@@ -2454,9 +2622,9 @@ Safe Function FieldDecl ReadGlobalNode(ParseCursor cursor, SyntaxAttribute attri
 
 Safe Function SyntaxTree Build(SourceFile source, list tokens, list diagnostics)
 {
-    PreparedTokenStream prepared = PrepareTokens(tokens);
+    PreparedTokenStream prepared = PrepareTokens(source, tokens, diagnostics);
     If (!ValidatePrepared(source, prepared.Tokens, prepared.HasUnsafeAlias,
-                          diagnostics)) Return null;
+                          prepared.HasPreparationError, diagnostics)) Return null;
     ParseCursor cursor = New ParseCursor(prepared.Tokens);
     string unitName = "";
     If (Match(cursor, TokenKind.KwUnit))

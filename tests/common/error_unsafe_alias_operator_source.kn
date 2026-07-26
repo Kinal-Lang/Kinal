@@ -1,0 +1,6 @@
+Unsafe Alias + By true;
+
+Static Function int Main()
+{
+    Return 0;
+}

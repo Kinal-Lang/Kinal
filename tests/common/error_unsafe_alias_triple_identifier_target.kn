@@ -1,0 +1,6 @@
+Unsafe Unsafe Unsafe Alias marker By replacement;
+
+Static Function int Main()
+{
+    Return 0;
+}

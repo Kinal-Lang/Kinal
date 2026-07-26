@@ -171,6 +171,66 @@ def main() -> int:
     )
     results.append({"name": "unsafe_alias_unit_diagnostic", "ok": True})
 
+    unsafe_alias_category_fixtures = [
+        root / "tests" / "common" / "error_unsafe_alias_operator_source.kn",
+        root / "tests" / "common" / "error_unsafe_alias_identifier_target.kn",
+        root / "tests" / "common" / "error_unsafe_alias_triple_identifier_target.kn",
+    ]
+    for unsafe_alias_category_fixture in unsafe_alias_category_fixtures:
+        stage0_category = run(
+            [
+                str(stage0),
+                "build",
+                "--no-module-discovery",
+                "--color",
+                "never",
+                "--emit",
+                "check",
+                str(unsafe_alias_category_fixture),
+                "-o",
+                str(out_dir / f"{unsafe_alias_category_fixture.stem}-stage0.kcheck"),
+            ],
+            cwd=root,
+        )
+        stage1_category = run(
+            [str(compiler), "check-source", str(unsafe_alias_category_fixture)],
+            cwd=root,
+        )
+        stage0_category_output = (stage0_category.stdout or "") + (stage0_category.stderr or "")
+        stage1_category_output = (stage1_category.stdout or "") + (stage1_category.stderr or "")
+        require(
+            stage0_category.returncode != 0
+            and "[Parser]" in stage0_category_output
+            and "Invalid Unsafe Alias" in stage0_category_output,
+            f"stage0 accepted invalid Unsafe Alias token category: {unsafe_alias_category_fixture}",
+            stage0_category,
+        )
+        require(
+            stage1_category.returncode != 0
+            and "[Parser]" in stage1_category_output
+            and "Invalid Unsafe Alias" in stage1_category_output,
+            f"stage1 differs on Unsafe Alias token category: {unsafe_alias_category_fixture}",
+            stage1_category,
+        )
+        stage0_parser_diagnostics = sum(
+            1 for line in stage0_category_output.splitlines() if line.startswith("[Parser]")
+        )
+        stage1_parser_diagnostics = sum(
+            1 for line in stage1_category_output.splitlines() if line.startswith("[Parser]")
+        )
+        require(
+            stage0_parser_diagnostics == stage1_parser_diagnostics,
+            f"Unsafe Alias diagnostic count differs: {unsafe_alias_category_fixture}",
+            stage1_category,
+        )
+    results.append(
+        {
+            "name": "unsafe_alias_category_diagnostics",
+            "ok": True,
+            "files": len(unsafe_alias_category_fixtures),
+        }
+    )
+
     switch_fixture = root / "tests" / "selfhost" / "fixtures" / "switch_expression.kn"
     switch_stage0_path = out_dir / "switch-expression-stage0.kast"
     switch_stage0 = run(

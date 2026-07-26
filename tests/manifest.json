@@ -1087,6 +1087,21 @@
     "expect_error": "[Parser] Invalid Unit With Unsafe Alias"
   },
   {
+    "name": "error_unsafe_alias_operator_source",
+    "file": "tests/common/error_unsafe_alias_operator_source.kn",
+    "expect_error": "[Parser] Invalid Unsafe Alias"
+  },
+  {
+    "name": "error_unsafe_alias_identifier_target",
+    "file": "tests/common/error_unsafe_alias_identifier_target.kn",
+    "expect_error": "[Parser] Invalid Unsafe Alias"
+  },
+  {
+    "name": "error_unsafe_alias_triple_identifier_target",
+    "file": "tests/common/error_unsafe_alias_triple_identifier_target.kn",
+    "expect_error": "[Parser] Invalid Unsafe Alias"
+  },
+  {
     "name": "error_bare_function_expr",
     "file": "tests/common/error_bare_function_expr.kn",
     "expect_error": "[Parser] Unexpected Token"
