@@ -742,6 +742,29 @@ def main() -> int:
 
     source_root = root / "apps" / "kinal-selfhost" / "src"
     source_files = sorted(source_root.rglob("*.kn"))
+    token_source = source_root / "IO" / "Kinal" / "Compiler" / "Lex" / "Token.kn"
+    token_text = token_source.read_text(encoding="utf-8")
+    for declaration in (
+        "Class Token",
+        "Public TokenKind Kind;",
+        "Public string Text;",
+        "Public int Line;",
+        "Public int Column;",
+    ):
+        require(declaration in token_text, f"structured Token declaration is missing {declaration!r}")
+    require("Safe Function string Encode(" not in token_text,
+            "serialized string Token.Encode ABI returned")
+    require("Safe Function string Part(" not in token_text,
+            "serialized string Token.Part ABI returned")
+    require("Separator()" not in token_text,
+            "serialized token separator returned")
+    for source_file in source_files:
+        require(
+            "Token.Encode(" not in source_file.read_text(encoding="utf-8"),
+            f"serialized Token.Encode call returned: {source_file}",
+        )
+    results.append({"name": "structured_token_boundary", "ok": True})
+
     project_file = root / "apps" / "kinal-selfhost" / "kinal.knproj"
     project = run([str(compiler), "project", str(project_file)], cwd=root)
     require(project.returncode == 0, "stage1 project loader failed", project)

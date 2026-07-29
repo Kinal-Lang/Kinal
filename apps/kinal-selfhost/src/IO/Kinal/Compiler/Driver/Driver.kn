@@ -414,7 +414,7 @@ Safe Function int Run(string[] args)
         int i = 0;
         While (i < tokens.Count())
         {
-            string token = [string](tokens.Fetch(i));
+            Token token = [Token](tokens.Fetch(i));
             If (command == "lex") IO.Console.PrintLine(IO.Kinal.Compiler.Lex.Token.Dump(token));
             If (command == "tokens") IO.Console.PrintLine(IO.Kinal.Compiler.Lex.Token.MachineDump(token));
             i = i + 1;

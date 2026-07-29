@@ -56,8 +56,8 @@ Class UnsafeAliasRule
         int i = 0;
         While (i < This.SourceTokens.Count())
         {
-            string expected = [string](This.SourceTokens.Fetch(i));
-            string actual = [string](tokens.Fetch(position + i));
+            Token expected = [Token](This.SourceTokens.Fetch(i));
+            Token actual = [Token](tokens.Fetch(position + i));
             If (IO.Kinal.Compiler.Lex.Token.Kind(expected) !=
                     IO.Kinal.Compiler.Lex.Token.Kind(actual) ||
                 IO.Kinal.Compiler.Lex.Token.Text(expected) !=
@@ -82,10 +82,10 @@ Class PreparedTokenStream
     }
 }
 
-Safe Function string ListTokenAt(list tokens, int index)
+Safe Function Token ListTokenAt(list tokens, int index)
 {
-    If (index < 0 || index >= tokens.Count()) Return "";
-    Return [string](tokens.Fetch(index));
+    If (index < 0 || index >= tokens.Count()) Return null;
+    Return [Token](tokens.Fetch(index));
 }
 
 Safe Function TokenKind ListTokenKindAt(list tokens, int index)
@@ -93,7 +93,7 @@ Safe Function TokenKind ListTokenKindAt(list tokens, int index)
     Return IO.Kinal.Compiler.Lex.Token.Kind(ListTokenAt(tokens, index));
 }
 
-Safe Function void ReportToken(list diagnostics, SourceFile source, string token,
+Safe Function void ReportToken(list diagnostics, SourceFile source, Token token,
                                string title, string detail)
 {
     string text = IO.Kinal.Compiler.Lex.Token.Text(token);
@@ -104,7 +104,7 @@ Safe Function void ReportToken(list diagnostics, SourceFile source, string token
         IO.Kinal.Compiler.Lex.Token.Column(token), length);
 }
 
-Safe Function void ReportWarningToken(list diagnostics, SourceFile source, string token,
+Safe Function void ReportWarningToken(list diagnostics, SourceFile source, Token token,
                                       string title, string detail)
 {
     string text = IO.Kinal.Compiler.Lex.Token.Text(token);
@@ -223,7 +223,7 @@ Safe Function PreparedTokenStream PrepareTokens(SourceFile source, list tokens, 
         bool invalid = false;
         If (triple)
         {
-            string firstSource = ListTokenAt(tokens, position);
+            Token firstSource = ListTokenAt(tokens, position);
             While (position < tokens.Count() &&
                    ListTokenKindAt(tokens, position) != TokenKind.KwBy)
             {
@@ -282,7 +282,7 @@ Safe Function PreparedTokenStream PrepareTokens(SourceFile source, list tokens, 
         }
         Else
         {
-            string sourceToken = ListTokenAt(tokens, position);
+            Token sourceToken = ListTokenAt(tokens, position);
             position = position + 1;
             If (!CanUseUnsafeAliasSource(IO.Kinal.Compiler.Lex.Token.Kind(sourceToken), false))
             {
@@ -300,7 +300,7 @@ Safe Function PreparedTokenStream PrepareTokens(SourceFile source, list tokens, 
                 Break;
             }
             position = position + 1;
-            string targetToken = ListTokenAt(tokens, position);
+            Token targetToken = ListTokenAt(tokens, position);
             position = position + 1;
             If (!CanUseUnsafeAliasTarget(IO.Kinal.Compiler.Lex.Token.Kind(targetToken), false))
             {
@@ -339,12 +339,12 @@ Safe Function PreparedTokenStream PrepareTokens(SourceFile source, list tokens, 
             Continue;
         }
 
-        string sourceToken = ListTokenAt(tokens, position);
+        Token sourceToken = ListTokenAt(tokens, position);
         int targetIndex = 0;
         While (targetIndex < match.TargetTokens.Count())
         {
-            string targetToken = [string](match.TargetTokens.Fetch(targetIndex));
-            prepared.Add(IO.Kinal.Compiler.Lex.Token.Encode(
+            Token targetToken = [Token](match.TargetTokens.Fetch(targetIndex));
+            prepared.Add(IO.Kinal.Compiler.Lex.Token.Create(
                 IO.Kinal.Compiler.Lex.Token.Kind(targetToken),
                 IO.Kinal.Compiler.Lex.Token.Text(targetToken),
                 IO.Kinal.Compiler.Lex.Token.Line(sourceToken),
@@ -359,10 +359,10 @@ Safe Function PreparedTokenStream PrepareTokens(SourceFile source, list tokens, 
     Return New PreparedTokenStream(prepared, hasUnsafeAlias, preparationError);
 }
 
-Safe Function string RawAt(ParseCursor cursor, int index)
+Safe Function Token RawAt(ParseCursor cursor, int index)
 {
-    If (index < 0 || index >= cursor.Tokens.Count()) Return "";
-    Return [string](cursor.Tokens.Fetch(index));
+    If (index < 0 || index >= cursor.Tokens.Count()) Return null;
+    Return [Token](cursor.Tokens.Fetch(index));
 }
 
 Safe Function TokenKind KindAt(ParseCursor cursor, int index)
@@ -375,7 +375,7 @@ Safe Function TokenKind CurrentKind(ParseCursor cursor)
     Return KindAt(cursor, cursor.Position);
 }
 
-Safe Function string CurrentToken(ParseCursor cursor)
+Safe Function Token CurrentToken(ParseCursor cursor)
 {
     Return RawAt(cursor, cursor.Position);
 }
@@ -888,7 +888,7 @@ Safe Function bool IsRightAssociative(TokenKind kind)
            kind == TokenKind.SlashAssign || kind == TokenKind.PercentAssign;
 }
 
-Safe Function ExpressionNode NewExpression(int kind, string token)
+Safe Function ExpressionNode NewExpression(int kind, Token token)
 {
     Return New ExpressionNode(kind, IO.Kinal.Compiler.Lex.Token.Text(token),
         IO.Kinal.Compiler.Lex.Token.Line(token), IO.Kinal.Compiler.Lex.Token.Column(token));
@@ -935,7 +935,7 @@ Safe Function void ReadTypeArguments(ParseCursor cursor, ExpressionNode call)
     While (!IsEnd(cursor) && CurrentKind(cursor) != TokenKind.Greater)
     {
         int start = cursor.Position;
-        string location = CurrentToken(cursor);
+        Token location = CurrentToken(cursor);
         int depth = 0;
         While (!IsEnd(cursor))
         {
@@ -961,7 +961,7 @@ Safe Function void ReadTypeArguments(ParseCursor cursor, ExpressionNode call)
 
 Safe Function ExpressionNode ParseArrayLiteral(ParseCursor cursor)
 {
-    string token = CurrentToken(cursor);
+    Token token = CurrentToken(cursor);
     Advance(cursor);
     ExpressionNode collection = New ExpressionNode([int](ExpressionKind.ArrayLiteral), "",
         IO.Kinal.Compiler.Lex.Token.Line(token), IO.Kinal.Compiler.Lex.Token.Column(token));
@@ -987,7 +987,7 @@ Safe Function ExpressionNode ParseArrayLiteral(ParseCursor cursor)
 
 Safe Function ExpressionNode ParsePackageLiteral(ParseCursor cursor)
 {
-    string token = CurrentToken(cursor);
+    Token token = CurrentToken(cursor);
     Advance(cursor);
     ExpressionNode package = New ExpressionNode([int](ExpressionKind.PackageLiteral), "",
         IO.Kinal.Compiler.Lex.Token.Line(token), IO.Kinal.Compiler.Lex.Token.Column(token));
@@ -1008,7 +1008,7 @@ Safe Function ExpressionNode ParsePackageLiteral(ParseCursor cursor)
 
 Safe Function ExpressionNode ParseSwitchExpression(ParseCursor cursor)
 {
-    string token = CurrentToken(cursor);
+    Token token = CurrentToken(cursor);
     Advance(cursor);
     ExpressionNode value = New ExpressionNode([int](ExpressionKind.Switch), "",
         IO.Kinal.Compiler.Lex.Token.Line(token), IO.Kinal.Compiler.Lex.Token.Column(token));
@@ -1021,7 +1021,7 @@ Safe Function ExpressionNode ParseSwitchExpression(ParseCursor cursor)
         "Switch expression body is missing");
     While (!IsEnd(cursor) && CurrentKind(cursor) != TokenKind.RightBrace)
     {
-        string caseToken = CurrentToken(cursor);
+        Token caseToken = CurrentToken(cursor);
         If (!Match(cursor, TokenKind.KwCase))
         {
             Report(cursor, cursor.Diagnostics, cursor.Source, "Expected Case",
@@ -1057,7 +1057,7 @@ Safe Function ExpressionNode ParseSwitchExpression(ParseCursor cursor)
 
 Safe Function ExpressionNode ParseIfExpression(ParseCursor cursor)
 {
-    string token = CurrentToken(cursor);
+    Token token = CurrentToken(cursor);
     Advance(cursor);
     ExpressionNode value = New ExpressionNode([int](ExpressionKind.Conditional), "",
         IO.Kinal.Compiler.Lex.Token.Line(token), IO.Kinal.Compiler.Lex.Token.Column(token));
@@ -1173,7 +1173,7 @@ Safe Function string ReadLegacyArrayTypeSuffixes(ParseCursor cursor, string type
 
 Safe Function ExpressionNode ParseFunctionLiteral(ParseCursor cursor)
 {
-    string token = CurrentToken(cursor);
+    Token token = CurrentToken(cursor);
     Advance(cursor);
     int typeStart = cursor.Position;
     While (!IsEnd(cursor) && CurrentKind(cursor) != TokenKind.LeftParen) Advance(cursor);
@@ -1191,7 +1191,7 @@ Safe Function ExpressionNode ParseFunctionLiteral(ParseCursor cursor)
         int nameIndex = FindParameterName(cursor, parameterStart, parameterEnd);
         If (nameIndex >= parameterStart)
         {
-            string nameToken = RawAt(cursor, nameIndex);
+            Token nameToken = RawAt(cursor, nameIndex);
             ExpressionNode parameter = New ExpressionNode([int](ExpressionKind.Name),
                 IO.Kinal.Compiler.Lex.Token.Text(nameToken),
                 IO.Kinal.Compiler.Lex.Token.Line(nameToken),
@@ -1211,7 +1211,7 @@ Safe Function ExpressionNode ParseFunctionLiteral(ParseCursor cursor)
 
 Safe Function ExpressionNode ParseBlockLiteral(ParseCursor cursor)
 {
-    string token = CurrentToken(cursor);
+    Token token = CurrentToken(cursor);
     Advance(cursor);
     string blockName = "";
     If (CurrentKind(cursor) == TokenKind.Identifier &&
@@ -1336,7 +1336,7 @@ Safe Function void ReadFormattedParts(ExpressionNode value, string rawToken, boo
 }
 
 Safe Function ExpressionNode ParsePrefixedString(ParseCursor cursor, string firstPrefix,
-                                                   string location)
+                                                   Token location)
 {
     bool formatted = IsFormatPrefix(firstPrefix);
     bool raw = IsRawPrefix(firstPrefix);
@@ -1352,7 +1352,7 @@ Safe Function ExpressionNode ParsePrefixedString(ParseCursor cursor, string firs
         ElseIf (IsRawPrefix(prefix)) raw = true;
         ElseIf (IsCharacterPrefix(prefix)) characters = true;
     }
-    string stringToken = CurrentToken(cursor);
+    Token stringToken = CurrentToken(cursor);
     If (CurrentKind(cursor) == TokenKind.String ||
         CurrentKind(cursor) == TokenKind.BadString) Advance(cursor);
     ExpressionNode value = New ExpressionNode(
@@ -1423,7 +1423,7 @@ Safe Function bool LooksLikeFunctionLiteral(ParseCursor cursor)
 
 Safe Function ExpressionNode ParsePrimary(ParseCursor cursor)
 {
-    string token = CurrentToken(cursor);
+    Token token = CurrentToken(cursor);
     TokenKind kind = CurrentKind(cursor);
     If (kind == TokenKind.Number)
     {
@@ -1530,7 +1530,7 @@ Safe Function ExpressionNode ParsePostfix(ParseCursor cursor)
     ExpressionNode value = ParsePrimary(cursor);
     While (!IsEnd(cursor))
     {
-        string token = CurrentToken(cursor);
+        Token token = CurrentToken(cursor);
         If (IsGenericCallArgumentList(cursor))
         {
             ExpressionNode call = New ExpressionNode([int](ExpressionKind.Call), "",
@@ -1552,7 +1552,7 @@ Safe Function ExpressionNode ParsePostfix(ParseCursor cursor)
         }
         If (Match(cursor, TokenKind.Dot))
         {
-            string memberToken = CurrentToken(cursor);
+            Token memberToken = CurrentToken(cursor);
             Advance(cursor);
             ExpressionNode member = New ExpressionNode([int](ExpressionKind.Member),
                 IO.Kinal.Compiler.Lex.Token.Text(memberToken), value.Line, value.Column);
@@ -1596,7 +1596,7 @@ Safe Function ExpressionNode ParseUnary(ParseCursor cursor)
         kind == TokenKind.KwAwait || kind == TokenKind.PlusPlus ||
         kind == TokenKind.MinusMinus)
     {
-        string token = CurrentToken(cursor);
+        Token token = CurrentToken(cursor);
         Advance(cursor);
         ExpressionNode unary = NewExpression([int](ExpressionKind.Unary), token);
         unary.Operator = kind;
@@ -1616,7 +1616,7 @@ Safe Function ExpressionNode ParseExpression(ParseCursor cursor, int minimumPrec
             operatorKind == TokenKind.Greater) Break;
         int precedence = BinaryPrecedence(operatorKind);
         If (precedence < minimumPrecedence || precedence == 0) Break;
-        string operatorToken = CurrentToken(cursor);
+        Token operatorToken = CurrentToken(cursor);
         Advance(cursor);
         ExpressionNode binary = NewExpression([int](ExpressionKind.Binary), operatorToken);
         binary.Operator = operatorKind;
@@ -1728,7 +1728,7 @@ Safe Function int FindDeclarationName(ParseCursor cursor, bool allowContextualNa
 
 Safe Function StatementNode ParseAstBlock(ParseCursor cursor)
 {
-    string token = CurrentToken(cursor);
+    Token token = CurrentToken(cursor);
     BuilderExpect(cursor, TokenKind.LeftBrace, "Expected '{'",
         "Statement block is missing");
     StatementNode block = New StatementNode([int](StatementKind.Block),
@@ -1749,7 +1749,7 @@ Safe Function StatementNode ParseAstBlock(ParseCursor cursor)
 
 Safe Function StatementNode ParseAstFor(ParseCursor cursor)
 {
-    string token = CurrentToken(cursor);
+    Token token = CurrentToken(cursor);
     StatementNode value = New StatementNode([int](StatementKind.For),
         IO.Kinal.Compiler.Lex.Token.Line(token), IO.Kinal.Compiler.Lex.Token.Column(token));
     Advance(cursor);
@@ -1776,7 +1776,7 @@ Safe Function StatementNode ParseAstFor(ParseCursor cursor)
 
 Safe Function StatementNode ParseAstForeach(ParseCursor cursor)
 {
-    string token = CurrentToken(cursor);
+    Token token = CurrentToken(cursor);
     StatementNode value = New StatementNode([int](StatementKind.Foreach),
         IO.Kinal.Compiler.Lex.Token.Line(token), IO.Kinal.Compiler.Lex.Token.Column(token));
     Advance(cursor);
@@ -1803,7 +1803,7 @@ Safe Function StatementNode ParseAstForeach(ParseCursor cursor)
 
 Safe Function StatementNode ParseAstSwitch(ParseCursor cursor)
 {
-    string token = CurrentToken(cursor);
+    Token token = CurrentToken(cursor);
     StatementNode value = New StatementNode([int](StatementKind.Switch),
         IO.Kinal.Compiler.Lex.Token.Line(token), IO.Kinal.Compiler.Lex.Token.Column(token));
     Advance(cursor);
@@ -1816,7 +1816,7 @@ Safe Function StatementNode ParseAstSwitch(ParseCursor cursor)
         "Switch statement body is missing");
     While (!IsEnd(cursor) && CurrentKind(cursor) != TokenKind.RightBrace)
     {
-        string caseToken = CurrentToken(cursor);
+        Token caseToken = CurrentToken(cursor);
         If (!Match(cursor, TokenKind.KwCase))
         {
             Report(cursor, cursor.Diagnostics, cursor.Source, "Expected Case",
@@ -1848,7 +1848,7 @@ Safe Function StatementNode ParseAstSwitch(ParseCursor cursor)
 
 Safe Function StatementNode ParseAstTry(ParseCursor cursor)
 {
-    string token = CurrentToken(cursor);
+    Token token = CurrentToken(cursor);
     StatementNode value = New StatementNode([int](StatementKind.Try),
         IO.Kinal.Compiler.Lex.Token.Line(token), IO.Kinal.Compiler.Lex.Token.Column(token));
     Advance(cursor);
@@ -1887,7 +1887,7 @@ Safe Function StatementNode ParseAstTry(ParseCursor cursor)
 
 Safe Function StatementNode ParseAstUnsafeBlock(ParseCursor cursor)
 {
-    string token = CurrentToken(cursor);
+    Token token = CurrentToken(cursor);
     bool isUnsafe = CurrentKind(cursor) == TokenKind.KwUnsafe;
     StatementNode value = New StatementNode([int](StatementKind.UnsafeBlock),
         IO.Kinal.Compiler.Lex.Token.Line(token), IO.Kinal.Compiler.Lex.Token.Column(token));
@@ -1920,7 +1920,7 @@ Safe Function StatementNode ParseAstUnsafeBlock(ParseCursor cursor)
 
 Safe Function StatementNode ParseLocalFunctionStatement(ParseCursor cursor)
 {
-    string token = CurrentToken(cursor);
+    Token token = CurrentToken(cursor);
     Advance(cursor);
     int declarationStart = cursor.Position;
     int open = declarationStart;
@@ -1945,7 +1945,7 @@ Safe Function StatementNode ParseLocalFunctionStatement(ParseCursor cursor)
         int parameterNameIndex = FindParameterName(cursor, parameterStart, parameterEnd);
         If (parameterNameIndex >= parameterStart)
         {
-            string nameToken = RawAt(cursor, parameterNameIndex);
+            Token nameToken = RawAt(cursor, parameterNameIndex);
             ExpressionNode parameter = New ExpressionNode([int](ExpressionKind.Name),
                 IO.Kinal.Compiler.Lex.Token.Text(nameToken),
                 IO.Kinal.Compiler.Lex.Token.Line(nameToken),
@@ -1967,7 +1967,7 @@ Safe Function StatementNode ParseLocalFunctionStatement(ParseCursor cursor)
 
 Safe Function StatementNode ParseLocalTypeStatement(ParseCursor cursor)
 {
-    string token = CurrentToken(cursor);
+    Token token = CurrentToken(cursor);
     Advance(cursor);
     If (CurrentKind(cursor) == TokenKind.Identifier) Advance(cursor);
     While (!IsEnd(cursor) && CurrentKind(cursor) != TokenKind.LeftBrace &&
@@ -2036,7 +2036,7 @@ Safe Function StatementNode ParseVariableStatement(ParseCursor cursor, int line,
 
 Safe Function StatementNode ParseAstStatementCore(ParseCursor cursor)
 {
-    string token = CurrentToken(cursor);
+    Token token = CurrentToken(cursor);
     TokenKind kind = CurrentKind(cursor);
     int line = IO.Kinal.Compiler.Lex.Token.Line(token);
     int column = IO.Kinal.Compiler.Lex.Token.Column(token);
@@ -2261,7 +2261,7 @@ Safe Function StatementNode ParseAstStatementCore(ParseCursor cursor)
 
 Safe Function StatementNode ParseAstStatement(ParseCursor cursor)
 {
-    string token = CurrentToken(cursor);
+    Token token = CurrentToken(cursor);
     If (CurrentKind(cursor) == TokenKind.KwForeach)
         Return ParseAstStatementCore(cursor);
     If (!EnterStatement(cursor))
@@ -2288,7 +2288,7 @@ Safe Function int AccessFromModifier(TokenKind kind)
 Safe Function FunctionDecl ReadFunctionNode(ParseCursor cursor, bool constructor,
                                              bool isStatic, bool isAsync, bool isExtern, int safety)
 {
-    string declarationToken = CurrentToken(cursor);
+    Token declarationToken = CurrentToken(cursor);
     If (constructor)
     {
         Advance(cursor);
@@ -2310,7 +2310,7 @@ Safe Function FunctionDecl ReadFunctionNode(ParseCursor cursor, bool constructor
     int nameIndex = FindFunctionNamePosition(cursor, returnStart);
     If (nameIndex < returnStart)
     {
-        string invalidToken = RawAt(cursor, returnStart);
+        Token invalidToken = RawAt(cursor, returnStart);
         Report(cursor, cursor.Diagnostics, cursor.Source, "Expected function name",
             "Missing function name before parameter list");
         FunctionDecl invalid = New FunctionDecl("", "",
@@ -2322,7 +2322,7 @@ Safe Function FunctionDecl ReadFunctionNode(ParseCursor cursor, bool constructor
             SkipBalancedUnchecked(cursor, TokenKind.LeftBrace, TokenKind.RightBrace);
         Return invalid;
     }
-    string nameToken = RawAt(cursor, nameIndex);
+    Token nameToken = RawAt(cursor, nameIndex);
     FunctionDecl value = New FunctionDecl(
         IO.Kinal.Compiler.Lex.Token.Text(nameToken), JoinTokenText(cursor, returnStart, nameIndex),
         IO.Kinal.Compiler.Lex.Token.Line(nameToken), IO.Kinal.Compiler.Lex.Token.Column(nameToken));
@@ -2335,7 +2335,7 @@ Safe Function FunctionDecl ReadFunctionNode(ParseCursor cursor, bool constructor
     {
         While (!IsEnd(cursor) && CurrentKind(cursor) != TokenKind.Greater)
         {
-            string parameterToken = CurrentToken(cursor);
+            Token parameterToken = CurrentToken(cursor);
             value.AddTypeParameter(New TypeParameterDecl(
                 IO.Kinal.Compiler.Lex.Token.Text(parameterToken),
                 IO.Kinal.Compiler.Lex.Token.Line(parameterToken),
@@ -2370,7 +2370,7 @@ Safe Function void ReadTypeMembers(ParseCursor cursor, TypeDecl type, SyntaxTree
                 Match(cursor, TokenKind.Comma);
                 Continue;
             }
-            string nameToken = CurrentToken(cursor);
+            Token nameToken = CurrentToken(cursor);
             Advance(cursor);
             EnumMemberDecl member = New EnumMemberDecl(
                 IO.Kinal.Compiler.Lex.Token.Text(nameToken), ordinal);
@@ -2438,7 +2438,7 @@ Safe Function void ReadTypeMembers(ParseCursor cursor, TypeDecl type, SyntaxTree
         {
             TokenKind nestedKind = CurrentKind(cursor);
             Advance(cursor);
-            string nestedNameToken = CurrentToken(cursor);
+            Token nestedNameToken = CurrentToken(cursor);
             string nestedName = type.Name + "." +
                 IO.Kinal.Compiler.Lex.Token.Text(nestedNameToken);
             Advance(cursor);
@@ -2474,7 +2474,7 @@ Safe Function void ReadTypeMembers(ParseCursor cursor, TypeDecl type, SyntaxTree
         }
         If (CurrentKind(cursor) == TokenKind.KwFunction)
         {
-            string methodToken = CurrentToken(cursor);
+            Token methodToken = CurrentToken(cursor);
             FunctionDecl method = ReadFunctionNode(cursor, false, isStatic, isAsync, isExtern, safety);
             If (method.ReturnType == "" && method.Name == type.Name)
             {
@@ -2505,7 +2505,7 @@ Safe Function void ReadTypeMembers(ParseCursor cursor, TypeDecl type, SyntaxTree
             int propertyName = bodyStart - 1;
             If (propertyName >= propertyStart)
             {
-                string nameToken = RawAt(cursor, propertyName);
+                Token nameToken = RawAt(cursor, propertyName);
                 FieldDecl property = New FieldDecl(IO.Kinal.Compiler.Lex.Token.Text(nameToken),
                     JoinTokenText(cursor, propertyStart, propertyName),
                     IO.Kinal.Compiler.Lex.Token.Line(nameToken),
@@ -2525,7 +2525,7 @@ Safe Function void ReadTypeMembers(ParseCursor cursor, TypeDecl type, SyntaxTree
         int fieldName = FindDeclarationName(cursor, true);
         If (fieldName > fieldStart)
         {
-            string nameToken = RawAt(cursor, fieldName);
+            Token nameToken = RawAt(cursor, fieldName);
             FieldDecl field = New FieldDecl(IO.Kinal.Compiler.Lex.Token.Text(nameToken),
                 JoinTokenText(cursor, fieldStart, fieldName),
                 IO.Kinal.Compiler.Lex.Token.Line(nameToken), IO.Kinal.Compiler.Lex.Token.Column(nameToken));
@@ -2654,9 +2654,9 @@ Safe Function void ReadMetaParameters(ParseCursor cursor, MetaDecl meta)
 
 Safe Function MetaDecl ReadMetaNode(ParseCursor cursor)
 {
-    string metaToken = CurrentToken(cursor);
+    Token metaToken = CurrentToken(cursor);
     Advance(cursor);
-    string nameToken = CurrentToken(cursor);
+    Token nameToken = CurrentToken(cursor);
     string name = IO.Kinal.Compiler.Lex.Token.Text(nameToken);
     BuilderExpect(cursor, TokenKind.Identifier, "Expected Identifier",
         "Expected Meta name");
@@ -2773,7 +2773,7 @@ Safe Function FieldDecl ReadGlobalNode(ParseCursor cursor, SyntaxAttribute attri
             "Expected global variable name");
         Return null;
     }
-    string nameToken = RawAt(cursor, declarationName);
+    Token nameToken = RawAt(cursor, declarationName);
     FieldDecl global = New FieldDecl(IO.Kinal.Compiler.Lex.Token.Text(nameToken),
         JoinTokenText(cursor, declarationStart, declarationName),
         IO.Kinal.Compiler.Lex.Token.Line(nameToken), IO.Kinal.Compiler.Lex.Token.Column(nameToken));
@@ -2799,7 +2799,7 @@ Safe Function FieldDecl ReadGlobalNode(ParseCursor cursor, SyntaxAttribute attri
 
 Safe Function void ReadGetDeclaration(ParseCursor cursor, SyntaxTree tree)
 {
-    string location = CurrentToken(cursor);
+    Token location = CurrentToken(cursor);
     Advance(cursor);
     string name = ReadQualifiedName(cursor);
     If (Match(cursor, TokenKind.KwBy))
@@ -2821,14 +2821,14 @@ Safe Function void ReadGetDeclaration(ParseCursor cursor, SyntaxTree tree)
     {
         While (!IsEnd(cursor) && CurrentKind(cursor) != TokenKind.RightBrace)
         {
-            string memberToken = CurrentToken(cursor);
+            Token memberToken = CurrentToken(cursor);
             If (!BuilderExpect(cursor, TokenKind.Identifier, "Expected Identifier",
                                "Expected name")) Break;
             string member = IO.Kinal.Compiler.Lex.Token.Text(memberToken);
             string remote = member;
             If (Match(cursor, TokenKind.KwBy))
             {
-                string remoteToken = CurrentToken(cursor);
+                Token remoteToken = CurrentToken(cursor);
                 If (BuilderExpect(cursor, TokenKind.Identifier, "Expected Identifier",
                                   "Expected remote name"))
                     remote = IO.Kinal.Compiler.Lex.Token.Text(remoteToken);
@@ -2856,9 +2856,9 @@ Safe Function void ReadGetDeclaration(ParseCursor cursor, SyntaxTree tree)
 
 Safe Function void ReadAliasDeclaration(ParseCursor cursor, SyntaxTree tree)
 {
-    string location = CurrentToken(cursor);
+    Token location = CurrentToken(cursor);
     Advance(cursor);
-    string nameToken = CurrentToken(cursor);
+    Token nameToken = CurrentToken(cursor);
     string name = IO.Kinal.Compiler.Lex.Token.Text(nameToken);
     If (!BuilderExpect(cursor, TokenKind.Identifier, "Expected Identifier",
                        "Alias name must be an identifier")) Return;
@@ -3040,7 +3040,7 @@ Safe Function SyntaxTree Build(SourceFile source, list tokens, list diagnostics)
                CurrentKind(cursor) == TokenKind.KwSealed) Advance(cursor);
         TokenKind typeKind = CurrentKind(cursor);
         Advance(cursor);
-        string typeNameToken = CurrentToken(cursor);
+        Token typeNameToken = CurrentToken(cursor);
         string typeName = IO.Kinal.Compiler.Lex.Token.Text(typeNameToken);
         Advance(cursor);
         string baseName = "";

@@ -204,20 +204,22 @@ Safe Function void SkipTrivia(LexerState state)
     }
 }
 
-Safe Function string MakeToken(LexerState state, TokenKind kind, int start, int line, int column)
+Safe Function Token MakeToken(LexerState state, TokenKind kind, int start, int line, int column)
 {
-    Return IO.Kinal.Compiler.Lex.Token.Encode(kind, IO.Text.Slice(state.Source.Text, start, state.Position - start), line, column);
+    Return IO.Kinal.Compiler.Lex.Token.Create(
+        kind, IO.Text.Slice(state.Source.Text, start, state.Position - start),
+        line, column);
 }
 
-Safe Function string ReadIdentifier(LexerState state, int line, int column)
+Safe Function Token ReadIdentifier(LexerState state, int line, int column)
 {
     int start = state.Position;
     While (IsIdentifierStart(Current(state)) || IsDigit(Current(state))) Advance(state);
     string text = IO.Text.Slice(state.Source.Text, start, state.Position - start);
-    Return IO.Kinal.Compiler.Lex.Token.Encode(KeywordKind(text), text, line, column);
+    Return IO.Kinal.Compiler.Lex.Token.Create(KeywordKind(text), text, line, column);
 }
 
-Safe Function string ReadNumber(LexerState state, int line, int column)
+Safe Function Token ReadNumber(LexerState state, int line, int column)
 {
     int start = state.Position;
     If (Current(state) == '0' && (Peek(state) == 'x' || Peek(state) == 'X'))
@@ -238,7 +240,7 @@ Safe Function string ReadNumber(LexerState state, int line, int column)
     Return MakeToken(state, TokenKind.Number, start, line, column);
 }
 
-Safe Function string ReadString(LexerState state, int line, int column)
+Safe Function Token ReadString(LexerState state, int line, int column)
 {
     int start = state.Position;
     int scan = state.Position + 1;
@@ -280,7 +282,7 @@ Safe Function string ReadString(LexerState state, int line, int column)
     Return MakeToken(state, terminated ? TokenKind.String : TokenKind.BadString, start, line, column);
 }
 
-Safe Function string ReadCharacter(LexerState state, int line, int column)
+Safe Function Token ReadCharacter(LexerState state, int line, int column)
 {
     int start = state.Position;
     int values = 0;
@@ -307,13 +309,14 @@ Safe Function string ReadCharacter(LexerState state, int line, int column)
     Return MakeToken(state, valid ? TokenKind.Character : TokenKind.BadCharacter, start, line, column);
 }
 
-Safe Function string SymbolToken(LexerState state, TokenKind kind, string text, int line, int column, bool twice)
+Safe Function Token SymbolToken(LexerState state, TokenKind kind, string text,
+                                int line, int column, bool twice)
 {
     If (twice) AdvanceTwice(state); Else Advance(state);
-    Return IO.Kinal.Compiler.Lex.Token.Encode(kind, text, line, column);
+    Return IO.Kinal.Compiler.Lex.Token.Create(kind, text, line, column);
 }
 
-Safe Function string ReadSymbol(LexerState state, int line, int column)
+Safe Function Token ReadSymbol(LexerState state, int line, int column)
 {
     char current = Current(state);
     char next = Peek(state);
@@ -397,7 +400,7 @@ Safe Function string ReadSymbol(LexerState state, int line, int column)
 
     string unknown = [string](Current(state));
     Advance(state);
-    Return IO.Kinal.Compiler.Lex.Token.Encode(TokenKind.Eof, unknown, line, column);
+    Return IO.Kinal.Compiler.Lex.Token.Create(TokenKind.Eof, unknown, line, column);
 }
 
 Safe Function list Tokenize(SourceFile source, list diagnostics)
@@ -410,10 +413,10 @@ Safe Function list Tokenize(SourceFile source, list diagnostics)
         int line = state.Line;
         int column = state.Column;
         char current = Current(state);
-        string token = "";
+        Token token = null;
         If (current == '\0')
         {
-            token = IO.Kinal.Compiler.Lex.Token.Encode(TokenKind.Eof, "", line, column);
+            token = IO.Kinal.Compiler.Lex.Token.Create(TokenKind.Eof, "", line, column);
         }
         ElseIf (IsIdentifierStart(current))
         {

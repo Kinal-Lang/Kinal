@@ -3,52 +3,48 @@ Unit IO.Kinal.Compiler.Lex.Token;
 Get IO.Text;
 Get IO.Kinal.Compiler.Lex.TokenKind;
 
-Safe Function string Separator()
+Class Token
 {
-    Return [string]([char](31));
+    Public TokenKind Kind;
+    Public string Text;
+    Public int Line;
+    Public int Column;
+
+    Public Safe Constructor(TokenKind kind, string text, int line, int column)
+    {
+        This.Kind = kind;
+        This.Text = text;
+        This.Line = line;
+        This.Column = column;
+    }
 }
 
-Safe Function string Encode(TokenKind kind, string text, int line, int column)
+Safe Function Token Create(TokenKind kind, string text, int line, int column)
 {
-    string safeText = IO.Text.Replace(text, Separator(), " ");
-    Return [string]([int](kind)) + Separator() + [string](line) + Separator() +
-           [string](column) + Separator() + safeText;
+    Return New Token(kind, text, line, column);
 }
 
-Safe Function string Part(string token, int index)
+Safe Function TokenKind Kind(Token token)
 {
-    list parts = IO.Text.Split(token, Separator());
-    If (index < 0 || index >= parts.Count()) Return "";
-    Return [string](parts.Fetch(index));
+    Return token == null ? TokenKind.Eof : token.Kind;
 }
 
-Safe Function TokenKind Kind(string token)
+Safe Function int Line(Token token)
 {
-    string value = Part(token, 0);
-    If (IO.Text.IsEmpty(value)) Return TokenKind.Eof;
-    Return [TokenKind]([int](value));
+    Return token == null ? 0 : token.Line;
 }
 
-Safe Function int Line(string token)
+Safe Function int Column(Token token)
 {
-    string value = Part(token, 1);
-    If (IO.Text.IsEmpty(value)) Return 0;
-    Return [int](value);
+    Return token == null ? 0 : token.Column;
 }
 
-Safe Function int Column(string token)
+Safe Function string Text(Token token)
 {
-    string value = Part(token, 2);
-    If (IO.Text.IsEmpty(value)) Return 0;
-    Return [int](value);
+    Return token == null ? "" : token.Text;
 }
 
-Safe Function string Text(string token)
-{
-    Return Part(token, 3);
-}
-
-Safe Function string Dump(string token)
+Safe Function string Dump(Token token)
 {
     string escaped = IO.Text.Replace(Text(token), [string]([char](10)), "\\n");
     escaped = IO.Text.Replace(escaped, [string]([char](13)), "\\r");
@@ -92,7 +88,7 @@ Safe Function string HexText(string text)
     Return result;
 }
 
-Safe Function string MachineDump(string token)
+Safe Function string MachineDump(Token token)
 {
     Return [string]([int](Kind(token))) + [string]([char](9)) +
            [string](Line(token)) + [string]([char](9)) +

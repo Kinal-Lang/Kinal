@@ -23,10 +23,10 @@ Class ProjectReader
         This.Position = 0;
     }
 
-    Public Safe Function string RawToken()
+    Public Safe Function Token RawToken()
     {
-        If (This.Position < 0 || This.Position >= This.Tokens.Count()) Return "";
-        Return [string](This.Tokens.Fetch(This.Position));
+        If (This.Position < 0 || This.Position >= This.Tokens.Count()) Return null;
+        Return [Token](This.Tokens.Fetch(This.Position));
     }
 
     Public Safe Function TokenKind Kind()
@@ -65,7 +65,7 @@ Class ProjectReader
 
     Public Safe Function void Report(string title, string detail)
     {
-        string token = This.RawToken();
+        Token token = This.RawToken();
         int length = IO.Text.Length(This.Text());
         If (length < 1) length = 1;
         IO.Kinal.Compiler.Core.Diagnostics.Add(This.Diagnostics, This.Source, "Project", title, detail,
