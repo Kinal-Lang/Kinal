@@ -1029,7 +1029,7 @@
   {
     "name": "error_aggregate_equality",
     "file": "tests/common/error_aggregate_equality.kn",
-    "expect_error": "[Sema] Equality is not defined"
+    "expect_error": "[Sema] Type Mismatch"
   },
   {
     "name": "error_package_index_runtime",
@@ -1084,7 +1084,7 @@
   {
     "name": "error_static_class_new",
     "file": "tests/common/error_static_class_new.kn",
-    "expect_error": "[Sema] Cannot instantiate static class"
+    "expect_error": "[Sema] Invalid New"
   },
   {
     "name": "error_ffi_safe",

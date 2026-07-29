@@ -52,6 +52,7 @@ Class HirExpression
     Public string Name;
     Public string Target;
     Public TokenKind Operator;
+    Public bool HasPrimaryError;
     Public HirExpression Left;
     Public HirExpression Right;
     Public HirExpression Third;
@@ -69,6 +70,7 @@ Class HirExpression
         This.Name = syntax == null ? "" : syntax.Text;
         This.Target = "";
         This.Operator = syntax == null ? TokenKind.Eof : syntax.Operator;
+        This.HasPrimaryError = false;
         This.Left = null;
         This.Right = null;
         This.Third = null;

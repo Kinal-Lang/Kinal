@@ -1534,7 +1534,7 @@ Safe Function ExpressionNode ParsePostfix(ParseCursor cursor)
         If (IsGenericCallArgumentList(cursor))
         {
             ExpressionNode call = New ExpressionNode([int](ExpressionKind.Call), "",
-                IO.Kinal.Compiler.Lex.Token.Line(token), IO.Kinal.Compiler.Lex.Token.Column(token));
+                value.Line, value.Column);
             call.Left = value;
             ReadTypeArguments(cursor, call);
             ReadArguments(cursor, call);
@@ -1544,7 +1544,7 @@ Safe Function ExpressionNode ParsePostfix(ParseCursor cursor)
         If (CurrentKind(cursor) == TokenKind.LeftParen)
         {
             ExpressionNode call = New ExpressionNode([int](ExpressionKind.Call), "",
-                IO.Kinal.Compiler.Lex.Token.Line(token), IO.Kinal.Compiler.Lex.Token.Column(token));
+                value.Line, value.Column);
             call.Left = value;
             ReadArguments(cursor, call);
             value = call;
@@ -1554,7 +1554,8 @@ Safe Function ExpressionNode ParsePostfix(ParseCursor cursor)
         {
             string memberToken = CurrentToken(cursor);
             Advance(cursor);
-            ExpressionNode member = NewExpression([int](ExpressionKind.Member), memberToken);
+            ExpressionNode member = New ExpressionNode([int](ExpressionKind.Member),
+                IO.Kinal.Compiler.Lex.Token.Text(memberToken), value.Line, value.Column);
             member.Left = value;
             value = member;
             Continue;

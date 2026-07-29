@@ -1650,6 +1650,7 @@ def main() -> int:
             str(root / "tests" / "selfhost" / "manifest_diagnostics_baseline.json"),
             "--output",
             str(manifest_diagnostics_report),
+            "--all-stages",
         ],
         cwd=root,
     )
@@ -1664,6 +1665,8 @@ def main() -> int:
         "cases": manifest_diagnostics_data["cases"],
         "passed": manifest_diagnostics_data["passed"],
         "coverage": manifest_diagnostics_data["coverage"],
+        "all_stage_differential_cases":
+            manifest_diagnostics_data["all_stage_differential_cases"],
     })
 
     (out_dir / "results.json").write_text(json.dumps(results, indent=2) + "\n", encoding="utf-8")

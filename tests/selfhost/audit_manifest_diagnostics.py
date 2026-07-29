@@ -58,6 +58,23 @@ def parser_warning_titles(output: str) -> list[str]:
     return titles
 
 
+def compiler_diagnostic_titles(output: str) -> list[str]:
+    titles: list[str] = []
+    known_stages = {"Lexer", "Parser", "Sema", "Project", "Driver", "Link", "KNC", "Native"}
+    for line in output.splitlines():
+        if not line.startswith("[") or "[warning]" in line:
+            continue
+        stage_end = line.find("]")
+        if stage_end < 0:
+            continue
+        stage = line[1:stage_end]
+        if stage not in known_stages:
+            continue
+        message = line[line.rfind("] ") + 2 :]
+        titles.append(f"{stage}:{message.split(':', 1)[0]}")
+    return titles
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--compiler", type=Path, required=True)
@@ -65,6 +82,7 @@ def main() -> int:
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument("--baseline", type=Path, required=True)
     parser.add_argument("--output", type=Path)
+    parser.add_argument("--all-stages", action="store_true")
     args = parser.parse_args()
 
     root = args.root.resolve()
@@ -76,6 +94,7 @@ def main() -> int:
     diagnostics: dict[str, str] = {}
     parser_mismatches: dict[str, dict[str, list[str]]] = {}
     warning_mismatches: dict[str, dict[str, list[str]]] = {}
+    stage_mismatches: dict[str, dict[str, list[str]]] = {}
     stage0_out = (
         (args.output.resolve().parent if args.output else root / "out" / "selfhost")
         / "manifest-diagnostics-stage0"
@@ -135,6 +154,14 @@ def main() -> int:
                     "stage0": expected_warnings,
                     "stage1": actual_warnings,
                 }
+            if args.all_stages:
+                expected_stages = compiler_diagnostic_titles(stage0_output)
+                actual_stages = compiler_diagnostic_titles(output)
+                if actual_stages != expected_stages:
+                    stage_mismatches[name] = {
+                        "stage0": expected_stages,
+                        "stage1": actual_stages,
+                    }
 
     report = {
         "format": "kinal-selfhost-manifest-diagnostics-v1",
@@ -148,6 +175,8 @@ def main() -> int:
         "parser_differential_cases": len(cases) if stage0 else 0,
         "parser_mismatches": parser_mismatches,
         "warning_mismatches": warning_mismatches,
+        "all_stage_differential_cases": len(cases) if stage0 and args.all_stages else 0,
+        "stage_mismatches": stage_mismatches,
     }
     if args.output:
         args.output.resolve().write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
@@ -168,6 +197,11 @@ def main() -> int:
     if warning_mismatches:
         print("manifest Parser warnings differ from stage0")
         for name, mismatch in sorted(warning_mismatches.items()):
+            print(f"{name}: stage0={mismatch['stage0']} stage1={mismatch['stage1']}")
+        return 1
+    if stage_mismatches:
+        print("manifest compiler diagnostics differ from stage0")
+        for name, mismatch in sorted(stage_mismatches.items()):
             print(f"{name}: stage0={mismatch['stage0']} stage1={mismatch['stage1']}")
         return 1
     print(f"[OK] manifest diagnostics: {report['passed']}/{report['cases']} ({report['coverage']:.1%})")

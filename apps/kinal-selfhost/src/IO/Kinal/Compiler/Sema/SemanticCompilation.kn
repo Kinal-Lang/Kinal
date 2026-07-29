@@ -1750,22 +1750,13 @@ Class SemanticCompilation
         This.ValidateAttributes(function);
         SyntaxAttribute overload = This.FindAttribute(declaration, "Overload");
         SyntaxAttribute symbolName = This.FindAttribute(declaration, "SymbolName");
-        SyntaxAttribute linkName = This.FindAttribute(declaration, "LinkName");
-        SyntaxAttribute linkLib = This.FindAttribute(declaration, "LinkLib");
         SyntaxAttribute cast = This.FindAttribute(declaration, "Cast");
         If (overload != null && symbolName == null)
             This.Report(syntax, "Invalid Overload", "Overload requires SymbolName",
                 declaration.Line, declaration.Column);
-        If (linkLib != null && declaration.IsDelegate)
-            This.Report(syntax, "Invalid Attribute", "LinkLib is not valid on Delegate",
-                declaration.Line, declaration.Column);
         If (symbolName != null &&
             (declaration.IsExtern || (declaration.IsDelegate && declaration.Abi != "C")))
             This.Report(syntax, "Invalid Attribute", "SymbolName is not valid on this declaration",
-                declaration.Line, declaration.Column);
-        If (linkName != null && (linkName.FirstArgument == null ||
-            linkName.FirstArgument.Kind != [int](ExpressionKind.String)))
-            This.Report(syntax, "Invalid Attribute", "LinkName requires a string argument",
                 declaration.Line, declaration.Column);
         If (cast != null && function.OwnerType != null)
         {
@@ -2287,13 +2278,15 @@ Class SemanticCompilation
     {
         This.UnresolvedExpressionCount = This.UnresolvedExpressionCount + 1;
         This.Report(syntax, title, detail, expression.Line, expression.Column);
-        Return New HirExpression([int](HirExpressionKind.Invalid), expression, This.Primitive("any"));
+        Return New HirExpression([int](HirExpressionKind.Invalid), expression,
+            New TypeSymbol([int](TypeKind.Unknown), "unknown"));
     }
 
     Public Safe Function HirExpression FailedExpression(ExpressionNode expression)
     {
         This.UnresolvedExpressionCount = This.UnresolvedExpressionCount + 1;
-        Return New HirExpression([int](HirExpressionKind.Invalid), expression, This.Primitive("any"));
+        Return New HirExpression([int](HirExpressionKind.Invalid), expression,
+            New TypeSymbol([int](TypeKind.Unknown), "unknown"));
     }
 
     Public Safe Function bool IsNamedArgument(ExpressionNode expression)
@@ -2479,7 +2472,10 @@ Class SemanticCompilation
         FunctionSymbol selected = This.FindApplicableFunction(syntax, caller, scope, call, initial);
         int count = This.ApplicableFunctionCount(syntax, caller, scope, call, initial);
         If (count > 1)
+        {
             This.Report(syntax, "Ambiguous Call", initial.Name, call.Line, call.Column);
+            Return null;
+        }
         Return selected == null ? initial : selected;
     }
 
@@ -2612,6 +2608,15 @@ Class SemanticCompilation
             targetSyntax.Kind == [int](ExpressionKind.Member))
         {
             receiver = This.BindExpression(syntax, function, scope, targetSyntax.Left);
+            If (receiver.Kind == [int](HirExpressionKind.Invalid))
+            {
+                If (targetSyntax.Left.Kind == [int](ExpressionKind.Member) &&
+                    receiver.Syntax != targetSyntax.Left)
+                    This.Report(syntax, "Invalid Member",
+                        "Member call requires class instance",
+                        expression.Line, expression.Column);
+                Return receiver;
+            }
             string memberName = targetSyntax.Text;
             If (receiver.Kind != [int](HirExpressionKind.Invalid))
             {
@@ -2673,6 +2678,12 @@ Class SemanticCompilation
             {
                 targetFunction = This.SelectOverload(syntax, function, scope,
                     expression, targetFunction);
+                If (targetFunction == null)
+                {
+                    This.Report(syntax, "Unknown Function", targetSyntax.Text,
+                        expression.Line, expression.Column);
+                    Return This.FailedExpression(expression);
+                }
                 targetFunction = This.ResolveGenericCallTarget(syntax, function, targetFunction, expression);
                 If (targetFunction == null) Return This.FailedExpression(expression);
                 returnType = targetFunction.ReturnType;
@@ -2731,8 +2742,19 @@ Class SemanticCompilation
 
         If (returnType == null)
         {
+            If (namespacePath)
+            {
+                This.Report(syntax, "Unknown Symbol", "Symbol not found in module",
+                    expression.Line, expression.Column);
+                This.Report(syntax, "Unknown Variable", "Variable not defined",
+                    expression.Line, expression.Column);
+                This.Report(syntax, "Invalid Member",
+                    "Member call requires class instance",
+                    expression.Line, expression.Column);
+                Return This.FailedExpression(expression);
+            }
             Return This.InvalidExpression(syntax, expression,
-                namespacePath ? "Unknown Symbol" : "Unresolved call",
+                "Unresolved call",
                 IO.Text.IsEmpty(path) ? targetSyntax.Text : path);
         }
 
@@ -2781,7 +2803,17 @@ Class SemanticCompilation
             Return constant;
         }
         HirExpression receiver = This.BindExpression(syntax, function, scope, expression.Left);
-        If (receiver.Kind == [int](HirExpressionKind.Invalid)) Return receiver;
+        If (receiver.Kind == [int](HirExpressionKind.Invalid))
+        {
+            If (expression.Left.Kind == [int](ExpressionKind.Member))
+            {
+                This.Report(syntax, "Invalid Member",
+                    "Member access requires class instance",
+                    expression.Line, expression.Column);
+                Return This.FailedExpression(expression);
+            }
+            Return receiver;
+        }
         string blockRecords = receiver.Symbol == null ? "" : receiver.Symbol.BlockRecords;
         If (blockRecords == "" && receiver.Function != null)
             blockRecords = receiver.Function.BlockRecords;
@@ -3301,7 +3333,7 @@ Class SemanticCompilation
             TypeSymbol type = This.ResolveFunctionType(syntax, function, expression.Text);
             If (type == null) Return This.InvalidExpression(syntax, expression, "Unknown constructed type", expression.Text);
             If (type.Declaration != null && type.Declaration.IsStatic)
-                This.Report(syntax, "Cannot instantiate static class", type.QualifiedName(),
+                This.Report(syntax, "Invalid New", "Cannot instantiate static class",
                     expression.Line, expression.Column);
             HirExpression result = New HirExpression([int](HirExpressionKind.NewObject), expression, type);
             result.CallKind = [int](HirCallKind.Constructor);
@@ -3361,7 +3393,7 @@ Class SemanticCompilation
                 customCastCount == 0)
                 This.Report(syntax, "Invalid Cast", "Object types are unrelated",
                     expression.Line, expression.Column);
-            If (targetObject && customCastCount != 1 && !relatedObjects &&
+            ElseIf (targetObject && customCastCount != 1 && !relatedObjects &&
                 !rawFunctionPointer &&
                 (result.Left == null ||
                  result.Left.Type.Kind != [int](TypeKind.NullType)))
@@ -3530,8 +3562,7 @@ Class SemanticCompilation
                     operand.Type : This.MakePointerType(operand.Type);
             ElseIf (expression.Operator == TokenKind.Star &&
                 operand.Type.Kind == [int](TypeKind.PointerType)) type = operand.Type.ElementType;
-            If (expression.Operator == TokenKind.Ampersand ||
-                expression.Operator == TokenKind.Star)
+            If (expression.Operator == TokenKind.Star)
                 This.CheckPointerSafety(syntax, function, expression);
             HirExpression result = New HirExpression([int](HirExpressionKind.Unary), expression, type);
             result.Left = operand;
@@ -3586,13 +3617,17 @@ Class SemanticCompilation
                  (left.Type.Kind == [int](TypeKind.NamedType) &&
                   left.Type.Declaration != null &&
                   left.Type.Declaration.Kind == TokenKind.KwStruct)))
-                This.Report(syntax, "Equality is not defined", This.TypeIdentity(left.Type),
+                This.Report(syntax, "Type Mismatch",
+                    "Equality is not defined for aggregate or any values",
                     expression.Line, expression.Column);
             If (expression.Operator == TokenKind.Plus &&
                 left.Type.Kind == [int](TypeKind.PointerType) &&
                 right.Type.Kind == [int](TypeKind.PointerType))
-                This.Report(syntax, "Type Mismatch", "Cannot add two pointers",
+            {
+                This.Report(syntax, "Type Mismatch",
+                    "Arithmetic operators require numeric types",
                     expression.Line, expression.Column);
+            }
             TypeSymbol type = comparison ? This.Primitive("bool") : left.Type;
             If (!assignment && expression.Operator == TokenKind.Plus &&
                 (left.Type.Kind == [int](TypeKind.StringType) || right.Type.Kind == [int](TypeKind.StringType)))
@@ -3600,6 +3635,10 @@ Class SemanticCompilation
             HirExpression result = New HirExpression([int](HirExpressionKind.Binary), expression, type);
             result.Left = left;
             result.Right = right;
+            If (expression.Operator == TokenKind.Plus &&
+                left.Type.Kind == [int](TypeKind.PointerType) &&
+                right.Type.Kind == [int](TypeKind.PointerType))
+                result.HasPrimaryError = true;
             Return result;
         }
         If (expression.Kind == [int](ExpressionKind.Conditional))
@@ -3729,6 +3768,12 @@ Class SemanticCompilation
                     statement.Line, statement.Column);
                 result.DeclaredType = This.Primitive("any");
             }
+            If (result.DeclaredType.Kind == [int](TypeKind.NamedType) &&
+                result.DeclaredType.Declaration != null &&
+                result.DeclaredType.Declaration.IsStatic)
+                This.Report(syntax, "Invalid Type",
+                    "Static class cannot be used as a value type",
+                    statement.Line, statement.Column);
             result.DeclaredSymbol = New ValueSymbol(statement.Name, result.DeclaredType, false);
             loopScope.Add(result.DeclaredSymbol);
             result.FirstChild = This.BindStatement(syntax, function, loopScope, statement.FirstChild);
@@ -3776,6 +3821,20 @@ Class SemanticCompilation
                 This.Report(syntax, "Unknown Type", This.CanonicalTypeName(statement.TypeName),
                     statement.Line, statement.Column);
                 result.DeclaredType = This.Primitive("any");
+            }
+            If (result.DeclaredType.Kind == [int](TypeKind.NamedType) &&
+                result.DeclaredType.Declaration != null &&
+                result.DeclaredType.Declaration.IsStatic)
+                This.Report(syntax, "Invalid Type",
+                    "Static class cannot be used as a value type",
+                    statement.Line, statement.Column);
+            If (statement.TypeName == "Var" &&
+                result.DeclaredType.Kind == [int](TypeKind.Unknown))
+            {
+                This.Report(syntax, "Invalid Type", "Type not specified",
+                    statement.Line, statement.Column);
+                This.Report(syntax, "Unsupported Type", "Type not supported yet",
+                    statement.Line, statement.Column);
             }
             If (result.DeclaredType.Kind == [int](TypeKind.PackageType))
             {
@@ -3831,7 +3890,7 @@ Class SemanticCompilation
                 bool contextualEmptyArray = result.DeclaredType.Kind == [int](TypeKind.ArrayType) &&
                     result.Expression.Kind == [int](HirExpressionKind.ArrayLiteral) &&
                     result.Expression.FirstArgument == null;
-                If (!contextualEmptyArray &&
+                If (!contextualEmptyArray && !result.Expression.HasPrimaryError &&
                     !This.IsHirAssignable(result.DeclaredType, result.Expression))
                     This.Report(syntax, "Type Mismatch", "Initializer type does not match variable type",
                         statement.Line, statement.Column);
