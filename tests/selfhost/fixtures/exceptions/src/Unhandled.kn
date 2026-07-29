@@ -1,0 +1,19 @@
+Unit Tests.Selfhost.Exceptions.Unhandled;
+
+Get IO.Console;
+
+Static Function string Fail()
+{
+    Throw "bad";
+}
+
+Static Function string Pick()
+{
+    Return Fail();
+}
+
+Safe Static Function int Main()
+{
+    IO.Console.PrintLine(Pick());
+    Return 0;
+}

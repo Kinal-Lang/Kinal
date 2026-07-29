@@ -399,7 +399,7 @@
   {
     "name": "any_collections",
     "file": "tests/common/any_collections.kn",
-    "expected": "true\ntrue\nfalse\n2\ntrue\nfalse\ntrue\nfalse\n"
+    "expected": "true\ntrue\nfalse\n2\ntrue\nfalse\ntrue\nfalse\ntrue\nfalse\ntrue\ntrue\nfalse\nfalse\nfalse\ntrue\nInvalid Cast\n"
   },
   {
     "name": "any_more",

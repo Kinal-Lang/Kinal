@@ -511,6 +511,19 @@ static LLVMValueRef gen_object_match_nonnull(Codegen *g, CGValue value, Type tar
     return matched;
 }
 
+static int any_collection_tag_for_type(Type type)
+{
+    if (type.kind != TY_CLASS || !type.name)
+        return -1;
+    if (kn_strcmp(type.name, "IO.Collection.dict") == 0)
+        return KN_ANY_TAG_DICT;
+    if (kn_strcmp(type.name, "IO.Collection.list") == 0)
+        return KN_ANY_TAG_LIST;
+    if (kn_strcmp(type.name, "IO.Collection.set") == 0)
+        return KN_ANY_TAG_SET;
+    return -1;
+}
+
 static LLVMValueRef gen_is_any(Codegen *g, CGValue value, Type target)
 {
     LLVMValueRef anyv = cast_value(g, value, type_make(TY_ANY));
@@ -527,6 +540,11 @@ static LLVMValueRef gen_is_any(Codegen *g, CGValue value, Type target)
         return LLVMBuildICmp(g->builder, LLVMIntEQ, tag, LLVMConstInt(g->i64, KN_ANY_TAG_STRING, 0), "is.any.string");
     if (is_integer_kind(target.kind) || target.kind == TY_ENUM)
         return LLVMBuildICmp(g->builder, LLVMIntEQ, tag, LLVMConstInt(g->i64, KN_ANY_TAG_I64, 0), "is.any.int");
+    int collection_tag = any_collection_tag_for_type(target);
+    if (collection_tag >= 0)
+        return LLVMBuildICmp(g->builder, LLVMIntEQ, tag,
+                             LLVMConstInt(g->i64, (uint64_t)collection_tag, 0),
+                             "is.any.collection");
     if (target.kind == TY_CLASS)
     {
         LLVMValueRef payload = LLVMBuildExtractValue(g->builder, anyv, 1, "is.any.payload");
@@ -1093,11 +1111,16 @@ static LLVMValueRef gen_checked_object_cast(Codegen *g, CGValue value, Type dst)
     {
         LLVMValueRef tag = LLVMBuildExtractValue(g->builder, value.value, 0, "cast.any.tag");
         LLVMValueRef payload = LLVMBuildExtractValue(g->builder, value.value, 1, "cast.any.payload");
+        int collection_tag = any_collection_tag_for_type(dst);
         LLVMValueRef is_none = LLVMBuildICmp(g->builder, LLVMIntEQ, tag,
                                              LLVMConstInt(g->i64, KN_ANY_TAG_NONE, 0),
                                              "cast.any.none");
         LLVMValueRef is_object = LLVMBuildICmp(g->builder, LLVMIntEQ, tag,
-                                               LLVMConstInt(g->i64, KN_ANY_TAG_PTR, 0),
+                                               LLVMConstInt(g->i64,
+                                                            collection_tag >= 0 ?
+                                                                (uint64_t)collection_tag :
+                                                                (uint64_t)KN_ANY_TAG_PTR,
+                                                            0),
                                                "cast.any.object");
         LLVMBasicBlockRef entry_bb = LLVMGetInsertBlock(g->builder);
         LLVMValueRef fn = LLVMGetBasicBlockParent(entry_bb);
@@ -1109,10 +1132,9 @@ static LLVMValueRef gen_checked_object_cast(Codegen *g, CGValue value, Type dst)
         LLVMBasicBlockRef done_bb = LLVMAppendBasicBlockInContext(g->ctx, fn, "cast.any.done");
         LLVMBuildCondBr(g->builder, is_none, done_bb, tag_bb);
 
-        // Reject primitive/string/collection tags before interpreting the
-        // payload as an object address.  __kn_any_to_ptr is intentionally
-        // permissive for explicit pointer conversions and is not safe for
-        // checked class casts.
+        // Reject every unexpected tag before interpreting the payload as an
+        // address. __kn_any_to_ptr is intentionally permissive for explicit
+        // pointer conversions and is not safe for checked reference casts.
         LLVMPositionBuilderAtEnd(g->builder, tag_bb);
         LLVMBuildCondBr(g->builder, is_object, pointer_bb, fail_bb);
 
@@ -1123,11 +1145,18 @@ static LLVMValueRef gen_checked_object_cast(Codegen *g, CGValue value, Type dst)
         LLVMBuildCondBr(g->builder, is_null, done_bb, nonnull_bb);
 
         LLVMPositionBuilderAtEnd(g->builder, nonnull_bb);
-        CGValue object_value;
-        object_value.value = obj_i8;
-        object_value.type = type_ptr(TY_BYTE);
-        LLVMValueRef matched = gen_object_match_nonnull(g, object_value, dst);
-        LLVMBuildCondBr(g->builder, matched, success_bb, fail_bb);
+        if (collection_tag >= 0)
+        {
+            LLVMBuildBr(g->builder, success_bb);
+        }
+        else
+        {
+            CGValue object_value;
+            object_value.value = obj_i8;
+            object_value.type = type_ptr(TY_BYTE);
+            LLVMValueRef matched = gen_object_match_nonnull(g, object_value, dst);
+            LLVMBuildCondBr(g->builder, matched, success_bb, fail_bb);
+        }
 
         LLVMPositionBuilderAtEnd(g->builder, success_bb);
         LLVMValueRef casted = LLVMBuildBitCast(g->builder, obj_i8, dst_ty, "cast.any.object.ptr");

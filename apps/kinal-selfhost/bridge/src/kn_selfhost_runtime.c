@@ -151,6 +151,106 @@ uint8_t kn_sh_rt_string_to_char(const char *text)
     return text ? (uint8_t)text[0] : 0;
 }
 
+typedef struct KnShError
+{
+    void *vtable;
+    int64_t runtime_type_id;
+    const char *title;
+    const char *message;
+    const char *trace;
+    struct KnShError *inner;
+} KnShError;
+
+void *kn_sh_rt_error_new(int64_t runtime_type_id,
+                         const char *title,
+                         const char *message)
+{
+    KnShError *error = (KnShError *)__kn_gc_alloc((uint64_t)sizeof(KnShError));
+    if (!error) return 0;
+    error->vtable = 0;
+    error->runtime_type_id = runtime_type_id;
+    error->title = title ? title : "Error";
+    error->message = message ? message : "";
+    error->trace = "";
+    error->inner = 0;
+    return error;
+}
+
+const char *kn_sh_rt_error_title(const void *value)
+{
+    const KnShError *error = (const KnShError *)value;
+    return error ? error->title : 0;
+}
+
+const char *kn_sh_rt_error_message(const void *value)
+{
+    const KnShError *error = (const KnShError *)value;
+    return error ? error->message : 0;
+}
+
+const char *kn_sh_rt_error_trace(const void *value)
+{
+    const KnShError *error = (const KnShError *)value;
+    return error ? error->trace : 0;
+}
+
+void *kn_sh_rt_error_inner(const void *value)
+{
+    const KnShError *error = (const KnShError *)value;
+    return error ? error->inner : 0;
+}
+
+void kn_sh_rt_error_link_inner(void *value, void *inner)
+{
+    KnShError *error = (KnShError *)value;
+    if (error && !error->inner && inner && inner != value)
+        error->inner = (KnShError *)inner;
+}
+
+void kn_sh_rt_error_set_trace(void *value, const char *trace)
+{
+    KnShError *error = (KnShError *)value;
+    if (error) error->trace = trace ? trace : "";
+}
+
+const char *kn_sh_rt_trace_format(const char *trace)
+{
+    uint64_t length = text_length(trace);
+    char *result = (char *)__kn_gc_alloc(length + 1);
+    uint64_t source = 0;
+    uint64_t destination = 0;
+    int first = 1;
+    if (!result) return "";
+    while (source < length)
+    {
+        uint64_t line_start = source;
+        uint64_t line_end;
+        while (source < length && trace[source] != '\n') source++;
+        line_end = source;
+        if (line_end >= line_start + 3 &&
+            trace[line_start] == 'a' &&
+            trace[line_start + 1] == 't' &&
+            trace[line_start + 2] == ' ')
+            line_start += 3;
+        if (line_end > line_start)
+        {
+            if (!first)
+            {
+                result[destination++] = ' ';
+                result[destination++] = '-';
+                result[destination++] = '>';
+                result[destination++] = ' ';
+            }
+            while (line_start < line_end)
+                result[destination++] = trace[line_start++];
+            first = 0;
+        }
+        if (source < length && trace[source] == '\n') source++;
+    }
+    result[destination] = 0;
+    return result;
+}
+
 void kn_sh_rt_print(const char *text)
 {
     fputs(text ? text : "", stdout);

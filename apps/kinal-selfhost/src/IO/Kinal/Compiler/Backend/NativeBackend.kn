@@ -832,6 +832,13 @@ Class NativeBackend
         This.DeclareRuntimeFunction("__kn_gc_push_frame", pointer, This.Types0());
         This.DeclareRuntimeFunction("__kn_gc_add_root", voidType, This.Types3(pointer, pointer, int64Type));
         This.DeclareRuntimeFunction("__kn_gc_pop_frame", voidType, This.Types1(pointer));
+        This.DeclareRuntimeFunction("__kn_exc_set", voidType, This.Types1(pointer));
+        This.DeclareRuntimeFunction("__kn_exc_get", pointer, This.Types0());
+        This.DeclareRuntimeFunction("__kn_exc_has", int32Type, This.Types0());
+        This.DeclareRuntimeFunction("__kn_exc_last", pointer, This.Types0());
+        This.DeclareRuntimeFunction("__kn_exc_clear", voidType, This.Types0());
+        This.DeclareRuntimeFunction("__kn_exc_push", voidType, This.Types1(pointer));
+        This.DeclareRuntimeFunction("__kn_exc_trace", pointer, This.Types0());
         This.DeclareRuntimeFunction("__kn_sys_args_from_argv", voidType,
             This.Types4(int32Type, pointerPointer, This.Module.PointerType(pointerPointer), int64Pointer));
 
@@ -861,6 +868,18 @@ Class NativeBackend
         This.DeclareRuntimeFunction("kn_sh_rt_string_to_f64", This.Module.FloatType(64), This.Types1(pointer));
         This.DeclareRuntimeFunction("kn_sh_rt_string_to_bool", int32Type, This.Types1(pointer));
         This.DeclareRuntimeFunction("kn_sh_rt_string_to_char", int8Type, This.Types1(pointer));
+        This.DeclareRuntimeFunction("kn_sh_rt_error_new", pointer,
+            This.Types3(int64Type, pointer, pointer));
+        This.DeclareRuntimeFunction("kn_sh_rt_error_title", pointer, This.Types1(pointer));
+        This.DeclareRuntimeFunction("kn_sh_rt_error_message", pointer, This.Types1(pointer));
+        This.DeclareRuntimeFunction("kn_sh_rt_error_trace", pointer, This.Types1(pointer));
+        This.DeclareRuntimeFunction("kn_sh_rt_error_inner", pointer, This.Types1(pointer));
+        This.DeclareRuntimeFunction("kn_sh_rt_error_link_inner", voidType,
+            This.Types2(pointer, pointer));
+        This.DeclareRuntimeFunction("kn_sh_rt_error_set_trace", voidType,
+            This.Types2(pointer, pointer));
+        This.DeclareRuntimeFunction("kn_sh_rt_trace_format", pointer,
+            This.Types1(pointer));
         This.DeclareRuntimeFunction("__kn_time_tick", int64Type, This.Types0());
         This.DeclareRuntimeFunction("__kn_time_nano", int64Type, This.Types0());
         This.DeclareRuntimeFunction("__kn_time_sleep", voidType, This.Types1(int32Type));
@@ -997,6 +1016,8 @@ Class NativeBackend
         }
         If (This.IsReferenceType(type) || type.Kind == [int](TypeKind.NullType))
             Return New LlvmValue(This.Module.ConstNull(typeHandle), type);
+        If (type.Kind == [int](TypeKind.FloatType))
+            Return New LlvmValue(This.Module.ConstFloat(typeHandle, 0.0), type);
         Return New LlvmValue(This.Module.ConstInt(typeHandle, 0), type);
     }
 
@@ -1522,6 +1543,27 @@ Class NativeBackend
         Return null;
     }
 
+    Public Trusted Function LlvmValue EmitErrorField(
+        LlvmFunctionContext context, HirExpression expression)
+    {
+        LlvmValue receiver = This.EmitExpression(context, expression.Left);
+        byte* raw = This.ErrorPointer(receiver);
+        If (expression.Target == "Inner")
+        {
+            byte* inner = This.CallRuntime("kn_sh_rt_error_inner",
+                This.Types1(raw), This.Unique("error_inner"));
+            Return New LlvmValue(This.Module.BitCast(inner,
+                This.TypeHandle(expression.Type), This.Unique("typed_error_inner")),
+                expression.Type);
+        }
+        string runtimeName = expression.Target == "Title" ?
+            "kn_sh_rt_error_title" :
+            (expression.Target == "Message" ? "kn_sh_rt_error_message" :
+            "kn_sh_rt_error_trace");
+        Return New LlvmValue(This.CallRuntime(runtimeName, This.Types1(raw),
+            This.Unique("error_field")), expression.Type);
+    }
+
     Public Trusted Function LlvmValue EmitPackageIndex(LlvmFunctionContext context,
                                                          HirExpression expression)
     {
@@ -1598,6 +1640,7 @@ Class NativeBackend
         }
         string resultName = binding.Symbol.ReturnType.Kind == [int](TypeKind.VoidType) ? "" : This.Unique("call");
         byte* result = This.Module.Call(binding.FunctionType, binding.Function, arguments, resultName);
+        If (!binding.UsesCAbi) This.MaybePropagateException(context);
         Return binding.UsesCAbi ? This.FromCAbi(result, binding.Symbol.ReturnType) :
             New LlvmValue(result, binding.Symbol.ReturnType);
     }
@@ -1658,8 +1701,10 @@ Class NativeBackend
         }
         string resultName = binding.Symbol.ReturnType.Kind == [int](TypeKind.VoidType) ?
             "" : This.Unique("virtual_call");
-        Return New LlvmValue(This.Module.Call(binding.FunctionType, callable,
-            arguments, resultName), binding.Symbol.ReturnType);
+        byte* result = This.Module.Call(binding.FunctionType, callable,
+            arguments, resultName);
+        This.MaybePropagateException(context);
+        Return New LlvmValue(result, binding.Symbol.ReturnType);
     }
 
     Public Trusted Function LlvmValue EmitDelegateCall(LlvmFunctionContext context,
@@ -1695,6 +1740,7 @@ Class NativeBackend
         string resultName = binding.Symbol.ReturnType.Kind == [int](TypeKind.VoidType) ?
             "" : This.Unique("delegate_call");
         byte* result = This.Module.Call(binding.FunctionType, callable, arguments, resultName);
+        If (!binding.UsesCAbi) This.MaybePropagateException(context);
         Return binding.UsesCAbi ? This.FromCAbi(result, binding.Symbol.ReturnType) :
             New LlvmValue(result, binding.Symbol.ReturnType);
     }
@@ -1794,6 +1840,7 @@ Class NativeBackend
         arguments.Add(firstValue);
         arguments.Add(secondValue);
         This.Module.Call(entryType, entry, arguments, "");
+        This.MaybePropagateException(context);
         Return This.DefaultValue(This.Semantics.Primitive("void"));
     }
 
@@ -1849,6 +1896,7 @@ Class NativeBackend
         arguments.Add(This.Module.ConstInt(This.Module.IntType(64), argumentCount));
         byte* result = This.Module.Call(wrapperType, wrapper, arguments,
             This.Unique("dynamic_call"));
+        This.MaybePropagateException(context);
         LlvmValue boxedResult = New LlvmValue(result, This.Semantics.Primitive("any"));
         If (expression.Type.Kind == [int](TypeKind.AnyType)) Return boxedResult;
         Return This.UnboxAny(boxedResult, expression.Type);
@@ -2233,6 +2281,27 @@ Class NativeBackend
             Return New LlvmValue(This.Module.GlobalString(receiver.Type.Name,
                 This.Unique("type_name")), This.Semantics.Primitive("string"));
 
+        If (target == "IO.Error.Clear")
+        {
+            This.CallRuntime("__kn_exc_clear", This.Types0(), "");
+            Return This.DefaultValue(This.Semantics.Primitive("void"));
+        }
+        If (target == "IO.Error.HasException")
+            Return New LlvmValue(This.RuntimeBool(This.CallRuntime(
+                "__kn_exc_has", This.Types0(), This.Unique("error_has_c"))),
+                This.Semantics.Primitive("bool"));
+        If (target == "IO.Error.LastTrace")
+            Return New LlvmValue(This.CallRuntime("__kn_exc_trace", This.Types0(),
+                This.Unique("error_last_trace")), This.Semantics.Primitive("string"));
+        If (target == "IO.Error.Current")
+        {
+            byte* raw = This.CallRuntime("__kn_exc_last", This.Types0(),
+                This.Unique("error_current"));
+            Return New LlvmValue(This.Module.BitCast(raw,
+                This.TypeHandle(This.ErrorType()), This.Unique("typed_error_current")),
+                This.ErrorType());
+        }
+
         If (target == "IO.Console.ReadLine")
             Return New LlvmValue(This.CallRuntime("kn_sh_rt_read_line", This.Types0(),
                 This.Unique("read_line")), This.Semantics.Primitive("string"));
@@ -2389,6 +2458,20 @@ Class NativeBackend
             If (target == "Count")
                 Return New LlvmValue(This.CallRuntime("__kn_dict_count", This.Types1(receiver.Handle),
                     This.Unique("dict_count")), This.Semantics.Primitive("int"));
+            If (target == "Set")
+            {
+                LlvmValue key = This.CastValue(This.EmitExpression(context, first),
+                    This.Semantics.Primitive("string"));
+                LlvmValue boxed = This.BoxAny(
+                    This.EmitExpression(context, first.Next));
+                byte* tag = This.Module.ExtractValue(boxed.Handle, 0,
+                    This.Unique("dict_set_tag"));
+                byte* payload = This.Module.ExtractValue(boxed.Handle, 1,
+                    This.Unique("dict_set_payload"));
+                This.CallRuntime("__kn_dict_set",
+                    This.Types4(receiver.Handle, key.Handle, tag, payload), "");
+                Return This.DefaultValue(This.Semantics.Primitive("void"));
+            }
             If (target == "Fetch")
             {
                 LlvmValue key = This.CastValue(This.EmitExpression(context, first),
@@ -2559,6 +2642,19 @@ Class NativeBackend
     Public Trusted Function LlvmValue EmitNewObject(LlvmFunctionContext context, HirExpression expression)
     {
         TypeSymbol type = expression.Type;
+        If (type.Name == "IO.Error")
+        {
+            HirExpression first = expression.FirstArgument;
+            byte* title = first == null ?
+                This.Module.GlobalString("Error", This.Unique("error_title")) :
+                This.CastValue(This.EmitExpression(context, first),
+                    This.Semantics.Primitive("string")).Handle;
+            byte* message = first == null || first.Next == null ?
+                This.Module.GlobalString("", This.Unique("error_message")) :
+                This.CastValue(This.EmitExpression(context, first.Next),
+                    This.Semantics.Primitive("string")).Handle;
+            Return This.CreateError(title, message);
+        }
         LlvmTypeBinding typeBinding = This.FindTypeBinding(type);
         If (typeBinding == null)
         {
@@ -2716,6 +2812,152 @@ Class NativeBackend
         If (type.Kind == [int](TypeKind.DictType)) Return 7;
         If (type.Kind == [int](TypeKind.SetType)) Return 9;
         Return -1;
+    }
+
+    Public Safe Function bool IsRuntimeObjectType(TypeSymbol type)
+    {
+        Return type != null &&
+            type.Kind == [int](TypeKind.NamedType) &&
+            !This.IsEnum(type) &&
+            (type.Declaration != null ||
+             type.Name == "IO.Error" ||
+             type.Name == "IO.Type.Object.Class" ||
+             type.Name == "Object.Class");
+    }
+
+    Public Trusted Function void EmitInvalidCast(
+        LlvmFunctionContext context, TypeSymbol source, TypeSymbol target)
+    {
+        string sourceName = source == null ? "unknown" : source.Name;
+        string targetName = target == null ? "unknown" : target.Name;
+        LlvmValue error = This.CreateError(
+            This.Module.GlobalString("Invalid Cast",
+                This.Unique("invalid_cast_title")),
+            This.Module.GlobalString("Cannot cast " + sourceName + " to " +
+                targetName, This.Unique("invalid_cast_message")));
+        This.SetAndRouteException(context, This.ErrorPointer(error));
+    }
+
+    Public Trusted Function LlvmValue EmitCheckedAnyReferenceCast(
+        LlvmFunctionContext context, LlvmValue value, TypeSymbol target)
+    {
+        byte* tag = This.Module.ExtractValue(value.Handle, 0,
+            This.Unique("cast_any_tag"));
+        byte* payload = This.Module.ExtractValue(value.Handle, 1,
+            This.Unique("cast_any_payload"));
+        byte* function = context.Binding.Function;
+        byte* entryBlock = This.Module.CurrentBlock();
+        byte* tagBlock = This.Module.AppendBlock(function,
+            This.Unique("cast_any_tag_check"));
+        byte* pointerBlock = This.Module.AppendBlock(function,
+            This.Unique("cast_any_pointer"));
+        byte* nonnullBlock = This.Module.AppendBlock(function,
+            This.Unique("cast_any_nonnull"));
+        byte* successBlock = This.Module.AppendBlock(function,
+            This.Unique("cast_any_success"));
+        byte* failBlock = This.Module.AppendBlock(function,
+            This.Unique("cast_any_fail"));
+        byte* doneBlock = This.Module.AppendBlock(function,
+            This.Unique("cast_any_done"));
+        byte* isNone = This.Module.Compare([int](LlvmIntPredicate.Equal), tag,
+            This.Module.ConstInt(This.Module.IntType(64), 0),
+            This.Unique("cast_any_none"));
+        This.Module.ConditionalBranch(isNone, doneBlock, tagBlock);
+
+        This.Module.PositionAtEnd(tagBlock);
+        int collectionTag = This.AnyTypeTag(target);
+        byte* expectedTag = This.Module.ConstInt(This.Module.IntType(64),
+            collectionTag >= 0 ? collectionTag : 6);
+        byte* hasExpectedTag = This.Module.Compare(
+            [int](LlvmIntPredicate.Equal), tag, expectedTag,
+            This.Unique("cast_any_expected_tag"));
+        This.Module.ConditionalBranch(hasExpectedTag, pointerBlock, failBlock);
+
+        This.Module.PositionAtEnd(pointerBlock);
+        byte* bytePointer = This.Module.PointerType(This.Module.IntType(8));
+        byte* raw = This.Module.IntToPointer(payload, bytePointer,
+            This.Unique("cast_any_pointer_value"));
+        byte* isNull = This.Module.Compare([int](LlvmIntPredicate.Equal), raw,
+            This.Module.ConstNull(bytePointer), This.Unique("cast_any_null"));
+        This.Module.ConditionalBranch(isNull, doneBlock, nonnullBlock);
+
+        This.Module.PositionAtEnd(nonnullBlock);
+        If (This.IsRuntimeObjectType(target))
+        {
+            byte* matched = This.EmitRuntimeTypeIdMatch(raw, target);
+            This.Module.ConditionalBranch(matched, successBlock, failBlock);
+        }
+        Else This.Module.Branch(successBlock);
+
+        This.Module.PositionAtEnd(successBlock);
+        byte* casted = This.Module.BitCast(raw, This.TypeHandle(target),
+            This.Unique("cast_any_reference"));
+        This.Module.Branch(doneBlock);
+        byte* successEnd = This.Module.CurrentBlock();
+
+        This.Module.PositionAtEnd(failBlock);
+        This.EmitInvalidCast(context, value.Type, target);
+
+        This.Module.PositionAtEnd(doneBlock);
+        byte* result = This.Module.Phi(This.TypeHandle(target),
+            This.Unique("cast_any_result"));
+        This.Module.AddIncoming(result,
+            This.Module.ConstNull(This.TypeHandle(target)), entryBlock);
+        This.Module.AddIncoming(result,
+            This.Module.ConstNull(This.TypeHandle(target)), pointerBlock);
+        This.Module.AddIncoming(result, casted, successEnd);
+        Return New LlvmValue(result, target);
+    }
+
+    Public Trusted Function LlvmValue EmitCheckedObjectCast(
+        LlvmFunctionContext context, LlvmValue value, TypeSymbol target)
+    {
+        If (value.Type.Kind == [int](TypeKind.NullType))
+            Return This.DefaultValue(target);
+        If (value.Type.Kind == [int](TypeKind.AnyType))
+            Return This.EmitCheckedAnyReferenceCast(context, value, target);
+        If (This.RuntimeTypeAssignable(value.Type, target))
+            Return New LlvmValue(This.Module.BitCast(value.Handle,
+                This.TypeHandle(target), This.Unique("cast_object_static")),
+                target);
+
+        byte* bytePointer = This.Module.PointerType(This.Module.IntType(8));
+        byte* raw = This.Module.BitCast(value.Handle, bytePointer,
+            This.Unique("cast_object_pointer"));
+        byte* function = context.Binding.Function;
+        byte* entryBlock = This.Module.CurrentBlock();
+        byte* nonnullBlock = This.Module.AppendBlock(function,
+            This.Unique("cast_object_nonnull"));
+        byte* successBlock = This.Module.AppendBlock(function,
+            This.Unique("cast_object_success"));
+        byte* failBlock = This.Module.AppendBlock(function,
+            This.Unique("cast_object_fail"));
+        byte* doneBlock = This.Module.AppendBlock(function,
+            This.Unique("cast_object_done"));
+        byte* isNull = This.Module.Compare([int](LlvmIntPredicate.Equal), raw,
+            This.Module.ConstNull(bytePointer), This.Unique("cast_object_null"));
+        This.Module.ConditionalBranch(isNull, doneBlock, nonnullBlock);
+
+        This.Module.PositionAtEnd(nonnullBlock);
+        byte* matched = This.EmitRuntimeTypeIdMatch(raw, target);
+        This.Module.ConditionalBranch(matched, successBlock, failBlock);
+
+        This.Module.PositionAtEnd(successBlock);
+        byte* casted = This.Module.BitCast(raw, This.TypeHandle(target),
+            This.Unique("cast_object_reference"));
+        This.Module.Branch(doneBlock);
+        byte* successEnd = This.Module.CurrentBlock();
+
+        This.Module.PositionAtEnd(failBlock);
+        This.EmitInvalidCast(context, value.Type, target);
+
+        This.Module.PositionAtEnd(doneBlock);
+        byte* result = This.Module.Phi(This.TypeHandle(target),
+            This.Unique("cast_object_result"));
+        This.Module.AddIncoming(result,
+            This.Module.ConstNull(This.TypeHandle(target)), entryBlock);
+        This.Module.AddIncoming(result, casted, successEnd);
+        Return New LlvmValue(result, target);
     }
 
     Public Trusted Function byte* ReferenceIsNonNull(LlvmValue value)
@@ -3288,6 +3530,9 @@ Class NativeBackend
         If (expression.Kind == [int](HirExpressionKind.Index) && expression.Left != null &&
             expression.Left.Type.Kind == [int](TypeKind.PackageType))
             Return This.EmitPackageIndex(context, expression);
+        If (expression.Kind == [int](HirExpressionKind.Field) &&
+            expression.Left != null && expression.Left.Type.Name == "IO.Error")
+            Return This.EmitErrorField(context, expression);
         If (expression.Kind == [int](HirExpressionKind.Field) ||
             expression.Kind == [int](HirExpressionKind.Index))
         {
@@ -3337,7 +3582,17 @@ Class NativeBackend
                 call.AddArgument(expression.Left);
                 Return This.EmitFunctionCall(context, customCast, call, null);
             }
-            Return This.CastValue(This.EmitExpression(context, expression.Left), expression.Type);
+            LlvmValue castSource = This.EmitExpression(context, expression.Left);
+            bool checkedTarget = This.IsRuntimeObjectType(expression.Type) ||
+                expression.Type.Kind == [int](TypeKind.ListType) ||
+                expression.Type.Kind == [int](TypeKind.DictType) ||
+                expression.Type.Kind == [int](TypeKind.SetType);
+            bool checkedSource = castSource.Type.Kind == [int](TypeKind.AnyType) ||
+                castSource.Type.Kind == [int](TypeKind.NullType) ||
+                This.IsRuntimeObjectType(castSource.Type);
+            If (checkedTarget && checkedSource)
+                Return This.EmitCheckedObjectCast(context, castSource, expression.Type);
+            Return This.CastValue(castSource, expression.Type);
         }
         If (expression.Kind == [int](HirExpressionKind.Call))
         {
@@ -3417,6 +3672,90 @@ Class NativeBackend
     {
         If (context.GcFrame != null)
             This.CallRuntime("__kn_gc_pop_frame", This.Types1(context.GcFrame), "");
+    }
+
+    Public Safe Function TypeSymbol ErrorType()
+    {
+        Return This.Semantics.FindExactType("IO.Error");
+    }
+
+    Public Safe Function int ErrorRuntimeTypeId()
+    {
+        LlvmTypeBinding binding = This.FindTypeBinding(This.ErrorType());
+        Return binding == null ? 0 : binding.RuntimeTypeId;
+    }
+
+    Public Trusted Function byte* ErrorPointer(LlvmValue value)
+    {
+        Return This.Module.BitCast(value.Handle,
+            This.Module.PointerType(This.Module.IntType(8)),
+            This.Unique("error_pointer"));
+    }
+
+    Public Trusted Function LlvmValue CreateError(byte* title, byte* message)
+    {
+        byte* raw = This.CallRuntime("kn_sh_rt_error_new", This.Types3(
+            This.Module.ConstInt(This.Module.IntType(64), This.ErrorRuntimeTypeId()),
+            title, message), This.Unique("error"));
+        Return New LlvmValue(This.Module.BitCast(raw,
+            This.TypeHandle(This.ErrorType()), This.Unique("typed_error")),
+            This.ErrorType());
+    }
+
+    Public Trusted Function void ReturnForException(LlvmFunctionContext context)
+    {
+        This.PopGcFrame(context);
+        TypeSymbol returnType = context.Binding.Symbol.ReturnType;
+        If (returnType.Kind == [int](TypeKind.VoidType)) This.Module.ReturnVoid();
+        Else This.Module.ReturnValue(This.DefaultValue(returnType).Handle);
+    }
+
+    Public Trusted Function void RouteException(LlvmFunctionContext context,
+                                                 byte* error)
+    {
+        byte* functionName = This.Module.GlobalString(
+            context.Binding.Symbol.QualifiedName(), This.Unique("exception_function"));
+        This.CallRuntime("__kn_exc_push", This.Types1(functionName), "");
+        byte* trace = This.CallRuntime("__kn_exc_trace", This.Types0(),
+            This.Unique("exception_trace"));
+        This.CallRuntime("kn_sh_rt_error_set_trace", This.Types2(error, trace), "");
+        If (context.CatchTarget != null && context.ExceptionSlot != null)
+        {
+            This.Module.Store(error, context.ExceptionSlot);
+            This.Module.Branch(context.CatchTarget);
+        }
+        Else This.ReturnForException(context);
+    }
+
+    Public Trusted Function void SetAndRouteException(
+        LlvmFunctionContext context, byte* error)
+    {
+        byte* previous = This.CallRuntime("__kn_exc_last", This.Types0(),
+            This.Unique("previous_exception"));
+        This.CallRuntime("kn_sh_rt_error_link_inner",
+            This.Types2(error, previous), "");
+        This.CallRuntime("__kn_exc_set", This.Types1(error), "");
+        This.RouteException(context, error);
+    }
+
+    Public Trusted Function void MaybePropagateException(
+        LlvmFunctionContext context)
+    {
+        byte* function = context.Binding.Function;
+        byte* errorBlock = This.Module.AppendBlock(function,
+            This.Unique("exception_error"));
+        byte* okBlock = This.Module.AppendBlock(function,
+            This.Unique("exception_ok"));
+        byte* hasException = This.RuntimeBool(This.CallRuntime(
+            "__kn_exc_has", This.Types0(), This.Unique("exception_has_c")));
+        This.Module.ConditionalBranch(hasException, errorBlock, okBlock);
+
+        This.Module.PositionAtEnd(errorBlock);
+        byte* error = This.CallRuntime("__kn_exc_get", This.Types0(),
+            This.Unique("exception_current"));
+        This.RouteException(context, error);
+
+        This.Module.PositionAtEnd(okBlock);
     }
 
     Public Trusted Function void EmitReturn(LlvmFunctionContext context, HirExpression expression)
@@ -3590,6 +3929,82 @@ Class NativeBackend
         This.Module.PositionAtEnd(endBlock);
     }
 
+    Public Trusted Function void EmitTry(LlvmFunctionContext context,
+                                          HirStatement statement)
+    {
+        HirStatement handler = statement.ElseBranch;
+        If (handler == null)
+        {
+            This.EmitStatementList(context, statement.FirstChild);
+            Return;
+        }
+
+        byte* function = context.Binding.Function;
+        byte* catchBlock = This.Module.AppendBlock(function,
+            This.Unique("catch"));
+        byte* afterBlock = This.Module.AppendBlock(function,
+            This.Unique("try_end"));
+        byte* bytePointer = This.Module.PointerType(This.Module.IntType(8));
+        byte* exceptionSlot = This.Module.Alloca(bytePointer,
+            This.Unique("try_exception"));
+        This.Module.Store(This.Module.ConstNull(bytePointer), exceptionSlot);
+
+        byte* previousCatch = context.CatchTarget;
+        byte* previousSlot = context.ExceptionSlot;
+        context.CatchTarget = catchBlock;
+        context.ExceptionSlot = exceptionSlot;
+        This.EmitStatementList(context, statement.FirstChild);
+        If (!This.Module.IsTerminated(This.Module.CurrentBlock()))
+            This.Module.Branch(afterBlock);
+        context.CatchTarget = previousCatch;
+        context.ExceptionSlot = previousSlot;
+
+        This.Module.PositionAtEnd(catchBlock);
+        byte* error = This.Module.Load(bytePointer, exceptionSlot,
+            This.Unique("caught_error"));
+        This.CallRuntime("__kn_exc_clear", This.Types0(), "");
+        LlvmVariable savedVariables = context.FirstVariable;
+        If (handler.DeclaredSymbol != null && handler.DeclaredType != null)
+        {
+            byte* address = This.AllocateVariableAddress(context,
+                handler.DeclaredSymbol, handler.DeclaredType,
+                This.Unique("catch_" + handler.DeclaredSymbol.Name));
+            byte* caught = null;
+            If (handler.DeclaredType.Kind == [int](TypeKind.StringType))
+                caught = This.CallRuntime("kn_sh_rt_error_message",
+                    This.Types1(error), This.Unique("caught_message"));
+            Else caught = This.Module.BitCast(error,
+                This.TypeHandle(handler.DeclaredType), This.Unique("caught_object"));
+            This.Module.Store(caught, address);
+            context.AddVariable(New LlvmVariable(handler.DeclaredSymbol.Name,
+                handler.DeclaredSymbol, handler.DeclaredType, address));
+            This.AddGcRoot(context, handler.DeclaredType, address);
+        }
+        This.EmitStatementList(context, handler.FirstChild);
+        context.FirstVariable = savedVariables;
+        If (!This.Module.IsTerminated(This.Module.CurrentBlock()))
+            This.Module.Branch(afterBlock);
+        This.Module.PositionAtEnd(afterBlock);
+    }
+
+    Public Trusted Function void EmitThrow(LlvmFunctionContext context,
+                                            HirStatement statement)
+    {
+        LlvmValue value = This.EmitExpression(context, statement.Expression);
+        byte* error = null;
+        If (value.Type.Name == "IO.Error") error = This.ErrorPointer(value);
+        Else
+        {
+            LlvmValue message = This.CastValue(value,
+                This.Semantics.Primitive("string"));
+            LlvmValue created = This.CreateError(
+                This.Module.GlobalString("Error", This.Unique("throw_title")),
+                message.Handle);
+            error = This.ErrorPointer(created);
+        }
+        This.SetAndRouteException(context, error);
+    }
+
     Public Trusted Function void EmitStatement(LlvmFunctionContext context, HirStatement statement)
     {
         If (statement == null) Return;
@@ -3645,6 +4060,16 @@ Class NativeBackend
         If (statement.Kind == [int](StatementKind.Return))
         {
             This.EmitReturn(context, statement.Expression);
+            Return;
+        }
+        If (statement.Kind == [int](StatementKind.Throw))
+        {
+            This.EmitThrow(context, statement);
+            Return;
+        }
+        If (statement.Kind == [int](StatementKind.Try))
+        {
+            This.EmitTry(context, statement);
             Return;
         }
         If (statement.Kind == [int](StatementKind.If))
@@ -3909,10 +4334,42 @@ Class NativeBackend
 
         byte* result = This.Module.Call(entryBinding.FunctionType, entryBinding.Function,
             arguments, entryBinding.Symbol.ReturnType.Kind == [int](TypeKind.VoidType) ? "" : "entry_result");
-        If (entryBinding.Symbol.ReturnType.Kind == [int](TypeKind.VoidType))
-            This.Module.ReturnValue(This.Module.ConstInt(int32Type, 0));
-        Else
-            This.Module.ReturnValue(This.Module.Truncate(result, int32Type, "exit_code"));
+        byte* normalCode = This.Module.ConstInt(int32Type, 0);
+        If (entryBinding.Symbol.ReturnType.Kind != [int](TypeKind.VoidType))
+            normalCode = This.Module.Truncate(result, int32Type, "exit_code");
+
+        byte* normalBlock = This.Module.AppendBlock(mainFunction, "entry_no_exception");
+        byte* errorBlock = This.Module.AppendBlock(mainFunction, "entry_exception");
+        byte* doneBlock = This.Module.AppendBlock(mainFunction, "entry_done");
+        byte* hasException = This.RuntimeBool(This.CallRuntime(
+            "__kn_exc_has", This.Types0(), "entry_exception_has_c"));
+        This.Module.ConditionalBranch(hasException, errorBlock, normalBlock);
+
+        This.Module.PositionAtEnd(normalBlock);
+        This.Module.Branch(doneBlock);
+        byte* normalEnd = This.Module.CurrentBlock();
+
+        This.Module.PositionAtEnd(errorBlock);
+        byte* error = This.CallRuntime("__kn_exc_get", This.Types0(),
+            "entry_exception_value");
+        byte* message = This.CallRuntime("kn_sh_rt_error_message",
+            This.Types1(error), "entry_exception_message");
+        byte* trace = This.CallRuntime("__kn_exc_trace", This.Types0(),
+            "entry_exception_trace");
+        byte* formattedTrace = This.CallRuntime("kn_sh_rt_trace_format",
+            This.Types1(trace), "entry_exception_trace_text");
+        This.CallRuntime("kn_sh_rt_print_line", This.Types1(message), "");
+        This.CallRuntime("kn_sh_rt_print_line", This.Types1(formattedTrace), "");
+        This.CallRuntime("__kn_exc_clear", This.Types0(), "");
+        This.Module.Branch(doneBlock);
+        byte* errorEnd = This.Module.CurrentBlock();
+
+        This.Module.PositionAtEnd(doneBlock);
+        byte* exitCode = This.Module.Phi(int32Type, "entry_final_code");
+        This.Module.AddIncoming(exitCode, normalCode, normalEnd);
+        This.Module.AddIncoming(exitCode, This.Module.ConstInt(int32Type, 1),
+            errorEnd);
+        This.Module.ReturnValue(exitCode);
     }
 
     Public Trusted Function bool GenerateModule()

@@ -1,0 +1,67 @@
+Unit Tests.Selfhost.Exceptions;
+
+Get IO.Console;
+Get IO.Error;
+Get IO.Text;
+
+Static Function void Deep()
+{
+    Throw New IO.Error("InnerT", "InnerM");
+}
+
+Static Function void Wrap()
+{
+    Try
+    {
+        Deep();
+    }
+    Catch (IO.Error caught)
+    {
+        IO.Console.PrintLine(caught.Title);
+        Throw New IO.Error("OuterT", "OuterM");
+    }
+}
+
+Safe Static Function int Main()
+{
+    Try
+    {
+        Throw "boom";
+        IO.Console.PrintLine("unreachable");
+    }
+    Catch (string message)
+    {
+        IO.Console.PrintLine(message);
+    }
+
+    IO.Error direct = New IO.Error("Title", "Message");
+    IO.Console.PrintLine(direct.Title);
+    IO.Console.PrintLine(direct.Message);
+
+    Try
+    {
+        Throw direct;
+    }
+    Catch (IO.Error caught)
+    {
+        IO.Console.PrintLine(caught.Title);
+        IO.Console.PrintLine(caught.Message);
+    }
+
+    Try
+    {
+        Wrap();
+    }
+    Catch (IO.Error outer)
+    {
+        IO.Console.PrintLine(outer.Title);
+        IO.Console.PrintLine(outer.Message);
+        IO.Console.PrintLine(outer.Inner.Title);
+        IO.Console.PrintLine(outer.Inner.Message);
+        IO.Console.PrintLine(IO.Error.HasException());
+        IO.Console.PrintLine(IO.Error.Current().Title == outer.Title);
+        IO.Console.PrintLine(IO.Text.Contains(
+            IO.Error.LastTrace(), "Tests.Selfhost.Exceptions.Wrap"));
+    }
+    Return 0;
+}

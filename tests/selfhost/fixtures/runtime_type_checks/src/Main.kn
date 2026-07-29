@@ -74,5 +74,53 @@ Safe Static Function int Main()
     {
         IO.Console.PrintLine("miss");
     }
+
+    Dog fromBase = [Dog](animal);
+    Dog fromAny = [Dog](boxed);
+    Dog fromNone = [Dog](none);
+    IO.Console.PrintLine(fromBase.Name());
+    IO.Console.PrintLine(fromAny.Name());
+    IO.Console.PrintLine(fromNone == null);
+
+    Try
+    {
+        Dog invalidObject = [Dog](unrelated);
+        IO.Console.PrintLine(invalidObject.Name());
+    }
+    Catch (IO.Error objectError)
+    {
+        IO.Console.PrintLine(objectError.Title);
+    }
+
+    Try
+    {
+        Dog invalidScalar = [Dog](scalar);
+        IO.Console.PrintLine(invalidScalar.Name());
+    }
+    Catch (IO.Error scalarError)
+    {
+        IO.Console.PrintLine(scalarError.Title);
+    }
+
+    list values = list.Create();
+    values.Add(1);
+    dict mapping = dict.Create();
+    mapping.Set("value", 1);
+    any boxedList = values;
+    any boxedDict = mapping;
+    IO.Console.PrintLine(boxedList Is list);
+    IO.Console.PrintLine(boxedList Is dict);
+    IO.Console.PrintLine(boxedDict Is dict);
+    IO.Console.PrintLine([list](boxedList).Count());
+    IO.Console.PrintLine([dict](boxedDict).Count());
+    Try
+    {
+        list invalidList = [list](boxedDict);
+        IO.Console.PrintLine(invalidList.Count());
+    }
+    Catch (IO.Error collectionError)
+    {
+        IO.Console.PrintLine(collectionError.Title);
+    }
     Return 0;
 }

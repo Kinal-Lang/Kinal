@@ -24,5 +24,30 @@ Static Function int Main()
     Console.PrintLine(s.IsEmpty());
     s.Add("x");
     Console.PrintLine(s.IsEmpty());
+
+    any boxedList = l;
+    any boxedDict = d;
+    any boxedSet = s;
+    Console.PrintLine(boxedList Is list);
+    Console.PrintLine(boxedList Is dict);
+    Console.PrintLine(boxedDict Is dict);
+    Console.PrintLine(boxedSet Is set);
+    Console.PrintLine([list](boxedList).IsEmpty());
+    Console.PrintLine([dict](boxedDict).IsEmpty());
+    Console.PrintLine([set](boxedSet).IsEmpty());
+
+    any none = null;
+    list empty = [list](none);
+    Console.PrintLine(empty == null);
+
+    Try
+    {
+        list wrong = [list](boxedDict);
+        Console.PrintLine(wrong.IsEmpty());
+    }
+    Catch (IO.Error error)
+    {
+        Console.PrintLine(error.Title);
+    }
     Return 0;
 }

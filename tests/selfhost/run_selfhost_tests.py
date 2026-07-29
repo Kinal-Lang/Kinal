@@ -895,11 +895,78 @@ def main() -> int:
         == "true\ntrue\nfalse\ntrue\ntrue\ntrue\ntrue\nfalse\n"
            "false\nfalse\nfalse\ntrue\ntrue\nfalse\ntrue\nfalse\n"
            "true\ntrue\nfalse\n"
-           "dog\ndog\nmiss",
+           "dog\ndog\nmiss\ndog\ndog\ntrue\nInvalid Cast\nInvalid Cast\n"
+           "true\nfalse\ntrue\n1\n1\nInvalid Cast",
         "stage1 runtime-type fixture output differs",
         runtime_type_run,
     )
     results.append({"name": "runtime_type_checks", "ok": True})
+
+    exceptions_project = (
+        root / "tests" / "selfhost" / "fixtures" / "exceptions" / "kinal.knproj"
+    )
+    exceptions_executable = out_dir / f"exceptions{executable_suffix}"
+    exceptions_build = run(
+        [
+            str(compiler),
+            "build",
+            str(exceptions_project),
+            str(exceptions_executable),
+            "test",
+        ],
+        cwd=root,
+    )
+    require(
+        exceptions_build.returncode == 0,
+        "stage1 exception fixture build failed",
+        exceptions_build,
+    )
+    exceptions_run = run([str(exceptions_executable)], cwd=root)
+    require(
+        exceptions_run.returncode == 0,
+        "stage1 exception fixture execution failed",
+        exceptions_run,
+    )
+    require(
+        exceptions_run.stdout.replace("\r\n", "\n").strip()
+        == "boom\nTitle\nMessage\nTitle\nMessage\nInnerT\nOuterT\nOuterM\n"
+           "InnerT\nInnerM\nfalse\ntrue\ntrue",
+        "stage1 exception fixture output differs",
+        exceptions_run,
+    )
+    results.append({"name": "exceptions", "ok": True})
+
+    unhandled_executable = out_dir / f"unhandled-exception{executable_suffix}"
+    unhandled_build = run(
+        [
+            str(compiler),
+            "build",
+            str(exceptions_project),
+            str(unhandled_executable),
+            "unhandled",
+        ],
+        cwd=root,
+    )
+    require(
+        unhandled_build.returncode == 0,
+        "stage1 unhandled-exception fixture build failed",
+        unhandled_build,
+    )
+    unhandled_run = run([str(unhandled_executable)], cwd=root)
+    require(
+        unhandled_run.returncode == 1,
+        "stage1 unhandled exception must return exit code 1",
+        unhandled_run,
+    )
+    require(
+        unhandled_run.stdout.replace("\r\n", "\n").strip()
+        == "bad\nTests.Selfhost.Exceptions.Unhandled.Fail -> "
+           "Tests.Selfhost.Exceptions.Unhandled.Pick -> "
+           "Tests.Selfhost.Exceptions.Unhandled.Main",
+        "stage1 unhandled-exception output differs",
+        unhandled_run,
+    )
+    results.append({"name": "unhandled_exception", "ok": True})
 
     nested_project = root / "tests" / "selfhost" / "fixtures" / "nested_types" / "kinal.knproj"
     nested_executable = out_dir / f"nested-types{executable_suffix}"

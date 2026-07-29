@@ -215,6 +215,8 @@ Class LlvmFunctionContext
     Public LlvmBlockBinding ActiveBlock;
     Public byte* BreakTarget;
     Public byte* ContinueTarget;
+    Public byte* CatchTarget;
+    Public byte* ExceptionSlot;
     Public byte* GcFrame;
     Public byte* RuntimeUntilEnabled;
     Public byte* RuntimeUntilOrdinal;
@@ -227,6 +229,8 @@ Class LlvmFunctionContext
         This.ActiveBlock = null;
         This.BreakTarget = null;
         This.ContinueTarget = null;
+        This.CatchTarget = null;
+        This.ExceptionSlot = null;
         This.GcFrame = null;
         This.RuntimeUntilEnabled = null;
         This.RuntimeUntilOrdinal = null;

@@ -1,0 +1,52 @@
+Project SelfhostExceptions
+{
+    DefaultProfile = "test";
+
+    SourceSet "main"
+    {
+        Roots = ["src"];
+        Include = ["Main.kn"];
+        RequireUnit = true;
+    }
+
+    SourceSet "unhandled"
+    {
+        Roots = ["src"];
+        Include = ["Unhandled.kn"];
+        RequireUnit = true;
+    }
+
+    Profile "test"
+    {
+        Source
+        {
+            Entry = "src/Main.kn";
+            Sets = ["main"];
+            Mode = ReachableUnits;
+        }
+
+        Build
+        {
+            Backend = Native;
+            Environment = Hosted;
+            Output = "../../../../out/selfhost/tests/exceptions.exe";
+        }
+    }
+
+    Profile "unhandled"
+    {
+        Source
+        {
+            Entry = "src/Unhandled.kn";
+            Sets = ["unhandled"];
+            Mode = ReachableUnits;
+        }
+
+        Build
+        {
+            Backend = Native;
+            Environment = Hosted;
+            Output = "../../../../out/selfhost/tests/unhandled-exception.exe";
+        }
+    }
+}
