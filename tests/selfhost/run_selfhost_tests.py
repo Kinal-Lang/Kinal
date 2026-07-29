@@ -865,6 +865,42 @@ def main() -> int:
     )
     results.append({"name": "oop_inheritance", "ok": True})
 
+    runtime_type_project = (
+        root / "tests" / "selfhost" / "fixtures" / "runtime_type_checks" / "kinal.knproj"
+    )
+    runtime_type_executable = out_dir / f"runtime-type-checks{executable_suffix}"
+    runtime_type_build = run(
+        [
+            str(compiler),
+            "build",
+            str(runtime_type_project),
+            str(runtime_type_executable),
+            "test",
+        ],
+        cwd=root,
+    )
+    require(
+        runtime_type_build.returncode == 0,
+        "stage1 runtime-type fixture build failed",
+        runtime_type_build,
+    )
+    runtime_type_run = run([str(runtime_type_executable)], cwd=root)
+    require(
+        runtime_type_run.returncode == 0,
+        "stage1 runtime-type fixture execution failed",
+        runtime_type_run,
+    )
+    require(
+        runtime_type_run.stdout.replace("\r\n", "\n").strip()
+        == "true\ntrue\nfalse\ntrue\ntrue\ntrue\ntrue\nfalse\n"
+           "false\nfalse\nfalse\ntrue\ntrue\nfalse\ntrue\nfalse\n"
+           "true\ntrue\nfalse\n"
+           "dog\ndog\nmiss",
+        "stage1 runtime-type fixture output differs",
+        runtime_type_run,
+    )
+    results.append({"name": "runtime_type_checks", "ok": True})
+
     nested_project = root / "tests" / "selfhost" / "fixtures" / "nested_types" / "kinal.knproj"
     nested_executable = out_dir / f"nested-types{executable_suffix}"
     nested_build = run(

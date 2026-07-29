@@ -296,13 +296,15 @@ Class NativeBackend
         This.AnyType = This.Module.LiteralStructType(anyFields, false);
 
         TypeSymbol type = This.Semantics.FirstType;
+        int runtimeTypeId = 1;
         While (type != null)
         {
             If (type.Kind == [int](TypeKind.NamedType) && !This.IsEnum(type))
             {
                 byte* structType = This.Module.NamedStructType(type.QualifiedName());
                 This.AddTypeBinding(New LlvmTypeBinding(type,
-                    This.Module.PointerType(structType), structType));
+                    This.Module.PointerType(structType), structType, runtimeTypeId));
+                runtimeTypeId = runtimeTypeId + 1;
             }
             type = type.Next;
         }
@@ -318,6 +320,7 @@ Class NativeBackend
             LlvmHandles fields = New LlvmHandles();
             byte* bytePointer = This.Module.PointerType(This.Module.IntType(8));
             fields.Add(This.Module.PointerType(bytePointer));
+            fields.Add(This.Module.IntType(64));
             This.AppendInstanceFieldTypes(fields, binding.Symbol);
             If (!This.Module.SetStructBody(binding.StructHandle, fields, false))
                 This.Fail("failed to define class layout: " + binding.Symbol.QualifiedName());
@@ -1033,17 +1036,65 @@ Class NativeBackend
             tag = 1;
             payload = This.ToI64(value);
         }
+        ElseIf (value.Type.Kind == [int](TypeKind.FloatType))
+        {
+            tag = 2;
+            byte* normalized = value.Handle;
+            int bits = This.FloatBits(value.Type);
+            byte* f64Type = This.TypeHandle(This.Semantics.Primitive("f64"));
+            If (bits < 64)
+                normalized = This.Module.FloatExtend(normalized, f64Type,
+                    This.Unique("any_float_widen"));
+            ElseIf (bits > 64)
+                normalized = This.Module.FloatTruncate(normalized, f64Type,
+                    This.Unique("any_float_narrow"));
+            payload = This.Module.BitCast(normalized, This.Module.IntType(64),
+                This.Unique("any_float"));
+        }
         ElseIf (value.Type.Kind == [int](TypeKind.StringType))
         {
+            byte* isNull = This.Module.Compare([int](LlvmIntPredicate.Equal),
+                value.Handle, This.Module.ConstNull(This.TypeHandle(value.Type)),
+                This.Unique("any_string_null"));
+            byte* raw = This.Module.PointerToInt(value.Handle,
+                This.Module.IntType(64), This.Unique("any_string"));
             tag = 5;
-            payload = This.Module.PointerToInt(value.Handle, This.Module.IntType(64), This.Unique("any_string"));
+            byte* tagValue = This.Module.Select(isNull,
+                This.Module.ConstInt(This.Module.IntType(64), 0),
+                This.Module.ConstInt(This.Module.IntType(64), tag),
+                This.Unique("any_string_tag"));
+            payload = This.Module.Select(isNull,
+                This.Module.ConstInt(This.Module.IntType(64), 0), raw,
+                This.Unique("any_string_payload"));
+            byte* boxed = This.Module.ConstUndef(This.AnyType);
+            boxed = This.Module.InsertValue(boxed, tagValue, 0, "");
+            boxed = This.Module.InsertValue(boxed, payload, 1, "");
+            Return New LlvmValue(boxed, This.Semantics.Primitive("any"));
         }
         ElseIf (This.IsReferenceType(value.Type))
         {
             tag = value.Type.Kind == [int](TypeKind.ListType) ? 8 :
                 (value.Type.Kind == [int](TypeKind.DictType) ? 7 :
                 (value.Type.Kind == [int](TypeKind.SetType) ? 9 : 6));
-            payload = This.Module.PointerToInt(value.Handle, This.Module.IntType(64), This.Unique("any_pointer"));
+            byte* bytePointer = This.Module.PointerType(This.Module.IntType(8));
+            byte* pointer = This.Module.BitCast(value.Handle, bytePointer,
+                This.Unique("any_pointer_cast"));
+            byte* isNull = This.Module.Compare([int](LlvmIntPredicate.Equal),
+                pointer, This.Module.ConstNull(bytePointer),
+                This.Unique("any_pointer_null"));
+            byte* raw = This.Module.PointerToInt(pointer,
+                This.Module.IntType(64), This.Unique("any_pointer"));
+            byte* tagValue = This.Module.Select(isNull,
+                This.Module.ConstInt(This.Module.IntType(64), 0),
+                This.Module.ConstInt(This.Module.IntType(64), tag),
+                This.Unique("any_pointer_tag"));
+            payload = This.Module.Select(isNull,
+                This.Module.ConstInt(This.Module.IntType(64), 0), raw,
+                This.Unique("any_pointer_payload"));
+            byte* boxed = This.Module.ConstUndef(This.AnyType);
+            boxed = This.Module.InsertValue(boxed, tagValue, 0, "");
+            boxed = This.Module.InsertValue(boxed, payload, 1, "");
+            Return New LlvmValue(boxed, This.Semantics.Primitive("any"));
         }
         ElseIf (value.Type.Kind == [int](TypeKind.NullType))
         {
@@ -1068,6 +1119,20 @@ Class NativeBackend
         {
             int bits = This.IntegerBits(target);
             byte* raw = bits < 64 ? This.Module.Truncate(payload, This.Module.IntType(bits), This.Unique("any_int")) : payload;
+            Return New LlvmValue(raw, target);
+        }
+        If (target.Kind == [int](TypeKind.FloatType))
+        {
+            byte* raw = This.Module.BitCast(payload,
+                This.TypeHandle(This.Semantics.Primitive("f64")),
+                This.Unique("any_float"));
+            int bits = This.FloatBits(target);
+            If (bits < 64)
+                raw = This.Module.FloatTruncate(raw, This.TypeHandle(target),
+                    This.Unique("any_float_narrow"));
+            ElseIf (bits > 64)
+                raw = This.Module.FloatExtend(raw, This.TypeHandle(target),
+                    This.Unique("any_float_widen"));
             Return New LlvmValue(raw, target);
         }
         If (This.IsReferenceType(target))
@@ -1223,7 +1288,7 @@ Class NativeBackend
         If (owner == null || owner.Declaration == null) Return -1;
         int inherited = This.FieldIndex(owner.BaseType, name);
         If (inherited >= 0) Return inherited;
-        int index = 1 + This.InstanceFieldCount(owner.BaseType);
+        int index = 2 + This.InstanceFieldCount(owner.BaseType);
         FieldDecl field = owner.Declaration.FirstField;
         While (field != null)
         {
@@ -1298,6 +1363,92 @@ Class NativeBackend
             slot = slot + 1;
         }
         This.Module.Store(vtable, vtableSlot);
+    }
+
+    Public Trusted Function void InitializeObjectTypeId(LlvmTypeBinding binding,
+                                                         byte* object)
+    {
+        byte* typeIdSlot = This.Module.StructGep(binding.StructHandle, object, 1,
+            This.Unique("type_id_slot"));
+        This.Module.Store(This.Module.ConstInt(This.Module.IntType(64),
+            binding.RuntimeTypeId), typeIdSlot);
+    }
+
+    Public Safe Function bool RuntimeTypeAssignable(TypeSymbol actual,
+                                                     TypeSymbol target)
+    {
+        If (actual == null || target == null || This.IsEnum(actual) ||
+            This.IsEnum(target)) Return false;
+        If (target.Name == "IO.Type.Object.Class" ||
+            target.Name == "Object.Class") Return true;
+        TypeSymbol current = actual;
+        While (current != null)
+        {
+            If (This.Semantics.SameType(current, target)) Return true;
+            current = current.BaseType;
+        }
+        Return false;
+    }
+
+    Public Trusted Function byte* LoadRuntimeTypeId(byte* object)
+    {
+        byte* bytePointer = This.Module.PointerType(This.Module.IntType(8));
+        LlvmHandles headerFields = New LlvmHandles();
+        headerFields.Add(This.Module.PointerType(bytePointer));
+        headerFields.Add(This.Module.IntType(64));
+        byte* headerType = This.Module.LiteralStructType(headerFields, false);
+        byte* header = This.Module.BitCast(object,
+            This.Module.PointerType(headerType), This.Unique("object_header"));
+        byte* typeIdAddress = This.Module.StructGep(headerType, header, 1,
+            This.Unique("object_type_id_address"));
+        Return This.Module.Load(This.Module.IntType(64), typeIdAddress,
+            This.Unique("object_type_id"));
+    }
+
+    Public Trusted Function byte* EmitRuntimeTypeIdMatch(byte* object,
+                                                          TypeSymbol target)
+    {
+        byte* typeId = This.LoadRuntimeTypeId(object);
+        byte* matched = This.Module.ConstInt(This.Module.IntType(1), 0);
+        LlvmTypeBinding candidate = This.FirstType;
+        While (candidate != null)
+        {
+            If (This.RuntimeTypeAssignable(candidate.Symbol, target))
+            {
+                byte* equals = This.Module.Compare([int](LlvmIntPredicate.Equal),
+                    typeId, This.Module.ConstInt(This.Module.IntType(64),
+                        candidate.RuntimeTypeId), This.Unique("type_id_equal"));
+                matched = This.Module.Or(matched, equals,
+                    This.Unique("type_id_match"));
+            }
+            candidate = candidate.Next;
+        }
+        Return matched;
+    }
+
+    Public Trusted Function byte* EmitGuardedRuntimeTypeMatch(
+        LlvmFunctionContext context, byte* object, byte* isObject,
+        TypeSymbol target)
+    {
+        byte* entryBlock = This.Module.CurrentBlock();
+        byte* matchBlock = This.Module.AppendBlock(context.Binding.Function,
+            This.Unique("type_match"));
+        byte* doneBlock = This.Module.AppendBlock(context.Binding.Function,
+            This.Unique("type_match_done"));
+        This.Module.ConditionalBranch(isObject, matchBlock, doneBlock);
+
+        This.Module.PositionAtEnd(matchBlock);
+        byte* matched = This.EmitRuntimeTypeIdMatch(object, target);
+        byte* matchEnd = This.Module.CurrentBlock();
+        This.Module.Branch(doneBlock);
+
+        This.Module.PositionAtEnd(doneBlock);
+        byte* result = This.Module.Phi(This.Module.IntType(1),
+            This.Unique("type_match_result"));
+        This.Module.AddIncoming(result,
+            This.Module.ConstInt(This.Module.IntType(1), 0), entryBlock);
+        This.Module.AddIncoming(result, matched, matchEnd);
+        Return result;
     }
 
     Public Safe Function int EnumValue(TypeSymbol type, string target)
@@ -1382,8 +1533,10 @@ Class NativeBackend
             This.Unique("package_element"));
         LlvmValue boxed = New LlvmValue(This.Module.Load(This.AnyType, address,
             This.Unique("package_any")), This.Semantics.Primitive("any"));
+        // Package storage is internally boxed as `any`, but indexing a typed
+        // package is an extraction, not a language-level dynamic conversion.
         LlvmValue result = expression.Type.Kind == [int](TypeKind.AnyType) ? boxed :
-            This.CastValue(boxed, expression.Type);
+            This.UnboxAny(boxed, expression.Type);
         result.Address = address;
         Return result;
     }
@@ -2416,8 +2569,9 @@ Class NativeBackend
         byte* memory = This.CallRuntime("__kn_gc_alloc", This.Types1(size), This.Unique("object_memory"));
         byte* object = This.Module.BitCast(memory, typeBinding.Handle, This.Unique("object"));
         This.InitializeObjectVtable(typeBinding, object, type);
+        This.InitializeObjectTypeId(typeBinding, object);
 
-        This.InitializeObjectFields(typeBinding, object, type, 1);
+        This.InitializeObjectFields(typeBinding, object, type, 2);
 
         int count = This.HirArgumentCount(expression);
         LlvmFunctionBinding constructor = This.FirstFunction;
@@ -2550,9 +2704,116 @@ Class NativeBackend
             This.Unique("switch_result_value")), expression.Type);
     }
 
+    Public Safe Function int AnyTypeTag(TypeSymbol type)
+    {
+        If (type == null) Return -1;
+        If (type.Kind == [int](TypeKind.BoolType)) Return 3;
+        If (type.Name == "char") Return 4;
+        If (This.IsIntegerLike(type)) Return 1;
+        If (type.Kind == [int](TypeKind.FloatType)) Return 2;
+        If (type.Kind == [int](TypeKind.StringType)) Return 5;
+        If (type.Kind == [int](TypeKind.ListType)) Return 8;
+        If (type.Kind == [int](TypeKind.DictType)) Return 7;
+        If (type.Kind == [int](TypeKind.SetType)) Return 9;
+        Return -1;
+    }
+
+    Public Trusted Function byte* ReferenceIsNonNull(LlvmValue value)
+    {
+        byte* bytePointer = This.Module.PointerType(This.Module.IntType(8));
+        byte* pointer = This.Module.BitCast(value.Handle, bytePointer,
+            This.Unique("is_reference_pointer"));
+        Return This.Module.Compare([int](LlvmIntPredicate.NotEqual), pointer,
+            This.Module.ConstNull(bytePointer), This.Unique("is_reference_nonnull"));
+    }
+
+    Public Trusted Function LlvmValue EmitIsValue(LlvmFunctionContext context,
+                                                   HirExpression expression,
+                                                   LlvmValue value)
+    {
+        TypeSymbol boolType = This.Semantics.Primitive("bool");
+        TypeSymbol source = value.Type;
+        TypeSymbol target = expression.Right == null ? null : expression.Right.Type;
+        byte* yes = This.Module.ConstInt(This.Module.IntType(1), 1);
+        byte* no = This.Module.ConstInt(This.Module.IntType(1), 0);
+
+        // `Is any` describes every value except void.  The left expression is
+        // still emitted above so observable side effects are preserved.
+        If (target != null && target.Kind == [int](TypeKind.AnyType))
+            Return New LlvmValue(
+                source.Kind == [int](TypeKind.VoidType) ? no : yes, boolType);
+
+        If (source.Kind == [int](TypeKind.AnyType))
+        {
+            byte* tag = This.Module.ExtractValue(value.Handle, 0,
+                This.Unique("is_any_tag"));
+            byte* payload = This.Module.ExtractValue(value.Handle, 1,
+                This.Unique("is_any_payload"));
+            If (target != null && target.Kind == [int](TypeKind.NamedType) &&
+                !This.IsEnum(target))
+            {
+                byte* hasObjectTag = This.Module.Compare(
+                    [int](LlvmIntPredicate.Equal), tag,
+                    This.Module.ConstInt(This.Module.IntType(64), 6),
+                    This.Unique("is_any_object_tag"));
+                byte* hasPayload = This.Module.Compare(
+                    [int](LlvmIntPredicate.NotEqual), payload,
+                    This.Module.ConstInt(This.Module.IntType(64), 0),
+                    This.Unique("is_any_object_nonnull"));
+                byte* isObject = This.Module.And(hasObjectTag, hasPayload,
+                    This.Unique("is_any_object"));
+                byte* object = This.Module.IntToPointer(payload,
+                    This.Module.PointerType(This.Module.IntType(8)),
+                    This.Unique("is_any_object_pointer"));
+                Return New LlvmValue(This.EmitGuardedRuntimeTypeMatch(
+                    context, object, isObject, target), boolType);
+            }
+            int targetTag = This.AnyTypeTag(target);
+            If (targetTag < 0) Return New LlvmValue(no, boolType);
+            Return New LlvmValue(This.Module.Compare(
+                [int](LlvmIntPredicate.Equal), tag,
+                This.Module.ConstInt(This.Module.IntType(64), targetTag),
+                This.Unique("is_any_type")), boolType);
+        }
+
+        If (source.Kind == [int](TypeKind.NullType) || target == null)
+            Return New LlvmValue(no, boolType);
+
+        If (source.Kind == [int](TypeKind.NamedType) && !This.IsEnum(source) &&
+            target.Kind == [int](TypeKind.NamedType) && !This.IsEnum(target))
+        {
+            byte* bytePointer = This.Module.PointerType(This.Module.IntType(8));
+            byte* object = This.Module.BitCast(value.Handle, bytePointer,
+                This.Unique("is_object_pointer"));
+            byte* nonnull = This.Module.Compare([int](LlvmIntPredicate.NotEqual),
+                object, This.Module.ConstNull(bytePointer),
+                This.Unique("is_object_nonnull"));
+            Return New LlvmValue(This.EmitGuardedRuntimeTypeMatch(
+                context, object, nonnull, target), boolType);
+        }
+
+        bool sameReference = This.SameType(source, target) &&
+            (source.Kind == [int](TypeKind.StringType) ||
+             source.Kind == [int](TypeKind.ListType) ||
+             source.Kind == [int](TypeKind.DictType) ||
+             source.Kind == [int](TypeKind.SetType) ||
+             source.Kind == [int](TypeKind.PointerType));
+        If (sameReference)
+            Return New LlvmValue(This.ReferenceIsNonNull(value), boolType);
+        Return New LlvmValue(This.SameType(source, target) ? yes : no, boolType);
+    }
+
+    Public Trusted Function LlvmValue EmitIs(LlvmFunctionContext context,
+                                              HirExpression expression)
+    {
+        Return This.EmitIsValue(context, expression,
+            This.EmitExpression(context, expression.Left));
+    }
+
     Public Trusted Function LlvmValue EmitBinary(LlvmFunctionContext context, HirExpression expression)
     {
         TokenKind operatorKind = expression.Operator;
+        If (operatorKind == TokenKind.KwIs) Return This.EmitIs(context, expression);
         If (operatorKind == TokenKind.AndAnd) Return This.EmitShortCircuit(context, expression, true);
         If (operatorKind == TokenKind.OrOr) Return This.EmitShortCircuit(context, expression, false);
 
@@ -3182,7 +3443,19 @@ Class NativeBackend
 
     Public Trusted Function void EmitIf(LlvmFunctionContext context, HirStatement statement)
     {
-        LlvmValue condition = This.CastValue(This.EmitExpression(context, statement.Expression),
+        bool hasPattern = statement.DeclaredSymbol != null &&
+            statement.Expression != null &&
+            statement.Expression.Kind == [int](HirExpressionKind.Binary) &&
+            statement.Expression.Operator == TokenKind.KwIs;
+        LlvmValue patternValue = null;
+        LlvmValue condition = null;
+        If (hasPattern)
+        {
+            patternValue = This.EmitExpression(context, statement.Expression.Left);
+            condition = This.EmitIsValue(context, statement.Expression, patternValue);
+        }
+        Else condition = This.CastValue(
+            This.EmitExpression(context, statement.Expression),
             This.Semantics.Primitive("bool"));
         byte* function = context.Binding.Function;
         byte* trueBlock = This.Module.AppendBlock(function, This.Unique("if_true"));
@@ -3191,8 +3464,22 @@ Class NativeBackend
         This.Module.ConditionalBranch(condition.Handle, trueBlock, falseBlock);
 
         This.Module.PositionAtEnd(trueBlock);
+        LlvmVariable savedVariables = context.FirstVariable;
+        If (hasPattern)
+        {
+            byte* address = This.AllocateVariableAddress(context,
+                statement.DeclaredSymbol, statement.DeclaredType,
+                This.Unique("is_pattern_" + statement.DeclaredSymbol.Name));
+            This.Module.Store(
+                This.CastValue(patternValue, statement.DeclaredType).Handle,
+                address);
+            context.AddVariable(New LlvmVariable(statement.DeclaredSymbol.Name,
+                statement.DeclaredSymbol, statement.DeclaredType, address));
+            This.AddGcRoot(context, statement.DeclaredType, address);
+        }
         This.EmitStatementList(context, statement.FirstChild);
         If (!This.Module.IsTerminated(This.Module.CurrentBlock())) This.Module.Branch(mergeBlock);
+        context.FirstVariable = savedVariables;
 
         This.Module.PositionAtEnd(falseBlock);
         This.EmitStatementList(context, statement.ElseBranch);

@@ -3050,12 +3050,25 @@ Class SemanticCompilation
         Return [int](escaped);
     }
 
+    Public Safe Function bool NumberIsFloat(string text)
+    {
+        bool hexadecimal = IO.Text.StartsWith(text, "0x") ||
+            IO.Text.StartsWith(text, "0X");
+        If (IO.Text.Contains(text, ".")) Return true;
+        If (hexadecimal || IO.Text.IsEmpty(text)) Return false;
+        Return IO.Text.EndsWith(text, "f") || IO.Text.EndsWith(text, "F");
+    }
+
     Public Safe Function ConstantIntegerValue ConstantIntegerCore(
         SyntaxTree syntax, BindingScope scope, ExpressionNode expression, int depth)
     {
         If (expression == null || depth > 192) Return New ConstantIntegerValue(false, 0);
         If (expression.Kind == [int](ExpressionKind.Number))
+        {
+            If (This.NumberIsFloat(expression.Text))
+                Return New ConstantIntegerValue(false, 0);
             Return New ConstantIntegerValue(true, [i64](expression.Text));
+        }
         If (expression.Kind == [int](ExpressionKind.Character))
             Return New ConstantIntegerValue(true, This.CharacterConstant(expression.Text));
         If (expression.Kind == [int](ExpressionKind.Boolean))
@@ -3197,7 +3210,8 @@ Class SemanticCompilation
         If (expression == null) Return null;
         This.BoundExpressionCount = This.BoundExpressionCount + 1;
         If (expression.Kind == [int](ExpressionKind.Number))
-            Return New HirExpression([int](HirExpressionKind.Constant), expression, This.Primitive("int"));
+            Return New HirExpression([int](HirExpressionKind.Constant), expression,
+                This.Primitive(This.NumberIsFloat(expression.Text) ? "float" : "int"));
         If (expression.Kind == [int](ExpressionKind.String) ||
             expression.Kind == [int](ExpressionKind.FormattedString))
             Return This.BindStringExpression(syntax, function, scope, expression);
@@ -3953,7 +3967,13 @@ Class SemanticCompilation
                 string patternTypeName = This.ExpressionPath(statement.Expression.Right);
                 TypeSymbol patternType = This.ResolveFunctionType(syntax, function, patternTypeName);
                 If (patternType != null)
-                    childScope.Add(New ValueSymbol(statement.Expression.Third.Text, patternType, false));
+                {
+                    ValueSymbol pattern = New ValueSymbol(
+                        statement.Expression.Third.Text, patternType, false);
+                    result.DeclaredType = patternType;
+                    result.DeclaredSymbol = pattern;
+                    childScope.Add(pattern);
+                }
             }
             result.FirstChild = This.BindStatement(syntax, function, childScope, statement.FirstChild);
         }

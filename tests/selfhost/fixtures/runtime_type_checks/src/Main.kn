@@ -1,0 +1,78 @@
+Unit Tests.Selfhost.RuntimeTypeChecks;
+
+Get IO.Console;
+
+Interface INode
+{
+}
+
+Class Animal
+{
+}
+
+Class Dog By Animal
+{
+    Public Safe Function string Name()
+    {
+        Return "dog";
+    }
+}
+
+Class Node By INode
+{
+}
+
+Class Other
+{
+}
+
+Safe Static Function int Main()
+{
+    Animal animal = New Dog();
+    INode node = New Node();
+    any boxed = New Dog();
+    any unrelated = New Other();
+    any scalar = 7;
+    any none = null;
+    any floating = 1.5;
+    string text = "kinal";
+    string missing = null;
+    any missingText = missing;
+
+    IO.Console.PrintLine(animal Is Animal);
+    IO.Console.PrintLine(animal Is Dog);
+    IO.Console.PrintLine(animal Is Node);
+    IO.Console.PrintLine(node Is INode);
+    IO.Console.PrintLine(node Is Node);
+    IO.Console.PrintLine(boxed Is Dog);
+    IO.Console.PrintLine(boxed Is Animal);
+    IO.Console.PrintLine(boxed Is Node);
+    IO.Console.PrintLine(unrelated Is Dog);
+    IO.Console.PrintLine(scalar Is Dog);
+    IO.Console.PrintLine(none Is Dog);
+    IO.Console.PrintLine(none Is any);
+    IO.Console.PrintLine(text Is string);
+    IO.Console.PrintLine(missing Is string);
+    IO.Console.PrintLine(1 Is int);
+    IO.Console.PrintLine(1 Is float);
+    IO.Console.PrintLine(floating Is float);
+    IO.Console.PrintLine([float](floating) > 1.0);
+    IO.Console.PrintLine(missingText Is string);
+    If (animal Is Dog dog)
+    {
+        IO.Console.PrintLine(dog.Name());
+    }
+    If (boxed Is Dog dynamicDog)
+    {
+        IO.Console.PrintLine(dynamicDog.Name());
+    }
+    If (unrelated Is Dog wrong)
+    {
+        IO.Console.PrintLine(wrong.Name());
+    }
+    Else
+    {
+        IO.Console.PrintLine("miss");
+    }
+    Return 0;
+}

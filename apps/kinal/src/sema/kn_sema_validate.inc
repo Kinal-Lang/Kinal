@@ -3644,7 +3644,8 @@ static bool explicit_object_cast_allowed(Sema *s, Type dst, Type src)
 static bool any_is_supported_target(Type t)
 {
     if (t.kind == TY_ANY || t.kind == TY_BOOL || t.kind == TY_CHAR ||
-        is_float_kind(t.kind) || t.kind == TY_STRING || is_integer_kind(t.kind))
+        is_float_kind(t.kind) || t.kind == TY_STRING || is_integer_kind(t.kind) ||
+        t.kind == TY_CLASS)
         return true;
     if (t.kind == TY_ENUM)
         return true;

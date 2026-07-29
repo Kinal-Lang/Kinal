@@ -527,6 +527,41 @@ static LLVMValueRef gen_is_any(Codegen *g, CGValue value, Type target)
         return LLVMBuildICmp(g->builder, LLVMIntEQ, tag, LLVMConstInt(g->i64, KN_ANY_TAG_STRING, 0), "is.any.string");
     if (is_integer_kind(target.kind) || target.kind == TY_ENUM)
         return LLVMBuildICmp(g->builder, LLVMIntEQ, tag, LLVMConstInt(g->i64, KN_ANY_TAG_I64, 0), "is.any.int");
+    if (target.kind == TY_CLASS)
+    {
+        LLVMValueRef payload = LLVMBuildExtractValue(g->builder, anyv, 1, "is.any.payload");
+        LLVMValueRef has_object_tag = LLVMBuildICmp(g->builder, LLVMIntEQ, tag,
+                                                    LLVMConstInt(g->i64, KN_ANY_TAG_PTR, 0),
+                                                    "is.any.object.tag");
+        LLVMValueRef has_payload = LLVMBuildICmp(g->builder, LLVMIntNE, payload,
+                                                 LLVMConstInt(g->i64, 0, 0),
+                                                 "is.any.object.nonnull");
+        LLVMValueRef is_object = LLVMBuildAnd(g->builder, has_object_tag, has_payload,
+                                              "is.any.object");
+        LLVMBasicBlockRef entry_bb = LLVMGetInsertBlock(g->builder);
+        LLVMValueRef fn = LLVMGetBasicBlockParent(entry_bb);
+        LLVMBasicBlockRef match_bb = LLVMAppendBasicBlockInContext(g->ctx, fn,
+                                                                   "is.any.object.match");
+        LLVMBasicBlockRef done_bb = LLVMAppendBasicBlockInContext(g->ctx, fn,
+                                                                  "is.any.object.done");
+        LLVMBuildCondBr(g->builder, is_object, match_bb, done_bb);
+
+        LLVMPositionBuilderAtEnd(g->builder, match_bb);
+        CGValue object_value;
+        object_value.value = LLVMBuildIntToPtr(g->builder, payload, g->i8ptr,
+                                               "is.any.object.ptr");
+        object_value.type = type_ptr(TY_BYTE);
+        LLVMValueRef matched = gen_object_match_nonnull(g, object_value, target);
+        LLVMBuildBr(g->builder, done_bb);
+        LLVMBasicBlockRef match_end_bb = LLVMGetInsertBlock(g->builder);
+
+        LLVMPositionBuilderAtEnd(g->builder, done_bb);
+        LLVMValueRef result = LLVMBuildPhi(g->builder, g->i1, "is.any.object.result");
+        LLVMValueRef incoming_values[2] = { const_bool(g, 0), matched };
+        LLVMBasicBlockRef incoming_blocks[2] = { entry_bb, match_end_bb };
+        LLVMAddIncoming(result, incoming_values, incoming_blocks, 2);
+        return result;
+    }
     return const_bool(g, 0);
 }
 

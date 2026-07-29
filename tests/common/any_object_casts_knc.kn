@@ -22,8 +22,15 @@ Static Function int Main()
     Box value = [Box](boxed);
     IO.Console.PrintLine(value.Value);
 
+    any unrelated = New Other();
+    any scalarCheck = 7;
+    IO.Console.PrintLine(boxed Is Box);
+    IO.Console.PrintLine(unrelated Is Box);
+    IO.Console.PrintLine(scalarCheck Is Box);
+
     any none = null;
     Box empty = [Box](none);
+    IO.Console.PrintLine(none Is Box);
     IO.Console.PrintLine(empty == null);
 
     Try

@@ -713,7 +713,11 @@ def run_driver_integration_tests(compiler: Path, out_dir: Path) -> int:
         return 1
     if run_knc_case("knc_vm_object_casts", "object_casts_knc.kn", "dog\ntrue\ntrue\ndog\ndog\ntrue\nInvalid Cast\ntrue\ntrue\n") != 0:
         return 1
-    if run_knc_case("knc_vm_any_object_casts", "any_object_casts_knc.kn", "42\ntrue\nInvalid Cast\nInvalid Cast\n") != 0:
+    if run_knc_case(
+        "knc_vm_any_object_casts",
+        "any_object_casts_knc.kn",
+        "42\ntrue\nfalse\nfalse\nfalse\ntrue\nInvalid Cast\nInvalid Cast\n",
+    ) != 0:
         return 1
 
     knc_time_file_fx = ROOT / "tests" / "common" / "knc_time_file.kn"

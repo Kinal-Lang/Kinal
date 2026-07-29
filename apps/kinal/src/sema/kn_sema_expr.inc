@@ -481,7 +481,7 @@ static Type sema_is_expr(Sema *s, Expr *e)
         sema_error(s, e->line, e->col, 1, "Invalid Is", "Is target type cannot be void");
     if (value_type.kind == TY_ANY && !any_is_supported_target(target))
         sema_error(s, e->line, e->col, 1, "Invalid Is",
-                   "any only supports Is with primitive, enum, string, or any targets");
+                   "any only supports Is with primitive, enum, string, object, or any targets");
     e->type = type_make(TY_BOOL);
     return e->type;
 }

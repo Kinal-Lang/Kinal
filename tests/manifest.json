@@ -186,7 +186,7 @@
   {
     "name": "any_cast",
     "file": "tests/common/any_cast.kn",
-    "expected": "123\n456\ntrue\n42\ntrue\nA\n"
+    "expected": "123\n456\ntrue\n42\ntrue\ntrue\nA\n"
   },
   {
     "name": "const_if",
@@ -250,7 +250,7 @@
   {
     "name": "any_object_casts",
     "file": "tests/common/any_object_casts.kn",
-    "expected": "42\ntrue\nInvalid Cast\nInvalid Cast\n",
+    "expected": "42\ntrue\nfalse\nfalse\nfalse\ntrue\nInvalid Cast\nInvalid Cast\n",
     "auto_link": true
   },
   {

@@ -1215,16 +1215,35 @@ static void build_runtime_hosted_string_parse(Codegen *g)
         LLVMBuildRet(g->builder, LLVMConstInt(g->i8, 0, 0));
     }
 
-    // __kn_string_to_f64 (via int)
+    // Hosted decimal parsing uses the platform CRT.  The previous
+    // integer-only implementation silently truncated "1.5" to 1 before
+    // converting it to f64.
     g->fn_string_to_f64_ty = LLVMFunctionType(g->f64, &t_i8ptr, 1, 0);
     g->fn_string_to_f64 = LLVMAddFunction(g->mod, "__kn_string_to_f64", g->fn_string_to_f64_ty);
     {
         LLVMBasicBlockRef entry = LLVMAppendBasicBlockInContext(g->ctx, g->fn_string_to_f64, "entry");
+        LLVMBasicBlockRef parse_bb = LLVMAppendBasicBlockInContext(g->ctx, g->fn_string_to_f64, "parse");
+        LLVMBasicBlockRef zero_bb = LLVMAppendBasicBlockInContext(g->ctx, g->fn_string_to_f64, "zero");
         LLVMPositionBuilderAtEnd(g->builder, entry);
         LLVMValueRef s = LLVMGetParam(g->fn_string_to_f64, 0);
-        LLVMValueRef iv = LLVMBuildCall2(g->builder, g->fn_string_to_i64_ty, g->fn_string_to_i64, &s, 1, "s2i");
-        LLVMValueRef fv = LLVMBuildSIToFP(g->builder, iv, g->f64, "i2f");
-        LLVMBuildRet(g->builder, fv);
+        LLVMValueRef isnull = LLVMBuildICmp(g->builder, LLVMIntEQ, s,
+                                             LLVMConstNull(t_i8ptr), "isnull");
+        LLVMBuildCondBr(g->builder, isnull, zero_bb, parse_bb);
+
+        LLVMPositionBuilderAtEnd(g->builder, parse_bb);
+        LLVMTypeRef endptr_ty = LLVMPointerType(t_i8ptr, 0);
+        LLVMTypeRef strtod_params[2] = { t_i8ptr, endptr_ty };
+        LLVMTypeRef strtod_ty = LLVMFunctionType(g->f64, strtod_params, 2, 0);
+        LLVMValueRef strtod_fn = LLVMGetNamedFunction(g->mod, "strtod");
+        if (!strtod_fn)
+            strtod_fn = LLVMAddFunction(g->mod, "strtod", strtod_ty);
+        LLVMValueRef strtod_args[2] = { s, LLVMConstNull(endptr_ty) };
+        LLVMValueRef parsed = LLVMBuildCall2(g->builder, strtod_ty, strtod_fn,
+                                              strtod_args, 2, "s2f");
+        LLVMBuildRet(g->builder, parsed);
+
+        LLVMPositionBuilderAtEnd(g->builder, zero_bb);
+        LLVMBuildRet(g->builder, LLVMConstReal(g->f64, 0.0));
     }
 }
 

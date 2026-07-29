@@ -23,13 +23,16 @@ Class LlvmTypeBinding
     Public TypeSymbol Symbol;
     Public byte* Handle;
     Public byte* StructHandle;
+    Public int RuntimeTypeId;
     Public LlvmTypeBinding Next;
 
-    Public Safe Constructor(TypeSymbol symbol, byte* handle, byte* structHandle)
+    Public Safe Constructor(TypeSymbol symbol, byte* handle, byte* structHandle,
+                            int runtimeTypeId)
     {
         This.Symbol = symbol;
         This.Handle = handle;
         This.StructHandle = structHandle;
+        This.RuntimeTypeId = runtimeTypeId;
         This.Next = null;
     }
 }
