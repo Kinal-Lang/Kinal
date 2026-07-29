@@ -924,6 +924,43 @@ static bool class_has_impl(Sema *s, ClassDecl *c, const Method *sig)
     return m && !m->is_abstract;
 }
 
+static InterfaceDecl *find_class_interface_decl(Sema *s, ClassDecl *owner,
+                                                const char *name)
+{
+    if (!s || !owner || !name) return 0;
+    InterfaceDecl *iface = find_interface(s, name);
+    if (iface) return iface;
+    const char *previous_unit = s->current_unit;
+    s->current_unit = owner->unit;
+    iface = find_visible_interface(s, name);
+    s->current_unit = previous_unit;
+    return iface;
+}
+
+static bool class_interface_seen_before(Sema *s, ClassDecl *root,
+                                        ClassDecl *stop_owner, int stop_index,
+                                        const char *interface_name)
+{
+    if (!s || !root || !stop_owner || !interface_name) return false;
+    ClassDecl *current = root;
+    int guard = 0;
+    while (current && guard++ < 256)
+    {
+        int limit = current == stop_owner ? stop_index : current->interface_count;
+        for (int i = 0; i < limit; i++)
+        {
+            InterfaceDecl *candidate =
+                find_class_interface_decl(s, current, current->interfaces[i]);
+            if (candidate &&
+                kn_strcmp(interface_qname(candidate), interface_name) == 0)
+                return true;
+        }
+        if (current == stop_owner || !current->base) break;
+        current = find_class(s, current->base);
+    }
+    return false;
+}
+
 static void validate_class_decl(Sema *s, ClassDecl *c)
 {
     if (!c) return;
@@ -1128,25 +1165,38 @@ static void validate_class_decl(Sema *s, ClassDecl *c)
             base = find_class(s, base->base);
         }
 
-        // interface methods
-        for (int i = 0; i < c->interface_count; i++)
+        // Interface requirements remain active through abstract base classes.
+        // A concrete derived class must therefore satisfy interfaces listed by
+        // any class in its ancestry, not only interfaces repeated directly.
+        ClassDecl *interface_owner = c;
+        int interface_depth = 0;
+        while (interface_owner && interface_depth++ < 256)
         {
-            InterfaceDecl *iface = find_interface(s, c->interfaces[i]);
-            if (!iface) continue;
-            for (int m = 0; m < iface->methods.count; m++)
+            for (int i = 0; i < interface_owner->interface_count; i++)
             {
-                Method *im = &iface->methods.items[m];
-                if (!class_has_impl(s, c, im))
-                    sema_error(s, c->line, c->col, 1, "Interface Method", "Class must implement interface method");
-                else
+                InterfaceDecl *iface = find_class_interface_decl(
+                    s, interface_owner, interface_owner->interfaces[i]);
+                if (!iface ||
+                    class_interface_seen_before(s, c, interface_owner, i,
+                                                interface_qname(iface)))
+                    continue;
+                for (int m = 0; m < iface->methods.count; m++)
                 {
-                    ClassDecl *owner = 0;
-                    int idx = -1;
-                    Method *impl = find_method_sig_hierarchy(s, c, im, &owner, &idx);
-                    if (impl && impl->access != ACC_PUBLIC)
-                        sema_error(s, impl->line, impl->col, 1, "Interface Method", "Interface implementation must be public");
+                    Method *im = &iface->methods.items[m];
+                    if (!class_has_impl(s, c, im))
+                        sema_error(s, c->line, c->col, 1, "Interface Method", "Class must implement interface method");
+                    else
+                    {
+                        ClassDecl *owner = 0;
+                        int idx = -1;
+                        Method *impl = find_method_sig_hierarchy(s, c, im, &owner, &idx);
+                        if (impl && impl->access != ACC_PUBLIC)
+                            sema_error(s, impl->line, impl->col, 1, "Interface Method", "Interface implementation must be public");
+                    }
                 }
             }
+            if (!interface_owner->base) break;
+            interface_owner = find_class(s, interface_owner->base);
         }
     }
     s->current_class = prev_class;

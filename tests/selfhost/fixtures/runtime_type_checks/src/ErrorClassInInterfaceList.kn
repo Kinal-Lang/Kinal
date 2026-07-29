@@ -1,0 +1,13 @@
+Unit Tests.Selfhost.ErrorClassInInterfaceList;
+
+Class Parent
+{
+}
+
+Class NotAnInterface
+{
+}
+
+Class InvalidList By Parent, NotAnInterface
+{
+}

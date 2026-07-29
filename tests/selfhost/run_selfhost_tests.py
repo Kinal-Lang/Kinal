@@ -961,6 +961,119 @@ def main() -> int:
     )
     results.append({"name": "callable_runtime_identity", "ok": True})
 
+    multiple_interfaces_executable = out_dir / f"multiple-interfaces{executable_suffix}"
+    multiple_interfaces_stage0_executable = (
+        out_dir / f"multiple-interfaces-stage0{executable_suffix}"
+    )
+    multiple_interfaces_build = run(
+        [
+            str(compiler),
+            "build",
+            str(runtime_type_project),
+            str(multiple_interfaces_executable),
+            "interfaces",
+        ],
+        cwd=root,
+    )
+    multiple_interfaces_stage0_build = run(
+        [
+            str(stage0),
+            "build",
+            "--project",
+            str(runtime_type_project.parent),
+            "--profile",
+            "interfaces",
+            "-o",
+            str(multiple_interfaces_stage0_executable),
+        ],
+        cwd=root,
+    )
+    require(
+        multiple_interfaces_build.returncode == 0,
+        "stage1 multiple-interface fixture build failed",
+        multiple_interfaces_build,
+    )
+    require(
+        multiple_interfaces_stage0_build.returncode == 0,
+        "stage0 multiple-interface fixture build failed",
+        multiple_interfaces_stage0_build,
+    )
+    multiple_interfaces_run = run([str(multiple_interfaces_executable)], cwd=root)
+    multiple_interfaces_stage0_run = run(
+        [str(multiple_interfaces_stage0_executable)], cwd=root
+    )
+    multiple_interfaces_expected = (
+        "dog\n5\nwoof\n7\n10\ndog\nwoof\n9\nwoof\n"
+        "true\ntrue\ntrue\ntrue\ntrue\ntrue\nInvalid Cast"
+    )
+    require(
+        multiple_interfaces_run.returncode == 0
+        and multiple_interfaces_stage0_run.returncode == 0
+        and multiple_interfaces_run.stdout.replace("\r\n", "\n").strip()
+        == multiple_interfaces_expected
+        and multiple_interfaces_stage0_run.stdout.replace("\r\n", "\n").strip()
+        == multiple_interfaces_expected,
+        "stage0/stage1 multiple-interface behavior differs",
+        multiple_interfaces_run,
+    )
+    results.append({"name": "multiple_interface_runtime", "ok": True})
+
+    interface_diagnostic_cases = (
+        ("ErrorMissingInterfaceMethod.kn", ["Sema:Interface Method"]),
+        ("ErrorPrivateInterfaceMethod.kn", ["Sema:Interface Method"]),
+        ("ErrorDuplicateInterface.kn", ["Sema:Duplicate Interface"]),
+        ("ErrorClassInInterfaceList.kn", ["Sema:Unknown Interface"]),
+        ("ErrorInvalidFirstBase.kn", ["Sema:Unknown Base"]),
+        ("ErrorInheritedInterfaceMethod.kn", ["Sema:Interface Method"]),
+    )
+    interface_source_dir = runtime_type_project.parent / "src"
+    for source_name, expected_titles in interface_diagnostic_cases:
+        source = interface_source_dir / source_name
+        stage1_diagnostic = run(
+            [str(compiler), "check-source", str(source)],
+            cwd=root,
+        )
+        stage0_diagnostic = run(
+            [
+                str(stage0),
+                "build",
+                "--no-module-discovery",
+                "--color",
+                "never",
+                "--emit",
+                "check",
+                str(source),
+                "-o",
+                str(out_dir / f"{source.stem}-stage0.kcheck"),
+            ],
+            cwd=root,
+        )
+        require(
+            stage1_diagnostic.returncode != 0,
+            f"stage1 accepted {source_name}",
+            stage1_diagnostic,
+        )
+        require(
+            stage0_diagnostic.returncode != 0,
+            f"stage0 accepted {source_name}",
+            stage0_diagnostic,
+        )
+        require(
+            compiler_diagnostic_titles(stage1_diagnostic) == expected_titles
+            and compiler_diagnostic_titles(stage0_diagnostic) == expected_titles,
+            f"stage0/stage1 interface diagnostics differ for {source_name}: "
+            f"stage0={compiler_diagnostic_titles(stage0_diagnostic)} "
+            f"stage1={compiler_diagnostic_titles(stage1_diagnostic)}",
+            stage1_diagnostic,
+        )
+    results.append(
+        {
+            "name": "multiple_interface_diagnostics",
+            "ok": True,
+            "files": len(interface_diagnostic_cases),
+        }
+    )
+
     exceptions_project = (
         root / "tests" / "selfhost" / "fixtures" / "exceptions" / "kinal.knproj"
     )

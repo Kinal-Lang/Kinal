@@ -644,6 +644,69 @@ Class NativeBackend
              symbol.Declaration.IsOverride);
     }
 
+    Public Safe Function int InterfaceSlotCount()
+    {
+        int count = 0;
+        FunctionSymbol method = This.Semantics.FirstFunction;
+        While (method != null)
+        {
+            If (This.Semantics.IsInterfaceType(method.OwnerType) &&
+                !method.Declaration.IsStatic &&
+                !method.Declaration.IsConstructor)
+                count = count + 1;
+            method = method.Next;
+        }
+        Return count;
+    }
+
+    Public Safe Function int InterfaceSlot(FunctionSymbol target)
+    {
+        If (target == null) Return -1;
+        int slot = 0;
+        FunctionSymbol method = This.Semantics.FirstFunction;
+        While (method != null)
+        {
+            If (This.Semantics.IsInterfaceType(method.OwnerType) &&
+                !method.Declaration.IsStatic &&
+                !method.Declaration.IsConstructor)
+            {
+                If (method == target) Return slot;
+                slot = slot + 1;
+            }
+            method = method.Next;
+        }
+        Return -1;
+    }
+
+    Public Safe Function FunctionSymbol InterfaceSlotDeclaration(int targetSlot)
+    {
+        If (targetSlot < 0) Return null;
+        int slot = 0;
+        FunctionSymbol method = This.Semantics.FirstFunction;
+        While (method != null)
+        {
+            If (This.Semantics.IsInterfaceType(method.OwnerType) &&
+                !method.Declaration.IsStatic &&
+                !method.Declaration.IsConstructor)
+            {
+                If (slot == targetSlot) Return method;
+                slot = slot + 1;
+            }
+            method = method.Next;
+        }
+        Return null;
+    }
+
+    Public Safe Function int DispatchSlot(TypeSymbol owner,
+                                           FunctionSymbol method)
+    {
+        If (This.Semantics.IsInterfaceType(owner))
+            Return This.InterfaceSlot(method);
+        int virtualSlot = This.VirtualSlot(owner, method);
+        Return virtualSlot < 0 ? -1 :
+            This.InterfaceSlotCount() + virtualSlot;
+    }
+
     Public Safe Function int VirtualSlotCount(TypeSymbol type)
     {
         If (type == null) Return 0;
@@ -1391,7 +1454,9 @@ Class NativeBackend
         byte* bytePointer = This.Module.PointerType(This.Module.IntType(8));
         byte* vtableSlot = This.Module.StructGep(binding.StructHandle, object, 0,
             This.Unique("vtable_slot"));
-        int slotCount = This.VirtualSlotCount(type);
+        int interfaceSlotCount = This.InterfaceSlotCount();
+        int virtualSlotCount = This.VirtualSlotCount(type);
+        int slotCount = interfaceSlotCount + virtualSlotCount;
         If (slotCount == 0)
         {
             This.Module.Store(This.Module.ConstNull(This.Module.PointerType(bytePointer)), vtableSlot);
@@ -1403,9 +1468,32 @@ Class NativeBackend
         byte* vtable = This.CallRuntime("__kn_gc_alloc", This.Types1(bytes),
             This.Unique("vtable"));
         int slot = 0;
-        While (slot < slotCount)
+        While (slot < interfaceSlotCount)
         {
-            FunctionSymbol declaration = This.VirtualSlotDeclaration(type, slot);
+            FunctionSymbol declaration = This.InterfaceSlotDeclaration(slot);
+            LlvmFunctionBinding function = null;
+            If (declaration != null &&
+                This.Semantics.TypeImplementsInterface(type,
+                    declaration.OwnerType))
+            {
+                FunctionSymbol implementation =
+                    This.Semantics.FindMethodSignature(type, declaration);
+                If (implementation != null &&
+                    !implementation.Declaration.IsAbstract)
+                    function = This.FindFunctionBinding(implementation);
+            }
+            byte* address = This.Module.Gep(bytePointer, vtable,
+                This.Types1(This.Module.ConstInt(This.Module.IntType(64), slot)), true,
+                This.Unique("interface_vtable_entry"));
+            This.Module.Store(function == null ?
+                This.Module.ConstNull(bytePointer) : function.Function, address);
+            slot = slot + 1;
+        }
+        int virtualSlot = 0;
+        While (virtualSlot < virtualSlotCount)
+        {
+            FunctionSymbol declaration = This.VirtualSlotDeclaration(type,
+                virtualSlot);
             FunctionSymbol implementation = This.VirtualImplementation(type, declaration);
             LlvmFunctionBinding function = This.FindFunctionBinding(implementation);
             If (function == null)
@@ -1415,11 +1503,12 @@ Class NativeBackend
             Else
             {
                 byte* address = This.Module.Gep(bytePointer, vtable,
-                    This.Types1(This.Module.ConstInt(This.Module.IntType(64), slot)), true,
+                    This.Types1(This.Module.ConstInt(This.Module.IntType(64),
+                        interfaceSlotCount + virtualSlot)), true,
                     This.Unique("vtable_entry"));
                 This.Module.Store(function.Function, address);
             }
-            slot = slot + 1;
+            virtualSlot = virtualSlot + 1;
         }
         This.Module.Store(vtable, vtableSlot);
     }
@@ -1440,6 +1529,8 @@ Class NativeBackend
             This.IsEnum(target)) Return false;
         If (target.Name == "IO.Type.Object.Class" ||
             target.Name == "Object.Class") Return true;
+        If (This.Semantics.IsInterfaceType(target))
+            Return This.Semantics.TypeImplementsInterface(actual, target);
         TypeSymbol current = actual;
         While (current != null)
         {
@@ -1449,13 +1540,30 @@ Class NativeBackend
         Return false;
     }
 
-    Public Trusted Function byte* LoadRuntimeTypeId(byte* object)
+    Public Trusted Function byte* ObjectHeaderType()
     {
         byte* bytePointer = This.Module.PointerType(This.Module.IntType(8));
         LlvmHandles headerFields = New LlvmHandles();
         headerFields.Add(This.Module.PointerType(bytePointer));
         headerFields.Add(This.Module.IntType(64));
-        byte* headerType = This.Module.LiteralStructType(headerFields, false);
+        Return This.Module.LiteralStructType(headerFields, false);
+    }
+
+    Public Trusted Function byte* LoadObjectVtable(byte* object)
+    {
+        byte* bytePointer = This.Module.PointerType(This.Module.IntType(8));
+        byte* headerType = This.ObjectHeaderType();
+        byte* header = This.Module.BitCast(object,
+            This.Module.PointerType(headerType), This.Unique("object_header"));
+        byte* vtableAddress = This.Module.StructGep(headerType, header, 0,
+            This.Unique("object_vtable_address"));
+        Return This.Module.Load(This.Module.PointerType(bytePointer),
+            vtableAddress, This.Unique("object_vtable"));
+    }
+
+    Public Trusted Function byte* LoadRuntimeTypeId(byte* object)
+    {
+        byte* headerType = This.ObjectHeaderType();
         byte* header = This.Module.BitCast(object,
             This.Module.PointerType(headerType), This.Unique("object_header"));
         byte* typeIdAddress = This.Module.StructGep(headerType, header, 1,
@@ -1700,18 +1808,17 @@ Class NativeBackend
             This.Fail("virtual call has no receiver: " + binding.Symbol.QualifiedName());
             Return This.DefaultValue(binding.Symbol.ReturnType);
         }
-        int slot = This.VirtualSlot(binding.Symbol.OwnerType, binding.Symbol);
-        LlvmTypeBinding receiverBinding = This.FindTypeBinding(receiver.Type);
-        If (slot < 0 || receiverBinding == null)
+        int slot = This.DispatchSlot(binding.Symbol.OwnerType,
+            binding.Symbol);
+        If (slot < 0)
         {
             This.Fail("virtual slot is missing: " + binding.Symbol.QualifiedName());
             Return This.DefaultValue(binding.Symbol.ReturnType);
         }
         byte* bytePointer = This.Module.PointerType(This.Module.IntType(8));
-        byte* vtableAddress = This.Module.StructGep(receiverBinding.StructHandle,
-            receiver.Handle, 0, This.Unique("vtable_slot"));
-        byte* vtable = This.Module.Load(This.Module.PointerType(bytePointer),
-            vtableAddress, This.Unique("vtable"));
+        byte* rawReceiver = This.Module.BitCast(receiver.Handle, bytePointer,
+            This.Unique("virtual_receiver"));
+        byte* vtable = This.LoadObjectVtable(rawReceiver);
         byte* methodAddress = This.Module.Gep(bytePointer, vtable,
             This.Types1(This.Module.ConstInt(This.Module.IntType(64), slot)), true,
             This.Unique("virtual_slot"));

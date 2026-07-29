@@ -35,6 +35,18 @@ Class PackageElementType
     }
 }
 
+Class InterfaceTypeLink
+{
+    Public TypeSymbol Type;
+    Public InterfaceTypeLink Next;
+
+    Public Safe Constructor(TypeSymbol type)
+    {
+        This.Type = type;
+        This.Next = null;
+    }
+}
+
 Class TypeSymbol
 {
     Public int Kind;
@@ -42,6 +54,9 @@ Class TypeSymbol
     Public string UnitName;
     Public TypeSymbol ElementType;
     Public TypeSymbol BaseType;
+    Public InterfaceTypeLink FirstInterface;
+    Public InterfaceTypeLink LastInterface;
+    Public int InterfaceCount;
     Public PackageElementType FirstPackageElement;
     Public PackageElementType LastPackageElement;
     Public int PackageCount;
@@ -56,12 +71,43 @@ Class TypeSymbol
         This.UnitName = "";
         This.ElementType = null;
         This.BaseType = null;
+        This.FirstInterface = null;
+        This.LastInterface = null;
+        This.InterfaceCount = 0;
         This.FirstPackageElement = null;
         This.LastPackageElement = null;
         This.PackageCount = 0;
         This.Declaration = null;
         This.Syntax = null;
         This.Next = null;
+    }
+
+    Public Safe Function bool HasDirectInterface(TypeSymbol type)
+    {
+        InterfaceTypeLink current = This.FirstInterface;
+        While (current != null)
+        {
+            If (current.Type == type ||
+                current.Type.QualifiedName() == type.QualifiedName()) Return true;
+            current = current.Next;
+        }
+        Return false;
+    }
+
+    Public Safe Function void AddInterface(TypeSymbol type)
+    {
+        InterfaceTypeLink value = New InterfaceTypeLink(type);
+        If (This.FirstInterface == null)
+        {
+            This.FirstInterface = value;
+            This.LastInterface = value;
+        }
+        Else
+        {
+            This.LastInterface.Next = value;
+            This.LastInterface = value;
+        }
+        This.InterfaceCount = This.InterfaceCount + 1;
     }
 
     Public Safe Function string QualifiedName()

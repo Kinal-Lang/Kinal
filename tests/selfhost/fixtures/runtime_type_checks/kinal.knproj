@@ -5,7 +5,7 @@ Project SelfhostRuntimeTypeChecks
     SourceSet "main"
     {
         Roots = ["src"];
-        Include = ["**/*.kn"];
+        Include = ["Main.kn", "CallableIdentity.kn", "MultipleInterfaces.kn"];
         RequireUnit = true;
     }
 
@@ -40,6 +40,23 @@ Project SelfhostRuntimeTypeChecks
             Backend = Native;
             Environment = Hosted;
             Output = "../../../../out/selfhost/tests/callable-identity.exe";
+        }
+    }
+
+    Profile "interfaces"
+    {
+        Source
+        {
+            Entry = "src/MultipleInterfaces.kn";
+            Sets = ["main"];
+            Mode = ReachableUnits;
+        }
+
+        Build
+        {
+            Backend = Native;
+            Environment = Hosted;
+            Output = "../../../../out/selfhost/tests/multiple-interfaces.exe";
         }
     }
 }

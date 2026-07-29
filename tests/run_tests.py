@@ -703,7 +703,7 @@ def run_driver_integration_tests(compiler: Path, out_dir: Path) -> int:
     run([str(compiler), "vm", "build", "--no-module-discovery", str(knc_any_cast_fx), "-o", str(knc_any_cast)], cwd=ROOT)
     knc_any_cast_out = run([str(vm_exe), str(knc_any_cast)], cwd=ROOT, capture=True)
     assert isinstance(knc_any_cast_out, subprocess.CompletedProcess)
-    expected_any_cast = "123\n456\ntrue\n42\ntrue\nA\n"
+    expected_any_cast = "123\n456\ntrue\n42\ntrue\ntrue\nA\n"
     if knc_any_cast_out.returncode != 0 or (knc_any_cast_out.stdout or "").replace("\r\n", "\n") != expected_any_cast:
         print("[FAIL] knc_vm_any_cast")
         return 1

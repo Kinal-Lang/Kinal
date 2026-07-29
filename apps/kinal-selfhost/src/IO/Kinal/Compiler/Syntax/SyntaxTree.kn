@@ -301,12 +301,29 @@ Class EnumMemberDecl
     }
 }
 
+Class TypeBaseDecl
+{
+    Public string Name;
+    Public TypeBaseDecl Next;
+
+    Public Safe Constructor(string name)
+    {
+        This.Name = name;
+        This.Next = null;
+    }
+}
+
 Class TypeDecl
 {
     Public TokenKind Kind;
     Public string Name;
     Public string BaseName;
+    Public TypeBaseDecl FirstBase;
+    Public TypeBaseDecl LastBase;
+    Public int BaseCount;
     Public bool IsStatic;
+    Public bool IsAbstract;
+    Public bool IsSealed;
     Public int Line;
     Public int Column;
     Public FieldDecl FirstField;
@@ -323,7 +340,12 @@ Class TypeDecl
         This.Kind = kind;
         This.Name = name;
         This.BaseName = "";
+        This.FirstBase = null;
+        This.LastBase = null;
+        This.BaseCount = 0;
         This.IsStatic = false;
+        This.IsAbstract = false;
+        This.IsSealed = false;
         This.Line = line;
         This.Column = column;
         This.FirstField = null;
@@ -334,6 +356,23 @@ Class TypeDecl
         This.FirstEnumMember = null;
         This.LastEnumMember = null;
         This.Next = null;
+    }
+
+    Public Safe Function void AddBase(string name)
+    {
+        TypeBaseDecl value = New TypeBaseDecl(name);
+        If (This.FirstBase == null)
+        {
+            This.FirstBase = value;
+            This.LastBase = value;
+            This.BaseName = name;
+        }
+        Else
+        {
+            This.LastBase.Next = value;
+            This.LastBase = value;
+        }
+        This.BaseCount = This.BaseCount + 1;
     }
 
     Public Safe Function void AddField(FieldDecl value)

@@ -1,0 +1,14 @@
+Unit Tests.Selfhost.ErrorPrivateInterfaceMethod;
+
+Interface IRunner
+{
+    Function int Run();
+}
+
+Class PrivateRunner By IRunner
+{
+    Function int Run()
+    {
+        Return 1;
+    }
+}

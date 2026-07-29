@@ -817,19 +817,100 @@ Class SemanticCompilation
         Return null;
     }
 
+    Public Safe Function bool IsInterfaceType(TypeSymbol type)
+    {
+        Return type != null && type.Declaration != null &&
+            type.Declaration.Kind == TokenKind.KwInterface;
+    }
+
+    Public Safe Function bool IsClassType(TypeSymbol type)
+    {
+        If (type == null || type.Kind != [int](TypeKind.NamedType)) Return false;
+        If (type.Declaration != null)
+            Return type.Declaration.Kind == TokenKind.KwClass;
+        // Runtime-provided named types have no source declaration in the
+        // selfhost compilation, but represent ordinary class types.
+        Return true;
+    }
+
+    Public Safe Function bool TypeImplementsInterface(TypeSymbol type,
+                                                       TypeSymbol target)
+    {
+        If (type == null || target == null) Return false;
+        If (This.SameType(type, target)) Return true;
+        TypeSymbol current = type;
+        int depth = 0;
+        While (current != null && depth < 256)
+        {
+            InterfaceTypeLink interfaceLink = current.FirstInterface;
+            While (interfaceLink != null)
+            {
+                If (This.SameType(interfaceLink.Type, target)) Return true;
+                interfaceLink = interfaceLink.Next;
+            }
+            current = current.BaseType;
+            depth = depth + 1;
+        }
+        Return false;
+    }
+
+    Public Safe Function void AddImplementedInterface(TypeSymbol type,
+                                                       TypeSymbol interfaceType)
+    {
+        If (type.HasDirectInterface(interfaceType))
+        {
+            This.Report(type.Syntax, "Duplicate Interface",
+                "Interface already listed",
+                type.Declaration.Line, type.Declaration.Column);
+            Return;
+        }
+        type.AddInterface(interfaceType);
+    }
+
     Public Safe Function void LinkBaseTypes()
     {
         TypeSymbol type = This.FirstType;
         While (type != null)
         {
-            If (type.Declaration != null && !IO.Text.IsEmpty(type.Declaration.BaseName))
+            If (type.Declaration != null &&
+                type.Declaration.Kind == TokenKind.KwClass)
             {
-                type.BaseType = This.ResolveType(type.Syntax, type.Declaration.BaseName);
-                If (type.BaseType == null)
+                TypeBaseDecl base = type.Declaration.FirstBase;
+                bool first = true;
+                While (base != null)
                 {
-                    This.UnresolvedTypeCount = This.UnresolvedTypeCount + 1;
-                    This.Report(type.Syntax, "Unknown base type", type.Declaration.BaseName,
-                        type.Declaration.Line, type.Declaration.Column);
+                    TypeSymbol resolved = This.ResolveType(type.Syntax, base.Name);
+                    If (resolved == null)
+                    {
+                        This.UnresolvedTypeCount = This.UnresolvedTypeCount + 1;
+                        This.Report(type.Syntax, first ? "Unknown Base" :
+                            "Unknown Interface", first ?
+                            "Base class or interface not found" :
+                            "Interface not found",
+                            type.Declaration.Line, type.Declaration.Column);
+                    }
+                    ElseIf (first && This.IsClassType(resolved))
+                    {
+                        type.BaseType = resolved;
+                    }
+                    ElseIf (This.IsInterfaceType(resolved))
+                    {
+                        This.AddImplementedInterface(type, resolved);
+                    }
+                    ElseIf (first)
+                    {
+                        This.Report(type.Syntax, "Unknown Base",
+                            "Base class or interface not found",
+                            type.Declaration.Line, type.Declaration.Column);
+                    }
+                    Else
+                    {
+                        This.Report(type.Syntax, "Unknown Interface",
+                            "Interface not found",
+                            type.Declaration.Line, type.Declaration.Column);
+                    }
+                    first = false;
+                    base = base.Next;
                 }
             }
             type = type.Next;
@@ -1037,6 +1118,30 @@ Class SemanticCompilation
         Return null;
     }
 
+    Public Safe Function FunctionSymbol FindMethodSignature(TypeSymbol owner,
+                                                             FunctionSymbol signature)
+    {
+        If (owner == null || signature == null) Return null;
+        TypeSymbol currentOwner = owner;
+        While (currentOwner != null)
+        {
+            FunctionSymbol method = This.FirstFunction;
+            While (method != null)
+            {
+                If (method.OwnerType == currentOwner &&
+                    !method.Declaration.IsConstructor &&
+                    method.Declaration.IsStatic ==
+                        signature.Declaration.IsStatic &&
+                    method.Name == signature.Name &&
+                    This.SameFunctionSignature(method, signature))
+                    Return method;
+                method = method.Next;
+            }
+            currentOwner = currentOwner.BaseType;
+        }
+        Return null;
+    }
+
     Public Safe Function bool HasConstructor(TypeSymbol owner)
     {
         FunctionSymbol function = This.FirstFunction;
@@ -1164,10 +1269,21 @@ Class SemanticCompilation
         If (left.Name == "IO.Type.Object.Class" || left.Name == "Object.Class" ||
             right.Name == "IO.Type.Object.Class" || right.Name == "Object.Class")
             Return true;
-        If ((left.Declaration != null &&
-             left.Declaration.Kind == TokenKind.KwInterface) ||
-            (right.Declaration != null &&
-             right.Declaration.Kind == TokenKind.KwInterface)) Return true;
+        bool leftInterface = This.IsInterfaceType(left);
+        bool rightInterface = This.IsInterfaceType(right);
+        If (leftInterface && rightInterface) Return true;
+        If (leftInterface)
+        {
+            If (This.TypeImplementsInterface(right, left)) Return true;
+            Return This.IsClassType(right) &&
+                (right.Declaration == null || !right.Declaration.IsSealed);
+        }
+        If (rightInterface)
+        {
+            If (This.TypeImplementsInterface(left, right)) Return true;
+            Return This.IsClassType(left) &&
+                (left.Declaration == null || !left.Declaration.IsSealed);
+        }
         TypeSymbol current = left;
         While (current != null)
         {
@@ -1220,6 +1336,116 @@ Class SemanticCompilation
             rightParameter = rightParameter.Next;
         }
         Return leftParameter == null && rightParameter == null;
+    }
+
+    Public Safe Function void ValidateClassRelationships()
+    {
+        TypeSymbol type = This.FirstType;
+        While (type != null)
+        {
+            TypeDecl declaration = type.Declaration;
+            If (declaration != null && declaration.Kind == TokenKind.KwClass)
+            {
+                If (declaration.IsStatic)
+                {
+                    If (type.BaseType != null)
+                        This.Report(type.Syntax, "Invalid Static Class",
+                            "Static class cannot inherit from a base class",
+                            declaration.Line, declaration.Column);
+                    If (type.InterfaceCount > 0)
+                        This.Report(type.Syntax, "Invalid Static Class",
+                            "Static class cannot implement interfaces",
+                            declaration.Line, declaration.Column);
+                    If (declaration.IsAbstract || declaration.IsSealed)
+                        This.Report(type.Syntax, "Invalid Static Class",
+                            "Static class cannot be abstract or sealed",
+                            declaration.Line, declaration.Column);
+                }
+                If (type.BaseType != null)
+                {
+                    If (This.SameType(type, type.BaseType))
+                        This.Report(type.Syntax, "Invalid Inheritance",
+                            "Class cannot inherit from itself",
+                            declaration.Line, declaration.Column);
+                    ElseIf (type.BaseType.Declaration != null &&
+                        type.BaseType.Declaration.IsSealed)
+                        This.Report(type.Syntax, "Invalid Inheritance",
+                            "Cannot inherit from sealed class",
+                            declaration.Line, declaration.Column);
+                }
+
+                If (!declaration.IsStatic && !declaration.IsAbstract)
+                {
+                    TypeSymbol baseType = type.BaseType;
+                    int depth = 0;
+                    While (baseType != null && depth < 256)
+                    {
+                        FunctionSymbol baseMethod = This.FirstFunction;
+                        While (baseMethod != null)
+                        {
+                            If (baseMethod.OwnerType == baseType &&
+                                baseMethod.Declaration.IsAbstract &&
+                                !baseMethod.Declaration.IsConstructor)
+                            {
+                                FunctionSymbol implementation =
+                                    This.FindMethodSignature(type, baseMethod);
+                                If (implementation == null ||
+                                    implementation.Declaration.IsAbstract)
+                                    This.Report(type.Syntax, "Abstract Method",
+                                        "Class must implement abstract base method",
+                                        declaration.Line, declaration.Column);
+                            }
+                            baseMethod = baseMethod.Next;
+                        }
+                        baseType = baseType.BaseType;
+                        depth = depth + 1;
+                    }
+
+                    TypeSymbol interfaceOwner = type;
+                    int interfaceDepth = 0;
+                    While (interfaceOwner != null &&
+                        interfaceDepth < 256)
+                    {
+                        InterfaceTypeLink interfaceLink =
+                            interfaceOwner.FirstInterface;
+                        While (interfaceLink != null)
+                        {
+                            FunctionSymbol interfaceMethod = This.FirstFunction;
+                            While (interfaceMethod != null)
+                            {
+                                If (interfaceMethod.OwnerType ==
+                                        interfaceLink.Type &&
+                                    !interfaceMethod.Declaration.IsStatic &&
+                                    !interfaceMethod.Declaration.IsConstructor)
+                                {
+                                    FunctionSymbol implementation =
+                                        This.FindMethodSignature(type,
+                                            interfaceMethod);
+                                    If (implementation == null ||
+                                        implementation.Declaration.IsAbstract)
+                                        This.Report(type.Syntax,
+                                            "Interface Method",
+                                            "Class must implement interface method",
+                                            declaration.Line,
+                                            declaration.Column);
+                                    ElseIf (implementation.Declaration.Access != 1)
+                                        This.Report(implementation.Syntax,
+                                            "Interface Method",
+                                            "Interface implementation must be public",
+                                            implementation.Declaration.Line,
+                                            implementation.Declaration.Column);
+                                }
+                                interfaceMethod = interfaceMethod.Next;
+                            }
+                            interfaceLink = interfaceLink.Next;
+                        }
+                        interfaceOwner = interfaceOwner.BaseType;
+                        interfaceDepth = interfaceDepth + 1;
+                    }
+                }
+            }
+            type = type.Next;
+        }
     }
 
     Public Safe Function bool IsBuiltinAttribute(string name)
@@ -1655,10 +1881,8 @@ Class SemanticCompilation
         If (target.Kind == [int](TypeKind.NamedType) &&
             source.Kind == [int](TypeKind.NamedType))
         {
-            If ((target.Declaration != null &&
-                 target.Declaration.Kind == TokenKind.KwInterface) ||
-                (source.Declaration != null &&
-                 source.Declaration.Kind == TokenKind.KwInterface)) Return true;
+            If (This.IsInterfaceType(target))
+                Return This.TypeImplementsInterface(source, target);
             TypeSymbol current = source.BaseType;
             While (current != null)
             {
@@ -4134,6 +4358,7 @@ Class SemanticCompilation
         This.ValidateTypeAndFieldAttributes();
         This.IndexGlobals();
         This.IndexFunctions();
+        This.ValidateClassRelationships();
         This.LinkGlobalLiteralFunctions();
         UnitSymbol unit = This.FirstUnit;
         While (unit != null)

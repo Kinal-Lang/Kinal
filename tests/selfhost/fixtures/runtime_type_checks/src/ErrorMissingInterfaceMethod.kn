@@ -1,0 +1,10 @@
+Unit Tests.Selfhost.ErrorMissingInterfaceMethod;
+
+Interface IRunner
+{
+    Function int Run();
+}
+
+Class MissingRunner By IRunner
+{
+}

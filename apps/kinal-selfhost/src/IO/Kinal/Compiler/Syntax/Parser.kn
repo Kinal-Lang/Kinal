@@ -2442,17 +2442,24 @@ Safe Function void ReadTypeMembers(ParseCursor cursor, TypeDecl type, SyntaxTree
             string nestedName = type.Name + "." +
                 IO.Kinal.Compiler.Lex.Token.Text(nestedNameToken);
             Advance(cursor);
-            string nestedBaseName = "";
-            If ((nestedKind == TokenKind.KwClass ||
-                 nestedKind == TokenKind.KwInterface) &&
-                Match(cursor, TokenKind.KwBy)) nestedBaseName = ReadQualifiedName(cursor);
-            While (!IsEnd(cursor) && CurrentKind(cursor) != TokenKind.LeftBrace)
-                Advance(cursor);
             TypeDecl nested = New TypeDecl(nestedKind, nestedName,
                 IO.Kinal.Compiler.Lex.Token.Line(nestedNameToken),
                 IO.Kinal.Compiler.Lex.Token.Column(nestedNameToken));
-            nested.BaseName = nestedBaseName;
+            If (nestedKind == TokenKind.KwClass &&
+                Match(cursor, TokenKind.KwBy))
+            {
+                bool readingBases = true;
+                While (readingBases)
+                {
+                    nested.AddBase(ReadQualifiedName(cursor));
+                    readingBases = Match(cursor, TokenKind.Comma);
+                }
+            }
+            While (!IsEnd(cursor) && CurrentKind(cursor) != TokenKind.LeftBrace)
+                Advance(cursor);
             nested.IsStatic = isStatic;
+            nested.IsAbstract = isAbstract;
+            nested.IsSealed = isSealed;
             nested.FirstAttribute = attributes;
             ReadTypeMembers(cursor, nested, tree);
             tree.AddType(nested);
@@ -2486,8 +2493,9 @@ Safe Function void ReadTypeMembers(ParseCursor cursor, TypeDecl type, SyntaxTree
                 method.IsConstructor = true;
             }
             method.IsStatic = method.IsStatic || type.IsStatic;
-            method.Access = access;
-            method.IsAbstract = isAbstract;
+            method.Access = type.Kind == TokenKind.KwInterface && access == 0 ?
+                1 : access;
+            method.IsAbstract = type.Kind == TokenKind.KwInterface || isAbstract;
             method.IsVirtual = isVirtual;
             method.IsOverride = isOverride;
             method.IsSealed = isSealed;
@@ -3032,26 +3040,52 @@ Safe Function SyntaxTree Build(SourceFile source, list tokens, list diagnostics)
             Jump Dispatch;
         }
 
-        While (CurrentKind(cursor) == TokenKind.KwPublic ||
-               CurrentKind(cursor) == TokenKind.KwPrivate ||
-               CurrentKind(cursor) == TokenKind.KwProtected ||
-               CurrentKind(cursor) == TokenKind.KwInternal ||
-               CurrentKind(cursor) == TokenKind.KwAbstract ||
-               CurrentKind(cursor) == TokenKind.KwSealed) Advance(cursor);
+        bool isAbstract = false;
+        bool isSealed = false;
+        bool readingTypeModifiers = true;
+        While (readingTypeModifiers)
+        {
+            TokenKind modifier = CurrentKind(cursor);
+            Switch (modifier)
+            {
+                Case(TokenKind.KwPublic) { Advance(cursor); }
+                Case(TokenKind.KwPrivate) { Advance(cursor); }
+                Case(TokenKind.KwProtected) { Advance(cursor); }
+                Case(TokenKind.KwInternal) { Advance(cursor); }
+                Case(TokenKind.KwAbstract)
+                {
+                    isAbstract = true;
+                    Advance(cursor);
+                }
+                Case(TokenKind.KwSealed)
+                {
+                    isSealed = true;
+                    Advance(cursor);
+                }
+                Case(default) { readingTypeModifiers = false; }
+            }
+        }
         TokenKind typeKind = CurrentKind(cursor);
         Advance(cursor);
         Token typeNameToken = CurrentToken(cursor);
         string typeName = IO.Kinal.Compiler.Lex.Token.Text(typeNameToken);
         Advance(cursor);
-        string baseName = "";
-        If ((typeKind == TokenKind.KwClass ||
-             typeKind == TokenKind.KwInterface) &&
-            Match(cursor, TokenKind.KwBy)) baseName = ReadQualifiedName(cursor);
-        While (!IsEnd(cursor) && CurrentKind(cursor) != TokenKind.LeftBrace) Advance(cursor);
         TypeDecl type = New TypeDecl(typeKind, typeName,
             IO.Kinal.Compiler.Lex.Token.Line(typeNameToken), IO.Kinal.Compiler.Lex.Token.Column(typeNameToken));
-        type.BaseName = baseName;
+        If (typeKind == TokenKind.KwClass &&
+            Match(cursor, TokenKind.KwBy))
+        {
+            bool readingBases = true;
+            While (readingBases)
+            {
+                type.AddBase(ReadQualifiedName(cursor));
+                readingBases = Match(cursor, TokenKind.Comma);
+            }
+        }
+        While (!IsEnd(cursor) && CurrentKind(cursor) != TokenKind.LeftBrace) Advance(cursor);
         type.IsStatic = isStatic;
+        type.IsAbstract = isAbstract;
+        type.IsSealed = isSealed;
         type.FirstAttribute = attributes;
         ReadTypeMembers(cursor, type, tree);
         tree.AddType(type);

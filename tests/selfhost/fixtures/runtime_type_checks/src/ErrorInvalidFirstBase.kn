@@ -1,0 +1,10 @@
+Unit Tests.Selfhost.ErrorInvalidFirstBase;
+
+Struct NotAClass
+{
+    int Value;
+}
+
+Class InvalidBase By NotAClass
+{
+}

@@ -1,0 +1,14 @@
+Unit Tests.Selfhost.ErrorInheritedInterfaceMethod;
+
+Interface IRunner
+{
+    Function int Run();
+}
+
+Abstract Class AbstractRunner By IRunner
+{
+}
+
+Class MissingInheritedRunner By AbstractRunner
+{
+}

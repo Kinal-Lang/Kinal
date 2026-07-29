@@ -1,0 +1,96 @@
+Unit Tests.Selfhost.MultipleInterfaces;
+
+Get IO.Console;
+
+Interface IRunner
+{
+    Function int Run(int value);
+}
+
+Interface ITalker
+{
+    Function string Talk();
+}
+
+Class Animal
+{
+    Public Virtual Function string Kind()
+    {
+        Return "animal";
+    }
+}
+
+Class Dog By Animal, IRunner, ITalker
+{
+    Public Override Function string Kind()
+    {
+        Return "dog";
+    }
+
+    Public Function int Run(int value)
+    {
+        Return value + 1;
+    }
+
+    Public Function string Talk()
+    {
+        Return "woof";
+    }
+}
+
+Class Puppy By Dog
+{
+}
+
+Class Solo By IRunner
+{
+    Public Function int Run(int value)
+    {
+        Return value * 2;
+    }
+}
+
+Class Cat By Animal
+{
+}
+
+Safe Static Function int Main()
+{
+    Dog dog = New Dog();
+    Animal animal = dog;
+    IRunner runner = dog;
+    ITalker talker = dog;
+    IRunner inherited = New Puppy();
+    IRunner solo = New Solo();
+    Object.Class objectValue = dog;
+    any boxed = dog;
+
+    IO.Console.PrintLine(animal.Kind());
+    IO.Console.PrintLine(runner.Run(4));
+    IO.Console.PrintLine(talker.Talk());
+    IO.Console.PrintLine(inherited.Run(6));
+    IO.Console.PrintLine(solo.Run(5));
+    IO.Console.PrintLine([Animal](runner).Kind());
+    IO.Console.PrintLine([ITalker](runner).Talk());
+    IO.Console.PrintLine([IRunner](boxed).Run(8));
+    IO.Console.PrintLine([ITalker](objectValue).Talk());
+
+    IO.Console.PrintLine(dog Is IRunner);
+    IO.Console.PrintLine(dog Is ITalker);
+    IO.Console.PrintLine(animal Is IRunner);
+    IO.Console.PrintLine(inherited Is ITalker);
+    IO.Console.PrintLine(boxed Is IRunner);
+    IO.Console.PrintLine(objectValue Is ITalker);
+
+    Try
+    {
+        any unrelated = New Cat();
+        IRunner invalid = [IRunner](unrelated);
+        IO.Console.PrintLine(invalid.Run(0));
+    }
+    Catch (IO.Error error)
+    {
+        IO.Console.PrintLine(error.Title);
+    }
+    Return 0;
+}

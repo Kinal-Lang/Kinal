@@ -1,0 +1,9 @@
+Unit Tests.Selfhost.ErrorDuplicateInterface;
+
+Interface IRunner
+{
+}
+
+Class DuplicateRunner By IRunner, IRunner
+{
+}
