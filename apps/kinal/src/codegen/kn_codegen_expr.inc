@@ -1054,6 +1054,66 @@ static LLVMValueRef gen_checked_object_cast(Codegen *g, CGValue value, Type dst)
     if (object_cast_is_statically_safe(g, value.type, dst))
         return cast_value(g, value, dst);
 
+    if (value.type.kind == TY_ANY)
+    {
+        LLVMValueRef tag = LLVMBuildExtractValue(g->builder, value.value, 0, "cast.any.tag");
+        LLVMValueRef payload = LLVMBuildExtractValue(g->builder, value.value, 1, "cast.any.payload");
+        LLVMValueRef is_none = LLVMBuildICmp(g->builder, LLVMIntEQ, tag,
+                                             LLVMConstInt(g->i64, KN_ANY_TAG_NONE, 0),
+                                             "cast.any.none");
+        LLVMValueRef is_object = LLVMBuildICmp(g->builder, LLVMIntEQ, tag,
+                                               LLVMConstInt(g->i64, KN_ANY_TAG_PTR, 0),
+                                               "cast.any.object");
+        LLVMBasicBlockRef entry_bb = LLVMGetInsertBlock(g->builder);
+        LLVMValueRef fn = LLVMGetBasicBlockParent(entry_bb);
+        LLVMBasicBlockRef tag_bb = LLVMAppendBasicBlockInContext(g->ctx, fn, "cast.any.tag.check");
+        LLVMBasicBlockRef pointer_bb = LLVMAppendBasicBlockInContext(g->ctx, fn, "cast.any.pointer");
+        LLVMBasicBlockRef nonnull_bb = LLVMAppendBasicBlockInContext(g->ctx, fn, "cast.any.nonnull");
+        LLVMBasicBlockRef success_bb = LLVMAppendBasicBlockInContext(g->ctx, fn, "cast.any.ok");
+        LLVMBasicBlockRef fail_bb = LLVMAppendBasicBlockInContext(g->ctx, fn, "cast.any.fail");
+        LLVMBasicBlockRef done_bb = LLVMAppendBasicBlockInContext(g->ctx, fn, "cast.any.done");
+        LLVMBuildCondBr(g->builder, is_none, done_bb, tag_bb);
+
+        // Reject primitive/string/collection tags before interpreting the
+        // payload as an object address.  __kn_any_to_ptr is intentionally
+        // permissive for explicit pointer conversions and is not safe for
+        // checked class casts.
+        LLVMPositionBuilderAtEnd(g->builder, tag_bb);
+        LLVMBuildCondBr(g->builder, is_object, pointer_bb, fail_bb);
+
+        LLVMPositionBuilderAtEnd(g->builder, pointer_bb);
+        LLVMValueRef obj_i8 = LLVMBuildIntToPtr(g->builder, payload, g->i8ptr, "cast.any.ptr");
+        LLVMValueRef is_null = LLVMBuildICmp(g->builder, LLVMIntEQ, obj_i8,
+                                             LLVMConstNull(g->i8ptr), "cast.any.null");
+        LLVMBuildCondBr(g->builder, is_null, done_bb, nonnull_bb);
+
+        LLVMPositionBuilderAtEnd(g->builder, nonnull_bb);
+        CGValue object_value;
+        object_value.value = obj_i8;
+        object_value.type = type_ptr(TY_BYTE);
+        LLVMValueRef matched = gen_object_match_nonnull(g, object_value, dst);
+        LLVMBuildCondBr(g->builder, matched, success_bb, fail_bb);
+
+        LLVMPositionBuilderAtEnd(g->builder, success_bb);
+        LLVMValueRef casted = LLVMBuildBitCast(g->builder, obj_i8, dst_ty, "cast.any.object.ptr");
+        LLVMBuildBr(g->builder, done_bb);
+        LLVMBasicBlockRef success_end_bb = LLVMGetInsertBlock(g->builder);
+
+        LLVMPositionBuilderAtEnd(g->builder, fail_bb);
+        emit_runtime_error(g, "Invalid Cast", cg_invalid_cast_detail(value.type, dst));
+
+        LLVMPositionBuilderAtEnd(g->builder, done_bb);
+        LLVMValueRef result = LLVMBuildPhi(g->builder, dst_ty, "cast.any.object");
+        LLVMValueRef incoming_vals[3] = {
+            LLVMConstNull(dst_ty),
+            LLVMConstNull(dst_ty),
+            casted
+        };
+        LLVMBasicBlockRef incoming_bbs[3] = { entry_bb, pointer_bb, success_end_bb };
+        LLVMAddIncoming(result, incoming_vals, incoming_bbs, 3);
+        return result;
+    }
+
     LLVMValueRef obj_i8 = cast_value(g, value, type_ptr(TY_BYTE));
     LLVMValueRef is_null = LLVMBuildICmp(g->builder, LLVMIntEQ, obj_i8, LLVMConstNull(g->i8ptr), "cast.obj.null");
     LLVMBasicBlockRef entry_bb = LLVMGetInsertBlock(g->builder);
@@ -1581,7 +1641,8 @@ static CGValue gen_expr(Codegen *g, Expr *e)
             out.value = build_callable_object(g, "IO.Type.Object.Function", invoke_ptr, 0);
             return out;
         }
-        if (e->v.cast.type.kind == TY_CLASS && (val.type.kind == TY_CLASS || val.type.kind == TY_NULL))
+        if (e->v.cast.type.kind == TY_CLASS &&
+            (val.type.kind == TY_CLASS || val.type.kind == TY_NULL || val.type.kind == TY_ANY))
         {
             out.value = gen_checked_object_cast(g, val, e->v.cast.type);
             return out;

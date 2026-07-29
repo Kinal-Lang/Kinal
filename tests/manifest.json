@@ -248,6 +248,12 @@
     "auto_link": true
   },
   {
+    "name": "any_object_casts",
+    "file": "tests/common/any_object_casts.kn",
+    "expected": "42\ntrue\nInvalid Cast\nInvalid Cast\n",
+    "auto_link": true
+  },
+  {
     "name": "custom_cast_json",
     "file": "tests/common/custom_cast_json.kn",
     "expected": "kinal\n9\nlang\n7\ntrue\n",

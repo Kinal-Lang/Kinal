@@ -672,6 +672,15 @@ static Type sema_cast_expr(Sema *s, Expr *e)
         return e->type;
     }
 
+    // Dynamic collections expose elements as `any`. An explicit cast back to
+    // an object reference is the typed boundary for callers; codegen performs
+    // the same runtime hierarchy check used by ordinary object casts.
+    if (cast_type.kind == TY_CLASS && value_type.kind == TY_ANY)
+    {
+        e->type = cast_type;
+        return e->type;
+    }
+
     if (cast_type.kind == TY_CLASS && (value_type.kind == TY_CLASS || value_type.kind == TY_NULL))
     {
         if (explicit_object_cast_allowed(s, cast_type, value_type))

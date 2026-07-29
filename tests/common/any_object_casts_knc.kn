@@ -1,0 +1,52 @@
+Unit Tests.AnyObjectCastsKnc;
+
+Get IO.Console;
+
+Class Box
+{
+    Public int Value;
+
+    Public Constructor(int value)
+    {
+        This.Value = value;
+    }
+}
+
+Class Other
+{
+}
+
+Static Function int Main()
+{
+    any boxed = New Box(42);
+    Box value = [Box](boxed);
+    IO.Console.PrintLine(value.Value);
+
+    any none = null;
+    Box empty = [Box](none);
+    IO.Console.PrintLine(empty == null);
+
+    Try
+    {
+        any scalar = 7;
+        Box invalidScalar = [Box](scalar);
+        IO.Console.PrintLine(invalidScalar.Value);
+    }
+    Catch (IO.Error error)
+    {
+        IO.Console.PrintLine(error.Title);
+    }
+
+    Try
+    {
+        any other = New Other();
+        Box invalidObject = [Box](other);
+        IO.Console.PrintLine(invalidObject.Value);
+    }
+    Catch (IO.Error error)
+    {
+        IO.Console.PrintLine(error.Title);
+    }
+
+    Return 0;
+}

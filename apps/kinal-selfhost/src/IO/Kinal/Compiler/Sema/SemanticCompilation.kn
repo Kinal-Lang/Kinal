@@ -3385,6 +3385,8 @@ Class SemanticCompilation
                 This.IsObjectSchemaType(result.Left.Type);
             bool relatedObjects = targetObject && sourceObject &&
                 This.RelatedNamedTypes(result.Left.Type, type);
+            bool dynamicObjectCast = targetObject && result.Left != null &&
+                result.Left.Type.Kind == [int](TypeKind.AnyType);
             bool rawFunctionPointer = result.Left != null &&
                 result.Left.Type.Kind == [int](TypeKind.PointerType) &&
                 (type.Name == "IO.Type.Object.Function" ||
@@ -3394,7 +3396,7 @@ Class SemanticCompilation
                 This.Report(syntax, "Invalid Cast", "Object types are unrelated",
                     expression.Line, expression.Column);
             ElseIf (targetObject && customCastCount != 1 && !relatedObjects &&
-                !rawFunctionPointer &&
+                !rawFunctionPointer && !dynamicObjectCast &&
                 (result.Left == null ||
                  result.Left.Type.Kind != [int](TypeKind.NullType)))
                 This.Report(syntax, "Invalid Cast",

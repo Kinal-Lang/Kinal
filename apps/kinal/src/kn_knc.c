@@ -2934,12 +2934,25 @@ static KncValue emit_checked_object_cast(KncFuncState *st, Expr *site, KncValue 
     KncValue out = value;
     KncValue matched;
     int success_patch;
+    int null_success_patch = -1;
 
     out.type = dst;
     if (value.type.kind == TY_NULL)
         return out;
     if (knc_object_cast_is_statically_safe(st->program, value.type, dst))
         return out;
+
+    if (value.type.kind == TY_ANY)
+    {
+        int null_reg = alloc_reg(st);
+        int is_null_reg = alloc_reg(st);
+        emit_default_value(st, null_reg, type_make(TY_NULL));
+        emit_u8(st->code, KNC_OP_EQ);
+        emit_u8(st->code, is_null_reg);
+        emit_u8(st->code, value.reg);
+        emit_u8(st->code, null_reg);
+        null_success_patch = emit_branch_placeholder(st->code, KNC_OP_JUMP_IF_TRUE, is_null_reg);
+    }
 
     matched = compile_is_check_from_value(st, site, value, dst);
     if (kn_diag_error_count() > 0)
@@ -2955,6 +2968,8 @@ static KncValue emit_checked_object_cast(KncFuncState *st, Expr *site, KncValue 
         return out;
     }
     patch_u16(st->code, success_patch, current_ip(st->code));
+    if (null_success_patch >= 0)
+        patch_u16(st->code, null_success_patch, current_ip(st->code));
     return out;
 }
 
@@ -4977,7 +4992,8 @@ static KncValue compile_expr(KncFuncState *st, Expr *e)
             out.type = e->type;
             return out;
         }
-        if (e->type.kind == TY_CLASS && (value.type.kind == TY_CLASS || value.type.kind == TY_NULL))
+        if (e->type.kind == TY_CLASS &&
+            (value.type.kind == TY_CLASS || value.type.kind == TY_NULL || value.type.kind == TY_ANY))
             return emit_checked_object_cast(st, e, value, e->type);
         if (e->type.kind == TY_ARRAY && value.type.kind == TY_PACKAGE)
         {
