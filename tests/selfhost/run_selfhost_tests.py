@@ -902,6 +902,65 @@ def main() -> int:
     )
     results.append({"name": "runtime_type_checks", "ok": True})
 
+    callable_identity_executable = out_dir / f"callable-identity{executable_suffix}"
+    callable_identity_stage0_executable = (
+        out_dir / f"callable-identity-stage0{executable_suffix}"
+    )
+    callable_identity_build = run(
+        [
+            str(compiler),
+            "build",
+            str(runtime_type_project),
+            str(callable_identity_executable),
+            "callable",
+        ],
+        cwd=root,
+    )
+    require(
+        callable_identity_build.returncode == 0,
+        "stage1 callable-identity fixture build failed",
+        callable_identity_build,
+    )
+    callable_identity_stage0_build = run(
+        [
+            str(stage0),
+            "build",
+            "--project",
+            str(runtime_type_project.parent),
+            "--profile",
+            "callable",
+            "-o",
+            str(callable_identity_stage0_executable),
+        ],
+        cwd=root,
+    )
+    require(
+        callable_identity_stage0_build.returncode == 0,
+        "stage0 callable-identity fixture build failed",
+        callable_identity_stage0_build,
+    )
+    callable_identity_run = run([str(callable_identity_executable)], cwd=root)
+    callable_identity_stage0_run = run(
+        [str(callable_identity_stage0_executable)], cwd=root
+    )
+    callable_identity_expected = (
+        "true\nfalse\ntrue\nfalse\ntrue\nfalse\ntrue\nfalse\n"
+        "true\nfalse\ntrue\nfalse\ntrue\nfalse\ntrue\ntrue\n"
+        "false\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\n"
+        "Invalid Cast\nInvalid Cast"
+    )
+    require(
+        callable_identity_run.returncode == 0
+        and callable_identity_stage0_run.returncode == 0
+        and callable_identity_run.stdout.replace("\r\n", "\n").strip()
+        == callable_identity_expected
+        and callable_identity_stage0_run.stdout.replace("\r\n", "\n").strip()
+        == callable_identity_expected,
+        "stage0/stage1 callable runtime identity differs",
+        callable_identity_run,
+    )
+    results.append({"name": "callable_runtime_identity", "ok": True})
+
     exceptions_project = (
         root / "tests" / "selfhost" / "fixtures" / "exceptions" / "kinal.knproj"
     )

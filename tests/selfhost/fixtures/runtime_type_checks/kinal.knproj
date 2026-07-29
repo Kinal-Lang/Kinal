@@ -25,4 +25,21 @@ Project SelfhostRuntimeTypeChecks
             Output = "../../../../out/selfhost/tests/runtime-type-checks.exe";
         }
     }
+
+    Profile "callable"
+    {
+        Source
+        {
+            Entry = "src/CallableIdentity.kn";
+            Sets = ["main"];
+            Mode = ReachableUnits;
+        }
+
+        Build
+        {
+            Backend = Native;
+            Environment = Hosted;
+            Output = "../../../../out/selfhost/tests/callable-identity.exe";
+        }
+    }
 }

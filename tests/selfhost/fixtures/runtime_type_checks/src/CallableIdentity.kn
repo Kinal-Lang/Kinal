@@ -1,0 +1,73 @@
+Unit Tests.Selfhost.CallableIdentity;
+
+Get IO.Console;
+
+Safe Function int AddOne(int value)
+{
+    Return value + 1;
+}
+
+Safe Static Function int Main()
+{
+    Object.Function function = AddOne;
+    Object.Function missingFunction = null;
+    Object.Block block = Block< / / >;
+    Object.Block missingBlock = null;
+    Object.Class functionClass = function;
+    Object.Class blockClass = block;
+    any boxedFunction = function;
+    any boxedBlock = block;
+    any boxedClass = functionClass;
+
+    IO.Console.PrintLine(function Is Object.Function);
+    IO.Console.PrintLine(function Is Object.Block);
+    IO.Console.PrintLine(function Is Object.Class);
+    IO.Console.PrintLine(missingFunction Is Object.Function);
+    IO.Console.PrintLine(block Is Object.Block);
+    IO.Console.PrintLine(block Is Object.Function);
+    IO.Console.PrintLine(block Is Object.Class);
+    IO.Console.PrintLine(missingBlock Is Object.Block);
+    IO.Console.PrintLine(functionClass Is Object.Function);
+    IO.Console.PrintLine(functionClass Is Object.Block);
+    IO.Console.PrintLine(blockClass Is Object.Block);
+    IO.Console.PrintLine(blockClass Is Object.Function);
+    IO.Console.PrintLine(boxedFunction Is Object.Function);
+    IO.Console.PrintLine(boxedFunction Is Object.Block);
+    IO.Console.PrintLine(boxedFunction Is Object.Class);
+    IO.Console.PrintLine(boxedBlock Is Object.Block);
+    IO.Console.PrintLine(boxedBlock Is Object.Function);
+    IO.Console.PrintLine(boxedBlock Is Object.Class);
+    IO.Console.PrintLine(boxedClass Is Object.Function);
+
+    Object.Function functionFromClass = [Object.Function](functionClass);
+    Object.Function functionFromAny = [Object.Function](boxedFunction);
+    Object.Block blockFromClass = [Object.Block](blockClass);
+    Object.Block blockFromAny = [Object.Block](boxedBlock);
+    Object.Function nullFromAny = [Object.Function]([any](null));
+    IO.Console.PrintLine(functionFromClass != null);
+    IO.Console.PrintLine(functionFromAny != null);
+    IO.Console.PrintLine(blockFromClass != null);
+    IO.Console.PrintLine(blockFromAny != null);
+    IO.Console.PrintLine(nullFromAny == null);
+
+    Try
+    {
+        Object.Function invalidFunction = [Object.Function](boxedBlock);
+        IO.Console.PrintLine(invalidFunction != null);
+    }
+    Catch (IO.Error functionError)
+    {
+        IO.Console.PrintLine(functionError.Title);
+    }
+
+    Try
+    {
+        Object.Block invalidBlock = [Object.Block](boxedFunction);
+        IO.Console.PrintLine(invalidBlock != null);
+    }
+    Catch (IO.Error blockError)
+    {
+        IO.Console.PrintLine(blockError.Title);
+    }
+    Return 0;
+}

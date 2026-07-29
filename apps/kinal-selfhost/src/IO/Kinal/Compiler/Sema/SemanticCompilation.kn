@@ -1161,6 +1161,9 @@ Class SemanticCompilation
     Public Safe Function bool RelatedNamedTypes(TypeSymbol left, TypeSymbol right)
     {
         If (This.SameType(left, right)) Return true;
+        If (left.Name == "IO.Type.Object.Class" || left.Name == "Object.Class" ||
+            right.Name == "IO.Type.Object.Class" || right.Name == "Object.Class")
+            Return true;
         If ((left.Declaration != null &&
              left.Declaration.Kind == TokenKind.KwInterface) ||
             (right.Declaration != null &&
@@ -3587,7 +3590,25 @@ Class SemanticCompilation
         If (expression.Kind == [int](ExpressionKind.Binary))
         {
             HirExpression left = This.BindExpression(syntax, function, scope, expression.Left);
-            HirExpression right = This.BindExpression(syntax, function, scope, expression.Right);
+            HirExpression right = null;
+            If (expression.Operator == TokenKind.KwIs)
+            {
+                string targetName = This.ExpressionPath(expression.Right);
+                TypeSymbol targetType = This.ResolveFunctionType(
+                    syntax, function, targetName);
+                If (targetType == null)
+                {
+                    This.UnresolvedTypeCount = This.UnresolvedTypeCount + 1;
+                    This.Report(syntax, "Unknown Type",
+                        This.CanonicalTypeName(targetName),
+                        expression.Right.Line, expression.Right.Column);
+                    targetType = New TypeSymbol([int](TypeKind.Unknown), "unknown");
+                }
+                right = New HirExpression([int](HirExpressionKind.Namespace),
+                    expression.Right, targetType);
+                right.Target = targetType.QualifiedName();
+            }
+            Else right = This.BindExpression(syntax, function, scope, expression.Right);
             bool comparison = expression.Operator == TokenKind.Equal ||
                 expression.Operator == TokenKind.NotEqual ||
                 expression.Operator == TokenKind.Less || expression.Operator == TokenKind.LessEqual ||

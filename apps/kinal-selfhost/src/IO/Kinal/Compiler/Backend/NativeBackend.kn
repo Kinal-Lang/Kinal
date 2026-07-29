@@ -502,20 +502,56 @@ Class NativeBackend
         }
     }
 
-    Public Trusted Function byte* CreateCallableObject(byte* wrapper, byte* environment)
+    Public Trusted Function byte* CallableLayout()
     {
         byte* bytePointer = This.Module.PointerType(This.Module.IntType(8));
-        byte* bytes = This.Module.Multiply(
-            This.Module.ConstInt(This.Module.IntType(64), 2),
-            This.Module.SizeOf(bytePointer), This.Unique("callable_bytes"));
-        byte* callable = This.CallRuntime("__kn_gc_alloc", This.Types1(bytes),
+        LlvmHandles fields = New LlvmHandles();
+        fields.Add(This.Module.PointerType(bytePointer));
+        fields.Add(This.Module.IntType(64));
+        fields.Add(bytePointer);
+        fields.Add(bytePointer);
+        Return This.Module.LiteralStructType(fields, false);
+    }
+
+    Public Trusted Function byte* CallableFieldAddress(byte* callable,
+                                                       int index,
+                                                       string name)
+    {
+        byte* layout = This.CallableLayout();
+        byte* typed = This.Module.BitCast(callable,
+            This.Module.PointerType(layout), This.Unique("typed_callable"));
+        Return This.Module.StructGep(layout, typed, index, This.Unique(name));
+    }
+
+    Public Trusted Function byte* CreateCallableObject(bool isBlock,
+                                                        byte* wrapper,
+                                                        byte* environment)
+    {
+        byte* bytePointer = This.Module.PointerType(This.Module.IntType(8));
+        byte* layout = This.CallableLayout();
+        byte* callable = This.CallRuntime("__kn_gc_alloc",
+            This.Types1(This.Module.SizeOf(layout)),
             This.Unique("callable"));
-        byte* wrapperSlot = This.Module.Gep(bytePointer, callable,
-            This.Types1(This.Module.ConstInt(This.Module.IntType(64), 0)), true,
-            This.Unique("callable_wrapper_slot"));
-        byte* environmentSlot = This.Module.Gep(bytePointer, callable,
-            This.Types1(This.Module.ConstInt(This.Module.IntType(64), 1)), true,
-            This.Unique("callable_environment_slot"));
+        byte* vtableSlot = This.CallableFieldAddress(callable, 0,
+            "callable_vtable_slot");
+        byte* typeIdSlot = This.CallableFieldAddress(callable, 1,
+            "callable_type_id_slot");
+        byte* wrapperSlot = This.CallableFieldAddress(callable, 2,
+            "callable_wrapper_slot");
+        byte* environmentSlot = This.CallableFieldAddress(callable, 3,
+            "callable_environment_slot");
+        TypeSymbol callableType = This.Semantics.FindExactType(isBlock ?
+            "IO.Type.Object.Block" : "IO.Type.Object.Function");
+        LlvmTypeBinding binding = This.FindTypeBinding(callableType);
+        If (binding == null)
+        {
+            This.Fail("callable runtime type binding is missing");
+            Return callable;
+        }
+        This.Module.Store(This.Module.ConstNull(
+            This.Module.PointerType(bytePointer)), vtableSlot);
+        This.Module.Store(This.Module.ConstInt(This.Module.IntType(64),
+            binding.RuntimeTypeId), typeIdSlot);
         This.Module.Store(wrapper, wrapperSlot);
         This.Module.Store(environment == null ? This.Module.ConstNull(bytePointer) : environment,
             environmentSlot);
@@ -560,7 +596,8 @@ Class NativeBackend
             This.Module.BitCast(binding.Function,
                 This.Module.PointerType(This.Module.IntType(8)), This.Unique("block_entry")) :
             This.EnsureCallableWrapper(binding);
-        Return This.CreateCallableObject(entry, environment);
+        Return This.CreateCallableObject(binding.Symbol.IsBlockLiteral,
+            entry, environment);
     }
 
     Public Trusted Function void InitializeGlobalCallables()
@@ -580,7 +617,8 @@ Class NativeBackend
                         This.Module.BitCast(binding.Function,
                             This.Module.PointerType(This.Module.IntType(8)), This.Unique("block_entry")) :
                         This.EnsureCallableWrapper(binding);
-                    This.Module.Store(This.CreateCallableObject(entry, null), global.Address);
+                    This.Module.Store(This.CreateCallableObject(
+                        binding.Symbol.IsBlockLiteral, entry, null), global.Address);
                 }
             }
             global = global.Next;
@@ -1813,12 +1851,10 @@ Class NativeBackend
         parameters.Add(This.Module.IntType(64));
         parameters.Add(This.Module.IntType(64));
         byte* entryType = This.Module.FunctionType(This.Module.VoidType(), parameters, false);
-        byte* entrySlot = This.Module.Gep(bytePointer, callable.Handle,
-            This.Types1(This.Module.ConstInt(This.Module.IntType(64), 0)), true,
-            This.Unique("block_entry_slot"));
-        byte* environmentSlot = This.Module.Gep(bytePointer, callable.Handle,
-            This.Types1(This.Module.ConstInt(This.Module.IntType(64), 1)), true,
-            This.Unique("block_environment_slot"));
+        byte* entrySlot = This.CallableFieldAddress(callable.Handle, 2,
+            "block_entry_slot");
+        byte* environmentSlot = This.CallableFieldAddress(callable.Handle, 3,
+            "block_environment_slot");
         byte* entry = This.Module.Load(This.Module.PointerType(entryType), entrySlot,
             This.Unique("block_entry"));
         byte* environment = This.Module.Load(bytePointer, environmentSlot,
@@ -1880,12 +1916,10 @@ Class NativeBackend
         parameters.Add(anyPointer);
         parameters.Add(This.Module.IntType(64));
         byte* wrapperType = This.Module.FunctionType(This.AnyType, parameters, false);
-        byte* wrapperSlot = This.Module.Gep(bytePointer, callable.Handle,
-            This.Types1(This.Module.ConstInt(This.Module.IntType(64), 0)), true,
-            This.Unique("callable_wrapper_slot"));
-        byte* environmentSlot = This.Module.Gep(bytePointer, callable.Handle,
-            This.Types1(This.Module.ConstInt(This.Module.IntType(64), 1)), true,
-            This.Unique("callable_environment_slot"));
+        byte* wrapperSlot = This.CallableFieldAddress(callable.Handle, 2,
+            "callable_wrapper_slot");
+        byte* environmentSlot = This.CallableFieldAddress(callable.Handle, 3,
+            "callable_environment_slot");
         byte* wrapper = This.Module.Load(This.Module.PointerType(wrapperType), wrapperSlot,
             This.Unique("callable_wrapper"));
         byte* environment = This.Module.Load(bytePointer, environmentSlot,
@@ -2069,7 +2103,7 @@ Class NativeBackend
                 This.EmitMetaDictInteger(dictionary, "owner_param_count", symbol.ParameterCount());
                 LlvmFunctionBinding functionBinding = This.FindFunctionBinding(symbol);
                 byte* wrapper = This.EnsureCallableWrapper(functionBinding);
-                byte* callable = This.CreateCallableObject(wrapper, null);
+                byte* callable = This.CreateCallableObject(false, wrapper, null);
                 This.CallRuntime("__kn_dict_set", This.Types4(dictionary,
                     This.Module.GlobalString("owner_ptr", This.Unique("meta_key")),
                     This.Module.ConstInt(This.Module.IntType(64), 6),
@@ -2822,7 +2856,11 @@ Class NativeBackend
             (type.Declaration != null ||
              type.Name == "IO.Error" ||
              type.Name == "IO.Type.Object.Class" ||
-             type.Name == "Object.Class");
+             type.Name == "Object.Class" ||
+             type.Name == "IO.Type.Object.Function" ||
+             type.Name == "Object.Function" ||
+             type.Name == "IO.Type.Object.Block" ||
+             type.Name == "Object.Block");
     }
 
     Public Trusted Function void EmitInvalidCast(
@@ -2991,8 +3029,7 @@ Class NativeBackend
                 This.Unique("is_any_tag"));
             byte* payload = This.Module.ExtractValue(value.Handle, 1,
                 This.Unique("is_any_payload"));
-            If (target != null && target.Kind == [int](TypeKind.NamedType) &&
-                !This.IsEnum(target))
+            If (This.IsRuntimeObjectType(target))
             {
                 byte* hasObjectTag = This.Module.Compare(
                     [int](LlvmIntPredicate.Equal), tag,
@@ -3021,8 +3058,8 @@ Class NativeBackend
         If (source.Kind == [int](TypeKind.NullType) || target == null)
             Return New LlvmValue(no, boolType);
 
-        If (source.Kind == [int](TypeKind.NamedType) && !This.IsEnum(source) &&
-            target.Kind == [int](TypeKind.NamedType) && !This.IsEnum(target))
+        If (This.IsRuntimeObjectType(source) &&
+            This.IsRuntimeObjectType(target))
         {
             byte* bytePointer = This.Module.PointerType(This.Module.IntType(8));
             byte* object = This.Module.BitCast(value.Handle, bytePointer,
