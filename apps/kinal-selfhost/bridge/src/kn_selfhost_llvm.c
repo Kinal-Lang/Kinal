@@ -489,6 +489,13 @@ int kn_sh_llvm_set_initializer(void *global, void *value)
     return 1;
 }
 
+int kn_sh_llvm_set_alignment(void *value, int alignment)
+{
+    if (!value || alignment <= 0) return 0;
+    LLVMSetAlignment((LLVMValueRef)value, (unsigned)alignment);
+    return 1;
+}
+
 void *kn_sh_llvm_build_global_string(void *module_handle, const char *text, const char *name)
 {
     KnShLlvmModule *state = module_state(module_handle);

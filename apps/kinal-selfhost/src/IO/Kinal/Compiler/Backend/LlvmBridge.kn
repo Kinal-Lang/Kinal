@@ -81,6 +81,8 @@ Extern Function byte* NativeConstUndef(byte* type) By C;
 Extern Function byte* NativeAddGlobal(byte* module, byte* type, string name) By C;
 [LinkName("kn_sh_llvm_set_initializer")]
 Extern Function int NativeSetInitializer(byte* global, byte* value) By C;
+[LinkName("kn_sh_llvm_set_alignment")]
+Extern Function int NativeSetAlignment(byte* value, int alignment) By C;
 [LinkName("kn_sh_llvm_build_global_string")]
 Extern Function byte* NativeBuildGlobalString(byte* module, string text, string name) By C;
 
@@ -353,6 +355,10 @@ Class LlvmModule
     Public Trusted Function bool SetInitializer(byte* global, byte* value)
     {
         Return NativeSetInitializer(global, value) != 0;
+    }
+    Public Trusted Function bool SetAlignment(byte* value, int alignment)
+    {
+        Return NativeSetAlignment(value, alignment) != 0;
     }
     Public Trusted Function byte* GlobalString(string text, string name)
     {

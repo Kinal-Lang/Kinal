@@ -846,6 +846,8 @@ static void validate_enum_decl(Sema *s, EnumDecl *e)
 {
     if (!e) return;
     s->src = e->src;
+    const char *prev_unit = s->current_unit;
+    s->current_unit = e->unit;
     validate_attr_list(s, &e->attrs, KN_META_TARGET_ENUM, e->src, e->line, e->col, 0);
     validate_type_ref(s, &e->underlying, e->line, e->col, 0);
     if (!is_integer_kind(e->underlying.kind))
@@ -857,12 +859,15 @@ static void validate_enum_decl(Sema *s, EnumDecl *e)
             if (kn_strcmp(e->items.items[j].name, it->name) == 0)
                 sema_error(s, it->line, it->col, 1, "Duplicate Enum", "Enum member already defined");
     }
+    s->current_unit = prev_unit;
 }
 
 static void validate_struct_decl(Sema *s, StructDecl *st)
 {
     if (!st) return;
     s->src = st->src;
+    const char *prev_unit = s->current_unit;
+    s->current_unit = st->unit;
     validate_attr_list(s, &st->attrs, KN_META_TARGET_STRUCT, st->src, st->line, st->col, 0);
     if (st->align > 0 && (st->align & (st->align - 1)) != 0)
         sema_error(s, st->line, st->col, 1, "Invalid Align", "Align must be power of two");
@@ -876,6 +881,7 @@ static void validate_struct_decl(Sema *s, StructDecl *st)
             if (kn_strcmp(st->fields.items[j].name, f->name) == 0)
                 sema_error(s, f->line, f->col, 1, "Duplicate Field", "Field already defined");
     }
+    s->current_unit = prev_unit;
 }
 
 static void normalize_class_bases(Sema *s, ClassDecl *c)

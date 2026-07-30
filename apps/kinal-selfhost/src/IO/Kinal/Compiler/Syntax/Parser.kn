@@ -2352,6 +2352,50 @@ Safe Function FunctionDecl ReadFunctionNode(ParseCursor cursor, bool constructor
     Return value;
 }
 
+Safe Function void ReadAggregateSpecifiers(ParseCursor cursor, TypeDecl type)
+{
+    If (!Match(cursor, TokenKind.KwBy)) Return;
+    If (type.Kind == TokenKind.KwEnum)
+    {
+        type.UnderlyingTypeName = ReadQualifiedName(cursor);
+        Return;
+    }
+    If (type.Kind != TokenKind.KwStruct) Return;
+
+    bool reading = true;
+    While (reading)
+    {
+        Token specifier = CurrentToken(cursor);
+        string name = IO.Kinal.Compiler.Lex.Token.Text(specifier);
+        If (!BuilderExpect(cursor, TokenKind.Identifier, "Expected Identifier",
+                           "Expected specifier")) Return;
+        If (name == "Packed")
+        {
+            type.IsPacked = true;
+        }
+        ElseIf (name == "Align")
+        {
+            BuilderExpect(cursor, TokenKind.LeftParen, "Expected '('",
+                "Missing '(' after Align");
+            Token number = CurrentToken(cursor);
+            If (BuilderExpect(cursor, TokenKind.Number, "Expected Number",
+                              "Align requires a number"))
+            {
+                int value = [int](IO.Kinal.Compiler.Lex.Token.Text(number));
+                If (value > 0 && value < 1073741824) type.Align = value;
+            }
+            BuilderExpect(cursor, TokenKind.RightParen, "Expected ')'",
+                "Missing ')' after Align");
+        }
+        Else
+        {
+            ReportToken(cursor.Diagnostics, cursor.Source, specifier,
+                "Unknown Specifier", "Unsupported struct specifier");
+        }
+        reading = Match(cursor, TokenKind.Comma);
+    }
+}
+
 Safe Function void ReadTypeMembers(ParseCursor cursor, TypeDecl type, SyntaxTree tree)
 {
     If (type.Kind == TokenKind.KwEnum)
@@ -2455,6 +2499,9 @@ Safe Function void ReadTypeMembers(ParseCursor cursor, TypeDecl type, SyntaxTree
                     readingBases = Match(cursor, TokenKind.Comma);
                 }
             }
+            ElseIf (nestedKind == TokenKind.KwStruct ||
+                    nestedKind == TokenKind.KwEnum)
+                ReadAggregateSpecifiers(cursor, nested);
             While (!IsEnd(cursor) && CurrentKind(cursor) != TokenKind.LeftBrace)
                 Advance(cursor);
             nested.IsStatic = isStatic;
@@ -3082,6 +3129,9 @@ Safe Function SyntaxTree Build(SourceFile source, list tokens, list diagnostics)
                 readingBases = Match(cursor, TokenKind.Comma);
             }
         }
+        ElseIf (typeKind == TokenKind.KwStruct ||
+                typeKind == TokenKind.KwEnum)
+            ReadAggregateSpecifiers(cursor, type);
         While (!IsEnd(cursor) && CurrentKind(cursor) != TokenKind.LeftBrace) Advance(cursor);
         type.IsStatic = isStatic;
         type.IsAbstract = isAbstract;

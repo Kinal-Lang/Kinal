@@ -61,6 +61,7 @@ void *kn_sh_llvm_const_null(void *type);
 void *kn_sh_llvm_const_undef(void *type);
 void *kn_sh_llvm_add_global(void *module_handle, void *type, const char *name);
 int kn_sh_llvm_set_initializer(void *global, void *value);
+int kn_sh_llvm_set_alignment(void *value, int alignment);
 void *kn_sh_llvm_build_global_string(void *module_handle, const char *text,
                                      const char *name);
 

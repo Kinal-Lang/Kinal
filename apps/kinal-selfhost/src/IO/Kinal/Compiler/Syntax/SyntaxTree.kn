@@ -324,6 +324,9 @@ Class TypeDecl
     Public bool IsStatic;
     Public bool IsAbstract;
     Public bool IsSealed;
+    Public bool IsPacked;
+    Public int Align;
+    Public string UnderlyingTypeName;
     Public int Line;
     Public int Column;
     Public FieldDecl FirstField;
@@ -346,6 +349,9 @@ Class TypeDecl
         This.IsStatic = false;
         This.IsAbstract = false;
         This.IsSealed = false;
+        This.IsPacked = false;
+        This.Align = 0;
+        This.UnderlyingTypeName = "int";
         This.Line = line;
         This.Column = column;
         This.FirstField = null;

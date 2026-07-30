@@ -362,6 +362,45 @@ Class SemanticCompilation
         }
     }
 
+    Public Safe Function void ValidateAggregateTypes()
+    {
+        TypeSymbol type = This.FirstType;
+        While (type != null)
+        {
+            If (This.IsEnumType(type))
+            {
+                TypeSymbol underlying = This.ResolveType(type.Syntax,
+                    type.Declaration.UnderlyingTypeName);
+                If (underlying == null)
+                {
+                    This.UnresolvedTypeCount = This.UnresolvedTypeCount + 1;
+                    This.Report(type.Syntax, "Unknown Type",
+                        This.CanonicalTypeName(type.Declaration.UnderlyingTypeName),
+                        type.Declaration.Line, type.Declaration.Column);
+                    This.Report(type.Syntax, "Invalid Enum",
+                        "Enum underlying type must be integer",
+                        type.Declaration.Line, type.Declaration.Column);
+                    underlying = This.Primitive("int");
+                }
+                ElseIf (underlying.Kind != [int](TypeKind.IntegerType))
+                {
+                    This.Report(type.Syntax, "Invalid Enum",
+                        "Enum underlying type must be integer",
+                        type.Declaration.Line, type.Declaration.Column);
+                }
+                type.UnderlyingType = underlying;
+            }
+            ElseIf (This.IsStructType(type) && type.Declaration.Align > 0 &&
+                (type.Declaration.Align & (type.Declaration.Align - 1)) != 0)
+            {
+                This.Report(type.Syntax, "Invalid Align",
+                    "Align must be power of two",
+                    type.Declaration.Line, type.Declaration.Column);
+            }
+            type = type.Next;
+        }
+    }
+
     Public Safe Function TypeSymbol FindExactType(string name)
     {
         TypeSymbol current = This.FirstType;
@@ -831,6 +870,20 @@ Class SemanticCompilation
         // Runtime-provided named types have no source declaration in the
         // selfhost compilation, but represent ordinary class types.
         Return true;
+    }
+
+    Public Safe Function bool IsStructType(TypeSymbol type)
+    {
+        Return type != null && type.Kind == [int](TypeKind.NamedType) &&
+            type.Declaration != null &&
+            type.Declaration.Kind == TokenKind.KwStruct;
+    }
+
+    Public Safe Function bool IsEnumType(TypeSymbol type)
+    {
+        Return type != null && type.Kind == [int](TypeKind.NamedType) &&
+            type.Declaration != null &&
+            type.Declaration.Kind == TokenKind.KwEnum;
     }
 
     Public Safe Function bool TypeImplementsInterface(TypeSymbol type,
@@ -1311,16 +1364,18 @@ Class SemanticCompilation
             While (candidate != null)
             {
                 If (candidate.Declaration != null &&
-                    candidate.Declaration.Kind == TokenKind.KwEnum &&
+                    (candidate.Declaration.Kind == TokenKind.KwEnum ||
+                     candidate.Declaration.Kind == TokenKind.KwStruct) &&
                     (candidate.Name == type.Name ||
                      candidate.QualifiedName() == type.Name ||
                      IO.Text.EndsWith(candidate.QualifiedName(),
-                         "." + type.Name))) Return false;
+                          "." + type.Name))) Return false;
                 candidate = candidate.Next;
             }
         }
         Return resolved == null || resolved.Declaration == null ||
-            resolved.Declaration.Kind != TokenKind.KwEnum;
+            (resolved.Declaration.Kind != TokenKind.KwEnum &&
+             resolved.Declaration.Kind != TokenKind.KwStruct);
     }
 
     Public Safe Function bool SameFunctionSignature(FunctionSymbol left, FunctionSymbol right)
@@ -1862,7 +1917,8 @@ Class SemanticCompilation
             target.ElementType.Name == "char" && source.Kind == [int](TypeKind.StringType))
             Return true;
         If ((target.Name == "IO.Type.Object.Class" || target.Name == "Object.Class") &&
-            (source.Kind == [int](TypeKind.NamedType) ||
+            ((source.Kind == [int](TypeKind.NamedType) &&
+              !This.IsStructType(source) && !This.IsEnumType(source)) ||
              source.Kind == [int](TypeKind.ArrayType) ||
              source.Kind == [int](TypeKind.PointerType))) Return true;
         If (target.Kind == [int](TypeKind.IntegerType) &&
@@ -1877,7 +1933,8 @@ Class SemanticCompilation
              target.Kind == [int](TypeKind.SetType) ||
              target.Kind == [int](TypeKind.ArrayType) ||
              target.Kind == [int](TypeKind.PointerType) ||
-             target.Kind == [int](TypeKind.NamedType))) Return true;
+             (target.Kind == [int](TypeKind.NamedType) &&
+              !This.IsStructType(target) && !This.IsEnumType(target)))) Return true;
         If (target.Kind == [int](TypeKind.NamedType) &&
             source.Kind == [int](TypeKind.NamedType))
         {
@@ -3573,8 +3630,13 @@ Class SemanticCompilation
         {
             TypeSymbol type = This.ResolveFunctionType(syntax, function, expression.Text);
             If (type == null) Return This.InvalidExpression(syntax, expression, "Unknown constructed type", expression.Text);
+            If (!This.IsClassType(type))
+                Return This.InvalidExpression(syntax, expression, "Unknown Type", "Class not found");
             If (type.Declaration != null && type.Declaration.IsStatic)
                 This.Report(syntax, "Invalid New", "Cannot instantiate static class",
+                    expression.Line, expression.Column);
+            If (type.Declaration != null && type.Declaration.IsAbstract)
+                This.Report(syntax, "Invalid New", "Cannot instantiate abstract class",
                     expression.Line, expression.Column);
             HirExpression result = New HirExpression([int](HirExpressionKind.NewObject), expression, type);
             result.CallKind = [int](HirCallKind.Constructor);
@@ -4353,6 +4415,7 @@ Class SemanticCompilation
     Public Safe Function bool Analyze()
     {
         This.IndexDeclarations();
+        This.ValidateAggregateTypes();
         This.LinkBaseTypes();
         This.ValidateMetaDeclarations();
         This.ValidateTypeAndFieldAttributes();

@@ -53,6 +53,7 @@ Class TypeSymbol
     Public string Name;
     Public string UnitName;
     Public TypeSymbol ElementType;
+    Public TypeSymbol UnderlyingType;
     Public TypeSymbol BaseType;
     Public InterfaceTypeLink FirstInterface;
     Public InterfaceTypeLink LastInterface;
@@ -70,6 +71,7 @@ Class TypeSymbol
         This.Name = name;
         This.UnitName = "";
         This.ElementType = null;
+        This.UnderlyingType = null;
         This.BaseType = null;
         This.FirstInterface = null;
         This.LastInterface = null;

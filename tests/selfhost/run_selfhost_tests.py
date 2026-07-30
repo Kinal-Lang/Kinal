@@ -1280,6 +1280,48 @@ def main() -> int:
     )
     results.append({"name": "block_features", "ok": True})
 
+    struct_project = root / "tests" / "selfhost" / "fixtures" / "struct_values" / "kinal.knproj"
+    struct_executable = out_dir / f"struct-values{executable_suffix}"
+    struct_stage0_executable = out_dir / f"struct-values-stage0{executable_suffix}"
+    struct_build = run(
+        [str(compiler), "build", str(struct_project), str(struct_executable), "test"],
+        cwd=root,
+    )
+    require(struct_build.returncode == 0, "stage1 Struct value fixture build failed", struct_build)
+    struct_stage0_build = run(
+        [
+            str(stage0),
+            "build",
+            "--project",
+            str(struct_project.parent),
+            "--profile",
+            "test",
+            "-o",
+            str(struct_stage0_executable),
+        ],
+        cwd=root,
+    )
+    require(
+        struct_stage0_build.returncode == 0,
+        "stage0 Struct value fixture build failed",
+        struct_stage0_build,
+    )
+    struct_run = run([str(struct_executable)], cwd=root)
+    struct_stage0_run = run([str(struct_stage0_executable)], cwd=root)
+    struct_expected = (
+        "0\n0\n0\n10\n99\n20\n77\n87\n10\n55\nnested\n20\n"
+        "3\n4\n11\n10\n44\n10\n7\ntrue"
+    )
+    require(
+        struct_run.returncode == 0
+        and struct_stage0_run.returncode == 0
+        and struct_run.stdout.replace("\r\n", "\n").strip() == struct_expected
+        and struct_stage0_run.stdout.replace("\r\n", "\n").strip() == struct_expected,
+        "stage0/stage1 Struct value behavior differs",
+        struct_run,
+    )
+    results.append({"name": "struct_value_runtime", "ok": True})
+
     phase5_project = (
         root / "tests" / "selfhost" / "fixtures" / "phase5_semantics" / "kinal.knproj"
     )

@@ -1,0 +1,95 @@
+Unit Tests.Selfhost.StructValues;
+
+Get IO.Console;
+
+Enum State By u8
+{
+    Empty = 0,
+    Ready = 7
+}
+
+Struct Pair
+{
+    int Left;
+    int Right;
+}
+
+Struct Nested
+{
+    Pair Value;
+    string Label;
+}
+
+Class Container
+{
+    Public Pair Value;
+}
+
+Pair GlobalPair;
+
+Safe Function Pair MakePair(int left, int right)
+{
+    Pair value;
+    value.Left = left;
+    value.Right = right;
+    Return value;
+}
+
+Safe Function Pair ChangeCopy(Pair value)
+{
+    value.Right = 77;
+    Return value;
+}
+
+Safe Function int Sum(Pair value)
+{
+    Return value.Left + value.Right;
+}
+
+Static Safe Function int Main()
+{
+    Pair defaults;
+    IO.Console.PrintLine(defaults.Left);
+    IO.Console.PrintLine(defaults.Right);
+    IO.Console.PrintLine(GlobalPair.Left);
+
+    Pair original = MakePair(10, 20);
+    Pair copy = original;
+    copy.Left = 99;
+    IO.Console.PrintLine(original.Left);
+    IO.Console.PrintLine(copy.Left);
+
+    Pair changed = ChangeCopy(original);
+    IO.Console.PrintLine(original.Right);
+    IO.Console.PrintLine(changed.Right);
+    IO.Console.PrintLine(Sum(changed));
+
+    Nested nested;
+    nested.Value = original;
+    nested.Value.Right = 55;
+    nested.Label = "nested";
+    IO.Console.PrintLine(nested.Value.Left);
+    IO.Console.PrintLine(nested.Value.Right);
+    IO.Console.PrintLine(nested.Label);
+    IO.Console.PrintLine(original.Right);
+
+    Pair returned = MakePair(3, 4);
+    IO.Console.PrintLine(returned.Left);
+    IO.Console.PrintLine(returned.Right);
+
+    Pair[] values = { original, copy, returned };
+    values[0].Left = 11;
+    IO.Console.PrintLine(values[0].Left);
+    IO.Console.PrintLine(original.Left);
+
+    Container container = New Container();
+    container.Value = original;
+    container.Value.Left = 44;
+    IO.Console.PrintLine(container.Value.Left);
+    IO.Console.PrintLine(original.Left);
+
+    State state = State.Ready;
+    IO.Console.PrintLine([int](state));
+    IO.Console.PrintLine(state == State.Ready);
+    Return 0;
+}

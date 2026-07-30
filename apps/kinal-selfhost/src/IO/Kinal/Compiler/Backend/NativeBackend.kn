@@ -167,19 +167,23 @@ Class NativeBackend
             type.Kind == [int](TypeKind.DictType) ||
             type.Kind == [int](TypeKind.SetType) ||
             type.Kind == [int](TypeKind.PointerType) ||
-            (type.Kind == [int](TypeKind.NamedType) && !This.IsEnum(type));
+            (type.Kind == [int](TypeKind.NamedType) && !This.IsEnum(type) &&
+             !This.Semantics.IsStructType(type));
     }
 
     Public Safe Function bool NeedsGcRoot(TypeSymbol type)
     {
         Return This.IsReferenceType(type) || type.Kind == [int](TypeKind.ArrayType) ||
             type.Kind == [int](TypeKind.PackageType) ||
-            type.Kind == [int](TypeKind.AnyType);
+            type.Kind == [int](TypeKind.AnyType) ||
+            This.Semantics.IsStructType(type);
     }
 
     Public Safe Function int IntegerBits(TypeSymbol type)
     {
         If (type == null) Return 64;
+        If (This.IsEnum(type) && type.UnderlyingType != null)
+            Return This.IntegerBits(type.UnderlyingType);
         If (type.Name == "byte" || type.Name == "char" || type.Name == "i8" || type.Name == "u8") Return 8;
         If (type.Name == "i16" || type.Name == "u16") Return 16;
         If (type.Name == "i32" || type.Name == "u32") Return 32;
@@ -189,6 +193,8 @@ Class NativeBackend
     Public Safe Function bool IsUnsignedInteger(TypeSymbol type)
     {
         If (type == null) Return false;
+        If (This.IsEnum(type) && type.UnderlyingType != null)
+            Return This.IsUnsignedInteger(type.UnderlyingType);
         Return type.Name == "byte" || type.Name == "char" || type.Name == "u8" ||
             type.Name == "u16" || type.Name == "u32" || type.Name == "u64" ||
             type.Name == "usize";
@@ -241,7 +247,14 @@ Class NativeBackend
             fields.Add(This.Module.IntType(64));
             Return This.Module.LiteralStructType(fields, false);
         }
-        If (type.Kind == [int](TypeKind.NamedType) && This.IsEnum(type)) Return This.Module.IntType(64);
+        If (type.Kind == [int](TypeKind.NamedType) && This.IsEnum(type))
+            Return type.UnderlyingType == null ?
+                This.Module.IntType(64) : This.TypeHandle(type.UnderlyingType);
+        If (This.Semantics.IsStructType(type))
+        {
+            LlvmTypeBinding binding = This.FindTypeBinding(type);
+            If (binding != null) Return binding.Handle;
+        }
         If (type.Kind == [int](TypeKind.NullType)) Return This.Module.PointerType(This.Module.IntType(8));
         If (This.IsReferenceType(type))
         {
@@ -302,8 +315,10 @@ Class NativeBackend
             If (type.Kind == [int](TypeKind.NamedType) && !This.IsEnum(type))
             {
                 byte* structType = This.Module.NamedStructType(type.QualifiedName());
+                byte* handle = This.Semantics.IsStructType(type) ?
+                    structType : This.Module.PointerType(structType);
                 This.AddTypeBinding(New LlvmTypeBinding(type,
-                    This.Module.PointerType(structType), structType, runtimeTypeId));
+                    handle, structType, runtimeTypeId));
                 runtimeTypeId = runtimeTypeId + 1;
             }
             type = type.Next;
@@ -318,12 +333,17 @@ Class NativeBackend
                 Continue;
             }
             LlvmHandles fields = New LlvmHandles();
-            byte* bytePointer = This.Module.PointerType(This.Module.IntType(8));
-            fields.Add(This.Module.PointerType(bytePointer));
-            fields.Add(This.Module.IntType(64));
+            If (!This.Semantics.IsStructType(binding.Symbol))
+            {
+                byte* bytePointer = This.Module.PointerType(This.Module.IntType(8));
+                fields.Add(This.Module.PointerType(bytePointer));
+                fields.Add(This.Module.IntType(64));
+            }
             This.AppendInstanceFieldTypes(fields, binding.Symbol);
-            If (!This.Module.SetStructBody(binding.StructHandle, fields, false))
-                This.Fail("failed to define class layout: " + binding.Symbol.QualifiedName());
+            bool packed = This.Semantics.IsStructType(binding.Symbol) &&
+                binding.Symbol.Declaration.IsPacked;
+            If (!This.Module.SetStructBody(binding.StructHandle, fields, packed))
+                This.Fail("failed to define aggregate layout: " + binding.Symbol.QualifiedName());
             binding = binding.Next;
         }
     }
@@ -1117,6 +1137,8 @@ Class NativeBackend
         }
         If (This.IsReferenceType(type) || type.Kind == [int](TypeKind.NullType))
             Return New LlvmValue(This.Module.ConstNull(typeHandle), type);
+        If (This.Semantics.IsStructType(type))
+            Return New LlvmValue(This.Module.ConstNull(typeHandle), type);
         If (type.Kind == [int](TypeKind.FloatType))
             Return New LlvmValue(This.Module.ConstFloat(typeHandle, 0.0), type);
         Return New LlvmValue(This.Module.ConstInt(typeHandle, 0), type);
@@ -1408,6 +1430,21 @@ Class NativeBackend
     Public Safe Function int FieldIndex(TypeSymbol owner, string name)
     {
         If (owner == null || owner.Declaration == null) Return -1;
+        If (This.Semantics.IsStructType(owner))
+        {
+            int structIndex = 0;
+            FieldDecl structField = owner.Declaration.FirstField;
+            While (structField != null)
+            {
+                If (!structField.IsStatic)
+                {
+                    If (structField.Name == name) Return structIndex;
+                    structIndex = structIndex + 1;
+                }
+                structField = structField.Next;
+            }
+            Return -1;
+        }
         int inherited = This.FieldIndex(owner.BaseType, name);
         If (inherited >= 0) Return inherited;
         int index = 2 + This.InstanceFieldCount(owner.BaseType);
@@ -1526,7 +1563,8 @@ Class NativeBackend
                                                      TypeSymbol target)
     {
         If (actual == null || target == null || This.IsEnum(actual) ||
-            This.IsEnum(target)) Return false;
+            This.IsEnum(target) || This.Semantics.IsStructType(actual) ||
+            This.Semantics.IsStructType(target)) Return false;
         If (target.Name == "IO.Type.Object.Class" ||
             target.Name == "Object.Class") Return true;
         If (This.Semantics.IsInterfaceType(target))
@@ -1661,7 +1699,18 @@ Class NativeBackend
                 This.Fail("unknown field address: " + expression.Target);
                 Return null;
             }
-            Return This.Module.StructGep(binding.StructHandle, receiver.Handle, index, This.Unique("field"));
+            byte* base = receiver.Handle;
+            If (This.Semantics.IsStructType(receiver.Type))
+            {
+                base = receiver.Address;
+                If (base == null)
+                {
+                    base = This.Module.Alloca(This.TypeHandle(receiver.Type),
+                        This.Unique("struct_temporary"));
+                    This.Module.Store(receiver.Handle, base);
+                }
+            }
+            Return This.Module.StructGep(binding.StructHandle, base, index, This.Unique("field"));
         }
         If (expression.Kind == [int](HirExpressionKind.Index))
         {
@@ -2960,6 +3009,7 @@ Class NativeBackend
         Return type != null &&
             type.Kind == [int](TypeKind.NamedType) &&
             !This.IsEnum(type) &&
+            !This.Semantics.IsStructType(type) &&
             (type.Declaration != null ||
              type.Name == "IO.Error" ||
              type.Name == "IO.Type.Object.Class" ||
@@ -3619,7 +3669,7 @@ Class NativeBackend
                 Return New LlvmValue(This.Module.ConstInt(This.Module.IntType(64), recordOrdinal),
                     This.Semantics.Primitive("isize"));
             If (This.IsEnum(expression.Type))
-                Return New LlvmValue(This.Module.ConstInt(This.Module.IntType(64),
+                Return New LlvmValue(This.Module.ConstInt(This.TypeHandle(expression.Type),
                     This.EnumValue(expression.Type, expression.Target)), expression.Type);
             If (syntaxKind == [int](ExpressionKind.Number))
             {
@@ -3797,7 +3847,14 @@ Class NativeBackend
                                                             string name)
     {
         If (symbol == null || !symbol.IsCaptured)
-            Return This.Module.Alloca(This.TypeHandle(type), name);
+        {
+            byte* address = This.Module.Alloca(This.TypeHandle(type), name);
+            If (This.Semantics.IsStructType(type) &&
+                type.Declaration.Align > 0 &&
+                !This.Module.SetAlignment(address, type.Declaration.Align))
+                This.Fail("failed to set Struct alignment: " + type.QualifiedName());
+            Return address;
+        }
 
         byte* bytePointer = This.Module.PointerType(This.Module.IntType(8));
         byte* storage = This.CallRuntime("__kn_gc_alloc",
