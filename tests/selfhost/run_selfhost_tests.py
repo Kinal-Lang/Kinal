@@ -831,6 +831,69 @@ def main() -> int:
     )
     results.append({"name": "native_backend_fixture", "ok": True})
 
+    compat_executable = out_dir / f"stage0-build-cli{executable_suffix}"
+    compat_object = out_dir / "stage0-build-cli.obj"
+    compat_ir = out_dir / "stage0-build-cli.ll"
+    compat_build = run(
+        [
+            str(compiler),
+            "build",
+            "--emit",
+            "bin",
+            "--project",
+            str(backend_project.parent),
+            "--profile",
+            "test",
+            "-o",
+            str(compat_executable),
+        ],
+        cwd=root,
+    )
+    require(compat_build.returncode == 0,
+            "stage0-compatible stage1 build command failed", compat_build)
+    compat_object_build = run(
+        [
+            str(compiler),
+            "build",
+            "--project",
+            str(backend_project),
+            "--profile",
+            "test",
+            "--emit",
+            "obj",
+            "--output",
+            str(compat_object),
+        ],
+        cwd=root,
+    )
+    require(compat_object_build.returncode == 0 and compat_object.is_file(),
+            "stage0-compatible stage1 object emit failed", compat_object_build)
+    compat_ir_build = run(
+        [
+            str(compiler),
+            "build",
+            "--project",
+            str(backend_project),
+            "--emit",
+            "ir",
+            "-o",
+            str(compat_ir),
+            "--profile",
+            "test",
+        ],
+        cwd=root,
+    )
+    require(compat_ir_build.returncode == 0 and compat_ir.is_file(),
+            "stage0-compatible stage1 LLVM IR emit failed", compat_ir_build)
+    compat_run = run([str(compat_executable)], cwd=root)
+    require(
+        compat_run.returncode == 0
+        and compat_run.stdout.replace("\r\n", "\n").strip() == "string[]\nchar[]",
+        "stage0-compatible stage1 executable differs",
+        compat_run,
+    )
+    results.append({"name": "stage0_build_cli", "ok": True, "emit_modes": 3})
+
     stdlib_project = root / "tests" / "selfhost" / "fixtures" / "stdlib_core" / "kinal.knproj"
     stdlib_executable = out_dir / f"stdlib-core{executable_suffix}"
     stdlib_check = run([str(compiler), "check", str(stdlib_project), "test"], cwd=root)

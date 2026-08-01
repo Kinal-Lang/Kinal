@@ -20,6 +20,24 @@ Get IO.Kinal.Compiler.Sema.Symbols;
 Get IO.Kinal.Compiler.Backend.LlvmBridge;
 Get IO.Kinal.Compiler.Backend.NativeBackend;
 
+Class ProjectBuildRequest
+{
+    Public string Mode;
+    Public string Manifest;
+    Public string Output;
+    Public string Profile;
+    Public string Error;
+
+    Public Safe Constructor(string mode)
+    {
+        This.Mode = mode;
+        This.Manifest = "";
+        This.Output = "";
+        This.Profile = "";
+        This.Error = "";
+    }
+}
+
 Safe Function string QuoteArgument(string value)
 {
     If (IO.Text.Contains(value, "\"")) Return "";
@@ -183,6 +201,135 @@ Trusted Function int LinkExecutable(string outputPath, string objectPath,
         bridgeLlvm, bridgeRuntime);
     commandLine = AppendExternLinkSettings(commandLine, semantics);
     Return IO.Kinal.Compiler.Backend.LlvmBridge.Execute(commandLine);
+}
+
+Safe Function string BuildModeForEmit(string emit)
+{
+    If (emit == "bin") Return "build";
+    If (emit == "obj") Return "build-object";
+    If (emit == "ir") Return "build-ir";
+    Return "";
+}
+
+Safe Function ProjectBuildRequest ParseProjectBuildRequest(string[] args, string command)
+{
+    ProjectBuildRequest request = New ProjectBuildRequest(command);
+    If (args.Length() < 2)
+    {
+        request.Error = "build requires a kinal.knproj path";
+        Return request;
+    }
+
+    bool optionStyle = IO.Text.StartsWith(args[1], "-");
+    If (!optionStyle)
+    {
+        request.Manifest = args[1];
+        If (args.Length() >= 3) request.Output = args[2];
+        If (args.Length() >= 4) request.Profile = args[3];
+        If (IO.Text.IsEmpty(request.Output))
+            request.Error = command + " requires an output path";
+        Return request;
+    }
+
+    int index = 1;
+    While (index < args.Length())
+    {
+        string argument = args[index];
+        If (argument == "--project" || argument == "--profile" ||
+            argument == "-o" || argument == "--output" || argument == "--emit")
+        {
+            If (index + 1 >= args.Length())
+            {
+                request.Error = "missing value for " + argument;
+                Return request;
+            }
+            string value = args[index + 1];
+            If (argument == "--project") request.Manifest = value;
+            ElseIf (argument == "--profile") request.Profile = value;
+            ElseIf (argument == "-o" || argument == "--output") request.Output = value;
+            Else
+            {
+                request.Mode = BuildModeForEmit(value);
+                If (IO.Text.IsEmpty(request.Mode))
+                {
+                    request.Error = "unsupported selfhost emit mode: " + value;
+                    Return request;
+                }
+            }
+            index = index + 2;
+            Continue;
+        }
+        request.Error = "unknown build option: " + argument;
+        Return request;
+    }
+
+    If (IO.Text.IsEmpty(request.Manifest))
+        request.Error = "build requires --project <kinal.knproj>";
+    Return request;
+}
+
+Safe Function string ResolveProjectBuildOutput(ProjectBuildRequest request,
+                                                ProjectConfig project,
+                                                ProjectProfileConfig profile)
+{
+    If (!IO.Text.IsEmpty(request.Output)) Return IO.Path.Normalize(request.Output);
+    If (!IO.Text.IsEmpty(profile.Output))
+    {
+        string configured = project.ResolvePath(profile.Output);
+        If (request.Mode == "build-object") Return IO.Path.ChangeExtension(configured, ".obj");
+        If (request.Mode == "build-ir") Return IO.Path.ChangeExtension(configured, ".ll");
+        Return configured;
+    }
+    string extension = request.Mode == "build-object" ? ".obj" :
+        (request.Mode == "build-ir" ? ".ll" : ".exe");
+    Return IO.Path.Combine(project.RootDirectory, project.Name + extension);
+}
+
+Trusted Function int CompileProject(ProjectBuildRequest request)
+{
+    string manifest = request.Manifest;
+    If (IO.Directory.Exists(manifest)) manifest = IO.Path.Combine(manifest, "kinal.knproj");
+    If (!IO.File.Exists(manifest))
+    {
+        IO.Console.PrintLine("project file not found: " + manifest);
+        Return 2;
+    }
+
+    CompileSession session = New CompileSession();
+    session.LoadProject(manifest, request.Profile);
+    If (!session.HasErrors()) session.ParseProject();
+    If (!session.HasErrors()) DiscoverRelatedSources(session,
+        session.Project.ResolvePath(session.Profile.Entry), false);
+    SemanticCompilation semantics = null;
+    If (!session.HasErrors())
+    {
+        semantics = New SemanticCompilation(session);
+        semantics.Analyze();
+    }
+    IO.Kinal.Compiler.Core.Diagnostics.PrintAll(session.Diagnostics);
+    If (session.HasErrors()) Return 1;
+
+    string output = ResolveProjectBuildOutput(request, session.Project, session.Profile);
+    NativeBackend backend = New NativeBackend(semantics);
+    bool emitted = false;
+    string backendOutput = request.Mode == "build" ? IO.Path.ChangeExtension(output, ".obj") : output;
+    If (request.Mode == "build-object" || request.Mode == "build")
+        emitted = backend.EmitObject(backendOutput);
+    ElseIf (backend.GenerateModule()) emitted = IO.File.WriteAllText(output, backend.Module.Ir());
+    If (!emitted) IO.Console.PrintLine("native backend failed: " + backend.Error);
+    backend.Dispose();
+    If (!emitted) Return 1;
+    If (request.Mode == "build" && LinkExecutable(output, backendOutput,
+        session.Project, session.Profile, semantics) != 0)
+    {
+        IO.Console.PrintLine("native link failed");
+        Return 1;
+    }
+    IO.Console.PrintLine(request.Mode == "build-object" ? "format=kinal-selfhost-object-v1" :
+        (request.Mode == "build-ir" ? "format=kinal-selfhost-ir-v1" :
+            "format=kinal-selfhost-executable-v1"));
+    IO.Console.PrintLine("output=" + output);
+    Return 0;
 }
 
 Safe Function bool SessionContainsSource(CompileSession session, string path)
@@ -350,6 +497,7 @@ Safe Function void PrintHelp()
     IO.Console.PrintLine("  build-object <manifest> <output> [profile]  emit a native object");
     IO.Console.PrintLine("  build-ir <manifest> <output> [profile]      emit LLVM IR");
     IO.Console.PrintLine("  build <manifest> <output> [profile]         emit and link an executable");
+    IO.Console.PrintLine("  build --project <manifest> [--profile <name>] [-o <file>] [--emit bin|obj|ir]");
     IO.Console.PrintLine("  llvm-probe <object>               verify the LLVM bridge");
     IO.Console.PrintLine("  help       show this help");
 }
@@ -413,49 +561,13 @@ Safe Function int Run(string[] args)
 
     If (command == "build-object" || command == "build-ir" || command == "build")
     {
-        If (args.Length() < 3)
+        ProjectBuildRequest request = ParseProjectBuildRequest(args, command);
+        If (!IO.Text.IsEmpty(request.Error))
         {
-            IO.Console.PrintLine(command + " requires a kinal.knproj path and output path");
+            IO.Console.PrintLine(request.Error);
             Return 2;
         }
-        string manifest = args[1];
-        If (!IO.File.Exists(manifest))
-        {
-            IO.Console.PrintLine("project file not found: " + manifest);
-            Return 2;
-        }
-        CompileSession session = New CompileSession();
-        string profileName = args.Length() >= 4 ? args[3] : "";
-        session.LoadProject(manifest, profileName);
-        If (!session.HasErrors()) session.ParseProject();
-        If (!session.HasErrors()) DiscoverRelatedSources(session,
-            session.Project.ResolvePath(session.Profile.Entry), false);
-        SemanticCompilation semantics = null;
-        If (!session.HasErrors())
-        {
-            semantics = New SemanticCompilation(session);
-            semantics.Analyze();
-        }
-        IO.Kinal.Compiler.Core.Diagnostics.PrintAll(session.Diagnostics);
-        If (session.HasErrors()) Return 1;
-        NativeBackend backend = New NativeBackend(semantics);
-        bool emitted = false;
-        string backendOutput = command == "build" ? IO.Path.ChangeExtension(args[2], ".obj") : args[2];
-        If (command == "build-object" || command == "build") emitted = backend.EmitObject(backendOutput);
-        ElseIf (backend.GenerateModule()) emitted = IO.File.WriteAllText(args[2], backend.Module.Ir());
-        If (!emitted) IO.Console.PrintLine("native backend failed: " + backend.Error);
-        backend.Dispose();
-        If (!emitted) Return 1;
-        If (command == "build" && LinkExecutable(args[2], backendOutput,
-            session.Project, session.Profile, semantics) != 0)
-        {
-            IO.Console.PrintLine("native link failed");
-            Return 1;
-        }
-        IO.Console.PrintLine(command == "build-object" ? "format=kinal-selfhost-object-v1" :
-            (command == "build-ir" ? "format=kinal-selfhost-ir-v1" : "format=kinal-selfhost-executable-v1"));
-        IO.Console.PrintLine("output=" + args[2]);
-        Return 0;
+        Return CompileProject(request);
     }
 
     If (command == "check-source" || command == "check-source-auto")
