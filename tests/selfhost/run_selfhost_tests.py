@@ -2341,6 +2341,30 @@ def main() -> int:
         "skipped": manifest_native_data.get("skipped", False),
     })
 
+    manifest_runtime = run(
+        [
+            sys.executable,
+            str(root / "tests" / "selfhost" / "audit_manifest_runtime.py"),
+            "--compiler",
+            str(compiler),
+            "--root",
+            str(root),
+            "--out-dir",
+            str(out_dir / "manifest-runtime-audit"),
+        ],
+        cwd=root,
+    )
+    require(manifest_runtime.returncode == 0,
+            "stage1 manifest runtime audit failed", manifest_runtime)
+    manifest_runtime_data = json.loads(manifest_runtime.stdout.strip())
+    results.append({
+        "name": "manifest_runtime_coverage",
+        "ok": True,
+        "runtime_cases": manifest_runtime_data.get("runtime_cases", 0),
+        "unsupported_cases": manifest_runtime_data.get("unsupported_cases", []),
+        "skipped": manifest_runtime_data.get("skipped", False),
+    })
+
     (out_dir / "results.json").write_text(json.dumps(results, indent=2) + "\n", encoding="utf-8")
     print(f"[OK] selfhost tests: {len(results)} groups")
     return 0

@@ -123,10 +123,23 @@ uint8_t kn_sh_rt_string_to_char(const char *text);
 const char *kn_sh_rt_any_to_string(int64_t tag, int64_t payload)
 {
     if (tag == 1) return kn_sh_rt_i64_to_string(payload);
+    if (tag == 2)
+    {
+        double value;
+        memcpy(&value, &payload, sizeof(value));
+        return kn_sh_rt_f64_to_string(value);
+    }
     if (tag == 3) return payload ? "true" : "false";
     if (tag == 4) return kn_sh_rt_char_to_string((uint8_t)payload);
     if (tag == 5) return (const char *)(uintptr_t)payload;
-    return "null";
+    if (tag >= 6 && tag <= 9)
+    {
+        char *result = (char *)__kn_gc_alloc(32);
+        if (!result) return "";
+        snprintf(result, 32, "0x%llx", (unsigned long long)(uint64_t)payload);
+        return result;
+    }
+    return "<any>";
 }
 
 int64_t kn_sh_rt_any_to_i64(int64_t tag, int64_t payload)

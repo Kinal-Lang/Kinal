@@ -2051,6 +2051,32 @@ Class SemanticCompilation
         Return null;
     }
 
+    Public Safe Function string AttributeString(FunctionDecl declaration, string name)
+    {
+        SyntaxAttribute attribute = This.FindAttribute(declaration, name);
+        If (attribute == null || attribute.FirstArgument == null) Return "";
+        string value = attribute.FirstArgument.Text;
+        int length = IO.Text.Length(value);
+        If (length >= 2) Return IO.Text.Slice(value, 1, length - 2);
+        Return value;
+    }
+
+    Public Safe Function string RuntimeSymbolName(FunctionSymbol function)
+    {
+        If (function == null || function.Declaration == null) Return null;
+        If (function.Declaration.IsDelegate)
+        {
+            string symbol = This.AttributeString(function.Declaration, "SymbolName");
+            Return IO.Text.IsEmpty(symbol) ? function.Name : symbol;
+        }
+        If (function.Declaration.IsExtern)
+        {
+            string symbol = This.AttributeString(function.Declaration, "LinkName");
+            Return IO.Text.IsEmpty(symbol) ? function.Name : symbol;
+        }
+        Return null;
+    }
+
     Public Safe Function bool IsSupportedCAbiType(TypeSymbol type)
     {
         If (type == null) Return false;
@@ -2900,6 +2926,18 @@ Class SemanticCompilation
         HirExpression collection = namespaceReceiver ? This.HirArgument(call, 0) : null;
         HirExpression first = This.HirArgument(call, receiverArgumentCount);
         HirExpression second = This.HirArgument(call, receiverArgumentCount + 1);
+        If (target == "IO.System.GetSymbol" && second != null && second.Function != null)
+        {
+            string symbol = This.RuntimeSymbolName(second.Function);
+            If (symbol != null)
+            {
+                second.Kind = [int](HirExpressionKind.Constant);
+                second.Type = This.Primitive("string");
+                second.Function = null;
+                second.Target = "__target_string";
+                second.Name = symbol;
+            }
+        }
         If (collection != null && collection.Type.Kind != receiverKind)
             This.Report(syntax, "Type Mismatch", "collection receiver type does not match",
                 expression.Line, expression.Column);

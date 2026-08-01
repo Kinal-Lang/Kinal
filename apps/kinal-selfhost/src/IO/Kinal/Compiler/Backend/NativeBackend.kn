@@ -576,6 +576,24 @@ Class NativeBackend
         }
     }
 
+    Public Trusted Function void InitializeGlobalRoots()
+    {
+        LlvmGlobalBinding binding = This.FirstGlobal;
+        byte* bytePointer = This.Module.PointerType(This.Module.IntType(8));
+        While (binding != null)
+        {
+            TypeSymbol type = binding.Symbol.Value.Type;
+            If (This.NeedsGcRoot(type))
+            {
+                byte* address = This.Module.BitCast(binding.Address, bytePointer,
+                    This.Unique("global_root"));
+                This.CallRuntime("__kn_gc_add_global_root",
+                    This.Types2(address, This.Module.SizeOf(This.TypeHandle(type))), "");
+            }
+            binding = binding.Next;
+        }
+    }
+
     Public Trusted Function byte* CallableLayout()
     {
         byte* bytePointer = This.Module.PointerType(This.Module.IntType(8));
@@ -881,7 +899,13 @@ Class NativeBackend
             string linked = This.AttributeString(symbol.Declaration, "LinkName");
             Return IO.Text.IsEmpty(linked) ? symbol.Name : linked;
         }
-        Return "__kn_sh_" + This.Sanitize(symbol.QualifiedName()) + "_" +
+        string identity = symbol.QualifiedName();
+        string overloadName = This.AttributeString(symbol.Declaration, "SymbolName");
+        If (!IO.Text.IsEmpty(overloadName))
+            identity = symbol.OwnerType == null ?
+                symbol.UnitName + "." + overloadName :
+                symbol.OwnerType.QualifiedName() + "." + overloadName;
+        Return "__kn_sh_" + This.Sanitize(identity) + "_" +
             [string](symbol.ParameterCount());
     }
 
@@ -1035,6 +1059,7 @@ Class NativeBackend
         This.DeclareRuntimeFunction("__kn_gc_alloc", pointer, This.Types1(int64Type));
         This.DeclareRuntimeFunction("__kn_gc_push_frame", pointer, This.Types0());
         This.DeclareRuntimeFunction("__kn_gc_add_root", voidType, This.Types3(pointer, pointer, int64Type));
+        This.DeclareRuntimeFunction("__kn_gc_add_global_root", voidType, This.Types2(pointer, int64Type));
         This.DeclareRuntimeFunction("__kn_gc_pop_frame", voidType, This.Types1(pointer));
         This.DeclareRuntimeFunction("__kn_gc_collect", voidType, This.Types0());
         This.DeclareRuntimeFunction("__kn_exc_set", voidType, This.Types1(pointer));
@@ -5322,6 +5347,92 @@ Class NativeBackend
         This.Module.PositionAtEnd(endBlock);
     }
 
+    Public Trusted Function void EmitForeach(LlvmFunctionContext context,
+                                               HirStatement statement)
+    {
+        LlvmValue source = This.EmitExpression(context, statement.Expression);
+        bool stringSource = source.Type.Kind == [int](TypeKind.StringType);
+        bool arraySource = source.Type.Kind == [int](TypeKind.ArrayType);
+        If (!stringSource && !arraySource)
+        {
+            This.Fail("foreach source must be an array or string");
+            Return;
+        }
+
+        byte* int64Type = This.Module.IntType(64);
+        byte* sourceAddress = This.Module.Alloca(This.TypeHandle(source.Type),
+            This.Unique("foreach_source"));
+        This.Module.Store(source.Handle, sourceAddress);
+        This.AddGcRoot(context, source.Type, sourceAddress);
+        byte* indexAddress = This.Module.Alloca(int64Type,
+            This.Unique("foreach_index"));
+        This.Module.Store(This.Module.ConstInt(int64Type, 0), indexAddress);
+        byte* itemAddress = This.AllocateVariableAddress(context,
+            statement.DeclaredSymbol, statement.DeclaredType,
+            This.Unique("foreach_" + statement.Name));
+        This.AddGcRoot(context, statement.DeclaredType, itemAddress);
+
+        byte* function = context.Binding.Function;
+        byte* conditionBlock = This.Module.AppendBlock(function,
+            This.Unique("foreach_condition"));
+        byte* bodyBlock = This.Module.AppendBlock(function,
+            This.Unique("foreach_body"));
+        byte* stepBlock = This.Module.AppendBlock(function,
+            This.Unique("foreach_step"));
+        byte* endBlock = This.Module.AppendBlock(function,
+            This.Unique("foreach_end"));
+        This.Module.Branch(conditionBlock);
+
+        This.Module.PositionAtEnd(conditionBlock);
+        byte* index = This.Module.Load(int64Type, indexAddress,
+            This.Unique("foreach_index_value"));
+        LlvmValue currentSource = New LlvmValue(
+            This.Module.Load(This.TypeHandle(source.Type), sourceAddress,
+                This.Unique("foreach_source_value")), source.Type);
+        byte* length = stringSource ?
+            This.CallRuntime("kn_sh_rt_string_length", This.Types1(currentSource.Handle),
+                This.Unique("foreach_string_length")) :
+            This.Module.ExtractValue(currentSource.Handle, 1,
+                This.Unique("foreach_array_length"));
+        byte* more = This.Module.Compare([int](LlvmIntPredicate.UnsignedLess),
+            index, length, This.Unique("foreach_more"));
+        This.Module.ConditionalBranch(more, bodyBlock, endBlock);
+
+        byte* previousBreak = context.BreakTarget;
+        byte* previousContinue = context.ContinueTarget;
+        context.BreakTarget = endBlock;
+        context.ContinueTarget = stepBlock;
+        This.Module.PositionAtEnd(bodyBlock);
+        TypeSymbol sourceItemType = stringSource ?
+            This.Semantics.Primitive("char") : source.Type.ElementType;
+        byte* data = stringSource ? currentSource.Handle :
+            This.Module.ExtractValue(currentSource.Handle, 0,
+                This.Unique("foreach_array_data"));
+        byte* elementAddress = This.Module.Gep(This.TypeHandle(sourceItemType), data,
+            This.Types1(index), true, This.Unique("foreach_element_address"));
+        LlvmValue item = New LlvmValue(This.Module.Load(This.TypeHandle(sourceItemType),
+            elementAddress, This.Unique("foreach_element")), sourceItemType);
+        This.Module.Store(This.CastValue(item, statement.DeclaredType).Handle, itemAddress);
+        LlvmVariable savedVariables = context.FirstVariable;
+        context.AddVariable(New LlvmVariable(statement.Name,
+            statement.DeclaredSymbol, statement.DeclaredType, itemAddress));
+        This.EmitStatementList(context, statement.FirstChild);
+        context.FirstVariable = savedVariables;
+        If (!This.Module.IsTerminated(This.Module.CurrentBlock()))
+            This.Module.Branch(stepBlock);
+
+        This.Module.PositionAtEnd(stepBlock);
+        byte* nextIndex = This.Module.Add(
+            This.Module.Load(int64Type, indexAddress,
+                This.Unique("foreach_step_index")),
+            This.Module.ConstInt(int64Type, 1), This.Unique("foreach_next_index"));
+        This.Module.Store(nextIndex, indexAddress);
+        This.Module.Branch(conditionBlock);
+        context.BreakTarget = previousBreak;
+        context.ContinueTarget = previousContinue;
+        This.Module.PositionAtEnd(endBlock);
+    }
+
     Public Trusted Function void EmitSwitchStatement(LlvmFunctionContext context, HirStatement statement)
     {
         LlvmValue selector = This.EmitExpression(context, statement.Expression);
@@ -5518,6 +5629,11 @@ Class NativeBackend
         If (statement.Kind == [int](StatementKind.For))
         {
             This.EmitFor(context, statement);
+            Return;
+        }
+        If (statement.Kind == [int](StatementKind.Foreach))
+        {
+            This.EmitForeach(context, statement);
             Return;
         }
         If (statement.Kind == [int](StatementKind.Switch))
@@ -5858,6 +5974,7 @@ Class NativeBackend
         byte* block = This.Module.AppendBlock(mainFunction, "entry");
         This.Module.PositionAtEnd(block);
         This.CallRuntime("__kn_gc_init", This.Types0(), "");
+        This.InitializeGlobalRoots();
         This.InitializeFixedGlobalArrays();
         This.InitializeGlobalCallables();
         This.InitializeGlobalCopies();
