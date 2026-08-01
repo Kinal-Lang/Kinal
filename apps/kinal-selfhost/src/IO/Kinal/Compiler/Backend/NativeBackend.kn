@@ -1014,10 +1014,20 @@ Class NativeBackend
         This.DeclareRuntimeFunction("__kn_list_new", pointer, This.Types0());
         This.DeclareRuntimeFunction("__kn_list_add", voidType, This.Types3(pointer, int64Type, int64Type));
         This.DeclareRuntimeFunction("__kn_list_get", voidType, This.Types4(pointer, int64Type, int64Pointer, int64Pointer));
+        This.DeclareRuntimeFunction("__kn_list_set", voidType,
+            This.Types4(pointer, int64Type, int64Type, int64Type));
+        This.DeclareRuntimeFunction("__kn_list_insert", voidType,
+            This.Types4(pointer, int64Type, int64Type, int64Type));
         This.DeclareRuntimeFunction("__kn_list_count", int64Type, This.Types1(pointer));
         This.DeclareRuntimeFunction("__kn_list_clear", voidType, This.Types1(pointer));
+        This.DeclareRuntimeFunction("__kn_list_remove_at", voidType,
+            This.Types4(pointer, int64Type, int64Pointer, int64Pointer));
+        This.DeclareRuntimeFunction("__kn_list_pop", voidType,
+            This.Types3(pointer, int64Pointer, int64Pointer));
         This.DeclareRuntimeFunction("__kn_list_is_empty", int32Type, This.Types1(pointer));
         This.DeclareRuntimeFunction("__kn_list_contains", int32Type, This.Types3(pointer, int64Type, int64Type));
+        This.DeclareRuntimeFunction("__kn_list_index_of", int64Type,
+            This.Types3(pointer, int64Type, int64Type));
 
         This.DeclareRuntimeFunction("__kn_dict_new", pointer, This.Types0());
         This.DeclareRuntimeFunction("__kn_dict_set", voidType,
@@ -1030,6 +1040,15 @@ Class NativeBackend
         This.DeclareRuntimeFunction("__kn_dict_is_empty", int32Type, This.Types1(pointer));
         This.DeclareRuntimeFunction("__kn_dict_keys", pointer, This.Types1(pointer));
         This.DeclareRuntimeFunction("__kn_dict_values", pointer, This.Types1(pointer));
+
+        This.DeclareRuntimeFunction("__kn_set_new", pointer, This.Types0());
+        This.DeclareRuntimeFunction("__kn_set_add", voidType, This.Types2(pointer, pointer));
+        This.DeclareRuntimeFunction("__kn_set_contains", int32Type, This.Types2(pointer, pointer));
+        This.DeclareRuntimeFunction("__kn_set_count", int64Type, This.Types1(pointer));
+        This.DeclareRuntimeFunction("__kn_set_remove", int32Type, This.Types2(pointer, pointer));
+        This.DeclareRuntimeFunction("__kn_set_clear", voidType, This.Types1(pointer));
+        This.DeclareRuntimeFunction("__kn_set_is_empty", int32Type, This.Types1(pointer));
+        This.DeclareRuntimeFunction("__kn_set_values", pointer, This.Types1(pointer));
 
         This.DeclareRuntimeFunction("__kn_string_to_chars", pointer, This.Types2(pointer, int64Pointer));
         This.DeclareRuntimeFunction("__kn_sys_file_exists", int32Type, This.Types1(pointer));
@@ -1278,6 +1297,24 @@ Class NativeBackend
         boxed = This.Module.InsertValue(boxed, This.Module.ConstInt(This.Module.IntType(64), tag), 0, "");
         boxed = This.Module.InsertValue(boxed, payload, 1, "");
         Return New LlvmValue(boxed, This.Semantics.Primitive("any"));
+    }
+
+    Public Trusted Function LlvmValue AnyValue(byte* tag, byte* payload)
+    {
+        byte* value = This.Module.ConstUndef(This.AnyType);
+        value = This.Module.InsertValue(value, tag, 0, "");
+        value = This.Module.InsertValue(value, payload, 1, "");
+        Return New LlvmValue(value, This.Semantics.Primitive("any"));
+    }
+
+    Public Trusted Function LlvmValue AnyFromSlots(byte* tagSlot, byte* payloadSlot,
+                                                    string prefix)
+    {
+        byte* tag = This.Module.Load(This.Module.IntType(64), tagSlot,
+            This.Unique(prefix + "_tag"));
+        byte* payload = This.Module.Load(This.Module.IntType(64), payloadSlot,
+            This.Unique(prefix + "_payload"));
+        Return This.AnyValue(tag, payload);
     }
 
     Public Trusted Function LlvmValue UnboxAny(LlvmValue value, TypeSymbol target)
@@ -2521,7 +2558,11 @@ Class NativeBackend
             This.EmitUnsafeBlock(context, context.FindBlock(blockName));
             Return This.DefaultValue(This.Semantics.Primitive("void"));
         }
-        LlvmValue receiver = expression.Left == null ? null : This.EmitExpression(context, expression.Left);
+        bool namespaceReceiver = expression.Left != null &&
+            expression.Left.Kind == [int](HirExpressionKind.Namespace);
+        TypeSymbol receiverType = expression.Left == null ? null : expression.Left.Type;
+        LlvmValue receiver = expression.Left == null || namespaceReceiver ?
+            null : This.EmitExpression(context, expression.Left);
         HirExpression first = expression.FirstArgument;
 
         If (target == "TypeOf" && receiver != null)
@@ -2595,6 +2636,9 @@ Class NativeBackend
         If (target == "dict.Create")
             Return New LlvmValue(This.CallRuntime("__kn_dict_new", This.Types0(), This.Unique("dict")),
                 This.Semantics.Primitive("dict"));
+        If (target == "set.Create")
+            Return New LlvmValue(This.CallRuntime("__kn_set_new", This.Types0(), This.Unique("set")),
+                This.Semantics.Primitive("set"));
         If (target == "IO.Meta.Query") Return This.EmitMetaQuery(context, expression);
         If (target == "IO.Meta.Find") Return This.EmitMetaFind(context, expression);
         If (target == "IO.Time.GetTick")
@@ -2655,97 +2699,237 @@ Class NativeBackend
             Return This.DefaultValue(This.Semantics.Primitive("void"));
         }
 
-        If (receiver != null && receiver.Type.Kind == [int](TypeKind.ListType))
+        If (receiverType != null && receiverType.Kind == [int](TypeKind.ListType))
         {
+            HirExpression argument = first;
+            LlvmValue values = receiver;
+            If (namespaceReceiver)
+            {
+                values = This.EmitExpression(context, argument);
+                argument = argument.Next;
+            }
             If (target == "Count")
-                Return New LlvmValue(This.CallRuntime("__kn_list_count", This.Types1(receiver.Handle),
+                Return New LlvmValue(This.CallRuntime("__kn_list_count", This.Types1(values.Handle),
                     This.Unique("list_count")), This.Semantics.Primitive("int"));
             If (target == "Add")
             {
-                LlvmValue boxed = This.BoxAny(This.EmitExpression(context, first));
+                LlvmValue boxed = This.BoxAny(This.EmitExpression(context, argument));
                 byte* tag = This.Module.ExtractValue(boxed.Handle, 0, This.Unique("list_tag"));
                 byte* payload = This.Module.ExtractValue(boxed.Handle, 1, This.Unique("list_payload"));
-                This.CallRuntime("__kn_list_add", This.Types3(receiver.Handle, tag, payload), "");
+                This.CallRuntime("__kn_list_add", This.Types3(values.Handle, tag, payload), "");
                 Return This.DefaultValue(This.Semantics.Primitive("void"));
             }
-            If (target == "Fetch")
+            If (target == "Fetch" || target == "RemoveAt")
             {
-                LlvmValue index = This.CastValue(This.EmitExpression(context, first), This.Semantics.Primitive("int"));
-                byte* tagSlot = This.Module.Alloca(This.Module.IntType(64), This.Unique("list_tag_slot"));
-                byte* payloadSlot = This.Module.Alloca(This.Module.IntType(64), This.Unique("list_payload_slot"));
-                This.CallRuntime("__kn_list_get", This.Types4(receiver.Handle, index.Handle, tagSlot, payloadSlot), "");
-                byte* boxed = This.Module.ConstUndef(This.AnyType);
-                boxed = This.Module.InsertValue(boxed,
-                    This.Module.Load(This.Module.IntType(64), tagSlot, This.Unique("list_tag")), 0, "");
-                boxed = This.Module.InsertValue(boxed,
-                    This.Module.Load(This.Module.IntType(64), payloadSlot, This.Unique("list_payload")), 1, "");
-                Return New LlvmValue(boxed, This.Semantics.Primitive("any"));
+                LlvmValue index = This.CastValue(This.EmitExpression(context, argument),
+                    This.Semantics.Primitive("int"));
+                byte* tagSlot = This.Module.Alloca(This.Module.IntType(64),
+                    This.Unique("list_result_tag_slot"));
+                byte* payloadSlot = This.Module.Alloca(This.Module.IntType(64),
+                    This.Unique("list_result_payload_slot"));
+                This.Module.Store(This.Module.ConstInt(This.Module.IntType(64), 0), tagSlot);
+                This.Module.Store(This.Module.ConstInt(This.Module.IntType(64), 0), payloadSlot);
+                This.CallRuntime(target == "Fetch" ? "__kn_list_get" : "__kn_list_remove_at",
+                    This.Types4(values.Handle, index.Handle, tagSlot, payloadSlot), "");
+                Return This.AnyFromSlots(tagSlot, payloadSlot, "list_result");
+            }
+            If (target == "Set" || target == "Insert")
+            {
+                LlvmValue index = This.CastValue(This.EmitExpression(context, argument),
+                    This.Semantics.Primitive("int"));
+                LlvmValue boxed = This.BoxAny(This.EmitExpression(context, argument.Next));
+                byte* tag = This.Module.ExtractValue(boxed.Handle, 0, This.Unique("list_value_tag"));
+                byte* payload = This.Module.ExtractValue(boxed.Handle, 1,
+                    This.Unique("list_value_payload"));
+                This.CallRuntime(target == "Set" ? "__kn_list_set" : "__kn_list_insert",
+                    This.Types4(values.Handle, index.Handle, tag, payload), "");
+                Return This.DefaultValue(This.Semantics.Primitive("void"));
+            }
+            If (target == "TryFetch")
+            {
+                LlvmValue index = This.CastValue(This.EmitExpression(context, argument),
+                    This.Semantics.Primitive("int"));
+                LlvmValue fallback = This.BoxAny(This.EmitExpression(context, argument.Next));
+                byte* count = This.CallRuntime("__kn_list_count", This.Types1(values.Handle),
+                    This.Unique("list_try_count"));
+                byte* inRange = This.Module.Compare([int](LlvmIntPredicate.UnsignedLess),
+                    index.Handle, count, This.Unique("list_try_range"));
+                byte* tagSlot = This.Module.Alloca(This.Module.IntType(64),
+                    This.Unique("list_try_tag_slot"));
+                byte* payloadSlot = This.Module.Alloca(This.Module.IntType(64),
+                    This.Unique("list_try_payload_slot"));
+                This.Module.Store(This.Module.ConstInt(This.Module.IntType(64), 0), tagSlot);
+                This.Module.Store(This.Module.ConstInt(This.Module.IntType(64), 0), payloadSlot);
+                This.CallRuntime("__kn_list_get",
+                    This.Types4(values.Handle, index.Handle, tagSlot, payloadSlot), "");
+                LlvmValue fetched = This.AnyFromSlots(tagSlot, payloadSlot, "list_try");
+                Return This.AnyValue(
+                    This.Module.Select(inRange,
+                        This.Module.ExtractValue(fetched.Handle, 0, This.Unique("list_try_tag")),
+                        This.Module.ExtractValue(fallback.Handle, 0, This.Unique("list_fallback_tag")),
+                        This.Unique("list_try_selected_tag")),
+                    This.Module.Select(inRange,
+                        This.Module.ExtractValue(fetched.Handle, 1, This.Unique("list_try_payload")),
+                        This.Module.ExtractValue(fallback.Handle, 1, This.Unique("list_fallback_payload")),
+                        This.Unique("list_try_selected_payload")));
             }
             If (target == "Clear")
             {
-                This.CallRuntime("__kn_list_clear", This.Types1(receiver.Handle), "");
+                This.CallRuntime("__kn_list_clear", This.Types1(values.Handle), "");
                 Return This.DefaultValue(This.Semantics.Primitive("void"));
             }
             If (target == "IsEmpty")
                 Return New LlvmValue(This.RuntimeBool(This.CallRuntime("__kn_list_is_empty",
-                    This.Types1(receiver.Handle), This.Unique("list_empty_c"))), This.Semantics.Primitive("bool"));
-            If (target == "Contains")
-            {
-                LlvmValue boxed = This.BoxAny(This.EmitExpression(context, first));
-                byte* tag = This.Module.ExtractValue(boxed.Handle, 0, This.Unique("list_tag"));
-                byte* payload = This.Module.ExtractValue(boxed.Handle, 1, This.Unique("list_payload"));
-                Return New LlvmValue(This.RuntimeBool(This.CallRuntime("__kn_list_contains",
-                    This.Types3(receiver.Handle, tag, payload), This.Unique("list_contains_c"))),
+                    This.Types1(values.Handle), This.Unique("list_empty_c"))),
                     This.Semantics.Primitive("bool"));
+            If (target == "Contains" || target == "IndexOf")
+            {
+                LlvmValue boxed = This.BoxAny(This.EmitExpression(context, argument));
+                byte* tag = This.Module.ExtractValue(boxed.Handle, 0, This.Unique("list_search_tag"));
+                byte* payload = This.Module.ExtractValue(boxed.Handle, 1,
+                    This.Unique("list_search_payload"));
+                byte* result = This.CallRuntime(target == "Contains" ?
+                    "__kn_list_contains" : "__kn_list_index_of",
+                    This.Types3(values.Handle, tag, payload), This.Unique("list_search"));
+                Return New LlvmValue(target == "Contains" ? This.RuntimeBool(result) : result,
+                    target == "Contains" ? This.Semantics.Primitive("bool") :
+                        This.Semantics.Primitive("int"));
+            }
+            If (target == "Pop" || target == "Peek")
+            {
+                byte* tagSlot = This.Module.Alloca(This.Module.IntType(64),
+                    This.Unique("list_tail_tag_slot"));
+                byte* payloadSlot = This.Module.Alloca(This.Module.IntType(64),
+                    This.Unique("list_tail_payload_slot"));
+                This.Module.Store(This.Module.ConstInt(This.Module.IntType(64), 0), tagSlot);
+                This.Module.Store(This.Module.ConstInt(This.Module.IntType(64), 0), payloadSlot);
+                If (target == "Pop")
+                    This.CallRuntime("__kn_list_pop",
+                        This.Types3(values.Handle, tagSlot, payloadSlot), "");
+                Else
+                {
+                    byte* count = This.CallRuntime("__kn_list_count", This.Types1(values.Handle),
+                        This.Unique("list_peek_count"));
+                    byte* index = This.Module.Subtract(count,
+                        This.Module.ConstInt(This.Module.IntType(64), 1),
+                        This.Unique("list_peek_index"));
+                    This.CallRuntime("__kn_list_get",
+                        This.Types4(values.Handle, index, tagSlot, payloadSlot), "");
+                }
+                Return This.AnyFromSlots(tagSlot, payloadSlot, "list_tail");
             }
         }
 
-        If (receiver != null && receiver.Type.Kind == [int](TypeKind.DictType))
+        If (receiverType != null && receiverType.Kind == [int](TypeKind.DictType))
         {
+            HirExpression argument = first;
+            LlvmValue values = receiver;
+            If (namespaceReceiver)
+            {
+                values = This.EmitExpression(context, argument);
+                argument = argument.Next;
+            }
             If (target == "Count")
-                Return New LlvmValue(This.CallRuntime("__kn_dict_count", This.Types1(receiver.Handle),
+                Return New LlvmValue(This.CallRuntime("__kn_dict_count", This.Types1(values.Handle),
                     This.Unique("dict_count")), This.Semantics.Primitive("int"));
             If (target == "Set")
             {
-                LlvmValue key = This.CastValue(This.EmitExpression(context, first),
+                LlvmValue key = This.CastValue(This.EmitExpression(context, argument),
                     This.Semantics.Primitive("string"));
-                LlvmValue boxed = This.BoxAny(
-                    This.EmitExpression(context, first.Next));
-                byte* tag = This.Module.ExtractValue(boxed.Handle, 0,
-                    This.Unique("dict_set_tag"));
+                LlvmValue boxed = This.BoxAny(This.EmitExpression(context, argument.Next));
+                byte* tag = This.Module.ExtractValue(boxed.Handle, 0, This.Unique("dict_set_tag"));
                 byte* payload = This.Module.ExtractValue(boxed.Handle, 1,
                     This.Unique("dict_set_payload"));
                 This.CallRuntime("__kn_dict_set",
-                    This.Types4(receiver.Handle, key.Handle, tag, payload), "");
+                    This.Types4(values.Handle, key.Handle, tag, payload), "");
                 Return This.DefaultValue(This.Semantics.Primitive("void"));
             }
-            If (target == "Fetch")
+            If (target == "Fetch" || target == "TryFetch")
             {
-                LlvmValue key = This.CastValue(This.EmitExpression(context, first),
+                LlvmValue key = This.CastValue(This.EmitExpression(context, argument),
                     This.Semantics.Primitive("string"));
-                byte* tagSlot = This.Module.Alloca(This.Module.IntType(64), This.Unique("dict_tag_slot"));
-                byte* payloadSlot = This.Module.Alloca(This.Module.IntType(64), This.Unique("dict_payload_slot"));
+                byte* tagSlot = This.Module.Alloca(This.Module.IntType(64),
+                    This.Unique("dict_result_tag_slot"));
+                byte* payloadSlot = This.Module.Alloca(This.Module.IntType(64),
+                    This.Unique("dict_result_payload_slot"));
+                This.Module.Store(This.Module.ConstInt(This.Module.IntType(64), 0), tagSlot);
+                This.Module.Store(This.Module.ConstInt(This.Module.IntType(64), 0), payloadSlot);
                 This.CallRuntime("__kn_dict_get",
-                    This.Types4(receiver.Handle, key.Handle, tagSlot, payloadSlot), "");
-                byte* boxed = This.Module.ConstUndef(This.AnyType);
-                boxed = This.Module.InsertValue(boxed,
-                    This.Module.Load(This.Module.IntType(64), tagSlot, This.Unique("dict_tag")), 0, "");
-                boxed = This.Module.InsertValue(boxed,
-                    This.Module.Load(This.Module.IntType(64), payloadSlot, This.Unique("dict_payload")), 1, "");
-                Return New LlvmValue(boxed, This.Semantics.Primitive("any"));
+                    This.Types4(values.Handle, key.Handle, tagSlot, payloadSlot), "");
+                LlvmValue fetched = This.AnyFromSlots(tagSlot, payloadSlot, "dict_result");
+                If (target == "Fetch") Return fetched;
+                byte* has = This.RuntimeBool(This.CallRuntime("__kn_dict_contains",
+                    This.Types2(values.Handle, key.Handle), This.Unique("dict_try_has_c")));
+                LlvmValue fallback = This.BoxAny(This.EmitExpression(context, argument.Next));
+                Return This.AnyValue(
+                    This.Module.Select(has,
+                        This.Module.ExtractValue(fetched.Handle, 0, This.Unique("dict_try_tag")),
+                        This.Module.ExtractValue(fallback.Handle, 0, This.Unique("dict_fallback_tag")),
+                        This.Unique("dict_try_selected_tag")),
+                    This.Module.Select(has,
+                        This.Module.ExtractValue(fetched.Handle, 1, This.Unique("dict_try_payload")),
+                        This.Module.ExtractValue(fallback.Handle, 1, This.Unique("dict_fallback_payload")),
+                        This.Unique("dict_try_selected_payload")));
             }
-            If (target == "Contains")
+            If (target == "Contains" || target == "Remove")
             {
-                LlvmValue key = This.CastValue(This.EmitExpression(context, first),
+                LlvmValue key = This.CastValue(This.EmitExpression(context, argument),
                     This.Semantics.Primitive("string"));
-                Return New LlvmValue(This.RuntimeBool(This.CallRuntime("__kn_dict_contains",
-                    This.Types2(receiver.Handle, key.Handle), This.Unique("dict_contains_c"))),
-                    This.Semantics.Primitive("bool"));
+                byte* result = This.CallRuntime(target == "Contains" ?
+                    "__kn_dict_contains" : "__kn_dict_remove",
+                    This.Types2(values.Handle, key.Handle), This.Unique("dict_predicate_c"));
+                Return New LlvmValue(This.RuntimeBool(result), This.Semantics.Primitive("bool"));
             }
             If (target == "IsEmpty")
                 Return New LlvmValue(This.RuntimeBool(This.CallRuntime("__kn_dict_is_empty",
-                    This.Types1(receiver.Handle), This.Unique("dict_empty_c"))),
+                    This.Types1(values.Handle), This.Unique("dict_empty_c"))),
                     This.Semantics.Primitive("bool"));
+            If (target == "Keys" || target == "Values")
+                Return New LlvmValue(This.CallRuntime(target == "Keys" ?
+                    "__kn_dict_keys" : "__kn_dict_values", This.Types1(values.Handle),
+                    This.Unique("dict_items")), This.Semantics.Primitive("list"));
+        }
+
+        If (receiverType != null && receiverType.Kind == [int](TypeKind.SetType))
+        {
+            HirExpression argument = first;
+            LlvmValue values = receiver;
+            If (namespaceReceiver)
+            {
+                values = This.EmitExpression(context, argument);
+                argument = argument.Next;
+            }
+            If (target == "Count")
+                Return New LlvmValue(This.CallRuntime("__kn_set_count", This.Types1(values.Handle),
+                    This.Unique("set_count")), This.Semantics.Primitive("int"));
+            If (target == "Add")
+            {
+                LlvmValue key = This.CastValue(This.EmitExpression(context, argument),
+                    This.Semantics.Primitive("string"));
+                This.CallRuntime("__kn_set_add", This.Types2(values.Handle, key.Handle), "");
+                Return This.DefaultValue(This.Semantics.Primitive("void"));
+            }
+            If (target == "Contains" || target == "Remove")
+            {
+                LlvmValue key = This.CastValue(This.EmitExpression(context, argument),
+                    This.Semantics.Primitive("string"));
+                byte* result = This.CallRuntime(target == "Contains" ?
+                    "__kn_set_contains" : "__kn_set_remove",
+                    This.Types2(values.Handle, key.Handle), This.Unique("set_predicate_c"));
+                Return New LlvmValue(This.RuntimeBool(result), This.Semantics.Primitive("bool"));
+            }
+            If (target == "Clear")
+            {
+                This.CallRuntime("__kn_set_clear", This.Types1(values.Handle), "");
+                Return This.DefaultValue(This.Semantics.Primitive("void"));
+            }
+            If (target == "IsEmpty")
+                Return New LlvmValue(This.RuntimeBool(This.CallRuntime("__kn_set_is_empty",
+                    This.Types1(values.Handle), This.Unique("set_empty_c"))),
+                    This.Semantics.Primitive("bool"));
+            If (target == "Values")
+                Return New LlvmValue(This.CallRuntime("__kn_set_values", This.Types1(values.Handle),
+                    This.Unique("set_values")), This.Semantics.Primitive("list"));
         }
 
         If (receiver != null && receiver.Type.Kind == [int](TypeKind.StringType))

@@ -1414,6 +1414,51 @@ def main() -> int:
         }
     )
 
+    collection_project = (
+        root / "tests" / "selfhost" / "fixtures" / "collection_runtime" / "kinal.knproj"
+    )
+    collection_executable = out_dir / f"collection-runtime{executable_suffix}"
+    collection_stage0_executable = out_dir / f"collection-runtime-stage0{executable_suffix}"
+    collection_build = run(
+        [str(compiler), "build", str(collection_project), str(collection_executable), "test"],
+        cwd=root,
+    )
+    require(collection_build.returncode == 0,
+            "stage1 collection-runtime fixture build failed", collection_build)
+    collection_stage0_build = run(
+        [
+            str(stage0),
+            "build",
+            "--project",
+            str(collection_project.parent),
+            "--profile",
+            "test",
+            "-o",
+            str(collection_stage0_executable),
+        ],
+        cwd=root,
+    )
+    require(collection_stage0_build.returncode == 0,
+            "stage0 collection-runtime fixture build failed", collection_stage0_build)
+    collection_run = run([str(collection_executable)], cwd=root)
+    collection_stage0_run = run([str(collection_stage0_executable)], cwd=root)
+    collection_expected = (
+        "true\n4\n4\nRED\nblue\nGREEN\nfallback\ntrue\nfalse\n2\n-1\ntail\n"
+        "blue\ntail\n2\ntrue\n3\n3\nkinal\n8\nfallback\n8\ntrue\nfalse\n3\n"
+        "true\n3\ntrue\ntrue\nfalse\ntrue\n2\n2\ntrue\nfalse\n2\ntrue\ntrue\n"
+        "false\ntrue"
+    )
+    require(
+        collection_run.returncode == 0
+        and collection_stage0_run.returncode == 0
+        and collection_run.stdout.replace("\r\n", "\n").strip() == collection_expected
+        and collection_stage0_run.stdout.replace("\r\n", "\n").strip()
+        == collection_expected,
+        "stage0/stage1 collection-runtime behavior differs",
+        collection_run,
+    )
+    results.append({"name": "collection_runtime", "ok": True})
+
     phase5_project = (
         root / "tests" / "selfhost" / "fixtures" / "phase5_semantics" / "kinal.knproj"
     )

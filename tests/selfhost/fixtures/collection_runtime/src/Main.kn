@@ -1,0 +1,77 @@
+Unit Tests.Selfhost.CollectionRuntime;
+
+Get IO.Console;
+
+Static Safe Function int Main()
+{
+    list items = list.Create();
+    IO.Console.PrintLine(items.IsEmpty());
+
+    list.Add(items, "red");
+    items.Add("green");
+    list.Insert(items, 1, "blue");
+    items.Insert(3, "tail");
+    list.Set(items, 0, "RED");
+    items.Set(2, "GREEN");
+
+    IO.Console.PrintLine(list.Count(items));
+    IO.Console.PrintLine(items.Count());
+    IO.Console.PrintLine([string](list.Fetch(items, 0)));
+    IO.Console.PrintLine([string](items.Fetch(1)));
+    IO.Console.PrintLine([string](list.TryFetch(items, 2, "missing")));
+    IO.Console.PrintLine([string](items.TryFetch(99, "fallback")));
+    IO.Console.PrintLine(list.Contains(items, "blue"));
+    IO.Console.PrintLine(items.Contains("missing"));
+    IO.Console.PrintLine(list.IndexOf(items, "GREEN"));
+    IO.Console.PrintLine(items.IndexOf("missing"));
+    IO.Console.PrintLine([string](list.Peek(items)));
+    IO.Console.PrintLine([string](items.RemoveAt(1)));
+    IO.Console.PrintLine([string](list.Pop(items)));
+    IO.Console.PrintLine(items.Count());
+    list.Clear(items);
+    IO.Console.PrintLine(items.IsEmpty());
+
+    dict metadata = dict.Create();
+    dict.Set(metadata, "name", "kinal");
+    metadata.Set("version", 8);
+    dict.Set(metadata, "stable", true);
+    IO.Console.PrintLine(dict.Count(metadata));
+    IO.Console.PrintLine(metadata.Count());
+    IO.Console.PrintLine([string](dict.Fetch(metadata, "name")));
+    IO.Console.PrintLine([int](metadata.Fetch("version")));
+    IO.Console.PrintLine([string](dict.TryFetch(metadata, "missing", "fallback")));
+    IO.Console.PrintLine([int](metadata.TryFetch("version", 0)));
+    IO.Console.PrintLine(dict.Contains(metadata, "stable"));
+    IO.Console.PrintLine(metadata.Contains("missing"));
+
+    list keys = dict.Keys(metadata);
+    list values = metadata.Values();
+    IO.Console.PrintLine(keys.Count());
+    IO.Console.PrintLine(keys.Contains("name"));
+    IO.Console.PrintLine(values.Count());
+    IO.Console.PrintLine(values.Contains(8));
+
+    IO.Console.PrintLine(dict.Remove(metadata, "stable"));
+    IO.Console.PrintLine(metadata.Remove("missing"));
+    metadata.Remove("name");
+    dict.Remove(metadata, "version");
+    IO.Console.PrintLine(dict.IsEmpty(metadata));
+
+    set tags = set.Create();
+    set.Add(tags, "core");
+    tags.Add("tests");
+    set.Add(tags, "core");
+    IO.Console.PrintLine(set.Count(tags));
+    IO.Console.PrintLine(tags.Count());
+    IO.Console.PrintLine(set.Contains(tags, "core"));
+    IO.Console.PrintLine(tags.Contains("missing"));
+
+    list tagValues = set.Values(tags);
+    IO.Console.PrintLine(tagValues.Count());
+    IO.Console.PrintLine(tagValues.Contains("tests"));
+    IO.Console.PrintLine(set.Remove(tags, "core"));
+    IO.Console.PrintLine(tags.Remove("missing"));
+    tags.Clear();
+    IO.Console.PrintLine(set.IsEmpty(tags));
+    Return 0;
+}

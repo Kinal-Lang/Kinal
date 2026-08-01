@@ -2782,20 +2782,43 @@ Class SemanticCompilation
     {
         string target = call.Target;
         int expectedCount = -1;
-        If (target == "Keys" && call.Left != null &&
-            call.Left.Type.Kind == [int](TypeKind.DictType))
-            expectedCount = This.ExpressionPath(expression.Left) == "dict.Keys" ? 1 : 0;
-        ElseIf (target == "Peek" && call.Left != null &&
-            call.Left.Type.Kind == [int](TypeKind.ListType)) expectedCount = 0;
+        int receiverKind = call.Left == null ? [int](TypeKind.Unknown) : call.Left.Type.Kind;
+        bool namespaceReceiver = call.Left != null &&
+            call.Left.Kind == [int](HirExpressionKind.Namespace);
+        int receiverArgumentCount = namespaceReceiver ? 1 : 0;
+
+        If (receiverKind == [int](TypeKind.ListType))
+        {
+            If (target == "Add" || target == "Fetch" || target == "RemoveAt" ||
+                target == "Contains" || target == "IndexOf")
+                expectedCount = receiverArgumentCount + 1;
+            ElseIf (target == "Set" || target == "Insert" || target == "TryFetch")
+                expectedCount = receiverArgumentCount + 2;
+            ElseIf (target == "Count" || target == "Clear" || target == "Pop" ||
+                target == "Peek" || target == "IsEmpty")
+                expectedCount = receiverArgumentCount;
+        }
+        ElseIf (receiverKind == [int](TypeKind.DictType))
+        {
+            If (target == "Set" || target == "TryFetch")
+                expectedCount = receiverArgumentCount + 2;
+            ElseIf (target == "Fetch" || target == "Contains" || target == "Remove")
+                expectedCount = receiverArgumentCount + 1;
+            ElseIf (target == "Count" || target == "IsEmpty" || target == "Keys" ||
+                target == "Values") expectedCount = receiverArgumentCount;
+        }
+        ElseIf (receiverKind == [int](TypeKind.SetType))
+        {
+            If (target == "Add" || target == "Contains" || target == "Remove")
+                expectedCount = receiverArgumentCount + 1;
+            ElseIf (target == "Count" || target == "Clear" || target == "IsEmpty" ||
+                target == "Values") expectedCount = receiverArgumentCount;
+        }
         ElseIf (target == "IsInt" && call.Left != null &&
             call.Left.Type.Kind == [int](TypeKind.AnyType)) expectedCount = 0;
         ElseIf (target == "Index" && call.Left != null &&
             (call.Left.Type.Kind == [int](TypeKind.StringType) ||
              call.Left.Type.Kind == [int](TypeKind.ArrayType))) expectedCount = 1;
-        ElseIf (target == "TryFetch" && call.Left != null &&
-            call.Left.Type.Kind == [int](TypeKind.DictType)) expectedCount = 2;
-        ElseIf (target == "Insert" && call.Left != null &&
-            call.Left.Type.Kind == [int](TypeKind.ListType)) expectedCount = 2;
         ElseIf (target == "IO.Text.Join") expectedCount = 2;
         ElseIf (target == "IO.File.WriteLines") expectedCount = 2;
 
@@ -2807,16 +2830,28 @@ Class SemanticCompilation
             Return;
         }
 
-        HirExpression first = This.HirArgument(call, 0);
-        HirExpression second = This.HirArgument(call, 1);
-        If (target == "TryFetch" && call.Left != null &&
-            call.Left.Type.Kind == [int](TypeKind.DictType) && first != null &&
+        HirExpression collection = namespaceReceiver ? This.HirArgument(call, 0) : null;
+        HirExpression first = This.HirArgument(call, receiverArgumentCount);
+        HirExpression second = This.HirArgument(call, receiverArgumentCount + 1);
+        If (collection != null && collection.Type.Kind != receiverKind)
+            This.Report(syntax, "Type Mismatch", "collection receiver type does not match",
+                expression.Line, expression.Column);
+        If (receiverKind == [int](TypeKind.DictType) &&
+            (target == "Set" || target == "Fetch" || target == "TryFetch" ||
+             target == "Contains" || target == "Remove") && first != null &&
             first.Type.Kind != [int](TypeKind.StringType))
             This.Report(syntax, "Type Mismatch", "dict key must be string",
                 expression.Line, expression.Column);
-        If (target == "Insert" && first != null &&
+        If (receiverKind == [int](TypeKind.SetType) &&
+            (target == "Add" || target == "Contains" || target == "Remove") &&
+            first != null && first.Type.Kind != [int](TypeKind.StringType))
+            This.Report(syntax, "Type Mismatch", "set value must be string",
+                expression.Line, expression.Column);
+        If (receiverKind == [int](TypeKind.ListType) &&
+            (target == "Fetch" || target == "Set" || target == "Insert" ||
+             target == "TryFetch" || target == "RemoveAt") && first != null &&
             first.Type.Kind != [int](TypeKind.IntegerType))
-            This.Report(syntax, "Type Mismatch", "list insertion index must be integer",
+            This.Report(syntax, "Type Mismatch", "list index must be integer",
                 expression.Line, expression.Column);
         If (target == "IO.Text.Join" && first != null &&
             first.Type.Kind != [int](TypeKind.ListType) &&
