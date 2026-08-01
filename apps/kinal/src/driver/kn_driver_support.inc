@@ -210,15 +210,24 @@ static bool copy_file_overwrite(const char *src, const char *dst)
 static bool dir_exists(const char *path)
 {
     if (!path || !path[0]) return false;
-    char pattern[KN_MAX_PATH];
-    if (!path_join(pattern, sizeof(pattern), path, "*"))
+    char candidate[KN_MAX_PATH];
+    size_t length = kn_strlen(path);
+    if (length >= sizeof(candidate))
         return false;
+    kn_memcpy(candidate, path, length + 1);
+    while (length > 1 && is_path_sep(candidate[length - 1]))
+    {
+        if (length == 3 && candidate[1] == ':')
+            break;
+        candidate[--length] = 0;
+    }
     KN_WIN32_FIND_DATAA data;
-    KN_HANDLE h = FindFirstFileA(pattern, &data);
-    if (h == KN_INVALID_HANDLE_VALUE)
+    KN_HANDLE h = FindFirstFileA(candidate, &data);
+    if (!h || h == KN_INVALID_HANDLE_VALUE)
         return false;
+    bool is_directory = (data.dwFileAttributes & KN_FILE_ATTRIBUTE_DIRECTORY) != 0;
     FindClose(h);
-    return true;
+    return is_directory;
 }
 
 static bool path_full(char *out, size_t cap, const char *path)
