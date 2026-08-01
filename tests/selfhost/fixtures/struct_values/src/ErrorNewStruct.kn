@@ -1,0 +1,12 @@
+Unit Tests.Selfhost.StructValues.NewStruct;
+
+Struct Value
+{
+    int Number;
+}
+
+Static Safe Function int Main()
+{
+    Value value = New Value();
+    Return 0;
+}

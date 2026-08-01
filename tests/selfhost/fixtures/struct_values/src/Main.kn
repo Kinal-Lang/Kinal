@@ -20,12 +20,25 @@ Struct Nested
     string Label;
 }
 
+Struct PackedPair By Packed
+{
+    byte Tag;
+    int Value;
+}
+
+Struct AlignedPair By Align(32)
+{
+    byte Tag;
+    int Value;
+}
+
 Class Container
 {
     Public Pair Value;
 }
 
 Pair GlobalPair;
+State GlobalState = State.Ready;
 
 Safe Function Pair MakePair(int left, int right)
 {
@@ -44,6 +57,11 @@ Safe Function Pair ChangeCopy(Pair value)
 Safe Function int Sum(Pair value)
 {
     Return value.Left + value.Right;
+}
+
+Safe Function <Pair, int> PackagePair(Pair value)
+{
+    Return <value, 1>;
 }
 
 Static Safe Function int Main()
@@ -91,5 +109,28 @@ Static Safe Function int Main()
     State state = State.Ready;
     IO.Console.PrintLine([int](state));
     IO.Console.PrintLine(state == State.Ready);
+    IO.Console.PrintLine([int](GlobalState));
+
+    PackedPair packed;
+    packed.Tag = 2;
+    packed.Value = 31;
+    PackedPair packedCopy = packed;
+    packedCopy.Value = 41;
+    IO.Console.PrintLine([int](packed.Tag));
+    IO.Console.PrintLine(packed.Value);
+    IO.Console.PrintLine(packedCopy.Value);
+
+    AlignedPair aligned;
+    aligned.Tag = 3;
+    aligned.Value = 32;
+    IO.Console.PrintLine([int](aligned.Tag));
+    IO.Console.PrintLine(aligned.Value);
+
+    <Pair, int> packaged = PackagePair(original);
+    Pair unboxed = packaged[0];
+    unboxed.Left = 88;
+    IO.Console.PrintLine(unboxed.Left);
+    IO.Console.PrintLine(unboxed.Right);
+    IO.Console.PrintLine(original.Left);
     Return 0;
 }

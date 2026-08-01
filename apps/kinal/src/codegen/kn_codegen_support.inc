@@ -1053,6 +1053,31 @@ static LLVMValueRef any_to_type(Codegen *g, LLVMValueRef anyv, Type dst)
         CGValue tmp; tmp.value = iv; tmp.type = type_make(TY_I64);
         return cast_value(g, tmp, dst);
     }
+    if (dst.kind == TY_STRUCT || dst.kind == TY_ARRAY || dst.kind == TY_PACKAGE)
+    {
+        LLVMTypeRef value_ty = llvm_type(g, dst);
+        LLVMTypeRef pointer_ty = LLVMPointerType(value_ty, 0);
+        LLVMValueRef tag = LLVMBuildExtractValue(g->builder, anyv, 0, "any2aggregate.tag");
+        LLVMValueRef payload = LLVMBuildExtractValue(g->builder, anyv, 1, "any2aggregate.payload");
+        LLVMValueRef has_pointer_tag = LLVMBuildICmp(
+            g->builder, LLVMIntEQ, tag,
+            LLVMConstInt(g->i64, KN_ANY_TAG_PTR, 0), "any2aggregate.tag.match");
+        LLVMValueRef has_payload = LLVMBuildICmp(
+            g->builder, LLVMIntNE, payload,
+            LLVMConstInt(g->i64, 0, 0), "any2aggregate.nonnull");
+        LLVMValueRef valid = LLVMBuildAnd(g->builder, has_pointer_tag, has_payload,
+                                         "any2aggregate.valid");
+        LLVMValueRef raw = LLVMBuildIntToPtr(g->builder, payload, g->i8ptr,
+                                            "any2aggregate.raw");
+        LLVMValueRef typed = LLVMBuildBitCast(g->builder, raw, pointer_ty,
+                                              "any2aggregate.ptr");
+        LLVMValueRef fallback = LLVMBuildAlloca(g->builder, value_ty,
+                                                "any2aggregate.default");
+        LLVMBuildStore(g->builder, LLVMConstNull(value_ty), fallback);
+        LLVMValueRef selected = LLVMBuildSelect(g->builder, valid, typed, fallback,
+                                                "any2aggregate.selected");
+        return LLVMBuildLoad2(g->builder, value_ty, selected, "any2aggregate.value");
+    }
     return LLVMConstNull(llvm_type(g, dst));
 }
 

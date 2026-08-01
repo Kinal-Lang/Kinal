@@ -1,0 +1,6 @@
+Unit Tests.Selfhost.StructValues.InvalidAlign;
+
+Struct Invalid By Align(3)
+{
+    int Value;
+}

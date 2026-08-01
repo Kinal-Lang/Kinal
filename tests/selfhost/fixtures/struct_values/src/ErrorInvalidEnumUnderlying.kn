@@ -1,0 +1,6 @@
+Unit Tests.Selfhost.StructValues.InvalidEnumUnderlying;
+
+Enum Invalid By string
+{
+    Value = 0
+}

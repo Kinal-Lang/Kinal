@@ -394,6 +394,12 @@ Class NativeBackend
         byte* type = This.TypeHandle(symbol.Value.Type);
         If (expression == null || expression.Kind == [int](ExpressionKind.Null))
             Return This.Module.ConstNull(type);
+        If (This.IsEnum(symbol.Value.Type) &&
+            (expression.Kind == [int](ExpressionKind.Name) ||
+             expression.Kind == [int](ExpressionKind.Member)))
+            Return This.Module.ConstInt(type,
+                This.EnumValue(symbol.Value.Type,
+                    This.Semantics.ExpressionPath(expression)));
         If (expression.Kind == [int](ExpressionKind.Number))
         {
             If (symbol.Value.Type.Kind == [int](TypeKind.FloatType))
@@ -1240,6 +1246,26 @@ Class NativeBackend
             boxed = This.Module.InsertValue(boxed, payload, 1, "");
             Return New LlvmValue(boxed, This.Semantics.Primitive("any"));
         }
+        ElseIf (This.Semantics.IsStructType(value.Type) ||
+                value.Type.Kind == [int](TypeKind.ArrayType) ||
+                value.Type.Kind == [int](TypeKind.PackageType))
+        {
+            // `any` has a fixed two-word ABI. Preserve value aggregates in a
+            // GC allocation and store its address in the pointer payload.
+            tag = 6;
+            byte* bytePointer = This.Module.PointerType(This.Module.IntType(8));
+            byte* storage = This.CallRuntime("__kn_gc_alloc",
+                This.Types1(This.Module.SizeOf(This.TypeHandle(value.Type))),
+                This.Unique("any_aggregate"));
+            byte* typedStorage = This.Module.BitCast(storage,
+                This.Module.PointerType(This.TypeHandle(value.Type)),
+                This.Unique("any_aggregate_pointer"));
+            This.Module.Store(value.Handle, typedStorage);
+            payload = This.Module.PointerToInt(
+                This.Module.BitCast(storage, bytePointer,
+                    This.Unique("any_aggregate_raw")),
+                This.Module.IntType(64), This.Unique("any_aggregate_payload"));
+        }
         ElseIf (value.Type.Kind == [int](TypeKind.NullType))
         {
             tag = 0;
@@ -1278,6 +1304,37 @@ Class NativeBackend
                 raw = This.Module.FloatExtend(raw, This.TypeHandle(target),
                     This.Unique("any_float_widen"));
             Return New LlvmValue(raw, target);
+        }
+        If (This.Semantics.IsStructType(target) ||
+            target.Kind == [int](TypeKind.ArrayType) ||
+            target.Kind == [int](TypeKind.PackageType))
+        {
+            byte* tag = This.Module.ExtractValue(value.Handle, 0,
+                This.Unique("any_aggregate_tag"));
+            byte* hasPointerTag = This.Module.Compare(
+                [int](LlvmIntPredicate.Equal), tag,
+                This.Module.ConstInt(This.Module.IntType(64), 6),
+                This.Unique("any_aggregate_tag_match"));
+            byte* hasPayload = This.Module.Compare(
+                [int](LlvmIntPredicate.NotEqual), payload,
+                This.Module.ConstInt(This.Module.IntType(64), 0),
+                This.Unique("any_aggregate_nonnull"));
+            byte* valid = This.Module.And(hasPointerTag, hasPayload,
+                This.Unique("any_aggregate_valid"));
+            byte* aggregateType = This.TypeHandle(target);
+            byte* aggregatePointer = This.Module.PointerType(aggregateType);
+            byte* raw = This.Module.IntToPointer(payload,
+                This.Module.PointerType(This.Module.IntType(8)),
+                This.Unique("any_aggregate_raw"));
+            byte* typed = This.Module.BitCast(raw, aggregatePointer,
+                This.Unique("any_aggregate_pointer"));
+            byte* fallback = This.Module.Alloca(aggregateType,
+                This.Unique("any_aggregate_default"));
+            This.Module.Store(This.Module.ConstNull(aggregateType), fallback);
+            byte* selected = This.Module.Select(valid, typed, fallback,
+                This.Unique("any_aggregate_selected"));
+            Return New LlvmValue(This.Module.Load(aggregateType, selected,
+                This.Unique("any_aggregate_value")), target);
         }
         If (This.IsReferenceType(target))
             Return New LlvmValue(This.Module.IntToPointer(payload, This.TypeHandle(target), This.Unique("any_pointer")), target);

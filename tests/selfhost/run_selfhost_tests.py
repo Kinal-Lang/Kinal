@@ -1310,7 +1310,8 @@ def main() -> int:
     struct_stage0_run = run([str(struct_stage0_executable)], cwd=root)
     struct_expected = (
         "0\n0\n0\n10\n99\n20\n77\n87\n10\n55\nnested\n20\n"
-        "3\n4\n11\n10\n44\n10\n7\ntrue"
+        "3\n4\n11\n10\n44\n10\n7\ntrue\n7\n2\n31\n41\n3\n32\n"
+        "88\n20\n10"
     )
     require(
         struct_run.returncode == 0
@@ -1321,6 +1322,97 @@ def main() -> int:
         struct_run,
     )
     results.append({"name": "struct_value_runtime", "ok": True})
+
+    struct_stage1_ir = out_dir / "struct-values-stage1.ll"
+    struct_stage0_ir = out_dir / "struct-values-stage0.ll"
+    struct_ir_build = run(
+        [str(compiler), "build-ir", str(struct_project), str(struct_stage1_ir), "test"],
+        cwd=root,
+    )
+    struct_stage0_ir_build = run(
+        [
+            str(stage0),
+            "build",
+            "--project",
+            str(struct_project.parent),
+            "--profile",
+            "test",
+            "--emit",
+            "ir",
+            "-o",
+            str(struct_stage0_ir),
+        ],
+        cwd=root,
+    )
+    require(struct_ir_build.returncode == 0, "stage1 Struct IR build failed", struct_ir_build)
+    require(
+        struct_stage0_ir_build.returncode == 0,
+        "stage0 Struct IR build failed",
+        struct_stage0_ir_build,
+    )
+    stage1_struct_ir = struct_stage1_ir.read_text(encoding="utf-8")
+    stage0_struct_ir = struct_stage0_ir.read_text(encoding="utf-8")
+    struct_layout_markers = (
+        "%Tests.Selfhost.StructValues.Pair = type { i64, i64 }",
+        "%Tests.Selfhost.StructValues.PackedPair = type <{ i8, i64 }>",
+        "%Tests.Selfhost.StructValues.AlignedPair = type { i8, i64 }",
+        "alloca %Tests.Selfhost.StructValues.AlignedPair, align 32",
+    )
+    require(
+        all(marker in stage1_struct_ir and marker in stage0_struct_ir
+            for marker in struct_layout_markers),
+        "stage0/stage1 Struct LLVM layouts differ",
+    )
+    results.append({"name": "struct_layout_ir", "ok": True})
+
+    struct_diagnostic_cases = (
+        ("ErrorInvalidAlign.kn", ["Sema:Invalid Align"]),
+        ("ErrorInvalidEnumUnderlying.kn", ["Sema:Invalid Enum"]),
+        ("ErrorUnknownStructSpecifier.kn", ["Parser:Unknown Specifier"]),
+        ("ErrorNewStruct.kn", ["Sema:Unknown Type", "Sema:Type Mismatch"]),
+        ("ErrorNullStruct.kn", ["Sema:Type Mismatch"]),
+    )
+    struct_source_dir = struct_project.parent / "src"
+    for source_name, expected_titles in struct_diagnostic_cases:
+        source = struct_source_dir / source_name
+        stage1_diagnostic = run(
+            [str(compiler), "check-source", str(source)],
+            cwd=root,
+        )
+        stage0_diagnostic = run(
+            [
+                str(stage0),
+                "build",
+                "--no-module-discovery",
+                "--color",
+                "never",
+                "--emit",
+                "check",
+                str(source),
+                "-o",
+                str(out_dir / f"{source.stem}-stage0.kcheck"),
+            ],
+            cwd=root,
+        )
+        require(stage1_diagnostic.returncode != 0,
+                f"stage1 accepted {source_name}", stage1_diagnostic)
+        require(stage0_diagnostic.returncode != 0,
+                f"stage0 accepted {source_name}", stage0_diagnostic)
+        require(
+            compiler_diagnostic_titles(stage1_diagnostic) == expected_titles
+            and compiler_diagnostic_titles(stage0_diagnostic) == expected_titles,
+            f"stage0/stage1 Struct diagnostics differ for {source_name}: "
+            f"stage0={compiler_diagnostic_titles(stage0_diagnostic)} "
+            f"stage1={compiler_diagnostic_titles(stage1_diagnostic)}",
+            stage1_diagnostic,
+        )
+    results.append(
+        {
+            "name": "struct_diagnostics",
+            "ok": True,
+            "files": len(struct_diagnostic_cases),
+        }
+    )
 
     phase5_project = (
         root / "tests" / "selfhost" / "fixtures" / "phase5_semantics" / "kinal.knproj"

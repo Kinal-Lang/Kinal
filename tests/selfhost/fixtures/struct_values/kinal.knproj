@@ -5,7 +5,7 @@ Project SelfhostStructValues
     SourceSet "main"
     {
         Roots = ["src"];
-        Include = ["**/*.kn"];
+        Include = ["Main.kn"];
         RequireUnit = true;
     }
 
