@@ -8,12 +8,20 @@ Extern Function int kn_native_int_echo(int value) By C;
 Extern Function bool kn_native_truthy_two() By C;
 Extern Function bool kn_native_false() By C;
 Extern Function bool kn_native_bool_echo(bool value) By C;
+Extern Function i32 kn_native_sum_i32(i32[] values, i32 count) By C;
+Extern Function void kn_native_increment_i32(i32[] values, i32 count) By C;
+Extern Function i32 kn_native_ascii_sum(char[] values, i32 count) By C;
+Extern Function i32 kn_native_string_length(string value) By C;
+Extern Function i32[] kn_native_numbers() By C;
 
 [SymbolName("kn_native_int_echo")]
 Delegate Function int dyn_int_echo(int value) By C;
 
 [SymbolName("kn_native_truthy_two")]
 Delegate Function bool dyn_truthy_two() By C;
+
+[SymbolName("kn_native_sum_i32")]
+Delegate Function i32 dyn_sum_i32(i32[] values, i32 count) By C;
 
 Unsafe Static Function int Main()
 {
@@ -24,6 +32,18 @@ Unsafe Static Function int Main()
     Console.PrintLine(kn_native_bool_echo(true));
     Console.PrintLine(kn_native_bool_echo(false));
 
+    i32[] numbers = { 1, 2, 3 };
+    Console.PrintLine(kn_native_sum_i32(numbers, 3));
+    kn_native_increment_i32(numbers, 3);
+    Console.PrintLine(numbers[0]);
+    Console.PrintLine(kn_native_sum_i32(numbers, 3));
+    char[] letters = { 'A', 'B', 'C' };
+    Console.PrintLine(kn_native_ascii_sum(letters, 3));
+    Console.PrintLine(kn_native_string_length("array"));
+    i32[] borrowed = kn_native_numbers();
+    Console.PrintLine(borrowed.Length());
+    Console.PrintLine(borrowed[1]);
+
     byte* library = IO.System.LoadLibrary("native_ffi.dll");
     If (library == null)
     {
@@ -32,7 +52,8 @@ Unsafe Static Function int Main()
     }
     byte* intPointer = IO.System.GetSymbol(library, dyn_int_echo);
     byte* truthPointer = IO.System.GetSymbol(library, dyn_truthy_two);
-    If (intPointer == null || truthPointer == null)
+    byte* sumPointer = IO.System.GetSymbol(library, dyn_sum_i32);
+    If (intPointer == null || truthPointer == null || sumPointer == null)
     {
         Console.PrintLine(IO.System.LastError());
         IO.System.CloseLibrary(library);
@@ -40,8 +61,10 @@ Unsafe Static Function int Main()
     }
     dyn_int_echo = intPointer;
     dyn_truthy_two = truthPointer;
+    dyn_sum_i32 = sumPointer;
     Console.PrintLine(dyn_int_echo(-99));
     Console.PrintLine(dyn_truthy_two());
+    Console.PrintLine(dyn_sum_i32(numbers, 3));
     IO.System.CloseLibrary(library);
     Return 0;
 }

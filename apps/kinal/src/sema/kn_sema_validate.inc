@@ -3947,6 +3947,12 @@ static bool type_assignable(Sema *s, Type dst, Type src)
         return true;
     if (src.kind == TY_ANY)
         return false;
+    if (dst.kind == TY_PTR && src.kind == TY_ARRAY)
+    {
+        Type dst_elem = type_immediate_elem(dst);
+        Type src_elem = type_immediate_elem(src);
+        return dst_elem.kind == TY_VOID || type_equal(dst_elem, src_elem);
+    }
     if (dst.kind == TY_PTR && dst.elem == TY_CHAR && src.kind == TY_STRING)
         return true;
     if (dst.kind == TY_STRING && src.kind == TY_CHAR)

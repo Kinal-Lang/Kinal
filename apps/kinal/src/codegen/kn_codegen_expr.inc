@@ -5886,6 +5886,10 @@ static void gen_stmt(Codegen *g, Stmt *s)
             LLVMValueRef cv = cast_value(g, initv, ty);
             LLVMBuildStore(g->builder, cv, alloca);
         }
+        else
+        {
+            LLVMBuildStore(g->builder, LLVMConstNull(llvm_type(g, ty)), alloca);
+        }
         scope_add(g->scope, s->v.var.name, ty, alloca);
         gc_add_root(g, alloca, ty);
         return;

@@ -641,7 +641,7 @@
   {
     "name": "ffi_abi",
     "file": "tests/windows/ffi_abi.kn",
-    "expected": "-7\n-123\ntrue\nfalse\ntrue\nfalse\n-99\ntrue\n",
+    "expected": "-7\n-123\ntrue\nfalse\ntrue\nfalse\n6\n2\n9\n198\n5\n0\n22\n-99\ntrue\n9\n",
     "auto_link": true,
     "compiler_args": [
       "-L",

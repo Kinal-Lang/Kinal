@@ -1,0 +1,51 @@
+Unit Tests.Selfhost.FfiArrays;
+
+Get IO.Console;
+
+[LinkName("kn_sh_rt_char_array_length")]
+Extern Function i64 NativeCharArrayLength(char[] value) By C;
+
+[LinkName("kn_sh_rt_string_length")]
+Extern Function i64 NativeStringLength(string value) By C;
+
+[LinkName("kn_sh_rt_pointer_length")]
+Extern Function i64 NativePointerLength(char* value) By C;
+
+[LinkName("kn_sh_rt_memory_copy")]
+Extern Function void NativeI32Copy(i32[] destination, i32[] source, usize count) By C;
+
+[LinkName("kn_sh_rt_borrowed_i32_values")]
+Extern Function i32[] NativeBorrowedI32Values() By C;
+
+Unsafe Delegate Function i64 c_array_length(char[] value) By C;
+
+Function i64 CountCharacters(char[] value)
+{
+    i64 index = 0;
+    While (value[index] != '\0') index = index + 1;
+    Return index + value.Length() * 100;
+}
+
+Trusted Static Function int Main()
+{
+    char[] characters = { 'a', 'b', 'c', '\0' };
+    IO.Console.PrintLine(NativeCharArrayLength(characters));
+    IO.Console.PrintLine(NativeStringLength("array"));
+    IO.Console.PrintLine(NativePointerLength(characters));
+    IO.Console.PrintLine(NativePointerLength("hello"));
+
+    i32[] source = { 7, 8, 9 };
+    i32[] destination = { 0, 0, 0 };
+    NativeI32Copy(destination, source, 12);
+    IO.Console.PrintLine(destination[0]);
+    IO.Console.PrintLine(destination[1]);
+    IO.Console.PrintLine(destination[2]);
+
+    i32[] borrowed = NativeBorrowedI32Values();
+    IO.Console.PrintLine(borrowed.Length());
+    IO.Console.PrintLine(borrowed[1]);
+
+    c_array_length = CountCharacters;
+    IO.Console.PrintLine(c_array_length(characters));
+    Return 0;
+}

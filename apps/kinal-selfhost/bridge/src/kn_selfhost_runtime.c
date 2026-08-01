@@ -30,6 +30,24 @@ int64_t kn_sh_rt_string_length(const char *text)
     return (int64_t)text_length(text);
 }
 
+/* Distinct symbols keep C stage0 declarations with pointer-equivalent source
+ * types from colliding in LLVM while exercising the same C pointer ABI. */
+int64_t kn_sh_rt_char_array_length(const char *text)
+{
+    return (int64_t)text_length(text);
+}
+
+int64_t kn_sh_rt_pointer_length(const char *text)
+{
+    return (int64_t)text_length(text);
+}
+
+int32_t *kn_sh_rt_borrowed_i32_values(void)
+{
+    static int32_t values[] = { 11, 22, 33 };
+    return values;
+}
+
 int kn_sh_rt_string_equal(const char *left, const char *right)
 {
     uint64_t i = 0;
@@ -78,6 +96,11 @@ const char *kn_sh_rt_i64_to_string(int64_t value)
         result[prefix + i] = reversed[count - i - 1];
     result[prefix + count] = 0;
     return result;
+}
+
+const char *kn_sh_rt_f64_to_string(double value)
+{
+    return kn_sh_rt_i64_to_string((int64_t)value);
 }
 
 const char *kn_sh_rt_char_to_string(uint8_t value)

@@ -1,0 +1,43 @@
+Unit Selfhost.GlobalConstants;
+
+Get IO.Console;
+
+Const u32 HexValue = [u32](0x00004000);
+Const string Message = "alpha\n" + "beta";
+
+Class FixedBuffer
+{
+    Public u8[4] Values;
+    Private int _Value;
+
+    Public Property int Value
+    {
+        Get
+        {
+            Return _Value + 1;
+        }
+        Set
+        {
+            _Value = value * 2;
+        }
+    }
+
+    Public Constructor()
+    {
+        Values[0] = 0x2a;
+        Values[3] = 0x7f;
+    }
+}
+
+Static Function int Main()
+{
+    IO.Console.PrintLine(HexValue);
+    IO.Console.PrintLine(Message);
+    FixedBuffer buffer = New FixedBuffer();
+    IO.Console.PrintLine("fixed", buffer.Values.Length(), buffer.Values[0], buffer.Values[3]);
+    buffer.Value = 20;
+    IO.Console.PrintLine(buffer.Value);
+    buffer.Value += 1;
+    IO.Console.PrintLine(buffer.Value);
+    Return 0;
+}

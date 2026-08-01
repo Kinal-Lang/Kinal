@@ -1,6 +1,12 @@
 Unit Tests.ErrorFfiUnsupportedType;
 
-Extern Function int BadArray(int[] values) By C;
+Struct Pair
+{
+    int Left;
+    int Right;
+}
+
+Extern Function int BadAggregate(Pair value) By C;
 
 Static Function int Main()
 {

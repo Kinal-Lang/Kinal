@@ -50,6 +50,10 @@ KnFfiAbiType kn_ffi_abi_type(Type type, int target_pointer_bits)
         return abi_type(KN_FFI_ABI_FLOAT, 64, 1, 0);
     case TY_STRING:
     case TY_PTR:
+    case TY_ARRAY:
+        /* C array parameters decay to their data pointer.  Kinal keeps the
+         * length in its native array value, but the C boundary carries only
+         * the element pointer, exactly like T*. */
         return abi_type(KN_FFI_ABI_POINTER, pointer_bits, 0, 0);
     default:
         return abi_type(KN_FFI_ABI_INVALID, 0, 0, 0);

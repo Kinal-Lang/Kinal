@@ -205,6 +205,16 @@ static LLVMValueRef cg_to_ffi_value(Codegen *g, LLVMValueRef value, Type type)
 {
     KnFfiAbiType abi = cg_ffi_abi_type(g, type);
     LLVMTypeRef dst = llvm_ffi_type(g, type);
+    if (type.kind == TY_ARRAY)
+    {
+        LLVMValueRef data = LLVMBuildExtractValue(g->builder, value, 0, "ffi.array.data");
+        return LLVMBuildBitCast(g->builder, data, dst, "ffi.array.ptr");
+    }
+    if (type.kind == TY_PTR && LLVMGetTypeKind(LLVMTypeOf(value)) == LLVMStructTypeKind)
+    {
+        LLVMValueRef data = LLVMBuildExtractValue(g->builder, value, 0, "ffi.array.data");
+        return LLVMBuildBitCast(g->builder, data, dst, "ffi.array.ptr");
+    }
     LLVMTypeRef src = LLVMTypeOf(value);
     if (src == dst)
         return value;
@@ -235,6 +245,16 @@ static LLVMValueRef cg_from_ffi_value(Codegen *g, LLVMValueRef value, Type type)
     Type resolved = cg_ffi_resolved_type(g, type);
     KnFfiAbiType abi = kn_ffi_abi_type(resolved, g->target_pointer_bits);
     LLVMTypeRef dst = llvm_type(g, resolved);
+    if (resolved.kind == TY_ARRAY)
+    {
+        Type element = type_immediate_elem(resolved);
+        LLVMTypeRef data_ty = LLVMPointerType(llvm_type(g, element), 0);
+        LLVMValueRef data = LLVMBuildBitCast(g->builder, value, data_ty, "ffi.array.data");
+        LLVMValueRef array = LLVMGetUndef(dst);
+        array = LLVMBuildInsertValue(g->builder, array, data, 0, "ffi.array.value.data");
+        return LLVMBuildInsertValue(g->builder, array, LLVMConstInt(g->i64, 0, 0), 1,
+                                    "ffi.array.value.length");
+    }
     LLVMTypeRef src = LLVMTypeOf(value);
     if (abi.is_bool)
         return LLVMBuildICmp(g->builder, LLVMIntNE, value, LLVMConstNull(src), "ffi.ret.bool");

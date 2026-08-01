@@ -11,10 +11,12 @@ Get IO.Kinal.Compiler.Source.SourceFile;
 Get IO.Kinal.Compiler.Lex.Lexer;
 Get IO.Kinal.Compiler.Lex.Token;
 Get IO.Kinal.Compiler.Syntax.Parser;
+Get IO.Kinal.Compiler.Syntax.Nodes;
 Get IO.Kinal.Compiler.Syntax.SyntaxTree;
 Get IO.Kinal.Compiler.Project.ProjectConfig;
 Get IO.Kinal.Compiler.Project.ProjectLoader;
 Get IO.Kinal.Compiler.Sema.SemanticCompilation;
+Get IO.Kinal.Compiler.Sema.Symbols;
 Get IO.Kinal.Compiler.Backend.LlvmBridge;
 Get IO.Kinal.Compiler.Backend.NativeBackend;
 
@@ -24,7 +26,134 @@ Safe Function string QuoteArgument(string value)
     Return "\"" + value + "\"";
 }
 
-Trusted Function int LinkExecutable(string outputPath, string objectPath)
+Safe Function string WindowsLibraryName(string name)
+{
+    Return IO.Text.IsEmpty(IO.Path.Extension(name)) ? name + ".lib" : name;
+}
+
+Safe Function bool WindowsX64LinkTarget(string target)
+{
+    Return target == "windows" || target == "win64" || target == "win-x64" ||
+        target == "x86_64-pc-windows-msvc";
+}
+
+Safe Function string LinkAttributeString(ExpressionNode argument)
+{
+    If (argument == null) Return "";
+    string raw = argument.Text;
+    int length = IO.Text.Length(raw);
+    If (length >= 2 && IO.Text.StartsWith(raw, "\"") &&
+        IO.Text.EndsWith(raw, "\""))
+        Return IO.Text.Slice(raw, 1, length - 2);
+    Return raw;
+}
+
+Safe Function string ResolveExternLinkFile(FunctionSymbol function, string value)
+{
+    If (IO.Path.IsAbsolute(value)) Return IO.Path.Normalize(value);
+    Return IO.Path.Normalize(IO.Path.Combine(
+        IO.Path.Directory(function.Syntax.Source.Path), value));
+}
+
+Safe Function string AppendExternLinkSettings(string commandLine,
+                                               SemanticCompilation semantics)
+{
+    list libraries = list.Create();
+    list files = list.Create();
+    FunctionSymbol function = semantics.FirstFunction;
+    While (function != null)
+    {
+        If (function.Declaration.IsExtern)
+        {
+            SyntaxAttribute attribute = function.Declaration.FirstAttribute;
+            While (attribute != null)
+            {
+                string name = semantics.AttributeShortName(attribute.Name);
+                bool library = name == "LinkLib" || name == "LinkLibTarget";
+                bool file = name == "LinkFile" || name == "LinkFileTarget";
+                ExpressionNode argument = attribute.FirstArgument;
+                If ((name == "LinkLibTarget" || name == "LinkFileTarget") &&
+                    argument != null)
+                {
+                    If (!WindowsX64LinkTarget(LinkAttributeString(argument)))
+                    {
+                        attribute = attribute.Next;
+                        Continue;
+                    }
+                    argument = argument.Next;
+                }
+                While ((library || file) && argument != null)
+                {
+                    string decoded = LinkAttributeString(argument);
+                    string value = file ? ResolveExternLinkFile(function, decoded) :
+                        WindowsLibraryName(decoded);
+                    list destination = file ? files : libraries;
+                    If (!destination.Contains(value)) destination.Add(value);
+                    argument = argument.Next;
+                }
+                attribute = attribute.Next;
+            }
+        }
+        function = function.Next;
+    }
+
+    int index = 0;
+    While (index < files.Count())
+    {
+        commandLine = commandLine + " " + QuoteArgument([string](files.Fetch(index)));
+        index = index + 1;
+    }
+    index = 0;
+    While (index < libraries.Count())
+    {
+        commandLine = commandLine + " " + QuoteArgument([string](libraries.Fetch(index)));
+        index = index + 1;
+    }
+    Return commandLine;
+}
+
+Safe Function string AppendProjectLinkSettings(string commandLine, ProjectConfig project,
+                                                ProjectProfileConfig profile,
+                                                string defaultBridgeLlvm,
+                                                string defaultBridgeRuntime)
+{
+    int index = 0;
+    While (index < profile.LibDirs.Count())
+    {
+        commandLine = commandLine + " /libpath:" +
+            QuoteArgument(project.ResolvePath([string](profile.LibDirs.Fetch(index))));
+        index = index + 1;
+    }
+    index = 0;
+    While (index < profile.Libs.Count())
+    {
+        commandLine = commandLine + " " +
+            QuoteArgument(WindowsLibraryName([string](profile.Libs.Fetch(index))));
+        index = index + 1;
+    }
+    index = 0;
+    While (index < profile.LinkFiles.Count())
+    {
+        string file = project.ResolvePath([string](profile.LinkFiles.Fetch(index)));
+        If (IO.Path.Normalize(file) != IO.Path.Normalize(defaultBridgeRuntime) &&
+            IO.Path.FileName(file) != IO.Path.FileName(defaultBridgeRuntime) &&
+            IO.Path.Normalize(file) != IO.Path.Normalize(defaultBridgeLlvm) &&
+            IO.Path.FileName(file) != IO.Path.FileName(defaultBridgeLlvm))
+            commandLine = commandLine + " " + QuoteArgument(file);
+        index = index + 1;
+    }
+    index = 0;
+    While (index < profile.LinkArgs.Count())
+    {
+        commandLine = commandLine + " " + [string](profile.LinkArgs.Fetch(index));
+        index = index + 1;
+    }
+    Return commandLine;
+}
+
+Trusted Function int LinkExecutable(string outputPath, string objectPath,
+                                    ProjectConfig project, ProjectProfileConfig profile,
+                                    SemanticCompilation semantics)
 {
     string root = IO.Path.Directory(IO.Kinal.Compiler.Backend.LlvmBridge.ExecutablePath());
     string linker = IO.Path.Combine(root, "linker/lld-link.exe");
@@ -38,16 +167,21 @@ Trusted Function int LinkExecutable(string outputPath, string objectPath)
         IO.Console.PrintLine("selfhost toolchain is incomplete beside " + root);
         Return 1;
     }
+    string bridgeRuntime = IO.Path.Combine(bridge, "kn_selfhost_runtime.o");
+    string bridgeLlvm = IO.Path.Combine(bridge, "kn_selfhost_llvm.o");
     string commandLine = QuoteArgument(linker) +
         " /nologo /timestamp:0 /machine:x64 /subsystem:console /stack:16777216 /entry:mainCRTStartup /out:" + QuoteArgument(outputPath) +
         " " + QuoteArgument(objectPath) +
         " " + QuoteArgument(IO.Path.Combine(runtime, "kn_runtime.obj")) +
         " " + QuoteArgument(IO.Path.Combine(runtime, "kn_math.obj")) +
-        " " + QuoteArgument(IO.Path.Combine(bridge, "kn_selfhost_llvm.o")) +
-        " " + QuoteArgument(IO.Path.Combine(bridge, "kn_selfhost_runtime.o")) +
+        " " + QuoteArgument(bridgeLlvm) +
+        " " + QuoteArgument(bridgeRuntime) +
         " /libpath:" + QuoteArgument(llvm) +
         " /libpath:" + QuoteArgument(runtime) +
         " LLVM-C.lib kernel32.lib user32.lib gdi32.lib oldnames.lib msvcrt.lib vcruntime.lib ucrt.lib";
+    commandLine = AppendProjectLinkSettings(commandLine, project, profile,
+        bridgeLlvm, bridgeRuntime);
+    commandLine = AppendExternLinkSettings(commandLine, semantics);
     Return IO.Kinal.Compiler.Backend.LlvmBridge.Execute(commandLine);
 }
 
@@ -105,6 +239,11 @@ Safe Function string FindStandardLibraryRoot(string entryPath)
         depth = depth + 1;
     }
 
+    string compilerDirectory = IO.Path.Directory(
+        IO.Kinal.Compiler.Backend.LlvmBridge.ExecutablePath());
+    string packagedCandidate = IO.Path.Combine(compilerDirectory, "stdlib-src");
+    If (IO.Directory.Exists(packagedCandidate)) Return packagedCandidate;
+
     string currentCandidate = IO.Path.Combine(IO.Path.CurrentDirectory(), "libs/std");
     If (IO.Directory.Exists(currentCandidate)) Return currentCandidate;
     Return "";
@@ -152,8 +291,8 @@ Safe Function bool IsPotentialPackageSource(CompileSession session, string path,
             If (import.Target == packageName ||
                 IO.Text.StartsWith(import.Target, packageName + ".") ||
                 (packageName == "IO.Core" &&
-                 (IO.Text.StartsWith(import.Target, "IO.Char") ||
-                  IO.Text.StartsWith(import.Target, "IO.Math")))) Return true;
+                 (import.Target == "IO" ||
+                  IO.Text.StartsWith(import.Target, "IO.")))) Return true;
             import = import.Next;
         }
         current = current.Next;
@@ -307,7 +446,8 @@ Safe Function int Run(string[] args)
         If (!emitted) IO.Console.PrintLine("native backend failed: " + backend.Error);
         backend.Dispose();
         If (!emitted) Return 1;
-        If (command == "build" && LinkExecutable(args[2], backendOutput) != 0)
+        If (command == "build" && LinkExecutable(args[2], backendOutput,
+            session.Project, session.Profile, semantics) != 0)
         {
             IO.Console.PrintLine("native link failed");
             Return 1;

@@ -251,6 +251,27 @@ Class ProjectReader
         This.ExpectKind(TokenKind.RightBrace, "Expected '}'", "Build body is not closed");
     }
 
+    Public Safe Function void ReadProfileLink(ProjectProfileConfig profile)
+    {
+        If (!This.ExpectKind(TokenKind.LeftBrace, "Expected '{'", "Link body is missing")) Return;
+        While (!This.AtEnd() && This.Kind() != TokenKind.RightBrace)
+        {
+            string field = This.Text();
+            This.Advance();
+            If (field == "Script") profile.LinkScript = This.ReadScalarAssignment();
+            ElseIf (field == "NoCRT") profile.NoCRT = This.ReadScalarAssignment() == "true";
+            ElseIf (field == "NoDefaultLibs")
+                profile.NoDefaultLibs = This.ReadScalarAssignment() == "true";
+            ElseIf (field == "LibDirs") This.CopyList(profile.LibDirs, This.ReadListAssignment());
+            ElseIf (field == "Libs") This.CopyList(profile.Libs, This.ReadListAssignment());
+            ElseIf (field == "LinkFiles") This.CopyList(profile.LinkFiles, This.ReadListAssignment());
+            ElseIf (field == "LinkArgs") This.CopyList(profile.LinkArgs, This.ReadListAssignment());
+            ElseIf (field == "LinkRoots") This.CopyList(profile.LinkRoots, This.ReadListAssignment());
+            Else This.SkipUnknownField();
+        }
+        This.ExpectKind(TokenKind.RightBrace, "Expected '}'", "Link body is not closed");
+    }
+
     Public Safe Function ProjectProfileConfig ReadProfile()
     {
         ProjectProfileConfig profile = New ProjectProfileConfig(This.ReadScalar());
@@ -261,6 +282,7 @@ Class ProjectReader
             This.Advance();
             If (section == "Source") This.ReadProfileSource(profile);
             ElseIf (section == "Build") This.ReadProfileBuild(profile);
+            ElseIf (section == "Link") This.ReadProfileLink(profile);
             Else This.SkipUnknownField();
         }
         This.ExpectKind(TokenKind.RightBrace, "Expected '}'", "Profile body is not closed");

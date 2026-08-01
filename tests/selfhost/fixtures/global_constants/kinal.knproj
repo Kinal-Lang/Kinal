@@ -1,0 +1,28 @@
+Project SelfhostGlobalConstants
+{
+    DefaultProfile = "native";
+
+    SourceSet "app"
+    {
+        Roots = ["src"];
+        Include = ["**/*.kn"];
+        RequireUnit = true;
+    }
+
+    Profile "native"
+    {
+        Source
+        {
+            Entry = "src/Main.kn";
+            Sets = ["app"];
+            Mode = ReachableUnits;
+        }
+
+        Build
+        {
+            Backend = Native;
+            Environment = Hosted;
+            Output = "out/global_constants.exe";
+        }
+    }
+}

@@ -40,7 +40,7 @@ def pe_stack_reserve(path: Path) -> int:
 
 
 def copy_stage_support(source: Path, target: Path) -> None:
-    for directory in ("bridge", "linker", "llvm", "runtime"):
+    for directory in ("bridge", "linker", "llvm", "runtime", "stdlib-src"):
         candidate = source / directory
         if candidate.is_dir():
             shutil.copytree(candidate, target / directory, dirs_exist_ok=True)

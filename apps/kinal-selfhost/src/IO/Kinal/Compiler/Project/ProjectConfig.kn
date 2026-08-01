@@ -68,6 +68,14 @@ Class ProjectProfileConfig
     Public string Panic;
     Public string Target;
     Public string Output;
+    Public string LinkScript;
+    Public bool NoCRT;
+    Public bool NoDefaultLibs;
+    Public list LibDirs;
+    Public list Libs;
+    Public list LinkFiles;
+    Public list LinkArgs;
+    Public list LinkRoots;
     Public ProjectProfileConfig Next;
 
     Public Safe Constructor(string name)
@@ -83,6 +91,14 @@ Class ProjectProfileConfig
         This.Panic = "Trap";
         This.Target = "";
         This.Output = "";
+        This.LinkScript = "";
+        This.NoCRT = false;
+        This.NoDefaultLibs = false;
+        This.LibDirs = list.Create();
+        This.Libs = list.Create();
+        This.LinkFiles = list.Create();
+        This.LinkArgs = list.Create();
+        This.LinkRoots = list.Create();
         This.Next = null;
     }
 }

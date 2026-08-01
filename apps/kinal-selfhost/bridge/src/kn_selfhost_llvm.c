@@ -499,7 +499,24 @@ int kn_sh_llvm_set_alignment(void *value, int alignment)
 void *kn_sh_llvm_build_global_string(void *module_handle, const char *text, const char *name)
 {
     KnShLlvmModule *state = module_state(module_handle);
-    return state ? LLVMBuildGlobalStringPtr(state->builder, text ? text : "", safe_name(name)) : 0;
+    LLVMValueRef value;
+    LLVMTypeRef storage_type;
+    LLVMValueRef storage;
+    LLVMValueRef indices[2];
+    uint64_t length = 0;
+    if (!state) return 0;
+    if (!text) text = "";
+    while (text[length]) length++;
+    value = LLVMConstStringInContext(state->context, text, (unsigned)length, 0);
+    storage_type = LLVMArrayType(LLVMInt8TypeInContext(state->context),
+                                 (unsigned)(length + 1));
+    storage = LLVMAddGlobal(state->module, storage_type, safe_name(name));
+    LLVMSetLinkage(storage, LLVMPrivateLinkage);
+    LLVMSetGlobalConstant(storage, 1);
+    LLVMSetInitializer(storage, value);
+    indices[0] = LLVMConstInt(LLVMInt32TypeInContext(state->context), 0, 0);
+    indices[1] = LLVMConstInt(LLVMInt32TypeInContext(state->context), 0, 0);
+    return LLVMConstInBoundsGEP2(storage_type, storage, indices, 2);
 }
 
 #define KN_SH_BUILD_BINARY(name, llvm_name) \

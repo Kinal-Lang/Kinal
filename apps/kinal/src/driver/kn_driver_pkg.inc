@@ -43,6 +43,7 @@ typedef struct
 #define KN_PKG_EMITTED_MANIFEST_CAP 65536u
 
 static KN_DRIVER_THREAD_LOCAL int g_pkg_error = 0;
+static KN_DRIVER_THREAD_LOCAL uint64_t g_pkg_cache_nonce = 0;
 
 static void pkg_fail(const char *msg, const char *detail)
 {
@@ -342,12 +343,46 @@ static void sanitize_cache_component(char *out, size_t cap, const char *text)
         copy_str(out, cap, "pkg");
 }
 
+static void append_u64_decimal_local(char *out, size_t cap, size_t *offset, uint64_t value)
+{
+    char digits[24];
+    size_t count = 0;
+    if (!out || !offset || *offset >= cap)
+        return;
+    do
+    {
+        digits[count++] = (char)('0' + (value % 10));
+        value /= 10;
+    } while (value > 0 && count < sizeof(digits));
+    while (count > 0 && *offset + 1 < cap)
+        out[(*offset)++] = digits[--count];
+    out[*offset] = 0;
+}
+
 static bool default_klib_cache_root(char *out, size_t cap)
 {
     char temp[KN_MAX_PATH];
+    char process_component[64];
+    size_t process_off = 0;
+    uint64_t process_id = 0;
     if (!out || cap == 0)
         return false;
     out[0] = 0;
+#if defined(_WIN32) || defined(_WIN64)
+    process_id = (uint64_t)GetCurrentProcessId();
+#else
+    process_id = (uint64_t)getpid();
+#endif
+    if (g_pkg_cache_nonce == 0)
+        g_pkg_cache_nonce = GetTickCount64();
+    copy_str(process_component, sizeof(process_component), "process-");
+    process_off = kn_strlen(process_component);
+    append_u64_decimal_local(process_component, sizeof(process_component), &process_off, process_id);
+    if (process_off + 1 < sizeof(process_component))
+        process_component[process_off++] = '-';
+    process_component[process_off] = 0;
+    append_u64_decimal_local(process_component, sizeof(process_component), &process_off,
+                             g_pkg_cache_nonce);
     {
         KN_DWORD n = GetEnvironmentVariableA("TMP", temp, (KN_DWORD)sizeof(temp));
         if (n == 0 || n >= (KN_DWORD)sizeof(temp))
@@ -367,12 +402,16 @@ static bool default_klib_cache_root(char *out, size_t cap)
                 return false;
             if (!path_join(out, cap, out, "klib"))
                 return false;
+            if (!path_join(out, cap, out, process_component))
+                return false;
             return true;
         }
     }
     if (!path_join(out, cap, ".", ".kinal-cache"))
         return false;
     if (!path_join(out, cap, out, "klib"))
+        return false;
+    if (!path_join(out, cap, out, process_component))
         return false;
     return true;
 }

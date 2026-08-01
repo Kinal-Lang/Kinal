@@ -1364,6 +1364,32 @@ def run_package_integration_tests(compiler: Path, out_dir: Path) -> int:
         return 1
     print("[OK] package_project_source")
 
+    parallel_package_processes: list[tuple[Path, subprocess.Popen[str]]] = []
+    for index in range(4):
+        output = exe_path(out_dir / f"driver_pkg_parallel_{index}")
+        process = subprocess.Popen(
+            [
+                str(compiler),
+                "build",
+                "--project",
+                str(ROOT / "tests" / "pkg" / "project_source"),
+                "-o",
+                str(output),
+            ],
+            cwd=ROOT,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        parallel_package_processes.append((output, process))
+    for output, process in parallel_package_processes:
+        stdout, stderr = process.communicate()
+        if process.returncode != 0 or not output.exists():
+            print("[FAIL] package_parallel_klib_cache")
+            print((stdout or "") + (stderr or ""))
+            return 1
+    print("[OK] package_parallel_klib_cache")
+
     project_modes_reachable_exe = exe_path(out_dir / "driver_project_modes_reachable")
     project_modes_reachable_proc = run(
         [

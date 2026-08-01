@@ -111,6 +111,7 @@ def package_selfhost_toolchain(stage0: Path, stage1: Path) -> None:
     stage1_root = stage1.parent
     bridge_dir = selfhost_bridge_object().parent
     shutil.copytree(bridge_dir, stage1_root / "bridge", dirs_exist_ok=True)
+    shutil.copytree(ROOT / "libs" / "std", stage1_root / "stdlib-src", dirs_exist_ok=True)
 
     linker_name = exe_name("lld-link") if is_windows() else "ld.lld"
     linker = stage0_root / "linker" / linker_name

@@ -1171,6 +1171,33 @@ Class SemanticCompilation
         Return null;
     }
 
+    Public Safe Function FunctionSymbol FindPropertyGetter(TypeSymbol owner, string name)
+    {
+        Return This.FindMethod(owner, "__get_" + name, 0);
+    }
+
+    Public Safe Function FunctionSymbol FindPropertySetter(TypeSymbol owner, string name)
+    {
+        Return This.FindMethod(owner, "__set_" + name, 1);
+    }
+
+    Public Safe Function HirExpression BindPropertyAccess(SyntaxTree syntax,
+                                                            FunctionSymbol function,
+                                                            ExpressionNode expression,
+                                                            HirExpression receiver,
+                                                            FunctionSymbol getter)
+    {
+        HirExpression result = New HirExpression([int](HirExpressionKind.Field),
+            expression, getter.ReturnType);
+        result.Left = receiver;
+        result.Target = expression.Text;
+        result.Function = getter;
+        FunctionSymbol setter = This.FindPropertySetter(getter.OwnerType, expression.Text);
+        result.Name = setter == null ? "" : setter.QualifiedName();
+        This.CheckCallSafety(syntax, function, getter, expression);
+        Return result;
+    }
+
     Public Safe Function FunctionSymbol FindMethodSignature(TypeSymbol owner,
                                                              FunctionSymbol signature)
     {
@@ -1914,8 +1941,14 @@ Class SemanticCompilation
         If (source.Kind == [int](TypeKind.AnyType)) Return true;
         If (target.Kind == [int](TypeKind.StringType) && source.Name == "char") Return true;
         If (target.Kind == [int](TypeKind.PointerType) && target.ElementType != null &&
+            source.Kind == [int](TypeKind.ArrayType) && source.ElementType != null &&
+            (target.ElementType.Kind == [int](TypeKind.VoidType) ||
+             This.SameType(target.ElementType, source.ElementType))) Return true;
+        If (target.Kind == [int](TypeKind.PointerType) && target.ElementType != null &&
             target.ElementType.Name == "char" && source.Kind == [int](TypeKind.StringType))
             Return true;
+        If (target.Kind == [int](TypeKind.PointerType) &&
+            source.Kind == [int](TypeKind.IntegerType)) Return true;
         If ((target.Name == "IO.Type.Object.Class" || target.Name == "Object.Class") &&
             ((source.Kind == [int](TypeKind.NamedType) &&
               !This.IsStructType(source) && !This.IsEnumType(source)) ||
@@ -2024,7 +2057,8 @@ Class SemanticCompilation
             type.Kind == [int](TypeKind.IntegerType) ||
             type.Kind == [int](TypeKind.FloatType) ||
             type.Kind == [int](TypeKind.StringType) ||
-            type.Kind == [int](TypeKind.PointerType);
+            type.Kind == [int](TypeKind.PointerType) ||
+            type.Kind == [int](TypeKind.ArrayType);
     }
 
     Public Safe Function void ValidateFunctionDeclaration(FunctionSymbol function)
@@ -2295,16 +2329,24 @@ Class SemanticCompilation
     {
         If (path == syntax.UnitName || IO.Text.StartsWith(path, syntax.UnitName + "."))
             Return true;
-        ImportDecl import = syntax.FirstImport;
-        While (import != null)
+        UnitSymbol unit = This.FirstUnit;
+        While (unit != null)
         {
-            If ((import.Kind == 0 || import.Kind == 2) &&
-                (path == import.Target || IO.Text.StartsWith(path, import.Target + ".")))
-                Return true;
-            If ((import.Kind == 1 || import.Kind == 3) &&
-                (path == import.Name || IO.Text.StartsWith(path, import.Name + ".")))
-                Return true;
-            import = import.Next;
+            If (unit.Name == syntax.UnitName)
+            {
+                ImportDecl import = unit.Syntax.FirstImport;
+                While (import != null)
+                {
+                    If ((import.Kind == 0 || import.Kind == 2) &&
+                        (path == import.Target || IO.Text.StartsWith(path, import.Target + ".")))
+                        Return true;
+                    If ((import.Kind == 1 || import.Kind == 3) &&
+                        (path == import.Name || IO.Text.StartsWith(path, import.Name + ".")))
+                        Return true;
+                    import = import.Next;
+                }
+            }
+            unit = unit.Next;
         }
         Return false;
     }
@@ -3173,6 +3215,11 @@ Class SemanticCompilation
         // type is NamedType. Use the expression role so nested types resolve.
         If (receiver.Kind == [int](HirExpressionKind.Namespace))
         {
+            FunctionSymbol staticGetter = This.FindPropertyGetter(
+                receiver.Type, expression.Text);
+            If (staticGetter != null && staticGetter.Declaration.IsStatic)
+                Return This.BindPropertyAccess(syntax, function, expression,
+                    null, staticGetter);
             string combined = receiver.Target + "." + expression.Text;
             TypeSymbol named = This.ResolveType(syntax, combined);
             If (named == null) named = This.FindExactType(combined);
@@ -3205,6 +3252,10 @@ Class SemanticCompilation
             Return result;
         }
 
+        FunctionSymbol getter = This.FindPropertyGetter(receiver.Type, expression.Text);
+        If (getter != null && !getter.Declaration.IsStatic)
+            Return This.BindPropertyAccess(syntax, function, expression,
+                receiver, getter);
         TypeSymbol fieldType = This.FindFieldType(syntax, receiver.Type, expression.Text);
         If (fieldType != null)
         {
@@ -3378,6 +3429,24 @@ Class SemanticCompilation
         Return IO.Text.EndsWith(text, "f") || IO.Text.EndsWith(text, "F");
     }
 
+    Public Safe Function i64 IntegerLiteralValue(string text)
+    {
+        If (!IO.Text.StartsWith(text, "0x") && !IO.Text.StartsWith(text, "0X"))
+            Return [i64](text);
+        char[] characters = text.ToChars();
+        i64 value = 0;
+        int index = 2;
+        While (index < characters.Length())
+        {
+            int code = [int](characters[index]);
+            int digit = code >= 48 && code <= 57 ? code - 48 :
+                (code >= 65 && code <= 70 ? code - 55 : code - 87);
+            value = value * 16 + digit;
+            index = index + 1;
+        }
+        Return value;
+    }
+
     Public Safe Function ConstantIntegerValue ConstantIntegerCore(
         SyntaxTree syntax, BindingScope scope, ExpressionNode expression, int depth)
     {
@@ -3386,7 +3455,8 @@ Class SemanticCompilation
         {
             If (This.NumberIsFloat(expression.Text))
                 Return New ConstantIntegerValue(false, 0);
-            Return New ConstantIntegerValue(true, [i64](expression.Text));
+            Return New ConstantIntegerValue(true,
+                This.IntegerLiteralValue(expression.Text));
         }
         If (expression.Kind == [int](ExpressionKind.Character))
             Return New ConstantIntegerValue(true, This.CharacterConstant(expression.Text));
@@ -3580,6 +3650,18 @@ Class SemanticCompilation
                     staticValue.Target = global.QualifiedName();
                     staticValue.Symbol = global.Value;
                     Return staticValue;
+                }
+                FunctionSymbol propertyGetter = This.FindPropertyGetter(
+                    function.OwnerType, expression.Text);
+                If (propertyGetter != null && !propertyGetter.Declaration.IsStatic &&
+                    function.Receiver != null)
+                {
+                    HirExpression receiver = New HirExpression(
+                        [int](HirExpressionKind.Local), expression, function.OwnerType);
+                    receiver.Target = "This";
+                    receiver.Symbol = function.Receiver;
+                    Return This.BindPropertyAccess(syntax, function, expression,
+                        receiver, propertyGetter);
                 }
                 TypeSymbol instanceField = This.FindInstanceFieldType(
                     syntax, function.OwnerType, expression.Text);
@@ -3947,12 +4029,33 @@ Class SemanticCompilation
                 If (left.Symbol != null && left.Symbol.IsConst)
                     This.Report(syntax, "Const Assignment", "Cannot assign to const variable",
                         expression.Left.Line, expression.Left.Column);
-                bool delegateAssignment = left.Kind == [int](HirExpressionKind.Delegate) &&
-                    right.Kind == [int](HirExpressionKind.FunctionReference);
-                If (delegateAssignment && !This.SameFunctionSignature(left.Function, right.Function))
+                If (left.Kind == [int](HirExpressionKind.Field) &&
+                    left.Function != null && IO.Text.IsEmpty(left.Name))
+                    This.Report(syntax, "Read-only Property",
+                        "Property does not declare a Set accessor",
+                        expression.Left.Line, expression.Left.Column);
+                bool delegateTarget = left.Kind == [int](HirExpressionKind.Delegate);
+                bool functionReference = right.Kind == [int](HirExpressionKind.FunctionReference);
+                bool cDelegate = delegateTarget && left.Function != null &&
+                    left.Function.Declaration.Abi == "C";
+                bool delegateAssignment = delegateTarget &&
+                    (functionReference ||
+                     (cDelegate && (right.Type.Kind == [int](TypeKind.PointerType) ||
+                                    right.Type.Kind == [int](TypeKind.NullType))) ||
+                     (!cDelegate && (right.Type.Kind == [int](TypeKind.NullType) ||
+                                     right.Type.Name == "IO.Type.Object.Function" ||
+                                     right.Type.Name == "Object.Function")));
+                If (delegateTarget && functionReference &&
+                    !This.SameFunctionSignature(left.Function, right.Function))
                     This.Report(syntax, "Type Mismatch", "Delegate signature does not match target",
                         expression.Line, expression.Column);
-                ElseIf (!delegateAssignment && !This.IsHirAssignable(left.Type, right))
+                ElseIf (delegateTarget && !delegateAssignment)
+                    This.Report(syntax, "Type Mismatch",
+                        cDelegate ?
+                            "By C Delegate assignment requires a top-level function, raw pointer, or null" :
+                            "Delegate assignment requires Object.Function or null",
+                        expression.Line, expression.Column);
+                ElseIf (!delegateTarget && !This.IsHirAssignable(left.Type, right))
                     This.Report(syntax, "Type Mismatch", "Assignment types do not match",
                         expression.Line, expression.Column);
             }
@@ -4300,7 +4403,8 @@ Class SemanticCompilation
         result.Initializer = This.BindStatement(syntax, function, scope, statement.Initializer);
         If (statement.FirstChild != null)
         {
-            BindingScope childScope = New BindingScope(scope);
+            BindingScope childScope = statement.Kind == [int](StatementKind.Record) ?
+                scope : New BindingScope(scope);
             If (statement.Kind == [int](StatementKind.If) && statement.Expression != null &&
                 statement.Expression.Kind == [int](ExpressionKind.Binary) &&
                 statement.Expression.Operator == TokenKind.KwIs &&

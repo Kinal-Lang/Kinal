@@ -749,6 +749,7 @@ Safe Function bool IsFunctionModifier(TokenKind kind)
         Case(TokenKind.KwUnsafe) { true; }
         Case(TokenKind.KwAsync) { true; }
         Case(TokenKind.KwExtern) { true; }
+        Case(TokenKind.KwDelegate) { true; }
         Case(default) { false; }
     };
 }
@@ -2561,14 +2562,47 @@ Safe Function void ReadTypeMembers(ParseCursor cursor, TypeDecl type, SyntaxTree
             If (propertyName >= propertyStart)
             {
                 Token nameToken = RawAt(cursor, propertyName);
-                FieldDecl property = New FieldDecl(IO.Kinal.Compiler.Lex.Token.Text(nameToken),
-                    JoinTokenText(cursor, propertyStart, propertyName),
-                    IO.Kinal.Compiler.Lex.Token.Line(nameToken),
-                    IO.Kinal.Compiler.Lex.Token.Column(nameToken));
-                property.Access = access;
-                property.IsStatic = isStatic || type.IsStatic;
-                property.FirstAttribute = attributes;
-                type.AddField(property);
+                string propertyNameText = IO.Kinal.Compiler.Lex.Token.Text(nameToken);
+                string propertyType = JoinTokenText(cursor, propertyStart, propertyName);
+                cursor.Position = bodyStart;
+                If (Match(cursor, TokenKind.Semicolon)) Jump Dispatch;
+                If (!BuilderExpect(cursor, TokenKind.LeftBrace, "Expected '{'",
+                    "Property body is missing")) Jump Dispatch;
+                While (!IsEnd(cursor) && CurrentKind(cursor) != TokenKind.RightBrace)
+                {
+                    Token accessorToken = CurrentToken(cursor);
+                    TokenKind accessorKind = CurrentKind(cursor);
+                    If (accessorKind != TokenKind.KwGet && accessorKind != TokenKind.KwSet)
+                    {
+                        ReportToken(cursor.Diagnostics, cursor.Source, accessorToken,
+                            "Expected Property Accessor", "Property supports Get and Set accessors");
+                        Advance(cursor);
+                        Continue;
+                    }
+                    Advance(cursor);
+                    bool getter = accessorKind == TokenKind.KwGet;
+                    FunctionDecl accessor = New FunctionDecl(
+                        (getter ? "__get_" : "__set_") + propertyNameText,
+                        getter ? propertyType : "void",
+                        IO.Kinal.Compiler.Lex.Token.Line(accessorToken),
+                        IO.Kinal.Compiler.Lex.Token.Column(accessorToken));
+                    accessor.Access = access;
+                    accessor.Safety = safety;
+                    accessor.IsStatic = isStatic || type.IsStatic;
+                    accessor.IsAbstract = type.Kind == TokenKind.KwInterface || isAbstract;
+                    accessor.IsVirtual = isVirtual;
+                    accessor.IsOverride = isOverride;
+                    accessor.IsSealed = isSealed;
+                    accessor.FirstAttribute = attributes;
+                    If (!getter)
+                        accessor.AddParameter(New ParameterDecl("value", propertyType));
+                    If (!Match(cursor, TokenKind.Semicolon))
+                        accessor.Body = ParseAstBlock(cursor);
+                    type.AddMethod(accessor);
+                }
+                BuilderExpect(cursor, TokenKind.RightBrace, "Expected '}'",
+                    "Property body is not closed");
+                Jump Dispatch;
             }
             cursor.Position = bodyStart;
             If (!Match(cursor, TokenKind.Semicolon))
@@ -3011,16 +3045,6 @@ Safe Function SyntaxTree Build(SourceFile source, list tokens, list diagnostics)
             tree.AddMeta(ReadMetaNode(cursor));
             Jump Dispatch;
         }
-        If (kind == TokenKind.KwDelegate)
-        {
-            Advance(cursor);
-            FunctionDecl delegate = ReadFunctionNode(cursor, false, false, false, false, 0);
-            delegate.IsDelegate = true;
-            delegate.FirstAttribute = attributes;
-            tree.AddFunction(delegate);
-            Jump Dispatch;
-        }
-
         If (IsGlobalStart(kind))
         {
             If (attributes != null)
@@ -3053,6 +3077,7 @@ Safe Function SyntaxTree Build(SourceFile source, list tokens, list diagnostics)
         bool isStatic = false;
         bool isAsync = false;
         bool isExtern = false;
+        bool isDelegate = false;
         int safety = 0;
         While (IsFunctionModifier(CurrentKind(cursor)))
         {
@@ -3062,6 +3087,7 @@ Safe Function SyntaxTree Build(SourceFile source, list tokens, list diagnostics)
                 Case(TokenKind.KwStatic) { isStatic = true; }
                 Case(TokenKind.KwAsync) { isAsync = true; }
                 Case(TokenKind.KwExtern) { isExtern = true; }
+                Case(TokenKind.KwDelegate) { isDelegate = true; }
                 Case(TokenKind.KwSafe) { safety = 1; }
                 Case(TokenKind.KwTrusted) { safety = 2; }
                 Case(TokenKind.KwUnsafe) { safety = 3; }
@@ -3072,6 +3098,7 @@ Safe Function SyntaxTree Build(SourceFile source, list tokens, list diagnostics)
         If (CurrentKind(cursor) == TokenKind.KwFunction)
         {
             FunctionDecl function = ReadFunctionNode(cursor, false, isStatic, isAsync, isExtern, safety);
+            function.IsDelegate = isDelegate;
             function.FirstAttribute = attributes;
             tree.AddFunction(function);
             Jump Dispatch;

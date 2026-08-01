@@ -1459,6 +1459,88 @@ def main() -> int:
     )
     results.append({"name": "collection_runtime", "ok": True})
 
+    ffi_arrays_project = (
+        root / "tests" / "selfhost" / "fixtures" / "ffi_arrays" / "kinal.knproj"
+    )
+    ffi_arrays_executable = out_dir / f"ffi-arrays{executable_suffix}"
+    ffi_arrays_stage0_executable = out_dir / f"ffi-arrays-stage0{executable_suffix}"
+    ffi_arrays_build = run(
+        [str(compiler), "build", str(ffi_arrays_project), str(ffi_arrays_executable), "test"],
+        cwd=root,
+    )
+    require(ffi_arrays_build.returncode == 0,
+            "stage1 FFI-array fixture build failed", ffi_arrays_build)
+    ffi_arrays_stage0_build = run(
+        [
+            str(stage0),
+            "build",
+            "--project",
+            str(ffi_arrays_project.parent),
+            "--profile",
+            "test",
+            "-o",
+            str(ffi_arrays_stage0_executable),
+        ],
+        cwd=root,
+    )
+    require(ffi_arrays_stage0_build.returncode == 0,
+            "stage0 FFI-array fixture build failed", ffi_arrays_stage0_build)
+    ffi_arrays_run = run([str(ffi_arrays_executable)], cwd=root)
+    ffi_arrays_stage0_run = run([str(ffi_arrays_stage0_executable)], cwd=root)
+    ffi_arrays_expected = "3\n5\n3\n5\n7\n8\n9\n0\n22\n3"
+    require(
+        ffi_arrays_run.returncode == 0
+        and ffi_arrays_stage0_run.returncode == 0
+        and ffi_arrays_run.stdout.replace("\r\n", "\n").strip() == ffi_arrays_expected
+        and ffi_arrays_stage0_run.stdout.replace("\r\n", "\n").strip()
+        == ffi_arrays_expected,
+        "stage0/stage1 FFI-array behavior differs",
+        ffi_arrays_run,
+    )
+    results.append({"name": "ffi_array_abi", "ok": True})
+
+    global_constants_project = (
+        root / "tests" / "selfhost" / "fixtures" / "global_constants" / "kinal.knproj"
+    )
+    global_constants_executable = out_dir / f"global-constants{executable_suffix}"
+    global_constants_stage0_executable = out_dir / f"global-constants-stage0{executable_suffix}"
+    global_constants_build = run(
+        [str(compiler), "build", str(global_constants_project),
+         str(global_constants_executable), "native"],
+        cwd=root,
+    )
+    require(global_constants_build.returncode == 0,
+            "stage1 global-constants fixture build failed", global_constants_build)
+    global_constants_stage0_build = run(
+        [
+            str(stage0),
+            "build",
+            "--project",
+            str(global_constants_project.parent),
+            "--profile",
+            "native",
+            "-o",
+            str(global_constants_stage0_executable),
+        ],
+        cwd=root,
+    )
+    require(global_constants_stage0_build.returncode == 0,
+            "stage0 global-constants fixture build failed", global_constants_stage0_build)
+    global_constants_run = run([str(global_constants_executable)], cwd=root)
+    global_constants_stage0_run = run([str(global_constants_stage0_executable)], cwd=root)
+    global_constants_expected = "16384\nalpha\nbeta\nfixed 4 42 127\n41\n85"
+    require(
+        global_constants_run.returncode == 0
+        and global_constants_stage0_run.returncode == 0
+        and global_constants_run.stdout.replace("\r\n", "\n").strip()
+        == global_constants_expected
+        and global_constants_stage0_run.stdout.replace("\r\n", "\n").strip()
+        == global_constants_expected,
+        "stage0/stage1 global constants and fixed arrays behavior differs",
+        global_constants_run,
+    )
+    results.append({"name": "global_constants_fixed_arrays", "ok": True})
+
     phase5_project = (
         root / "tests" / "selfhost" / "fixtures" / "phase5_semantics" / "kinal.knproj"
     )
