@@ -897,8 +897,12 @@ Class NativeBackend
             }
             bool cAbi = symbol.Declaration.IsExtern ||
                 (symbol.Declaration.IsDelegate && symbol.Declaration.Abi == "C");
+            bool isAsync = symbol.Declaration.IsAsync &&
+                !symbol.Declaration.IsExtern && !symbol.Declaration.IsDelegate &&
+                !symbol.IsBlockLiteral;
             LlvmHandles parameters = New LlvmHandles();
             byte* returnType = null;
+            byte* logicalReturnType = null;
             If (symbol.IsBlockLiteral)
             {
                 parameters.Add(This.Module.PointerType(This.Module.IntType(8)));
@@ -922,6 +926,9 @@ Class NativeBackend
                 }
                 returnType = cAbi ? This.AbiTypeHandle(symbol.ReturnType) : This.TypeHandle(symbol.ReturnType);
             }
+            logicalReturnType = returnType;
+            If (isAsync)
+                returnType = This.TypeHandle(This.Semantics.FindExactType("IO.Async.Task"));
             byte* functionType = This.Module.FunctionType(returnType, parameters, false);
             If (symbol.Declaration.IsDelegate)
             {
@@ -938,7 +945,29 @@ Class NativeBackend
             }
             byte* function = This.Module.AddFunction(This.FunctionName(symbol), functionType);
             If (function == null) This.Fail("failed to declare function: " + symbol.QualifiedName());
-            This.AddFunctionBinding(New LlvmFunctionBinding(symbol, functionType, function, cAbi));
+            LlvmFunctionBinding binding = New LlvmFunctionBinding(
+                symbol, functionType, function, cAbi);
+            If (isAsync)
+            {
+                string helperPrefix = This.FunctionName(symbol);
+                binding.AsyncBodyFunctionType = This.Module.FunctionType(
+                    logicalReturnType, parameters, false);
+                binding.AsyncBodyFunction = This.Module.AddFunction(
+                    helperPrefix + "$async_body", binding.AsyncBodyFunctionType);
+                binding.AsyncEnvironmentType = This.Module.NamedStructType(
+                    helperPrefix + "$async_env");
+                If (!This.Module.SetStructBody(binding.AsyncEnvironmentType,
+                    parameters, false))
+                    This.Fail("failed to declare async environment: " +
+                        symbol.QualifiedName());
+                byte* bytePointer = This.Module.PointerType(This.Module.IntType(8));
+                LlvmHandles runnerParameters = This.Types2(bytePointer, bytePointer);
+                binding.AsyncRunnerFunctionType = This.Module.FunctionType(
+                    This.Module.VoidType(), runnerParameters, false);
+                binding.AsyncRunnerFunction = This.Module.AddFunction(
+                    helperPrefix + "$async_runner", binding.AsyncRunnerFunctionType);
+            }
+            This.AddFunctionBinding(binding);
             symbol = symbol.Next;
         }
     }
@@ -1007,6 +1036,7 @@ Class NativeBackend
         This.DeclareRuntimeFunction("__kn_gc_push_frame", pointer, This.Types0());
         This.DeclareRuntimeFunction("__kn_gc_add_root", voidType, This.Types3(pointer, pointer, int64Type));
         This.DeclareRuntimeFunction("__kn_gc_pop_frame", voidType, This.Types1(pointer));
+        This.DeclareRuntimeFunction("__kn_gc_collect", voidType, This.Types0());
         This.DeclareRuntimeFunction("__kn_exc_set", voidType, This.Types1(pointer));
         This.DeclareRuntimeFunction("__kn_exc_get", pointer, This.Types0());
         This.DeclareRuntimeFunction("__kn_exc_has", int32Type, This.Types0());
@@ -1029,7 +1059,11 @@ Class NativeBackend
         This.DeclareRuntimeFunction("kn_sh_rt_read_line", pointer, This.Types0());
         This.DeclareRuntimeFunction("kn_sh_rt_memory_copy", voidType,
             This.Types3(pointer, pointer, int64Type));
+        This.DeclareRuntimeFunction("kn_sh_rt_memory_set", voidType,
+            This.Types3(pointer, int8Type, int64Type));
         This.DeclareRuntimeFunction("kn_sh_rt_memory_zero", voidType, This.Types2(pointer, int64Type));
+        This.DeclareRuntimeFunction("kn_sh_rt_memory_compare", int32Type,
+            This.Types3(pointer, pointer, int64Type));
         This.DeclareRuntimeFunction("kn_sh_rt_volatile_read8", int8Type, This.Types1(pointer));
         This.DeclareRuntimeFunction("kn_sh_rt_volatile_read16", This.Module.IntType(16), This.Types1(pointer));
         This.DeclareRuntimeFunction("kn_sh_rt_volatile_read32", int32Type, This.Types1(pointer));
@@ -1047,6 +1081,13 @@ Class NativeBackend
             This.Types1(This.Module.FloatType(64)));
         This.DeclareRuntimeFunction("kn_sh_rt_char_to_string", pointer, This.Types1(int8Type));
         This.DeclareRuntimeFunction("kn_sh_rt_any_to_string", pointer, This.Types2(int64Type, int64Type));
+        This.DeclareRuntimeFunction("kn_sh_rt_any_to_i64", int64Type, This.Types2(int64Type, int64Type));
+        This.DeclareRuntimeFunction("kn_sh_rt_any_to_f64", This.Module.FloatType(64),
+            This.Types2(int64Type, int64Type));
+        This.DeclareRuntimeFunction("kn_sh_rt_any_to_bool", int32Type, This.Types2(int64Type, int64Type));
+        This.DeclareRuntimeFunction("kn_sh_rt_any_to_char", int8Type, This.Types2(int64Type, int64Type));
+        This.DeclareRuntimeFunction("kn_sh_rt_console_values", voidType,
+            This.Types3(pointer, int64Type, int32Type));
         This.DeclareRuntimeFunction("kn_sh_rt_string_to_i64", int64Type, This.Types1(pointer));
         This.DeclareRuntimeFunction("kn_sh_rt_string_to_f32", This.Module.FloatType(32), This.Types1(pointer));
         This.DeclareRuntimeFunction("kn_sh_rt_string_to_f64", This.Module.FloatType(64), This.Types1(pointer));
@@ -1067,6 +1108,30 @@ Class NativeBackend
         This.DeclareRuntimeFunction("__kn_time_tick", int64Type, This.Types0());
         This.DeclareRuntimeFunction("__kn_time_nano", int64Type, This.Types0());
         This.DeclareRuntimeFunction("__kn_time_sleep", voidType, This.Types1(int32Type));
+        This.DeclareRuntimeFunction("__kn_time_format", pointer, This.Types2(int64Type, pointer));
+        This.DeclareRuntimeFunction("kn_sh_rt_datetime_now", pointer, This.Types1(int64Type));
+        This.DeclareRuntimeFunction("kn_sh_rt_datetime_ticks", int64Type, This.Types1(pointer));
+
+        This.DeclareRuntimeFunction("__kn_async_process_spawn", pointer, This.Types1(pointer));
+        This.DeclareRuntimeFunction("__kn_async_process_is_completed", int32Type,
+            This.Types1(pointer));
+        This.DeclareRuntimeFunction("__kn_async_process_wait", int32Type,
+            This.Types2(pointer, int64Type));
+        This.DeclareRuntimeFunction("__kn_async_process_exit_code", int32Type,
+            This.Types1(pointer));
+        This.DeclareRuntimeFunction("__kn_async_process_close", int32Type,
+            This.Types1(pointer));
+        This.DeclareRuntimeFunction("__kn_async_task_spawn", pointer,
+            This.Types2(pointer, pointer));
+        This.DeclareRuntimeFunction("__kn_async_task_run", voidType,
+            This.Types3(pointer, int64Pointer, int64Pointer));
+        This.DeclareRuntimeFunction("__kn_async_task_complete", voidType,
+            This.Types3(pointer, int64Type, int64Type));
+        This.DeclareRuntimeFunction("__kn_async_task_fail", voidType,
+            This.Types3(pointer, pointer, pointer));
+        This.DeclareRuntimeFunction("__kn_async_task_sleep", pointer,
+            This.Types1(int32Type));
+        This.DeclareRuntimeFunction("__kn_async_task_yield", pointer, This.Types0());
 
         This.DeclareRuntimeFunction("__kn_list_new", pointer, This.Types0());
         This.DeclareRuntimeFunction("__kn_list_add", voidType, This.Types3(pointer, int64Type, int64Type));
@@ -1123,6 +1188,8 @@ Class NativeBackend
         This.DeclareRuntimeFunction("__kn_file_copy", int32Type, This.Types2(pointer, pointer));
         This.DeclareRuntimeFunction("__kn_file_move", int32Type, This.Types2(pointer, pointer));
         This.DeclareRuntimeFunction("__kn_file_replace_text", int32Type, This.Types3(pointer, pointer, pointer));
+        This.DeclareRuntimeFunction("__kn_file_read_lines", pointer, This.Types1(pointer));
+        This.DeclareRuntimeFunction("__kn_file_write_lines", int32Type, This.Types2(pointer, pointer));
         This.DeclareRuntimeFunction("__kn_dir_exists", int32Type, This.Types1(pointer));
         This.DeclareRuntimeFunction("__kn_dir_create", int32Type, This.Types1(pointer));
         This.DeclareRuntimeFunction("__kn_dir_ensure", int32Type, This.Types1(pointer));
@@ -1156,6 +1223,7 @@ Class NativeBackend
         This.DeclareRuntimeFunction("__kn_text_count", int64Type, This.Types2(pointer, pointer));
         This.DeclareRuntimeFunction("__kn_text_split", pointer, This.Types2(pointer, pointer));
         This.DeclareRuntimeFunction("__kn_text_lines", pointer, This.Types1(pointer));
+        This.DeclareRuntimeFunction("__kn_text_join", pointer, This.Types2(pointer, pointer));
     }
 
     Public Trusted Function byte* CallRuntime(string name, LlvmHandles arguments, string resultName)
@@ -1378,22 +1446,59 @@ Class NativeBackend
         Return This.AnyValue(tag, payload);
     }
 
+    Public Trusted Function LlvmValue RunAsyncTask(byte* task, string prefix)
+    {
+        byte* int64Type = This.Module.IntType(64);
+        byte* tagSlot = This.Module.Alloca(int64Type,
+            This.Unique(prefix + "_tag_slot"));
+        byte* payloadSlot = This.Module.Alloca(int64Type,
+            This.Unique(prefix + "_payload_slot"));
+        This.Module.Store(This.Module.ConstInt(int64Type, 0), tagSlot);
+        This.Module.Store(This.Module.ConstInt(int64Type, 0), payloadSlot);
+        byte* rawTask = This.Module.BitCast(task,
+            This.Module.PointerType(This.Module.IntType(8)),
+            This.Unique(prefix + "_task"));
+        This.CallRuntime("__kn_async_task_run",
+            This.Types3(rawTask, tagSlot, payloadSlot), "");
+        Return This.AnyFromSlots(tagSlot, payloadSlot, prefix);
+    }
+
+    Public Trusted Function LlvmValue AwaitTaskResult(
+        LlvmFunctionContext context, byte* task, TypeSymbol resultType,
+        string prefix)
+    {
+        LlvmValue boxed = This.RunAsyncTask(task, prefix);
+        This.MaybePropagateException(context);
+        If (resultType.Kind == [int](TypeKind.VoidType))
+            Return This.DefaultValue(resultType);
+        If (resultType.Kind == [int](TypeKind.AnyType)) Return boxed;
+        Return This.UnboxAny(boxed, resultType);
+    }
+
     Public Trusted Function LlvmValue UnboxAny(LlvmValue value, TypeSymbol target)
     {
+        byte* tag = This.Module.ExtractValue(value.Handle, 0, This.Unique("any_tag"));
         byte* payload = This.Module.ExtractValue(value.Handle, 1, This.Unique("any_payload"));
         If (target.Kind == [int](TypeKind.BoolType))
-            Return New LlvmValue(This.Module.Truncate(payload, This.Module.IntType(1), This.Unique("any_bool")), target);
+            Return New LlvmValue(This.RuntimeBool(This.CallRuntime("kn_sh_rt_any_to_bool",
+                This.Types2(tag, payload), This.Unique("any_bool_c"))), target);
         If (This.IsIntegerLike(target))
         {
+            byte* converted = target.Name == "char" ?
+                This.CallRuntime("kn_sh_rt_any_to_char", This.Types2(tag, payload),
+                    This.Unique("any_char")) :
+                This.CallRuntime("kn_sh_rt_any_to_i64", This.Types2(tag, payload),
+                    This.Unique("any_i64"));
             int bits = This.IntegerBits(target);
-            byte* raw = bits < 64 ? This.Module.Truncate(payload, This.Module.IntType(bits), This.Unique("any_int")) : payload;
+            byte* raw = bits < 64 && target.Name != "char" ?
+                This.Module.Truncate(converted, This.Module.IntType(bits),
+                    This.Unique("any_int")) : converted;
             Return New LlvmValue(raw, target);
         }
         If (target.Kind == [int](TypeKind.FloatType))
         {
-            byte* raw = This.Module.BitCast(payload,
-                This.TypeHandle(This.Semantics.Primitive("f64")),
-                This.Unique("any_float"));
+            byte* raw = This.CallRuntime("kn_sh_rt_any_to_f64",
+                This.Types2(tag, payload), This.Unique("any_float"));
             int bits = This.FloatBits(target);
             If (bits < 64)
                 raw = This.Module.FloatTruncate(raw, This.TypeHandle(target),
@@ -1407,8 +1512,6 @@ Class NativeBackend
             target.Kind == [int](TypeKind.ArrayType) ||
             target.Kind == [int](TypeKind.PackageType))
         {
-            byte* tag = This.Module.ExtractValue(value.Handle, 0,
-                This.Unique("any_aggregate_tag"));
             byte* hasPointerTag = This.Module.Compare(
                 [int](LlvmIntPredicate.Equal), tag,
                 This.Module.ConstInt(This.Module.IntType(64), 6),
@@ -2001,6 +2104,8 @@ Class NativeBackend
                                                         LlvmValue receiver)
     {
         LlvmHandles arguments = New LlvmHandles();
+        TypeSymbol callResultType = binding.Symbol.Declaration.IsAsync ?
+            expression.Type : binding.Symbol.ReturnType;
         bool hasReceiver = binding.Symbol.OwnerType != null &&
             (!binding.Symbol.Declaration.IsStatic || binding.Symbol.Declaration.IsConstructor);
         If (hasReceiver)
@@ -2015,7 +2120,7 @@ Class NativeBackend
             If (receiver == null)
             {
                 This.Fail("instance call has no receiver: " + binding.Symbol.QualifiedName());
-                Return This.DefaultValue(binding.Symbol.ReturnType);
+                Return This.DefaultValue(callResultType);
             }
             arguments.Add(This.CastValue(receiver, binding.Symbol.OwnerType).Handle);
         }
@@ -2038,11 +2143,11 @@ Class NativeBackend
             }
             parameter = parameter.Next;
         }
-        string resultName = binding.Symbol.ReturnType.Kind == [int](TypeKind.VoidType) ? "" : This.Unique("call");
+        string resultName = callResultType.Kind == [int](TypeKind.VoidType) ? "" : This.Unique("call");
         byte* result = This.Module.Call(binding.FunctionType, binding.Function, arguments, resultName);
         If (!binding.UsesCAbi) This.MaybePropagateException(context);
         Return binding.UsesCAbi ? This.FromCAbi(result, binding.Symbol.ReturnType) :
-            New LlvmValue(result, binding.Symbol.ReturnType);
+            New LlvmValue(result, callResultType);
     }
 
     Public Trusted Function LlvmValue EmitVirtualFunctionCall(LlvmFunctionContext context,
@@ -2050,6 +2155,8 @@ Class NativeBackend
                                                                HirExpression expression,
                                                                LlvmValue receiver)
     {
+        TypeSymbol callResultType = binding.Symbol.Declaration.IsAsync ?
+            expression.Type : binding.Symbol.ReturnType;
         If (receiver == null)
         {
             LlvmVariable thisVariable = context.FindVariable(context.Binding.Symbol.Receiver, "This");
@@ -2060,14 +2167,14 @@ Class NativeBackend
         If (receiver == null)
         {
             This.Fail("virtual call has no receiver: " + binding.Symbol.QualifiedName());
-            Return This.DefaultValue(binding.Symbol.ReturnType);
+            Return This.DefaultValue(callResultType);
         }
         int slot = This.DispatchSlot(binding.Symbol.OwnerType,
             binding.Symbol);
         If (slot < 0)
         {
             This.Fail("virtual slot is missing: " + binding.Symbol.QualifiedName());
-            Return This.DefaultValue(binding.Symbol.ReturnType);
+            Return This.DefaultValue(callResultType);
         }
         byte* bytePointer = This.Module.PointerType(This.Module.IntType(8));
         byte* rawReceiver = This.Module.BitCast(receiver.Handle, bytePointer,
@@ -2098,12 +2205,12 @@ Class NativeBackend
             }
             parameter = parameter.Next;
         }
-        string resultName = binding.Symbol.ReturnType.Kind == [int](TypeKind.VoidType) ?
+        string resultName = callResultType.Kind == [int](TypeKind.VoidType) ?
             "" : This.Unique("virtual_call");
         byte* result = This.Module.Call(binding.FunctionType, callable,
             arguments, resultName);
         This.MaybePropagateException(context);
-        Return New LlvmValue(result, binding.Symbol.ReturnType);
+        Return New LlvmValue(result, callResultType);
     }
 
     Public Trusted Function LlvmValue EmitDelegateCall(LlvmFunctionContext context,
@@ -2364,6 +2471,42 @@ Class NativeBackend
         Return wrapper;
     }
 
+    Public Trusted Function byte* EnsureBuiltinCallableWrapper(string target)
+    {
+        bool console = target == "IO.Console.Print" ||
+            target == "IO.Console.PrintLine" || target == "IO.Console.Write" ||
+            target == "IO.Console.WriteLine";
+        If (!console)
+        {
+            This.Fail("builtin function reference is not lowered: " + target);
+            Return null;
+        }
+
+        byte* bytePointer = This.Module.PointerType(This.Module.IntType(8));
+        byte* anyPointer = This.Module.PointerType(This.AnyType);
+        LlvmHandles parameters = New LlvmHandles();
+        parameters.Add(bytePointer);
+        parameters.Add(anyPointer);
+        parameters.Add(This.Module.IntType(64));
+        byte* wrapperType = This.Module.FunctionType(This.AnyType, parameters, false);
+        byte* wrapper = This.Module.AddFunction(This.Unique(
+            "__kn_selfhost_builtin_callable_" + This.Sanitize(target) + "_"),
+            wrapperType);
+
+        byte* savedBlock = This.Module.CurrentBlock();
+        This.Module.PositionAtEnd(This.Module.AppendBlock(wrapper, "entry"));
+        byte* arguments = This.Module.BitCast(This.Module.Parameter(wrapper, 1),
+            bytePointer, This.Unique("builtin_arguments"));
+        bool newline = target == "IO.Console.PrintLine" ||
+            target == "IO.Console.WriteLine";
+        This.CallRuntime("kn_sh_rt_console_values", This.Types3(arguments,
+            This.Module.Parameter(wrapper, 2),
+            This.Module.ConstInt(This.Module.IntType(32), newline ? 1 : 0)), "");
+        This.Module.ReturnValue(This.DefaultValue(This.Semantics.Primitive("any")).Handle);
+        If (savedBlock != null) This.Module.PositionAtEnd(savedBlock);
+        Return wrapper;
+    }
+
     Public Trusted Function void EmitMetaDictString(byte* dictionary, string key, string value)
     {
         byte* text = This.Module.GlobalString(value, This.Unique("meta_text"));
@@ -2398,6 +2541,51 @@ Class NativeBackend
             unit = unit.Next;
         }
         Return attribute.Name;
+    }
+
+    Public Trusted Function LlvmValue EmitMetaOwnerName(LlvmFunctionContext context,
+                                                          HirExpression expression)
+    {
+        If (expression != null &&
+            expression.Kind == [int](HirExpressionKind.FunctionReference) &&
+            expression.Function != null)
+            Return New LlvmValue(This.Module.GlobalString(
+                expression.Function.QualifiedName(), This.Unique("meta_owner_name")),
+                This.Semantics.Primitive("string"));
+        Return This.CastValue(This.EmitExpression(context, expression),
+            This.Semantics.Primitive("string"));
+    }
+
+    Public Trusted Function byte* EmitMetaDictionary(FunctionSymbol symbol,
+                                                       SyntaxAttribute attribute)
+    {
+        string resolvedName = This.ResolvedAttributeName(symbol.Syntax, attribute);
+        byte* dictionary = This.CallRuntime("__kn_dict_new", This.Types0(),
+            This.Unique("meta_dictionary"));
+        This.EmitMetaDictString(dictionary, "owner", symbol.QualifiedName());
+        This.EmitMetaDictInteger(dictionary, "owner_kind", 1);
+        This.EmitMetaDictInteger(dictionary, "owner_param_count", symbol.ParameterCount());
+        LlvmFunctionBinding functionBinding = This.FindFunctionBinding(symbol);
+        byte* ownerPointer = null;
+        If (This.Semantics.AttributeShortName(attribute.Name) == "__Dispatcher" &&
+            functionBinding != null)
+            ownerPointer = functionBinding.Function;
+        Else
+        {
+            byte* wrapper = This.EnsureCallableWrapper(functionBinding);
+            ownerPointer = This.CreateCallableObject(false, wrapper, null);
+        }
+        This.CallRuntime("__kn_dict_set", This.Types4(dictionary,
+            This.Module.GlobalString("owner_ptr", This.Unique("meta_key")),
+            This.Module.ConstInt(This.Module.IntType(64), 6),
+            This.Module.PointerToInt(ownerPointer, This.Module.IntType(64),
+                This.Unique("meta_owner_pointer"))), "");
+        This.EmitMetaDictString(dictionary, "module", symbol.UnitName);
+        This.EmitMetaDictString(dictionary, "meta", resolvedName);
+        This.EmitMetaDictString(dictionary, "name",
+            This.Semantics.AttributeShortName(resolvedName));
+        This.EmitMetaAttributeArguments(dictionary, symbol.Syntax, attribute);
+        Return dictionary;
     }
 
     Public Trusted Function LlvmValue EmitMetaQuery(LlvmFunctionContext context, HirExpression expression)
@@ -2438,6 +2626,43 @@ Class NativeBackend
             symbol = symbol.Next;
         }
         Return New LlvmValue(owners, This.Semantics.Primitive("list"));
+    }
+
+    Public Trusted Function LlvmValue EmitMetaOf(LlvmFunctionContext context,
+                                                  HirExpression expression)
+    {
+        LlvmValue ownerName = This.EmitMetaOwnerName(context, expression.FirstArgument);
+        byte* attributes = This.CallRuntime("__kn_list_new", This.Types0(),
+            This.Unique("meta_attributes"));
+        FunctionSymbol symbol = This.Semantics.FirstFunction;
+        While (symbol != null)
+        {
+            SyntaxAttribute attribute = symbol.Declaration.FirstAttribute;
+            While (attribute != null)
+            {
+                byte* ownerMatches = This.RuntimeBool(This.CallRuntime(
+                    "kn_sh_rt_string_equal", This.Types2(ownerName.Handle,
+                        This.Module.GlobalString(symbol.QualifiedName(),
+                            This.Unique("meta_owner"))),
+                    This.Unique("meta_owner_match_c")));
+                byte* addBlock = This.Module.AppendBlock(context.Binding.Function,
+                    This.Unique("meta_of_add"));
+                byte* nextBlock = This.Module.AppendBlock(context.Binding.Function,
+                    This.Unique("meta_of_next"));
+                This.Module.ConditionalBranch(ownerMatches, addBlock, nextBlock);
+                This.Module.PositionAtEnd(addBlock);
+                byte* dictionary = This.EmitMetaDictionary(symbol, attribute);
+                This.CallRuntime("__kn_list_add", This.Types3(attributes,
+                    This.Module.ConstInt(This.Module.IntType(64), 7),
+                    This.Module.PointerToInt(dictionary, This.Module.IntType(64),
+                        This.Unique("meta_dictionary_value"))), "");
+                This.Module.Branch(nextBlock);
+                This.Module.PositionAtEnd(nextBlock);
+                attribute = attribute.Next;
+            }
+            symbol = symbol.Next;
+        }
+        Return New LlvmValue(attributes, This.Semantics.Primitive("list"));
     }
 
     Public Safe Function string BuiltinMetaParameterName(string attributeName, int index)
@@ -2588,6 +2813,17 @@ Class NativeBackend
         This.Module.PositionAtEnd(doneBlock);
         Return New LlvmValue(This.Module.Load(This.Module.PointerType(This.Module.IntType(8)), resultAddress,
             This.Unique("meta_result_value")), This.Semantics.Primitive("dict"));
+    }
+
+    Public Trusted Function LlvmValue EmitMetaHas(LlvmFunctionContext context,
+                                                   HirExpression expression)
+    {
+        LlvmValue found = This.EmitMetaFind(context, expression);
+        byte* pointer = This.Module.BitCast(found.Handle,
+            This.Module.PointerType(This.Module.IntType(8)), This.Unique("meta_has_pointer"));
+        Return New LlvmValue(This.Module.Compare([int](LlvmIntPredicate.NotEqual), pointer,
+            This.Module.ConstNull(This.Module.PointerType(This.Module.IntType(8))),
+            This.Unique("meta_has")), This.Semantics.Primitive("bool"));
     }
 
     Public Safe Function int ExpressionListCount(HirExpression expression)
@@ -2762,6 +2998,171 @@ Class NativeBackend
         Return New LlvmValue(dictionary, expression.Type);
     }
 
+    Public Safe Function string RuntimeTypeName(TypeSymbol type)
+    {
+        If (type == null) Return "unknown";
+        If (type.Kind == [int](TypeKind.ListType)) Return "IO.Collection.list";
+        If (type.Kind == [int](TypeKind.DictType)) Return "IO.Collection.dict";
+        If (type.Kind == [int](TypeKind.SetType)) Return "IO.Collection.set";
+        If (type.Kind == [int](TypeKind.PackageType)) Return "Package";
+        If (type.Kind == [int](TypeKind.NamedType)) Return type.QualifiedName();
+        Return type.Name;
+    }
+
+    Public Safe Function bool IsAnyBuiltin(string target)
+    {
+        string name = IO.Text.StartsWith(target, "IO.Type.any.") ?
+            IO.Text.Slice(target, 12, IO.Text.Length(target) - 12) : target;
+        Return name == "IsNull" || name == "ToString" || name == "Equals" ||
+            name == "Tag" || name == "TypeName" || name == "IsNumber" ||
+            name == "IsPointer" || name == "IsInt" || name == "IsFloat" ||
+            name == "IsString" || name == "IsBool" || name == "IsChar" ||
+            name == "IsObject";
+    }
+
+    Public Trusted Function LlvmValue EmitAnyBuiltin(LlvmFunctionContext context,
+                                                       HirExpression expression,
+                                                       LlvmValue receiver)
+    {
+        string target = expression.Target;
+        string name = IO.Text.StartsWith(target, "IO.Type.any.") ?
+            IO.Text.Slice(target, 12, IO.Text.Length(target) - 12) : target;
+        HirExpression argument = expression.FirstArgument;
+        LlvmValue value = receiver;
+        If (value == null && argument != null)
+        {
+            value = This.EmitExpression(context, argument);
+            argument = argument.Next;
+        }
+        If (value == null) Return null;
+
+        If (name == "ToString")
+            Return This.CastValue(value, This.Semantics.Primitive("string"));
+        If (name == "TypeName" && value.Type.Kind != [int](TypeKind.AnyType))
+            Return New LlvmValue(This.Module.GlobalString(This.RuntimeTypeName(value.Type),
+                This.Unique("type_name")), This.Semantics.Primitive("string"));
+
+        LlvmValue boxed = This.BoxAny(value);
+        byte* tag = This.Module.ExtractValue(boxed.Handle, 0, This.Unique("any_tag"));
+        byte* payload = This.Module.ExtractValue(boxed.Handle, 1, This.Unique("any_payload"));
+        byte* int64Type = This.Module.IntType(64);
+        If (name == "Tag") Return New LlvmValue(tag, This.Semantics.Primitive("int"));
+        If (name == "Equals")
+        {
+            If (argument == null) Return This.DefaultValue(This.Semantics.Primitive("bool"));
+            LlvmValue other = This.BoxAny(This.EmitExpression(context, argument));
+            byte* otherTag = This.Module.ExtractValue(other.Handle, 0,
+                This.Unique("any_other_tag"));
+            byte* otherPayload = This.Module.ExtractValue(other.Handle, 1,
+                This.Unique("any_other_payload"));
+            byte* sameTag = This.Module.Compare([int](LlvmIntPredicate.Equal), tag,
+                otherTag, This.Unique("any_same_tag"));
+            byte* samePayload = This.Module.Compare([int](LlvmIntPredicate.Equal), payload,
+                otherPayload, This.Unique("any_same_payload"));
+            byte* isString = This.Module.Compare([int](LlvmIntPredicate.Equal), tag,
+                This.Module.ConstInt(int64Type, 5), This.Unique("any_is_string"));
+            byte* bytePointer = This.Module.PointerType(This.Module.IntType(8));
+            byte* nullPointer = This.Module.ConstNull(bytePointer);
+            byte* leftString = This.Module.Select(isString,
+                This.Module.IntToPointer(payload, bytePointer, This.Unique("any_left_string")),
+                nullPointer, This.Unique("any_safe_left_string"));
+            byte* rightString = This.Module.Select(isString,
+                This.Module.IntToPointer(otherPayload, bytePointer,
+                    This.Unique("any_right_string")),
+                nullPointer, This.Unique("any_safe_right_string"));
+            byte* stringEqual = This.RuntimeBool(This.CallRuntime("kn_sh_rt_string_equal",
+                This.Types2(leftString, rightString), This.Unique("any_string_equal_c")));
+            byte* equalValue = This.Module.Select(isString, stringEqual, samePayload,
+                This.Unique("any_equal_value"));
+            Return New LlvmValue(This.Module.And(sameTag, equalValue,
+                This.Unique("any_equal")), This.Semantics.Primitive("bool"));
+        }
+        If (name == "TypeName")
+        {
+            byte* result = This.Module.GlobalString("pointer", This.Unique("type_pointer"));
+            result = This.Module.Select(This.Module.Compare([int](LlvmIntPredicate.Equal), tag,
+                This.Module.ConstInt(int64Type, 0), This.Unique("type_is_null")),
+                This.Module.GlobalString("null", This.Unique("type_null")), result,
+                This.Unique("type_name_null"));
+            result = This.Module.Select(This.Module.Compare([int](LlvmIntPredicate.Equal), tag,
+                This.Module.ConstInt(int64Type, 1), This.Unique("type_is_int")),
+                This.Module.GlobalString("int", This.Unique("type_int")), result,
+                This.Unique("type_name_int"));
+            result = This.Module.Select(This.Module.Compare([int](LlvmIntPredicate.Equal), tag,
+                This.Module.ConstInt(int64Type, 2), This.Unique("type_is_float")),
+                This.Module.GlobalString("float", This.Unique("type_float")), result,
+                This.Unique("type_name_float"));
+            result = This.Module.Select(This.Module.Compare([int](LlvmIntPredicate.Equal), tag,
+                This.Module.ConstInt(int64Type, 3), This.Unique("type_is_bool")),
+                This.Module.GlobalString("bool", This.Unique("type_bool")), result,
+                This.Unique("type_name_bool"));
+            result = This.Module.Select(This.Module.Compare([int](LlvmIntPredicate.Equal), tag,
+                This.Module.ConstInt(int64Type, 4), This.Unique("type_is_char")),
+                This.Module.GlobalString("char", This.Unique("type_char")), result,
+                This.Unique("type_name_char"));
+            result = This.Module.Select(This.Module.Compare([int](LlvmIntPredicate.Equal), tag,
+                This.Module.ConstInt(int64Type, 5), This.Unique("type_is_string")),
+                This.Module.GlobalString("string", This.Unique("type_string")), result,
+                This.Unique("type_name_string"));
+            result = This.Module.Select(This.Module.Compare([int](LlvmIntPredicate.Equal), tag,
+                This.Module.ConstInt(int64Type, 7), This.Unique("type_is_dict")),
+                This.Module.GlobalString("IO.Collection.dict", This.Unique("type_dict")), result,
+                This.Unique("type_name_dict"));
+            result = This.Module.Select(This.Module.Compare([int](LlvmIntPredicate.Equal), tag,
+                This.Module.ConstInt(int64Type, 8), This.Unique("type_is_list")),
+                This.Module.GlobalString("IO.Collection.list", This.Unique("type_list")), result,
+                This.Unique("type_name_list"));
+            result = This.Module.Select(This.Module.Compare([int](LlvmIntPredicate.Equal), tag,
+                This.Module.ConstInt(int64Type, 9), This.Unique("type_is_set")),
+                This.Module.GlobalString("IO.Collection.set", This.Unique("type_set")), result,
+                This.Unique("type_name_set"));
+            Return New LlvmValue(result, This.Semantics.Primitive("string"));
+        }
+
+        byte* matches = null;
+        If (name == "IsNull")
+        {
+            byte* nullTag = This.Module.Compare([int](LlvmIntPredicate.Equal), tag,
+                This.Module.ConstInt(int64Type, 0), This.Unique("any_null_tag"));
+            byte* nullPayload = This.Module.Compare([int](LlvmIntPredicate.Equal), payload,
+                This.Module.ConstInt(int64Type, 0), This.Unique("any_null_payload"));
+            matches = This.Module.And(nullTag, nullPayload, This.Unique("any_is_null"));
+        }
+        ElseIf (name == "IsNumber")
+        {
+            byte* integer = This.Module.Compare([int](LlvmIntPredicate.Equal), tag,
+                This.Module.ConstInt(int64Type, 1), This.Unique("any_is_integer"));
+            byte* floating = This.Module.Compare([int](LlvmIntPredicate.Equal), tag,
+                This.Module.ConstInt(int64Type, 2), This.Unique("any_is_floating"));
+            matches = This.Module.Or(integer, floating, This.Unique("any_is_number"));
+        }
+        ElseIf (name == "IsObject")
+        {
+            byte* pointer = This.Module.Compare([int](LlvmIntPredicate.Equal), tag,
+                This.Module.ConstInt(int64Type, 6), This.Unique("any_is_pointer"));
+            byte* dictionary = This.Module.Compare([int](LlvmIntPredicate.Equal), tag,
+                This.Module.ConstInt(int64Type, 7), This.Unique("any_is_dictionary"));
+            byte* values = This.Module.Compare([int](LlvmIntPredicate.Equal), tag,
+                This.Module.ConstInt(int64Type, 8), This.Unique("any_is_list"));
+            byte* setValues = This.Module.Compare([int](LlvmIntPredicate.Equal), tag,
+                This.Module.ConstInt(int64Type, 9), This.Unique("any_is_set"));
+            matches = This.Module.Or(This.Module.Or(pointer, dictionary,
+                This.Unique("any_object_pointer")), This.Module.Or(values, setValues,
+                This.Unique("any_object_collection")), This.Unique("any_is_object"));
+        }
+        Else
+        {
+            int expectedTag = name == "IsPointer" ? 6 : (name == "IsInt" ? 1 :
+                (name == "IsFloat" ? 2 : (name == "IsString" ? 5 :
+                (name == "IsBool" ? 3 : (name == "IsChar" ? 4 : -1)))));
+            If (expectedTag >= 0)
+                matches = This.Module.Compare([int](LlvmIntPredicate.Equal), tag,
+                    This.Module.ConstInt(int64Type, expectedTag), This.Unique("any_kind"));
+        }
+        If (matches == null) Return null;
+        Return New LlvmValue(matches, This.Semantics.Primitive("bool"));
+    }
+
     Public Trusted Function LlvmValue EmitRuntimeBuiltin(LlvmFunctionContext context, HirExpression expression)
     {
         string target = expression.Target;
@@ -2770,8 +3171,12 @@ Class NativeBackend
         If (expression.Left == null && IO.Text.EndsWith(target, ".Run"))
         {
             string blockName = IO.Text.Slice(target, 0, IO.Text.Length(target) - 4);
-            This.EmitUnsafeBlock(context, context.FindBlock(blockName));
-            Return This.DefaultValue(This.Semantics.Primitive("void"));
+            LlvmBlockBinding block = context.FindBlock(blockName);
+            If (block != null)
+            {
+                This.EmitUnsafeBlock(context, block);
+                Return This.DefaultValue(This.Semantics.Primitive("void"));
+            }
         }
         bool namespaceReceiver = expression.Left != null &&
             expression.Left.Kind == [int](HirExpressionKind.Namespace);
@@ -2779,6 +3184,12 @@ Class NativeBackend
         LlvmValue receiver = expression.Left == null || namespaceReceiver ?
             null : This.EmitExpression(context, expression.Left);
         HirExpression first = expression.FirstArgument;
+
+        If (This.IsAnyBuiltin(target))
+        {
+            LlvmValue anyResult = This.EmitAnyBuiltin(context, expression, receiver);
+            If (anyResult != null) Return anyResult;
+        }
 
         If (target == "TypeOf" && receiver != null)
             Return New LlvmValue(This.Module.GlobalString(receiver.Type.Name,
@@ -2863,6 +3274,29 @@ Class NativeBackend
                 This.Types2(left.Handle, right.Handle), This.Unique("string_equal_c"))),
                 This.Semantics.Primitive("bool"));
         }
+        If (target == "IO.Type.string.ToChars")
+        {
+            LlvmValue value = This.CastValue(This.EmitExpression(context, first),
+                This.Semantics.Primitive("string"));
+            byte* lengthSlot = This.Module.Alloca(This.Module.IntType(64),
+                This.Unique("chars_length_slot"));
+            This.Module.Store(This.Module.ConstInt(This.Module.IntType(64), 0), lengthSlot);
+            byte* data = This.CallRuntime("__kn_string_to_chars",
+                This.Types2(value.Handle, lengthSlot), This.Unique("chars_data"));
+            byte* array = This.Module.ConstUndef(This.TypeHandle(expression.Type));
+            array = This.Module.InsertValue(array, data, 0, "");
+            array = This.Module.InsertValue(array,
+                This.Module.Load(This.Module.IntType(64), lengthSlot,
+                    This.Unique("chars_length")), 1, "");
+            Return New LlvmValue(array, expression.Type);
+        }
+        If (IO.Text.StartsWith(target, "IO.Type."))
+        {
+            string convertedName = IO.Text.Slice(target, 8,
+                IO.Text.Length(target) - 8);
+            If (!IO.Text.Contains(convertedName, ".") && first != null)
+                Return This.CastValue(This.EmitExpression(context, first), expression.Type);
+        }
         If (target == "list.Create")
             Return New LlvmValue(This.CallRuntime("__kn_list_new", This.Types0(), This.Unique("list")),
                 This.Semantics.Primitive("list"));
@@ -2873,13 +3307,106 @@ Class NativeBackend
             Return New LlvmValue(This.CallRuntime("__kn_set_new", This.Types0(), This.Unique("set")),
                 This.Semantics.Primitive("set"));
         If (target == "IO.Meta.Query") Return This.EmitMetaQuery(context, expression);
+        If (target == "IO.Meta.Of") Return This.EmitMetaOf(context, expression);
         If (target == "IO.Meta.Find") Return This.EmitMetaFind(context, expression);
+        If (target == "IO.Meta.Has") Return This.EmitMetaHas(context, expression);
+        If (target == "IO.GC.Collect")
+        {
+            This.CallRuntime("__kn_gc_collect", This.Types0(), "");
+            Return This.DefaultValue(This.Semantics.Primitive("void"));
+        }
+        If (target == "IO.Async.Spawn")
+        {
+            LlvmValue command = This.CastValue(This.EmitExpression(context, first),
+                This.Semantics.Primitive("string"));
+            Return New LlvmValue(This.CallRuntime("__kn_async_process_spawn",
+                This.Types1(command.Handle), This.Unique("async_process")),
+                expression.Type);
+        }
+        If (target == "IO.Async.IsCompleted")
+        {
+            LlvmValue handle = This.EmitExpression(context, first);
+            Return New LlvmValue(This.RuntimeBool(This.CallRuntime(
+                "__kn_async_process_is_completed", This.Types1(handle.Handle),
+                This.Unique("async_completed_c"))), This.Semantics.Primitive("bool"));
+        }
+        If (target == "IO.Async.Wait")
+        {
+            LlvmValue handle = This.EmitExpression(context, first);
+            LlvmValue timeout = This.CastValue(This.EmitExpression(context, first.Next),
+                This.Semantics.Primitive("int"));
+            Return New LlvmValue(This.RuntimeBool(This.CallRuntime(
+                "__kn_async_process_wait", This.Types2(handle.Handle, timeout.Handle),
+                This.Unique("async_wait_c"))), This.Semantics.Primitive("bool"));
+        }
+        If (target == "IO.Async.ExitCode")
+        {
+            LlvmValue handle = This.EmitExpression(context, first);
+            byte* exitCode = This.CallRuntime("__kn_async_process_exit_code",
+                This.Types1(handle.Handle), This.Unique("async_exit_code_c"));
+            Return New LlvmValue(This.Module.SignExtend(exitCode,
+                This.Module.IntType(64), This.Unique("async_exit_code")),
+                This.Semantics.Primitive("int"));
+        }
+        If (target == "IO.Async.Close")
+        {
+            LlvmValue handle = This.EmitExpression(context, first);
+            Return New LlvmValue(This.RuntimeBool(This.CallRuntime(
+                "__kn_async_process_close", This.Types1(handle.Handle),
+                This.Unique("async_close_c"))), This.Semantics.Primitive("bool"));
+        }
+        If (target == "IO.Async.Run")
+        {
+            LlvmValue task = This.EmitExpression(context, first);
+            Return This.AwaitTaskResult(context, task.Handle, expression.Type,
+                "async_run");
+        }
+        If (target == "IO.Async.Sleep")
+        {
+            LlvmValue milliseconds = This.CastValue(This.EmitExpression(context, first),
+                This.Semantics.Primitive("int"));
+            byte* task = This.CallRuntime("__kn_async_task_sleep", This.Types1(
+                This.Module.Truncate(milliseconds.Handle, This.Module.IntType(32),
+                    This.Unique("async_sleep_ms"))), This.Unique("async_sleep"));
+            Return New LlvmValue(This.Module.BitCast(task, This.TypeHandle(expression.Type),
+                This.Unique("async_sleep_task")), expression.Type);
+        }
+        If (target == "IO.Async.Yield")
+        {
+            byte* task = This.CallRuntime("__kn_async_task_yield", This.Types0(),
+                This.Unique("async_yield"));
+            Return New LlvmValue(This.Module.BitCast(task, This.TypeHandle(expression.Type),
+                This.Unique("async_yield_task")), expression.Type);
+        }
         If (target == "IO.Time.GetTick")
             Return New LlvmValue(This.CallRuntime("__kn_time_tick", This.Types0(), This.Unique("time_tick")),
                 This.Semantics.Primitive("int"));
         If (target == "IO.Time.GetNanoTick")
             Return New LlvmValue(This.CallRuntime("__kn_time_nano", This.Types0(), This.Unique("time_nano")),
                 This.Semantics.Primitive("int"));
+        If (target == "IO.Time.Now")
+        {
+            LlvmTypeBinding dateTime = This.FindTypeBinding(expression.Type);
+            byte* raw = This.CallRuntime("kn_sh_rt_datetime_now",
+                This.Types1(This.Module.ConstInt(This.Module.IntType(64),
+                    dateTime == null ? 0 : dateTime.RuntimeTypeId)),
+                This.Unique("datetime_now"));
+            Return New LlvmValue(This.Module.BitCast(raw, This.TypeHandle(expression.Type),
+                This.Unique("datetime")), expression.Type);
+        }
+        If (target == "IO.Time.Format")
+        {
+            LlvmValue dateTime = This.EmitExpression(context, first);
+            LlvmValue pattern = This.CastValue(This.EmitExpression(context, first.Next),
+                This.Semantics.Primitive("string"));
+            byte* raw = This.Module.BitCast(dateTime.Handle,
+                This.Module.PointerType(This.Module.IntType(8)), This.Unique("datetime_raw"));
+            byte* ticks = This.CallRuntime("kn_sh_rt_datetime_ticks", This.Types1(raw),
+                This.Unique("datetime_ticks"));
+            Return New LlvmValue(This.CallRuntime("__kn_time_format",
+                This.Types2(ticks, pattern.Handle), This.Unique("datetime_text")),
+                This.Semantics.Primitive("string"));
+        }
         If (target == "IO.Time.Sleep")
         {
             LlvmValue milliseconds = This.CastValue(This.EmitExpression(context, first),
@@ -2933,7 +3460,8 @@ Class NativeBackend
         If (target == "IO.System.LastError")
             Return New LlvmValue(This.CallRuntime("__kn_sys_last_error", This.Types0(),
                 This.Unique("last_error")), This.Semantics.Primitive("string"));
-        If (target == "IO.Memory.Copy" || target == "IO.Memory.Zero")
+        If (target == "IO.Memory.Copy" || target == "IO.Memory.Set" ||
+            target == "IO.Memory.Zero" || target == "IO.Memory.Compare")
         {
             LlvmValue destination = This.EmitExpression(context, first);
             If (target == "IO.Memory.Copy")
@@ -2943,6 +3471,27 @@ Class NativeBackend
                     This.Semantics.Primitive("usize"));
                 This.CallRuntime("kn_sh_rt_memory_copy",
                     This.Types3(destination.Handle, source.Handle, count.Handle), "");
+            }
+            ElseIf (target == "IO.Memory.Set")
+            {
+                LlvmValue value = This.CastValue(This.EmitExpression(context, first.Next),
+                    This.Semantics.Primitive("byte"));
+                LlvmValue count = This.CastValue(This.EmitExpression(context, first.Next.Next),
+                    This.Semantics.Primitive("usize"));
+                This.CallRuntime("kn_sh_rt_memory_set",
+                    This.Types3(destination.Handle, value.Handle, count.Handle), "");
+            }
+            ElseIf (target == "IO.Memory.Compare")
+            {
+                LlvmValue other = This.EmitExpression(context, first.Next);
+                LlvmValue count = This.CastValue(This.EmitExpression(context, first.Next.Next),
+                    This.Semantics.Primitive("usize"));
+                byte* compared = This.CallRuntime("kn_sh_rt_memory_compare",
+                    This.Types3(destination.Handle, other.Handle, count.Handle),
+                    This.Unique("memory_compare_c"));
+                Return New LlvmValue(This.Module.SignExtend(compared,
+                    This.Module.IntType(64), This.Unique("memory_compare")),
+                    This.Semantics.Primitive("int"));
             }
             Else
             {
@@ -3210,7 +3759,8 @@ Class NativeBackend
                     This.Unique("set_values")), This.Semantics.Primitive("list"));
         }
 
-        If (receiver != null && receiver.Type.Kind == [int](TypeKind.StringType))
+        If (receiver != null && (receiver.Type.Kind == [int](TypeKind.StringType) ||
+            receiver.Type.Name == "string" || receiver.Type.Name == "IO.Type.string"))
         {
             If (target == "Length")
                 Return New LlvmValue(This.CallRuntime("kn_sh_rt_string_length", This.Types1(receiver.Handle),
@@ -3226,6 +3776,17 @@ Class NativeBackend
                 array = This.Module.InsertValue(array,
                     This.Module.Load(This.Module.IntType(64), lengthSlot, This.Unique("chars_length")), 1, "");
                 Return New LlvmValue(array, resultType);
+            }
+            If (target == "Index")
+            {
+                LlvmValue index = This.CastValue(This.EmitExpression(context, first),
+                    This.Semantics.Primitive("int"));
+                byte* address = This.Module.Gep(This.TypeHandle(This.Semantics.Primitive("char")),
+                    receiver.Handle, This.Types1(index.Handle), true,
+                    This.Unique("string_index"));
+                Return New LlvmValue(This.Module.Load(
+                    This.TypeHandle(This.Semantics.Primitive("char")), address,
+                    This.Unique("string_character")), This.Semantics.Primitive("char"));
             }
         }
         If (receiver != null && receiver.Type.Kind == [int](TypeKind.ArrayType))
@@ -3273,7 +3834,30 @@ Class NativeBackend
                 This.Module.ConstNull(This.Module.PointerType(This.Module.IntType(8))),
                 This.Unique("file_read_if")), This.Semantics.Primitive("string"));
         }
-        If (target == "IO.File.Exists") runtimeName = "__kn_sys_file_exists";
+        If (target == "IO.Path.HasExtension")
+        {
+            LlvmValue path = This.CastValue(This.EmitExpression(context, first),
+                This.Semantics.Primitive("string"));
+            byte* extension = This.CallRuntime("__kn_path_extension",
+                This.Types1(path.Handle), This.Unique("path_extension"));
+            byte* length = This.CallRuntime("kn_sh_rt_string_length",
+                This.Types1(extension), This.Unique("path_extension_length"));
+            Return New LlvmValue(This.Module.Compare(
+                [int](LlvmIntPredicate.UnsignedGreater), length,
+                This.Module.ConstInt(This.Module.IntType(64), 0),
+                This.Unique("path_has_extension")), This.Semantics.Primitive("bool"));
+        }
+        If (target == "IO.Path.IsRelative")
+        {
+            LlvmValue path = This.CastValue(This.EmitExpression(context, first),
+                This.Semantics.Primitive("string"));
+            byte* absolute = This.RuntimeBool(This.CallRuntime("__kn_path_is_absolute",
+                This.Types1(path.Handle), This.Unique("path_absolute_c")));
+            Return New LlvmValue(This.Module.Not(absolute, This.Unique("path_relative")),
+                This.Semantics.Primitive("bool"));
+        }
+        If (target == "IO.File.Exists" || target == "IO.System.FileExists")
+            runtimeName = "__kn_sys_file_exists";
         ElseIf (target == "IO.File.Create") runtimeName = "__kn_file_create";
         ElseIf (target == "IO.File.Touch") runtimeName = "__kn_file_touch";
         ElseIf (target == "IO.File.ReadAllText") runtimeName = "__kn_file_read_all_text";
@@ -3288,24 +3872,29 @@ Class NativeBackend
         ElseIf (target == "IO.File.Copy") runtimeName = "__kn_file_copy";
         ElseIf (target == "IO.File.Move") runtimeName = "__kn_file_move";
         ElseIf (target == "IO.File.ReplaceText") runtimeName = "__kn_file_replace_text";
+        ElseIf (target == "IO.File.ReadLines") runtimeName = "__kn_file_read_lines";
+        ElseIf (target == "IO.File.WriteLines") runtimeName = "__kn_file_write_lines";
         ElseIf (target == "IO.Directory.Exists") runtimeName = "__kn_dir_exists";
         ElseIf (target == "IO.Directory.Create") runtimeName = "__kn_dir_create";
         ElseIf (target == "IO.Directory.Ensure") runtimeName = "__kn_dir_ensure";
         ElseIf (target == "IO.Directory.Delete") runtimeName = "__kn_dir_delete";
         ElseIf (target == "IO.Directory.DeleteIfExists") runtimeName = "__kn_dir_delete_if_exists";
         ElseIf (target == "IO.Directory.Files") runtimeName = "__kn_dir_files";
-        ElseIf (target == "IO.Path.Combine") runtimeName = "__kn_path_combine";
+        ElseIf (target == "IO.Path.Combine" || target == "IO.Path.Join")
+            runtimeName = "__kn_path_combine";
         ElseIf (target == "IO.Path.Join3") runtimeName = "__kn_path_join3";
         ElseIf (target == "IO.Path.Join4") runtimeName = "__kn_path_join4";
         ElseIf (target == "IO.Path.FileName") runtimeName = "__kn_path_file_name";
         ElseIf (target == "IO.Path.Extension") runtimeName = "__kn_path_extension";
-        ElseIf (target == "IO.Path.Directory") runtimeName = "__kn_path_directory";
+        ElseIf (target == "IO.Path.Directory" || target == "IO.Path.Parent")
+            runtimeName = "__kn_path_directory";
         ElseIf (target == "IO.Path.Normalize") runtimeName = "__kn_path_normalize";
         ElseIf (target == "IO.Path.CurrentDirectory" || target == "IO.Path.Cwd")
             runtimeName = "__kn_path_cwd";
         ElseIf (target == "IO.Path.ChangeExtension") runtimeName = "__kn_path_change_extension";
         ElseIf (target == "IO.Path.IsAbsolute") runtimeName = "__kn_path_is_absolute";
-        ElseIf (target == "IO.Path.BaseName") runtimeName = "__kn_path_base_name";
+        ElseIf (target == "IO.Path.BaseName" || target == "IO.Path.Stem")
+            runtimeName = "__kn_path_base_name";
         ElseIf (target == "IO.Path.EnsureTrailingSeparator") runtimeName = "__kn_path_ensure_trailing_separator";
         ElseIf (target == "IO.Text.Contains") runtimeName = "__kn_text_contains";
         ElseIf (target == "IO.Text.StartsWith") runtimeName = "__kn_text_starts_with";
@@ -3320,6 +3909,7 @@ Class NativeBackend
         ElseIf (target == "IO.Text.Count") runtimeName = "__kn_text_count";
         ElseIf (target == "IO.Text.Split") runtimeName = "__kn_text_split";
         ElseIf (target == "IO.Text.Lines") runtimeName = "__kn_text_lines";
+        ElseIf (target == "IO.Text.Join") runtimeName = "__kn_text_join";
         ElseIf (target == "IO.Text.Length") runtimeName = "kn_sh_rt_string_length";
         ElseIf (target == "IO.Text.IsEmpty")
         {
@@ -4078,6 +4668,9 @@ Class NativeBackend
             Return New LlvmValue(address, expression.Type);
         }
         LlvmValue operand = This.EmitExpression(context, expression.Left);
+        If (operatorKind == TokenKind.KwAwait)
+            Return This.AwaitTaskResult(context, operand.Handle, expression.Type,
+                "await");
         If (operatorKind == TokenKind.Star)
             Return New LlvmValue(This.Module.Load(This.TypeHandle(expression.Type), operand.Handle,
                 This.Unique("dereference")), expression.Type);
@@ -4320,7 +4913,15 @@ Class NativeBackend
             LlvmFunctionBinding function = This.FindFunctionBinding(expression.Function);
             If (function == null)
             {
-                This.Fail("function reference binding is missing: " + expression.Target);
+                If (This.Semantics.RuntimeCallType(expression.Target, null) != null)
+                {
+                    byte* wrapper = This.EnsureBuiltinCallableWrapper(expression.Target);
+                    If (wrapper != null)
+                        Return New LlvmValue(This.CreateCallableObject(false, wrapper, null),
+                            expression.Type);
+                }
+                If (!This.Failed())
+                    This.Fail("function reference binding is missing: " + expression.Target);
                 Return This.DefaultValue(expression.Type);
             }
             Return New LlvmValue(This.EmitCallableObject(context, function), expression.Type);
@@ -4328,6 +4929,18 @@ Class NativeBackend
         If (expression.Kind == [int](HirExpressionKind.Index) && expression.Left != null &&
             expression.Left.Type.Kind == [int](TypeKind.PackageType))
             Return This.EmitPackageIndex(context, expression);
+        If (expression.Kind == [int](HirExpressionKind.Field) &&
+            expression.Left != null &&
+            expression.Left.Type.Name == "IO.Time.DateTime" &&
+            expression.Target == "Ticks")
+        {
+            LlvmValue dateTime = This.EmitExpression(context, expression.Left);
+            byte* raw = This.Module.BitCast(dateTime.Handle,
+                This.Module.PointerType(This.Module.IntType(8)), This.Unique("datetime_raw"));
+            Return New LlvmValue(This.CallRuntime("kn_sh_rt_datetime_ticks",
+                This.Types1(raw), This.Unique("datetime_ticks")),
+                This.Semantics.Primitive("int"));
+        }
         If (expression.Kind == [int](HirExpressionKind.Field) &&
             expression.Left != null && expression.Left.Type.Name == "IO.Error")
             Return This.EmitErrorField(context, expression);
@@ -5017,17 +5630,9 @@ Class NativeBackend
         This.Module.ReturnVoid();
     }
 
-    Public Trusted Function void EmitFunctionBody(LlvmFunctionBinding binding)
+    Public Trusted Function void EmitRegularFunctionBody(
+        LlvmFunctionBinding binding, HirFunction hirFunction)
     {
-        If (binding.Symbol.Declaration.IsExtern) Return;
-        HirFunction hirFunction = This.FindHirFunction(binding.Symbol);
-        If (hirFunction == null || hirFunction.Body == null) Return;
-        If (binding.Symbol.IsBlockLiteral)
-        {
-            This.EmitBlockFunctionBody(binding, hirFunction);
-            Return;
-        }
-
         byte* entry = This.Module.AppendBlock(binding.Function, "entry");
         This.Module.PositionAtEnd(entry);
         LlvmFunctionContext context = New LlvmFunctionContext(binding);
@@ -5078,6 +5683,140 @@ Class NativeBackend
 
         This.EmitStatementList(context, hirFunction.Body);
         If (!This.Module.IsTerminated(This.Module.CurrentBlock())) This.EmitReturn(context, null);
+    }
+
+    Public Trusted Function void EmitAsyncFunctionBody(
+        LlvmFunctionBinding binding, HirFunction hirFunction)
+    {
+        LlvmFunctionBinding bodyBinding = New LlvmFunctionBinding(
+            binding.Symbol, binding.AsyncBodyFunctionType,
+            binding.AsyncBodyFunction, false);
+        This.EmitRegularFunctionBody(bodyBinding, hirFunction);
+
+        byte* bytePointer = This.Module.PointerType(This.Module.IntType(8));
+        byte* int64Type = This.Module.IntType(64);
+        byte* runnerEntry = This.Module.AppendBlock(
+            binding.AsyncRunnerFunction, "entry");
+        This.Module.PositionAtEnd(runnerEntry);
+        byte* environment = This.Module.BitCast(
+            This.Module.Parameter(binding.AsyncRunnerFunction, 0),
+            This.Module.PointerType(binding.AsyncEnvironmentType),
+            This.Unique("async_environment"));
+        byte* task = This.Module.Parameter(binding.AsyncRunnerFunction, 1);
+        LlvmHandles arguments = New LlvmHandles();
+        int fieldIndex = 0;
+        If (binding.Symbol.FirstCapture != null)
+        {
+            byte* address = This.Module.StructGep(binding.AsyncEnvironmentType,
+                environment, fieldIndex, This.Unique("async_capture_address"));
+            arguments.Add(This.Module.Load(bytePointer, address,
+                This.Unique("async_capture")));
+            fieldIndex = fieldIndex + 1;
+        }
+        bool hasReceiver = binding.Symbol.OwnerType != null &&
+            (!binding.Symbol.Declaration.IsStatic ||
+             binding.Symbol.Declaration.IsConstructor);
+        If (hasReceiver)
+        {
+            byte* address = This.Module.StructGep(binding.AsyncEnvironmentType,
+                environment, fieldIndex, This.Unique("async_receiver_address"));
+            arguments.Add(This.Module.Load(This.TypeHandle(binding.Symbol.OwnerType),
+                address, This.Unique("async_receiver")));
+            fieldIndex = fieldIndex + 1;
+        }
+        ParameterSymbol parameter = binding.Symbol.FirstParameter;
+        While (parameter != null)
+        {
+            byte* address = This.Module.StructGep(binding.AsyncEnvironmentType,
+                environment, fieldIndex, This.Unique("async_parameter_address"));
+            arguments.Add(This.Module.Load(This.TypeHandle(parameter.Type), address,
+                This.Unique("async_parameter")));
+            fieldIndex = fieldIndex + 1;
+            parameter = parameter.Next;
+        }
+
+        byte* logicalResult = This.Module.Call(binding.AsyncBodyFunctionType,
+            binding.AsyncBodyFunction, arguments,
+            binding.Symbol.ReturnType.Kind == [int](TypeKind.VoidType) ?
+                "" : This.Unique("async_body_result"));
+        byte* failedBlock = This.Module.AppendBlock(binding.AsyncRunnerFunction,
+            This.Unique("async_failed"));
+        byte* completedBlock = This.Module.AppendBlock(binding.AsyncRunnerFunction,
+            This.Unique("async_completed"));
+        byte* hasException = This.RuntimeBool(This.CallRuntime(
+            "__kn_exc_has", This.Types0(), This.Unique("async_exception_c")));
+        This.Module.ConditionalBranch(hasException, failedBlock, completedBlock);
+
+        This.Module.PositionAtEnd(failedBlock);
+        byte* error = This.CallRuntime("__kn_exc_get", This.Types0(),
+            This.Unique("async_error"));
+        byte* trace = This.CallRuntime("__kn_exc_trace", This.Types0(),
+            This.Unique("async_trace"));
+        This.CallRuntime("__kn_async_task_fail",
+            This.Types3(task, error, trace), "");
+        This.Module.ReturnVoid();
+
+        This.Module.PositionAtEnd(completedBlock);
+        byte* tag = This.Module.ConstInt(int64Type, 0);
+        byte* payload = This.Module.ConstInt(int64Type, 0);
+        If (binding.Symbol.ReturnType.Kind != [int](TypeKind.VoidType))
+        {
+            LlvmValue boxed = This.BoxAny(New LlvmValue(
+                logicalResult, binding.Symbol.ReturnType));
+            tag = This.Module.ExtractValue(boxed.Handle, 0,
+                This.Unique("async_result_tag"));
+            payload = This.Module.ExtractValue(boxed.Handle, 1,
+                This.Unique("async_result_payload"));
+        }
+        This.CallRuntime("__kn_async_task_complete",
+            This.Types3(task, tag, payload), "");
+        This.Module.ReturnVoid();
+
+        byte* outerEntry = This.Module.AppendBlock(binding.Function, "entry");
+        This.Module.PositionAtEnd(outerEntry);
+        byte* rawEnvironment = This.CallRuntime("__kn_gc_alloc",
+            This.Types1(This.Module.SizeOf(binding.AsyncEnvironmentType)),
+            This.Unique("async_environment_memory"));
+        environment = This.Module.BitCast(rawEnvironment,
+            This.Module.PointerType(binding.AsyncEnvironmentType),
+            This.Unique("async_environment_pointer"));
+        int outerIndex = 0;
+        int fieldCount = binding.Symbol.ParameterCount() +
+            (binding.Symbol.FirstCapture == null ? 0 : 1) +
+            (hasReceiver ? 1 : 0);
+        While (outerIndex < fieldCount)
+        {
+            byte* address = This.Module.StructGep(binding.AsyncEnvironmentType,
+                environment, outerIndex, This.Unique("async_environment_field"));
+            This.Module.Store(This.Module.Parameter(binding.Function, outerIndex),
+                address);
+            outerIndex = outerIndex + 1;
+        }
+        byte* rawRunner = This.Module.BitCast(binding.AsyncRunnerFunction,
+            bytePointer, This.Unique("async_runner"));
+        byte* spawned = This.CallRuntime("__kn_async_task_spawn",
+            This.Types2(rawRunner, rawEnvironment), This.Unique("async_task"));
+        This.Module.ReturnValue(This.Module.BitCast(spawned,
+            This.TypeHandle(This.Semantics.FindExactType("IO.Async.Task")),
+            This.Unique("async_task_value")));
+    }
+
+    Public Trusted Function void EmitFunctionBody(LlvmFunctionBinding binding)
+    {
+        If (binding.Symbol.Declaration.IsExtern) Return;
+        HirFunction hirFunction = This.FindHirFunction(binding.Symbol);
+        If (hirFunction == null || hirFunction.Body == null) Return;
+        If (binding.Symbol.IsBlockLiteral)
+        {
+            This.EmitBlockFunctionBody(binding, hirFunction);
+            Return;
+        }
+        If (binding.Symbol.Declaration.IsAsync)
+        {
+            This.EmitAsyncFunctionBody(binding, hirFunction);
+            Return;
+        }
+        This.EmitRegularFunctionBody(binding, hirFunction);
     }
 
     Public Trusted Function void EmitFunctions()
@@ -5153,9 +5892,25 @@ Class NativeBackend
         }
 
         byte* result = This.Module.Call(entryBinding.FunctionType, entryBinding.Function,
-            arguments, entryBinding.Symbol.ReturnType.Kind == [int](TypeKind.VoidType) ? "" : "entry_result");
+            arguments, entryBinding.Symbol.Declaration.IsAsync ||
+                entryBinding.Symbol.ReturnType.Kind != [int](TypeKind.VoidType) ?
+                "entry_result" : "");
         byte* normalCode = This.Module.ConstInt(int32Type, 0);
-        If (entryBinding.Symbol.ReturnType.Kind != [int](TypeKind.VoidType))
+        If (entryBinding.Symbol.Declaration.IsAsync)
+        {
+            LlvmValue boxed = This.RunAsyncTask(result, "entry_async");
+            If (entryBinding.Symbol.ReturnType.Kind != [int](TypeKind.VoidType))
+            {
+                LlvmValue logicalResult = entryBinding.Symbol.ReturnType.Kind ==
+                    [int](TypeKind.AnyType) ? boxed :
+                    This.UnboxAny(boxed, entryBinding.Symbol.ReturnType);
+                logicalResult = This.CastValue(logicalResult,
+                    This.Semantics.Primitive("int"));
+                normalCode = This.Module.Truncate(logicalResult.Handle,
+                    int32Type, "exit_code");
+            }
+        }
+        ElseIf (entryBinding.Symbol.ReturnType.Kind != [int](TypeKind.VoidType))
             normalCode = This.Module.Truncate(result, int32Type, "exit_code");
 
         byte* normalBlock = This.Module.AppendBlock(mainFunction, "entry_no_exception");

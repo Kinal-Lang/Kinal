@@ -1,0 +1,16 @@
+Unit Tests.Selfhost.AsyncAwaitInTry;
+
+Get IO.Async;
+
+Static Async Function int Main()
+{
+    Try
+    {
+        Await IO.Async.Yield();
+    }
+    Catch (string message)
+    {
+        Return 1;
+    }
+    Return 0;
+}

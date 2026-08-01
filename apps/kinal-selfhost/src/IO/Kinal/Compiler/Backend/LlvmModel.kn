@@ -42,6 +42,11 @@ Class LlvmFunctionBinding
     Public FunctionSymbol Symbol;
     Public byte* FunctionType;
     Public byte* Function;
+    Public byte* AsyncBodyFunctionType;
+    Public byte* AsyncBodyFunction;
+    Public byte* AsyncEnvironmentType;
+    Public byte* AsyncRunnerFunctionType;
+    Public byte* AsyncRunnerFunction;
     Public byte* CallableWrapperType;
     Public byte* CallableWrapper;
     Public bool UsesCAbi;
@@ -52,6 +57,11 @@ Class LlvmFunctionBinding
         This.Symbol = symbol;
         This.FunctionType = functionType;
         This.Function = function;
+        This.AsyncBodyFunctionType = null;
+        This.AsyncBodyFunction = null;
+        This.AsyncEnvironmentType = null;
+        This.AsyncRunnerFunctionType = null;
+        This.AsyncRunnerFunction = null;
         This.CallableWrapperType = null;
         This.CallableWrapper = null;
         This.UsesCAbi = usesCAbi;

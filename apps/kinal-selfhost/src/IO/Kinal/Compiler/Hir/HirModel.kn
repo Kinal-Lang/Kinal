@@ -47,6 +47,7 @@ Class HirExpression
     Public int CallKind;
     Public ExpressionNode Syntax;
     Public TypeSymbol Type;
+    Public TypeSymbol AsyncResultType;
     Public ValueSymbol Symbol;
     Public FunctionSymbol Function;
     Public string Name;
@@ -65,6 +66,7 @@ Class HirExpression
         This.CallKind = [int](HirCallKind.None);
         This.Syntax = syntax;
         This.Type = type;
+        This.AsyncResultType = null;
         This.Symbol = null;
         This.Function = null;
         This.Name = syntax == null ? "" : syntax.Text;

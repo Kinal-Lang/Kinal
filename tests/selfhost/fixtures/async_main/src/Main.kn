@@ -1,0 +1,11 @@
+Unit Tests.Selfhost.AsyncMain;
+
+Get IO.Async;
+Get IO.Console;
+
+Static Async Function int Main()
+{
+    Await IO.Async.Yield();
+    IO.Console.PrintLine("async-main");
+    Return 0;
+}

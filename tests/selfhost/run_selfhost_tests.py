@@ -1499,6 +1499,95 @@ def main() -> int:
     )
     results.append({"name": "ffi_array_abi", "ok": True})
 
+    async_runtime_cases = [
+        ("async_runtime", "42\nasync-error"),
+        ("async_main", "async-main"),
+    ]
+    for async_name, async_expected in async_runtime_cases:
+        async_project = (
+            root / "tests" / "selfhost" / "fixtures" / async_name / "kinal.knproj"
+        )
+        async_executable = out_dir / f"{async_name}{executable_suffix}"
+        async_stage0_executable = out_dir / f"{async_name}-stage0{executable_suffix}"
+        async_build = run(
+            [str(compiler), "build", str(async_project), str(async_executable), "test"],
+            cwd=root,
+        )
+        require(async_build.returncode == 0,
+                f"stage1 {async_name} fixture build failed", async_build)
+        async_stage0_build = run(
+            [
+                str(stage0),
+                "build",
+                "--project",
+                str(async_project.parent),
+                "--profile",
+                "test",
+                "-o",
+                str(async_stage0_executable),
+            ],
+            cwd=root,
+        )
+        require(async_stage0_build.returncode == 0,
+                f"stage0 {async_name} fixture build failed", async_stage0_build)
+        async_run = run([str(async_executable)], cwd=root)
+        async_stage0_run = run([str(async_stage0_executable)], cwd=root)
+        require(
+            async_run.returncode == 0
+            and async_stage0_run.returncode == 0
+            and async_run.stdout.replace("\r\n", "\n").strip() == async_expected
+            and async_stage0_run.stdout.replace("\r\n", "\n").strip()
+            == async_expected,
+            f"stage0/stage1 {async_name} behavior differs",
+            async_run,
+        )
+
+    async_diagnostic_cases = [
+        "async_await_outside.kn",
+        "async_await_in_try.kn",
+        "async_await_non_task.kn",
+    ]
+    for async_source_name in async_diagnostic_cases:
+        async_source = (
+            root / "tests" / "selfhost" / "fixtures" / async_source_name
+        )
+        async_stage0_diagnostic = run(
+            [
+                str(stage0),
+                "build",
+                "--no-module-discovery",
+                "--color",
+                "never",
+                "--emit",
+                "check",
+                str(async_source),
+                "-o",
+                str(out_dir / f"{async_source.stem}-stage0.kcheck"),
+            ],
+            cwd=root,
+        )
+        async_stage1_diagnostic = run(
+            [str(compiler), "check-source", str(async_source)], cwd=root
+        )
+        require(
+            async_stage0_diagnostic.returncode != 0
+            and async_stage1_diagnostic.returncode != 0
+            and compiler_diagnostic_titles(async_stage0_diagnostic)
+            == compiler_diagnostic_titles(async_stage1_diagnostic),
+            f"stage0/stage1 async diagnostics differ for {async_source_name}: "
+            f"stage0={compiler_diagnostic_titles(async_stage0_diagnostic)} "
+            f"stage1={compiler_diagnostic_titles(async_stage1_diagnostic)}",
+            async_stage1_diagnostic,
+        )
+    results.append(
+        {
+            "name": "async_runtime",
+            "ok": True,
+            "runtime_cases": len(async_runtime_cases),
+            "diagnostic_cases": len(async_diagnostic_cases),
+        }
+    )
+
     global_constants_project = (
         root / "tests" / "selfhost" / "fixtures" / "global_constants" / "kinal.knproj"
     )
@@ -2226,6 +2315,30 @@ def main() -> int:
         "coverage": manifest_diagnostics_data["coverage"],
         "all_stage_differential_cases":
             manifest_diagnostics_data["all_stage_differential_cases"],
+    })
+
+    manifest_native = run(
+        [
+            sys.executable,
+            str(root / "tests" / "selfhost" / "audit_manifest_native.py"),
+            "--compiler",
+            str(compiler),
+            "--root",
+            str(root),
+            "--out-dir",
+            str(out_dir / "manifest-native-audit"),
+        ],
+        cwd=root,
+    )
+    require(manifest_native.returncode == 0,
+            "stage1 manifest native audit failed", manifest_native)
+    manifest_native_data = json.loads(manifest_native.stdout.strip())
+    results.append({
+        "name": "manifest_native_coverage",
+        "ok": True,
+        "positive_cases": manifest_native_data.get("positive_cases", 0),
+        "unsupported_cases": manifest_native_data.get("unsupported_cases", []),
+        "skipped": manifest_native_data.get("skipped", False),
     })
 
     (out_dir / "results.json").write_text(json.dumps(results, indent=2) + "\n", encoding="utf-8")

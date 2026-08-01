@@ -184,6 +184,7 @@ Class CaptureSymbol
         This.Type = source.Type;
         This.Source = source;
         This.Value = New ValueSymbol(source.Name, source.Type, false);
+        This.Value.AsyncResultType = source.AsyncResultType;
         This.Index = index;
         This.Next = null;
     }
@@ -207,6 +208,7 @@ Class ValueSymbol
 {
     Public string Name;
     Public TypeSymbol Type;
+    Public TypeSymbol AsyncResultType;
     Public bool IsParameter;
     Public bool IsConst;
     Public bool IsCaptured;
@@ -221,6 +223,7 @@ Class ValueSymbol
     {
         This.Name = name;
         This.Type = type;
+        This.AsyncResultType = null;
         This.IsParameter = isParameter;
         This.IsConst = false;
         This.IsCaptured = false;

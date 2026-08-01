@@ -1,0 +1,9 @@
+Unit Tests.Selfhost.AsyncAwaitOutside;
+
+Get IO.Async;
+
+Static Function int Main()
+{
+    Await IO.Async.Yield();
+    Return 0;
+}

@@ -1,0 +1,33 @@
+Project SelfhostAsyncMain
+{
+    DefaultProfile = "test";
+
+    SourceSet "main"
+    {
+        Roots = ["src"];
+        Include = ["Main.kn"];
+        RequireUnit = true;
+    }
+
+    Profile "test"
+    {
+        Source
+        {
+            Entry = "src/Main.kn";
+            Sets = ["main"];
+            Mode = ReachableUnits;
+        }
+
+        Build
+        {
+            Backend = Native;
+            Environment = Hosted;
+            Output = "../../../../out/selfhost/tests/async-main.exe";
+        }
+
+        Link
+        {
+            LinkFiles = ["../../../../out/selfhost/bridge/kn_selfhost_runtime.o"];
+        }
+    }
+}

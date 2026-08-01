@@ -1,0 +1,7 @@
+Unit Tests.Selfhost.AsyncAwaitNonTask;
+
+Static Async Function int Main()
+{
+    int value = Await 1;
+    Return value;
+}

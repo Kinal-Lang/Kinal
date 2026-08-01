@@ -6,6 +6,9 @@
 extern void *__kn_gc_alloc(uint64_t size);
 extern const char *__kn_sys_executable_path(void);
 extern int __kn_sys_exec(const char *command_line);
+extern void __kn_time_now_parts(int32_t *year, int32_t *month, int32_t *day,
+                                int32_t *hour, int32_t *minute, int32_t *second,
+                                int32_t *millisecond, int64_t *tick_ms);
 
 const char *kn_sh_rt_executable_path(void)
 {
@@ -112,6 +115,11 @@ const char *kn_sh_rt_char_to_string(uint8_t value)
     return result;
 }
 
+int64_t kn_sh_rt_string_to_i64(const char *text);
+double kn_sh_rt_string_to_f64(const char *text);
+int kn_sh_rt_string_to_bool(const char *text);
+uint8_t kn_sh_rt_string_to_char(const char *text);
+
 const char *kn_sh_rt_any_to_string(int64_t tag, int64_t payload)
 {
     if (tag == 1) return kn_sh_rt_i64_to_string(payload);
@@ -119,6 +127,64 @@ const char *kn_sh_rt_any_to_string(int64_t tag, int64_t payload)
     if (tag == 4) return kn_sh_rt_char_to_string((uint8_t)payload);
     if (tag == 5) return (const char *)(uintptr_t)payload;
     return "null";
+}
+
+int64_t kn_sh_rt_any_to_i64(int64_t tag, int64_t payload)
+{
+    if (tag == 2)
+    {
+        double value;
+        memcpy(&value, &payload, sizeof(value));
+        return (int64_t)value;
+    }
+    if (tag == 5) return kn_sh_rt_string_to_i64((const char *)(uintptr_t)payload);
+    if (tag == 1 || tag == 3 || tag == 4 || (tag >= 6 && tag <= 9)) return payload;
+    return 0;
+}
+
+double kn_sh_rt_any_to_f64(int64_t tag, int64_t payload)
+{
+    if (tag == 2)
+    {
+        double value;
+        memcpy(&value, &payload, sizeof(value));
+        return value;
+    }
+    if (tag == 5) return kn_sh_rt_string_to_f64((const char *)(uintptr_t)payload);
+    if (tag == 1 || tag == 3 || tag == 4) return (double)payload;
+    return 0.0;
+}
+
+int kn_sh_rt_any_to_bool(int64_t tag, int64_t payload)
+{
+    if (tag == 2) return kn_sh_rt_any_to_f64(tag, payload) != 0.0;
+    if (tag == 5) return kn_sh_rt_string_to_bool((const char *)(uintptr_t)payload);
+    return payload != 0;
+}
+
+uint8_t kn_sh_rt_any_to_char(int64_t tag, int64_t payload)
+{
+    if (tag == 5) return kn_sh_rt_string_to_char((const char *)(uintptr_t)payload);
+    return (uint8_t)kn_sh_rt_any_to_i64(tag, payload);
+}
+
+typedef struct KnShAny
+{
+    int64_t tag;
+    int64_t payload;
+} KnShAny;
+
+void kn_sh_rt_console_values(const KnShAny *values, uint64_t count, int newline)
+{
+    uint64_t index;
+    if (!values) count = 0;
+    for (index = 0; index < count; index++)
+    {
+        if (index != 0) fputc(' ', stdout);
+        fputs(kn_sh_rt_any_to_string(values[index].tag, values[index].payload), stdout);
+    }
+    if (newline) fputc('\n', stdout);
+    fflush(stdout);
 }
 
 int64_t kn_sh_rt_string_to_i64(const char *text)
@@ -329,9 +395,47 @@ void kn_sh_rt_memory_copy(void *destination, const void *source, uint64_t count)
     if (destination && source && count) memcpy(destination, source, (size_t)count);
 }
 
+void kn_sh_rt_memory_set(void *destination, uint8_t value, uint64_t count)
+{
+    if (destination && count) memset(destination, value, (size_t)count);
+}
+
 void kn_sh_rt_memory_zero(void *destination, uint64_t count)
 {
     if (destination && count) memset(destination, 0, (size_t)count);
+}
+
+int32_t kn_sh_rt_memory_compare(const void *left, const void *right, uint64_t count)
+{
+    if (count == 0 || left == right) return 0;
+    if (!left) return -1;
+    if (!right) return 1;
+    return (int32_t)memcmp(left, right, (size_t)count);
+}
+
+typedef struct KnShDateTime
+{
+    void *vtable;
+    int64_t runtime_type_id;
+    int64_t ticks;
+} KnShDateTime;
+
+void *kn_sh_rt_datetime_now(int64_t runtime_type_id)
+{
+    int32_t year, month, day, hour, minute, second, millisecond;
+    KnShDateTime *value = (KnShDateTime *)__kn_gc_alloc((uint64_t)sizeof(KnShDateTime));
+    if (!value) return 0;
+    value->vtable = 0;
+    value->runtime_type_id = runtime_type_id;
+    __kn_time_now_parts(&year, &month, &day, &hour, &minute, &second,
+                        &millisecond, &value->ticks);
+    return value;
+}
+
+int64_t kn_sh_rt_datetime_ticks(const void *raw)
+{
+    const KnShDateTime *value = (const KnShDateTime *)raw;
+    return value ? value->ticks : 0;
 }
 
 uint8_t kn_sh_rt_volatile_read8(const volatile uint8_t *address) { return address ? *address : 0; }

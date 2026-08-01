@@ -55,6 +55,7 @@ Class SemanticCompilation
     Public int BoundExpressionCount;
     Public int UnresolvedExpressionCount;
     Public int LocalLiteralCount;
+    Public int TryDepth;
 
     Public Safe Constructor(CompileSession session)
     {
@@ -75,6 +76,7 @@ Class SemanticCompilation
         This.BoundExpressionCount = 0;
         This.UnresolvedExpressionCount = 0;
         This.LocalLiteralCount = 0;
+        This.TryDepth = 0;
         This.RegisterBuiltinTypes();
     }
 
@@ -2477,6 +2479,15 @@ Class SemanticCompilation
             If (target == "IO.Type.string.Equals") Return This.Primitive("bool");
             If (target == "IO.Type.string.ToChars")
                 Return This.MakeArrayType(This.Primitive("char"));
+            If (target == "IO.Type.any.ToString" || target == "IO.Type.any.TypeName")
+                Return This.Primitive("string");
+            If (target == "IO.Type.any.Tag") Return This.Primitive("int");
+            If (target == "IO.Type.any.Equals" || target == "IO.Type.any.IsNull" ||
+                target == "IO.Type.any.IsNumber" || target == "IO.Type.any.IsPointer" ||
+                target == "IO.Type.any.IsInt" || target == "IO.Type.any.IsFloat" ||
+                target == "IO.Type.any.IsString" || target == "IO.Type.any.IsBool" ||
+                target == "IO.Type.any.IsChar" || target == "IO.Type.any.IsObject")
+                Return This.Primitive("bool");
             string convertedName = IO.Text.Slice(target, 8, IO.Text.Length(target) - 8);
             If (!IO.Text.Contains(convertedName, "."))
             {
@@ -2856,13 +2867,27 @@ Class SemanticCompilation
             ElseIf (target == "Count" || target == "Clear" || target == "IsEmpty" ||
                 target == "Values") expectedCount = receiverArgumentCount;
         }
-        ElseIf (target == "IsInt" && call.Left != null &&
-            call.Left.Type.Kind == [int](TypeKind.AnyType)) expectedCount = 0;
+        ElseIf ((target == "IsNull" || target == "ToString" || target == "Tag" ||
+            target == "TypeName" || target == "IsNumber" || target == "IsPointer" ||
+            target == "IsInt" || target == "IsFloat" || target == "IsString" ||
+            target == "IsBool" || target == "IsChar" || target == "IsObject") &&
+            call.Left != null) expectedCount = 0;
+        ElseIf (target == "Equals" && call.Left != null) expectedCount = 1;
+        ElseIf (IO.Text.StartsWith(target, "IO.Type.any."))
+        {
+            string anyMember = IO.Text.Slice(target, 12, IO.Text.Length(target) - 12);
+            expectedCount = anyMember == "Equals" ? 2 : 1;
+        }
         ElseIf (target == "Index" && call.Left != null &&
             (call.Left.Type.Kind == [int](TypeKind.StringType) ||
              call.Left.Type.Kind == [int](TypeKind.ArrayType))) expectedCount = 1;
         ElseIf (target == "IO.Text.Join") expectedCount = 2;
         ElseIf (target == "IO.File.WriteLines") expectedCount = 2;
+        ElseIf (target == "IO.Async.Spawn" || target == "IO.Async.IsCompleted" ||
+            target == "IO.Async.ExitCode" || target == "IO.Async.Close" ||
+            target == "IO.Async.Run" || target == "IO.Async.Sleep") expectedCount = 1;
+        ElseIf (target == "IO.Async.Wait") expectedCount = 2;
+        ElseIf (target == "IO.Async.Yield") expectedCount = 0;
 
         int actualCount = expression.ArgumentCount();
         If (expectedCount >= 0 && actualCount != expectedCount)
@@ -2906,6 +2931,10 @@ Class SemanticCompilation
             (second.Type.Kind != [int](TypeKind.ArrayType) ||
              second.Type.ElementType.Kind != [int](TypeKind.StringType)))
             This.Report(syntax, "Type Mismatch", "WriteLines values must be string[]",
+                expression.Line, expression.Column);
+        If (target == "IO.Async.Run" && first != null &&
+            first.Type.Name != "IO.Async.Task")
+            This.Report(syntax, "Async Run", "IO.Async.Run expects IO.Async.Task",
                 expression.Line, expression.Column);
     }
 
@@ -3138,6 +3167,28 @@ Class SemanticCompilation
         }
         If (callKind == [int](HirCallKind.RuntimeBuiltin))
             This.ValidateRuntimeArguments(syntax, expression, bound);
+        If (targetFunction != null && targetFunction.Declaration.IsAsync)
+        {
+            bound.AsyncResultType = targetFunction.ReturnType;
+            bound.Type = This.FindExactType("IO.Async.Task");
+        }
+        ElseIf (callKind == [int](HirCallKind.RuntimeBuiltin) &&
+            (bound.Target == "IO.Async.Sleep" || bound.Target == "IO.Async.Yield"))
+        {
+            bound.AsyncResultType = This.Primitive("void");
+        }
+        ElseIf (callKind == [int](HirCallKind.RuntimeBuiltin) &&
+            bound.Target == "IO.Async.Run")
+        {
+            HirExpression task = This.HirArgument(bound, 0);
+            If (task != null && task.Type.Name == "IO.Async.Task")
+            {
+                If (task.AsyncResultType == null)
+                    This.Report(syntax, "Async Run", "Task result type is not known here",
+                        expression.Line, expression.Column);
+                Else bound.Type = task.AsyncResultType;
+            }
+        }
         Return bound;
     }
 
@@ -3629,6 +3680,7 @@ Class SemanticCompilation
                 HirExpression local = New HirExpression([int](HirExpressionKind.Local), expression, value.Type);
                 local.Target = value.Name;
                 local.Symbol = value;
+                local.AsyncResultType = value.AsyncResultType;
                 Return local;
             }
             GlobalSymbol global = This.FindVisibleGlobal(syntax, expression.Text);
@@ -3638,6 +3690,7 @@ Class SemanticCompilation
                     [int](HirExpressionKind.Global), expression, global.Value.Type);
                 globalValue.Target = global.QualifiedName();
                 globalValue.Symbol = global.Value;
+                globalValue.AsyncResultType = global.Value.AsyncResultType;
                 Return globalValue;
             }
             If (function != null)
@@ -3977,8 +4030,43 @@ Class SemanticCompilation
         }
         If (expression.Kind == [int](ExpressionKind.Unary))
         {
+            If (expression.Operator == TokenKind.KwAwait &&
+                (function == null || !function.Declaration.IsAsync))
+            {
+                This.Report(syntax, "Await Outside Async",
+                    "Await is only allowed inside Async Function",
+                    expression.Line, expression.Column);
+                Return New HirExpression([int](HirExpressionKind.Unary), expression,
+                    New TypeSymbol([int](TypeKind.Unknown), "unknown"));
+            }
+            If (expression.Operator == TokenKind.KwAwait && This.TryDepth > 0)
+            {
+                This.Report(syntax, "Await In Try",
+                    "Await inside Try/Catch is not supported yet",
+                    expression.Line, expression.Column);
+                Return New HirExpression([int](HirExpressionKind.Unary), expression,
+                    New TypeSymbol([int](TypeKind.Unknown), "unknown"));
+            }
             HirExpression operand = This.BindExpression(syntax, function, scope, expression.Left);
             TypeSymbol type = expression.Operator == TokenKind.Not ? This.Primitive("bool") : operand.Type;
+            If (expression.Operator == TokenKind.KwAwait)
+            {
+                If (operand.Type.Name != "IO.Async.Task")
+                {
+                    This.Report(syntax, "Await Requires Task",
+                        "Await operand must be IO.Async.Task",
+                        expression.Line, expression.Column);
+                    type = New TypeSymbol([int](TypeKind.Unknown), "unknown");
+                }
+                ElseIf (operand.AsyncResultType == null)
+                {
+                    This.Report(syntax, "Unknown Task Result",
+                        "Task result type is not known here",
+                        expression.Line, expression.Column);
+                    type = New TypeSymbol([int](TypeKind.Unknown), "unknown");
+                }
+                Else type = operand.AsyncResultType;
+            }
             If (expression.Operator == TokenKind.Ampersand)
                 type = operand.Kind == [int](HirExpressionKind.FunctionReference) ?
                     operand.Type : This.MakePointerType(operand.Type);
@@ -4168,6 +4256,17 @@ Class SemanticCompilation
                  result.Expression.Type.Name != "IO.Error"))
                 This.Report(syntax, "Invalid Throw", "Throw requires string or IO.Error",
                     statement.Line, statement.Column);
+            result.Next = This.BindStatement(syntax, function, scope, statement.Next);
+            Return result;
+        }
+        If (statement.Kind == [int](StatementKind.Try) && statement.TypeName == "")
+        {
+            This.TryDepth = This.TryDepth + 1;
+            result.FirstChild = This.BindStatement(syntax, function,
+                New BindingScope(scope), statement.FirstChild);
+            result.ElseBranch = This.BindStatement(syntax, function,
+                scope, statement.ElseBranch);
+            This.TryDepth = This.TryDepth - 1;
             result.Next = This.BindStatement(syntax, function, scope, statement.Next);
             Return result;
         }
@@ -4366,6 +4465,8 @@ Class SemanticCompilation
                 }
             }
             result.DeclaredSymbol = New ValueSymbol(statement.Name, result.DeclaredType, false);
+            If (result.Expression != null)
+                result.DeclaredSymbol.AsyncResultType = result.Expression.AsyncResultType;
             result.DeclaredSymbol.IsConst = statement.IsConst;
             result.DeclaredSymbol.ConstantOrigin = statement.Expression;
             result.DeclaredSymbol.PackageLabels = statement.PackageLabels;
