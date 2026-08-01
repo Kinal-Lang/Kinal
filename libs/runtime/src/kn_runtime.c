@@ -771,14 +771,60 @@ static void rt_store_string_array(KnStringArray value, const char ***out_data, u
     if (out_len) *out_len = value.len;
 }
 
+static int g_process_argc = 0;
+static const char **g_process_argv = 0;
+static char *g_process_command_line = 0;
+
+static void rt_cache_process_argv(int argc, const char **argv)
+{
+    if (g_process_argv || argc <= 0 || !argv)
+        return;
+
+    size_t length = 0;
+    for (int i = 0; i < argc; i++)
+    {
+        length += (size_t)rt_strlen(argv[i] ? argv[i] : "");
+        if (i + 1 < argc)
+            length++;
+    }
+
+    char *command_line = (char *)rt_alloc(length + 1);
+    if (!command_line)
+        return;
+
+    size_t offset = 0;
+    for (int i = 0; i < argc; i++)
+    {
+        const char *argument = argv[i] ? argv[i] : "";
+        size_t argument_length = (size_t)rt_strlen(argument);
+        if (argument_length)
+        {
+            rt_memcpy(command_line + offset, argument, argument_length);
+            offset += argument_length;
+        }
+        if (i + 1 < argc)
+            command_line[offset++] = ' ';
+    }
+    command_line[offset] = 0;
+
+    g_process_argc = argc;
+    g_process_argv = argv;
+    g_process_command_line = command_line;
+}
+
 void __kn_sys_args(const char ***out_data, uint64_t *out_len)
 {
-    KnStringArray out = {0, 0};
-    rt_store_string_array(out, out_data, out_len);
+    rt_store_string_array(
+        rt_string_array_from_items((char **)g_process_argv, g_process_argc, 1),
+        out_data,
+        out_len);
 }
 
 void __kn_sys_args_from_argv(int argc, const char **argv, const char ***out_data, uint64_t *out_len)
 {
+    rt_cache_process_argv(argc, argv);
+    if (!out_data && !out_len)
+        return;
     rt_store_string_array(rt_string_array_from_items((char **)argv, argc, 1), out_data, out_len);
 }
 
@@ -789,7 +835,7 @@ void __kn_sys_exit(int code)
 
 const char *__kn_sys_command_line(void)
 {
-    return "";
+    return g_process_command_line ? g_process_command_line : "";
 }
 
 const char *__kn_sys_executable_path(void)

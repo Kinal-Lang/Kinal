@@ -1776,6 +1776,20 @@ static void build_runtime_hosted_entry(Codegen *g, const HostedPlatformApi *plat
                         LLVMValueRef meta_mod = LLVMBuildCall2(g->builder, g->fn_meta_get_module_ty, g->fn_meta_get_module, 0, 0, "meta.mod");
                         LLVMBuildCall2(g->builder, g->fn_meta_register_main_ty, g->fn_meta_register_main, &meta_mod, 1, "");
                     }
+                    {
+                        LLVMValueRef argc = LLVMGetParam(main_fn, 0);
+                        LLVMValueRef argv = LLVMGetParam(main_fn, 1);
+                        LLVMTypeRef data_out_ty = LLVMPointerType(LLVMPointerType(t_i8ptr, 0), 0);
+                        LLVMTypeRef length_out_ty = LLVMPointerType(g->i64, 0);
+                        LLVMValueRef init_args[4] = {
+                            argc,
+                            argv,
+                            LLVMConstNull(data_out_ty),
+                            LLVMConstNull(length_out_ty)
+                        };
+                        LLVMBuildCall2(g->builder, g->fn_sys_args_from_argv_ty,
+                            g->fn_sys_args_from_argv, init_args, 4, "");
+                    }
                     LLVMTypeRef fn_ty = g->fn_main_ty ? g->fn_main_ty : fn_type(g->fn_main);
                 unsigned param_count = LLVMCountParams(g->fn_main);
                 LLVMValueRef retv;
