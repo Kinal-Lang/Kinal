@@ -506,7 +506,11 @@ def cmd_selfhost(args: argparse.Namespace) -> int:
 
 def cmd_selfhost_bootstrap(args: argparse.Namespace) -> int:
     ensure_build_prereqs()
-    stage0 = prepare_selfhost_stage0(clean_first=args.clean, cmd_dist=cmd_dist)
+    stage0 = prepare_selfhost_stage0(
+        clean_first=args.clean,
+        cmd_dist=cmd_dist,
+        bundle_dir=args.stage0_bundle,
+    )
     stage1 = build_selfhost_stage1(stage0)
     print(f"[OK] selfhost stage0: {stage0}")
     print(f"[OK] selfhost stage1: {stage1}")
@@ -515,7 +519,7 @@ def cmd_selfhost_bootstrap(args: argparse.Namespace) -> int:
         max_stage=args.max_stage,
         bootstrap_backend=args.bootstrap_backend,
         metric_backend=args.metric_backend,
-        clean=False,
+        clean=args.clean,
     )
     return 0
 
@@ -599,7 +603,16 @@ def build_parser() -> argparse.ArgumentParser:
     selfhost_bootstrap.add_argument("--max-stage", type=int, default=3, help="maximum stage to build")
     selfhost_bootstrap.add_argument("--bootstrap-backend", choices=["host", "self"], default="self", help="backend used for next-stage compiler builds")
     selfhost_bootstrap.add_argument("--metric-backend", choices=["host", "self"], default="self", help="backend used for completion measurement")
-    selfhost_bootstrap.add_argument("--clean", action="store_true", help="rebuild stage0 and wipe bootstrap output first")
+    selfhost_bootstrap.add_argument(
+        "--clean",
+        action="store_true",
+        help="clean bootstrap outputs and fully rebuild stage0 when it is sourced from the checkout",
+    )
+    selfhost_bootstrap.add_argument(
+        "--stage0-bundle",
+        type=Path,
+        help="use an existing release bundle as stage0 instead of rebuilding it from source",
+    )
 
     return ap
 

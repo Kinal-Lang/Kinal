@@ -1,0 +1,208 @@
+name: Selfhost Bootstrap (Experimental)
+
+on:
+  workflow_dispatch:
+    inputs:
+      stage0_source:
+        description: Stage0 compiler source
+        type: choice
+        options:
+          - latest-release
+          - source
+        default: latest-release
+      release_tag:
+        description: Optional release tag (empty uses the latest published release)
+        type: string
+        required: false
+        default: ""
+      validation:
+        description: Validation depth
+        type: choice
+        options:
+          - bootstrap
+          - bootstrap-and-regressions
+        default: bootstrap
+      clean:
+        description: Clean bootstrap outputs (and source build outputs when applicable)
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: selfhost-manual-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  LLVM_VERSION: "21.1.8"
+  ZIG_VERSION: "0.15.2"
+  PYTHON_VERSION: "3.12"
+
+jobs:
+  bootstrap:
+    name: Windows x64 bootstrap
+    runs-on: windows-latest
+    timeout-minutes: 150
+
+    steps:
+      - name: Checkout Kinal
+        uses: actions/checkout@v4
+        with:
+          path: Kinal
+
+      - name: Checkout Kinal-ThirdParty
+        uses: actions/checkout@v4
+        with:
+          repository: Kinal-Lang/Kinal-ThirdParty
+          path: Kinal-ThirdParty
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Setup CMake and Ninja
+        if: inputs.stage0_source == 'source'
+        uses: lukka/get-cmake@latest
+
+      - name: Cache LLVM prebuilt
+        id: cache-llvm
+        uses: actions/cache@v4
+        with:
+          path: Kinal-ThirdParty/.cache/llvm/prebuilt
+          key: llvm-${{ env.LLVM_VERSION }}-win-x64
+
+      - name: Fetch LLVM prebuilt
+        if: steps.cache-llvm.outputs.cache-hit != 'true'
+        working-directory: Kinal
+        run: python x.py fetch llvm-prebuilt
+
+      - name: Cache Zig
+        if: inputs.stage0_source == 'source'
+        id: cache-zig
+        uses: actions/cache@v4
+        with:
+          path: ~/AppData/Local/Kinal/toolchains/zig
+          key: zig-${{ env.ZIG_VERSION }}-win-x64
+
+      - name: Fetch Zig
+        if: inputs.stage0_source == 'source' && steps.cache-zig.outputs.cache-hit != 'true'
+        working-directory: Kinal
+        run: python x.py fetch zig-prebuilt
+
+      - name: Setup MSVC environment
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: amd64
+
+      - name: Download release stage0
+        if: inputs.stage0_source == 'latest-release'
+        id: release-stage0
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          $arguments = @("release", "download")
+          if (-not [string]::IsNullOrWhiteSpace($env:RELEASE_TAG)) {
+            $arguments += $env:RELEASE_TAG
+          }
+          $arguments += @(
+            "--repo", $env:GITHUB_REPOSITORY,
+            "--pattern", "Kinal-*-win-x64.zip",
+            "--dir", "stage0-download",
+            "--clobber"
+          )
+          & gh @arguments
+          if ($LASTEXITCODE -ne 0) {
+            throw "Failed to download the requested stage0 release."
+          }
+
+          $archives = @(Get-ChildItem -LiteralPath "stage0-download" -Filter "Kinal-*-win-x64.zip")
+          if ($archives.Count -ne 1) {
+            throw "Expected one Windows x64 release archive, found $($archives.Count)."
+          }
+          Expand-Archive -LiteralPath $archives[0].FullName -DestinationPath "stage0-extracted" -Force
+
+          $compilers = @(Get-ChildItem -LiteralPath "stage0-extracted" -Recurse -Filter "kinal.exe")
+          if ($compilers.Count -ne 1) {
+            throw "Expected one stage0 compiler in the release archive, found $($compilers.Count)."
+          }
+          $compiler = $compilers[0].FullName
+          "bundle=$($compilers[0].Directory.FullName)" >> $env:GITHUB_OUTPUT
+          "archive=$($archives[0].Name)" >> $env:GITHUB_OUTPUT
+          & $compiler version
+
+      - name: Bootstrap with release stage0
+        if: inputs.stage0_source == 'latest-release'
+        working-directory: Kinal
+        shell: pwsh
+        run: |
+          $arguments = @(
+            "x.py", "selfhost-bootstrap",
+            "--stage0-bundle", "${{ steps.release-stage0.outputs.bundle }}",
+            "--target", "100.0",
+            "--max-stage", "3",
+            "--bootstrap-backend", "self",
+            "--metric-backend", "self"
+          )
+          if ("${{ inputs.clean }}" -eq "true") {
+            $arguments += "--clean"
+          }
+          python @arguments
+
+      - name: Bootstrap with source-built stage0
+        if: inputs.stage0_source == 'source'
+        working-directory: Kinal
+        shell: pwsh
+        run: |
+          $arguments = @(
+            "x.py", "selfhost-bootstrap",
+            "--target", "100.0",
+            "--max-stage", "3",
+            "--bootstrap-backend", "self",
+            "--metric-backend", "self"
+          )
+          if ("${{ inputs.clean }}" -eq "true") {
+            $arguments += "--clean"
+          }
+          python @arguments
+
+      - name: Run selfhost regressions
+        if: inputs.validation == 'bootstrap-and-regressions'
+        working-directory: Kinal
+        run: >-
+          python tests/selfhost/run_selfhost_tests.py
+          --stage0 out/selfhost/stage0-host/kinal.exe
+          --compiler out/selfhost/stage1/kinal-selfhost.exe
+          --root .
+          --out-dir out/selfhost/tests
+
+      - name: Write run summary
+        if: always()
+        shell: pwsh
+        run: |
+          @'
+          ## Experimental selfhost bootstrap
+
+          - Stage0 source: `${{ inputs.stage0_source }}`
+          - Release tag: `${{ inputs.release_tag || 'latest' }}`
+          - Release archive: `${{ steps.release-stage0.outputs.archive || 'not used' }}`
+          - Validation: `${{ inputs.validation }}`
+          - Host: `windows-x64`
+          '@ >> $env:GITHUB_STEP_SUMMARY
+
+      - name: Upload selfhost reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: selfhost-reports-${{ inputs.stage0_source }}
+          path: |
+            Kinal/out/selfhost/bootstrap-report.json
+            Kinal/out/selfhost/tests/results.json
+            Kinal/out/selfhost/stage1/self.ll
+            Kinal/out/selfhost/stage2/self.ll
+            Kinal/out/selfhost/stage3/self.ll
+          if-no-files-found: warn
+          retention-days: 14

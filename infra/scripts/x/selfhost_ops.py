@@ -146,7 +146,32 @@ def package_selfhost_toolchain(stage0: Path, stage1: Path) -> None:
         shutil.copy2(llvm_import, llvm_target / llvm_import.name)
 
 
-def prepare_selfhost_stage0(*, clean_first: bool, cmd_dist) -> Path:
+def freeze_selfhost_stage0_bundle(bundle_dir: Path) -> Path:
+    bundle = bundle_dir.expanduser().resolve()
+    compiler = bundle / exe_name("kinal")
+    required = [
+        compiler,
+        bundle / "linker",
+        bundle / "llvm" / "lib",
+        bundle / "runtime",
+        bundle / "stdpkg",
+    ]
+    missing = [path for path in required if not path.exists()]
+    if missing:
+        details = "\n".join(f"  - {path}" for path in missing)
+        raise SystemExit(f"Selfhost stage0 bundle is incomplete:\n{details}")
+
+    stage0_dir = selfhost_stage0_dir()
+    if stage0_dir.exists():
+        shutil.rmtree(stage0_dir)
+    shutil.copytree(bundle, stage0_dir)
+    return selfhost_stage0_exe()
+
+
+def prepare_selfhost_stage0(*, clean_first: bool, cmd_dist, bundle_dir: Path | None = None) -> Path:
+    if bundle_dir is not None:
+        return freeze_selfhost_stage0_bundle(bundle_dir)
+
     # Selfhosting is a compiler correctness boundary. Rebuild before freezing so
     # stage0 never carries stale runtime/compiler objects from an older bundle.
     cmd_dist(type("Args", (), {"clean": clean_first})())
@@ -159,12 +184,7 @@ def prepare_selfhost_stage0(*, clean_first: bool, cmd_dist) -> Path:
     if not available:
         raise SystemExit("No release compiler bundle is available for selfhost stage0.")
     bundle = max(available, key=lambda path: (path / exe_name("kinal")).stat().st_mtime_ns)
-    stage0_dir = selfhost_stage0_dir()
-    if stage0_dir.exists():
-        shutil.rmtree(stage0_dir)
-    shutil.copytree(bundle, stage0_dir)
-
-    return selfhost_stage0_exe()
+    return freeze_selfhost_stage0_bundle(bundle)
 
 
 def build_selfhost_stage1(stage0: Path) -> Path:
