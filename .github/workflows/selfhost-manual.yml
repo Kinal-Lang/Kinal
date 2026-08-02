@@ -132,7 +132,7 @@ jobs:
           $compiler = $compilers[0].FullName
           "bundle=$($compilers[0].Directory.FullName)" >> $env:GITHUB_OUTPUT
           "archive=$($archives[0].Name)" >> $env:GITHUB_OUTPUT
-          & $compiler version
+          & $compiler --version
 
       - name: Bootstrap with release stage0
         if: inputs.stage0_source == 'latest-release'
