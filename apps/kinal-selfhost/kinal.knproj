@@ -30,16 +30,6 @@ Project KinalSelfhost
             Output = "../../out/selfhost/stage1/kinal-selfhost.exe";
         }
 
-        Link
-        {
-            LibDirs = ["../../out/selfhost/stage0-host/llvm/lib"];
-            Libs = ["LLVM-C"];
-            LinkFiles = [
-                "../../out/selfhost/bridge/kn_selfhost_llvm.o",
-                "../../out/selfhost/bridge/kn_selfhost_runtime.o"
-            ];
-            LinkArgs = ["/stack:16777216"];
-        }
     }
 
     Lsp

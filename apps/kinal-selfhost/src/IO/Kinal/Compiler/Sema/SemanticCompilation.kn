@@ -1,6 +1,7 @@
 Unit IO.Kinal.Compiler.Sema.SemanticCompilation;
 
 Get IO.Text;
+Get IO.Host;
 Get IO.Kinal.Compiler.Core.Diagnostics;
 Get IO.Kinal.Compiler.Core.CompileSession;
 Get IO.Kinal.Compiler.Syntax.Nodes;
@@ -3432,13 +3433,13 @@ Class SemanticCompilation
     Public Safe Function int TargetIntegerConstant(string path)
     {
         If (path == "IO.Target" || path == "IO.Target.OS" ||
-            path == "IO.Target.OS.Current" ||
-            path == "IO.Target.Windows" || path == "IO.Target.OS.Windows") Return 1;
+            path == "IO.Target.OS.Current") Return IO.Host.OS.Current;
+        If (path == "IO.Target.Windows" || path == "IO.Target.OS.Windows") Return 1;
         If (path == "IO.Target.Linux" || path == "IO.Target.OS.Linux") Return 2;
         If (path == "IO.Target.MacOS" || path == "IO.Target.OS.MacOS") Return 3;
         If (path == "IO.Target.Unknown" || path == "IO.Target.OS.Unknown") Return 0;
-        If (path == "IO.Target.Arch" || path == "IO.Target.Arch.Current" ||
-            path == "IO.Target.X64" || path == "IO.Target.Arch.X64") Return 2;
+        If (path == "IO.Target.Arch" || path == "IO.Target.Arch.Current") Return IO.Host.Arch.Current;
+        If (path == "IO.Target.X64" || path == "IO.Target.Arch.X64") Return 2;
         If (path == "IO.Target.X86" || path == "IO.Target.Arch.X86") Return 1;
         If (path == "IO.Target.Arm64" || path == "IO.Target.Arch.Arm64") Return 3;
         If (path == "IO.Target.Arch.Unknown") Return 0;
@@ -3448,13 +3449,13 @@ Class SemanticCompilation
         If (path == "IO.Target.Env.Unknown") Return 0;
         If (path == "IO.Target.PointerBits") Return 64;
         If (path == "IO.Host" || path == "IO.Host.OS" ||
-            path == "IO.Host.OS.Current" || path == "IO.Host.Windows" ||
-            path == "IO.Host.OS.Windows") Return 1;
+            path == "IO.Host.OS.Current") Return IO.Host.OS.Current;
+        If (path == "IO.Host.Windows" || path == "IO.Host.OS.Windows") Return 1;
         If (path == "IO.Host.Linux" || path == "IO.Host.OS.Linux") Return 2;
         If (path == "IO.Host.MacOS" || path == "IO.Host.OS.MacOS") Return 3;
         If (path == "IO.Host.Unknown" || path == "IO.Host.OS.Unknown") Return 0;
-        If (path == "IO.Host.Arch" || path == "IO.Host.Arch.Current" ||
-            path == "IO.Host.X64" || path == "IO.Host.Arch.X64") Return 2;
+        If (path == "IO.Host.Arch" || path == "IO.Host.Arch.Current") Return IO.Host.Arch.Current;
+        If (path == "IO.Host.X64" || path == "IO.Host.Arch.X64") Return 2;
         If (path == "IO.Host.X86" || path == "IO.Host.Arch.X86") Return 1;
         If (path == "IO.Host.Arm64" || path == "IO.Host.Arch.Arm64") Return 3;
         If (path == "IO.Host.Arch.Unknown") Return 0;
@@ -3468,14 +3469,17 @@ Class SemanticCompilation
 
     Public Safe Function string TargetStringConstant(string path)
     {
-        If (path == "IO.Target.PathSeparator" || path == "IO.Host.PathSeparator") Return "\\";
-        If (path == "IO.Target.ExeSuffix" || path == "IO.Host.ExeSuffix") Return ".exe";
-        If (path == "IO.Target.ObjectSuffix" || path == "IO.Host.ObjectSuffix") Return ".obj";
+        If (path == "IO.Target.PathSeparator" || path == "IO.Host.PathSeparator")
+            Return IO.Host.PathSeparator;
+        If (path == "IO.Target.ExeSuffix" || path == "IO.Host.ExeSuffix")
+            Return IO.Host.ExeSuffix;
+        If (path == "IO.Target.ObjectSuffix" || path == "IO.Host.ObjectSuffix")
+            Return IO.Host.ObjectSuffix;
         If (path == "IO.Target.DynamicLibrarySuffix" ||
-            path == "IO.Host.DynamicLibrarySuffix") Return ".dll";
+            path == "IO.Host.DynamicLibrarySuffix") Return IO.Host.DynamicLibrarySuffix;
         If (path == "IO.Target.StaticLibrarySuffix" ||
-            path == "IO.Host.StaticLibrarySuffix") Return ".lib";
-        If (path == "IO.Target.NewLine" || path == "IO.Host.NewLine") Return "\r\n";
+            path == "IO.Host.StaticLibrarySuffix") Return IO.Host.StaticLibrarySuffix;
+        If (path == "IO.Target.NewLine" || path == "IO.Host.NewLine") Return IO.Host.NewLine;
         Return null;
     }
 

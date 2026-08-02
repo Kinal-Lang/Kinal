@@ -249,7 +249,11 @@ def main() -> int:
     sys.path.insert(0, str(root / "tests"))
     import run_tests as legacy_tests
 
-    asset_dir = out_dir / "native-assets"
+    # The manifest intentionally contains source-relative LinkFile attributes
+    # and filesystem fixtures rooted under out/test.  Mirror the canonical
+    # test-runner layout instead of placing native assets in an audit-only
+    # directory, otherwise those paths fail before runtime behavior is tested.
+    asset_dir = root / "out" / "test"
     asset_dir.mkdir(parents=True, exist_ok=True)
     legacy_tests.build_native_ffi_assets(asset_dir)
     manifest = json.loads((root / "tests" / "manifest.json").read_text(encoding="utf-8"))

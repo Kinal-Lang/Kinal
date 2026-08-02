@@ -732,7 +732,7 @@ def copy_host_linker_tools(stage_linker: Path, llvm_bin: Path) -> None:
         return
 
     if host.startswith("macos-"):
-        for name in ("ld.lld", "lld"):
+        for name in ("ld64.lld", "ld.lld", "lld"):
             src = llvm_bin / name
             if src.exists():
                 shutil.copy2(src, stage_linker / name)
