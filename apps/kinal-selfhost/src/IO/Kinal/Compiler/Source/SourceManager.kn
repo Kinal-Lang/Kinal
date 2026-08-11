@@ -2,6 +2,7 @@ Unit IO.Kinal.Compiler.Source.SourceManager;
 
 Get IO.Path;
 Get IO.Kinal.Compiler.Source.SourceFile;
+Get IO.Kinal.Compiler.Source.SourcePath;
 
 Class SourceEntry
 {
@@ -28,7 +29,7 @@ Class SourceManager
 
     Public Safe Function SourceFile Load(string path)
     {
-        string normalized = IO.Path.Normalize(path);
+        string normalized = IO.Kinal.Compiler.Source.SourcePath.Canonical(path);
         SourceEntry current = This.First;
         While (current != null)
         {

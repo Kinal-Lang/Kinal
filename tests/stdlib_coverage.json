@@ -467,6 +467,9 @@
       "stdlib_math_complete",
       "stdlib_char_complete"
     ],
+    "IO.Kinal.Runtime": [
+      "stdlib_memory_volatile"
+    ],
     "IO.Json": [
       "stdlib_json_complete"
     ],

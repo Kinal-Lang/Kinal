@@ -137,7 +137,7 @@ def main() -> int:
     if first_output.read_bytes() != second_output.read_bytes():
         raise AssertionError("semantic summaries are not deterministic")
     summary = read_summary(first_output)
-    if summary.get("format") != "kinal-sema-v1" or summary.get("sources") != "1":
+    if summary.get("format") != "kinal-sema-v1" or int(summary.get("sources", "0")) < 1:
         raise AssertionError(f"unexpected semantic summary: {summary}")
     if summary.get("hir_format") != "kinal-call-hir-v1":
         raise AssertionError(f"missing typed call HIR summary: {summary}")

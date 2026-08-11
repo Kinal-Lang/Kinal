@@ -1,6 +1,8 @@
 #include "kn_selfhost_llvm.h"
 
+#include <stdatomic.h>
 #include <stdint.h>
+#include <stdlib.h>
 
 #include "llvm-c/Core.h"
 #include "llvm-c/Analysis.h"
@@ -14,18 +16,9 @@ typedef struct KnShLlvmModule
     LLVMBuilderRef builder;
 } KnShLlvmModule;
 
-typedef struct KnShHandleList
-{
-    uint64_t count;
-    uint64_t capacity;
-    void **items;
-} KnShHandleList;
-
-/* The hosted Kinal runtime owns bridge allocations and scans them as roots. */
-extern void *__kn_gc_alloc(uint64_t size);
-
-static char g_last_error[1024];
-static int g_target_initialized;
+static _Thread_local char g_last_error[1024];
+/* 0 = uninitialized, 1 = initializing, 2 = ready, 3 = failed. */
+static atomic_int g_target_state = ATOMIC_VAR_INIT(0);
 
 static void clear_error(void)
 {
@@ -53,7 +46,7 @@ static char *copy_runtime_string(const char *text)
         text = "";
     while (text[length])
         length++;
-    copy = (char *)__kn_gc_alloc(length + 1);
+    copy = (char *)malloc((size_t)length + 1u);
     if (!copy)
     {
         set_error("out of memory while copying an LLVM string");
@@ -67,17 +60,36 @@ static char *copy_runtime_string(const char *text)
 
 static int initialize_native_target(void)
 {
-    if (g_target_initialized)
+    int state = atomic_load_explicit(&g_target_state, memory_order_acquire);
+    int expected = 0;
+    if (state == 2)
         return 1;
-    if (LLVMInitializeNativeTarget() != 0 ||
-        LLVMInitializeNativeAsmPrinter() != 0 ||
-        LLVMInitializeNativeAsmParser() != 0)
+    if (state == 3)
     {
         set_error("LLVM native target initialization failed");
         return 0;
     }
-    g_target_initialized = 1;
-    return 1;
+    if (atomic_compare_exchange_strong_explicit(
+            &g_target_state, &expected, 1,
+            memory_order_acq_rel, memory_order_acquire))
+    {
+        int ok = LLVMInitializeNativeTarget() == 0 &&
+                 LLVMInitializeNativeAsmPrinter() == 0 &&
+                 LLVMInitializeNativeAsmParser() == 0;
+        atomic_store_explicit(&g_target_state, ok ? 2 : 3,
+                              memory_order_release);
+        if (!ok)
+            set_error("LLVM native target initialization failed");
+        return ok;
+    }
+    do
+    {
+        state = atomic_load_explicit(&g_target_state, memory_order_acquire);
+    } while (state == 1);
+    if (state == 2)
+        return 1;
+    set_error("LLVM native target initialization failed");
+    return 0;
 }
 
 int kn_sh_llvm_version_major(void)
@@ -91,7 +103,7 @@ void *kn_sh_llvm_module_create(const char *name)
 {
     KnShLlvmModule *state;
     clear_error();
-    state = (KnShLlvmModule *)__kn_gc_alloc((uint64_t)sizeof(KnShLlvmModule));
+    state = (KnShLlvmModule *)calloc(1u, sizeof(KnShLlvmModule));
     if (!state)
     {
         set_error("out of memory while creating an LLVM module");
@@ -100,6 +112,7 @@ void *kn_sh_llvm_module_create(const char *name)
     state->context = LLVMContextCreate();
     if (!state->context)
     {
+        free(state);
         set_error("LLVMContextCreate failed");
         return 0;
     }
@@ -108,7 +121,7 @@ void *kn_sh_llvm_module_create(const char *name)
     if (!state->module)
     {
         LLVMContextDispose(state->context);
-        state->context = 0;
+        free(state);
         set_error("LLVMModuleCreateWithNameInContext failed");
         return 0;
     }
@@ -117,8 +130,7 @@ void *kn_sh_llvm_module_create(const char *name)
     {
         LLVMDisposeModule(state->module);
         LLVMContextDispose(state->context);
-        state->module = 0;
-        state->context = 0;
+        free(state);
         set_error("LLVMCreateBuilderInContext failed");
         return 0;
     }
@@ -139,6 +151,7 @@ void kn_sh_llvm_module_dispose(void *module_handle)
     state->builder = 0;
     state->module = 0;
     state->context = 0;
+    free(state);
 }
 
 int kn_sh_llvm_build_probe(void *module_handle, const char *function_name,
@@ -172,7 +185,7 @@ int kn_sh_llvm_build_probe(void *module_handle, const char *function_name,
     return 1;
 }
 
-const char *kn_sh_llvm_module_ir(void *module_handle)
+char *kn_sh_llvm_module_ir(void *module_handle)
 {
     KnShLlvmModule *state = (KnShLlvmModule *)module_handle;
     char *message;
@@ -181,17 +194,17 @@ const char *kn_sh_llvm_module_ir(void *module_handle)
     if (!state || !state->module)
     {
         set_error("invalid LLVM module handle");
-        return "";
+        return 0;
     }
     message = LLVMPrintModuleToString(state->module);
     if (!message)
     {
         set_error("LLVMPrintModuleToString failed");
-        return "";
+        return 0;
     }
     copy = copy_runtime_string(message);
     LLVMDisposeMessage(message);
-    return copy ? copy : "";
+    return copy;
 }
 
 int kn_sh_llvm_emit_object(void *module_handle, const char *target_triple,
@@ -286,53 +299,6 @@ static const char *safe_name(const char *name)
     return name ? name : "";
 }
 
-void *kn_sh_llvm_handles_create(void)
-{
-    KnShHandleList *list = (KnShHandleList *)__kn_gc_alloc(sizeof(KnShHandleList));
-    if (!list)
-        return 0;
-    list->count = 0;
-    list->capacity = 8;
-    list->items = (void **)__kn_gc_alloc(sizeof(void *) * list->capacity);
-    if (!list->items)
-        return 0;
-    return list;
-}
-
-int kn_sh_llvm_handles_add(void *handles, void *handle)
-{
-    KnShHandleList *list = (KnShHandleList *)handles;
-    if (!list)
-        return 0;
-    if (list->count == list->capacity)
-    {
-        uint64_t next_capacity = list->capacity * 2;
-        void **next = (void **)__kn_gc_alloc(sizeof(void *) * next_capacity);
-        if (!next)
-            return 0;
-        for (uint64_t i = 0; i < list->count; i++)
-            next[i] = list->items[i];
-        list->items = next;
-        list->capacity = next_capacity;
-    }
-    list->items[list->count++] = handle;
-    return 1;
-}
-
-int kn_sh_llvm_handles_count(void *handles)
-{
-    KnShHandleList *list = (KnShHandleList *)handles;
-    return list ? (int)list->count : 0;
-}
-
-void *kn_sh_llvm_handles_get(void *handles, int index)
-{
-    KnShHandleList *list = (KnShHandleList *)handles;
-    if (!list || index < 0 || (uint64_t)index >= list->count)
-        return 0;
-    return list->items[index];
-}
-
 void *kn_sh_llvm_type_void(void *module_handle)
 {
     KnShLlvmModule *state = module_state(module_handle);
@@ -368,31 +334,34 @@ void *kn_sh_llvm_type_named_struct(void *module_handle, const char *name)
     return state ? LLVMStructCreateNamed(state->context, safe_name(name)) : 0;
 }
 
-void *kn_sh_llvm_type_literal_struct(void *module_handle, void *fields, int packed)
+void *kn_sh_llvm_type_literal_struct(void *module_handle, void *fields,
+                                     int field_count, int packed)
 {
     KnShLlvmModule *state = module_state(module_handle);
-    KnShHandleList *list = (KnShHandleList *)fields;
-    return state && list ? LLVMStructTypeInContext(
-        state->context, (LLVMTypeRef *)list->items, (unsigned)list->count, packed) : 0;
+    if (!state || field_count < 0 || (field_count > 0 && !fields))
+        return 0;
+    return LLVMStructTypeInContext(state->context, (LLVMTypeRef *)fields,
+                                   (unsigned)field_count, packed);
 }
 
-int kn_sh_llvm_type_set_struct_body(void *struct_type, void *fields, int packed)
+int kn_sh_llvm_type_set_struct_body(void *struct_type, void *fields,
+                                    int field_count, int packed)
 {
-    KnShHandleList *list = (KnShHandleList *)fields;
-    if (!struct_type || !list)
+    if (!struct_type || field_count < 0 || (field_count > 0 && !fields))
         return 0;
-    LLVMStructSetBody((LLVMTypeRef)struct_type, (LLVMTypeRef *)list->items,
-                      (unsigned)list->count, packed);
+    LLVMStructSetBody((LLVMTypeRef)struct_type, (LLVMTypeRef *)fields,
+                      (unsigned)field_count, packed);
     return 1;
 }
 
-void *kn_sh_llvm_type_function(void *return_type, void *parameters, int variadic)
+void *kn_sh_llvm_type_function(void *return_type, void *parameters,
+                               int parameter_count, int variadic)
 {
-    KnShHandleList *list = (KnShHandleList *)parameters;
-    if (!return_type || !list)
+    if (!return_type || parameter_count < 0 ||
+        (parameter_count > 0 && !parameters))
         return 0;
-    return LLVMFunctionType((LLVMTypeRef)return_type, (LLVMTypeRef *)list->items,
-                            (unsigned)list->count, variadic);
+    return LLVMFunctionType((LLVMTypeRef)return_type, (LLVMTypeRef *)parameters,
+                            (unsigned)parameter_count, variadic);
 }
 
 void *kn_sh_llvm_type_array(void *element_type, int count)
@@ -447,6 +416,13 @@ void *kn_sh_llvm_current_block(void *module_handle)
 {
     KnShLlvmModule *state = module_state(module_handle);
     return state ? LLVMGetInsertBlock(state->builder) : 0;
+}
+
+void *kn_sh_llvm_current_function(void *module_handle)
+{
+    KnShLlvmModule *state = module_state(module_handle);
+    LLVMBasicBlockRef block = state ? LLVMGetInsertBlock(state->builder) : 0;
+    return block ? LLVMGetBasicBlockParent(block) : 0;
 }
 
 int kn_sh_llvm_block_is_terminated(void *block)
@@ -573,19 +549,20 @@ void *kn_sh_llvm_build_struct_gep(void *module_handle, void *struct_type,
 }
 
 void *kn_sh_llvm_build_gep(void *module_handle, void *element_type, void *pointer,
-                           void *indices, int in_bounds, const char *name)
+                           void *indices, int index_count, int in_bounds,
+                           const char *name)
 {
     KnShLlvmModule *state = module_state(module_handle);
-    KnShHandleList *list = (KnShHandleList *)indices;
-    if (!state || !element_type || !pointer || !list)
+    if (!state || !element_type || !pointer || index_count < 0 ||
+        (index_count > 0 && !indices))
         return 0;
     if (in_bounds)
         return LLVMBuildInBoundsGEP2(state->builder, (LLVMTypeRef)element_type,
-            (LLVMValueRef)pointer, (LLVMValueRef *)list->items,
-            (unsigned)list->count, safe_name(name));
+            (LLVMValueRef)pointer, (LLVMValueRef *)indices,
+            (unsigned)index_count, safe_name(name));
     return LLVMBuildGEP2(state->builder, (LLVMTypeRef)element_type,
-        (LLVMValueRef)pointer, (LLVMValueRef *)list->items,
-        (unsigned)list->count, safe_name(name));
+        (LLVMValueRef)pointer, (LLVMValueRef *)indices,
+        (unsigned)index_count, safe_name(name));
 }
 
 void *kn_sh_llvm_build_extract_value(void *module_handle, void *aggregate,
@@ -695,13 +672,16 @@ KN_SH_BUILD_CAST(kn_sh_llvm_build_fp_to_si, LLVMBuildFPToSI)
 KN_SH_BUILD_CAST(kn_sh_llvm_build_fp_to_ui, LLVMBuildFPToUI)
 
 void *kn_sh_llvm_build_call(void *module_handle, void *function_type,
-                            void *function, void *arguments, const char *name)
+                            void *function, void *arguments,
+                            int argument_count, const char *name)
 {
     KnShLlvmModule *state = module_state(module_handle);
-    KnShHandleList *list = (KnShHandleList *)arguments;
-    return state && function_type && function && list ? LLVMBuildCall2(
-        state->builder, (LLVMTypeRef)function_type, (LLVMValueRef)function,
-        (LLVMValueRef *)list->items, (unsigned)list->count, safe_name(name)) : 0;
+    if (!state || !function_type || !function || argument_count < 0 ||
+        (argument_count > 0 && !arguments))
+        return 0;
+    return LLVMBuildCall2(state->builder, (LLVMTypeRef)function_type,
+                          (LLVMValueRef)function, (LLVMValueRef *)arguments,
+                          (unsigned)argument_count, safe_name(name));
 }
 
 void *kn_sh_llvm_build_return(void *module_handle, void *value)

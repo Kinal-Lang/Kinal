@@ -1,6 +1,7 @@
 Unit IO.Kinal.Compiler.Main;
 
 Get IO.Kinal.Compiler.Driver;
+Get IO.Kinal.Runtime;
 
 Trusted Static Function int Main(string[] args)
 {

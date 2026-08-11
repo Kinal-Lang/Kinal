@@ -46,7 +46,7 @@ IO.File.Touch("log.txt");            // 仅确保文件存在
 |------|------|------|
 | `ReadAllText(path)` | `string → string` | 读取全部内容 |
 | `ReadFirstLine(path)` | `string → string` | 读取第一行 |
-| `ReadIfExists(path)` | `string → string` | 文件存在则读取，否则返回 `""` |
+| `ReadIfExists(path)` | `string → string` | 文件存在则读取，否则返回 `null` |
 | `ReadOrDefault(path, default)` | `string, string → string` | 文件存在则读取，否则返回默认值 |
 | `ReadOr(path, default)` | `string, string → string` | 同 `ReadOrDefault`（别名） |
 | `ReadLines(path)` | `string → list` | 按行读取，返回 `list` |

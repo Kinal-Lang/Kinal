@@ -536,7 +536,7 @@ static LLVMValueRef declare_func(Codegen *g, Func *f, LLVMTypeRef *out_ty)
     const char *sym = (f->is_extern && f->extern_symbol && f->extern_symbol[0])
                           ? f->extern_symbol
                           : ((f->is_extern && f->name) ? f->name : (f->qname ? f->qname : f->name));
-    LLVMValueRef fn = LLVMAddFunction(g->mod, sym, fn_ty);
+    LLVMValueRef fn = ensure_function(g->mod, sym, fn_ty);
     if (f->is_extern && f->extern_abi == KN_EXTERN_ABI_SYSTEM && g->target_is_windows && g->target_is_x86)
         LLVMSetFunctionCallConv(fn, LLVMX86StdcallCallConv);
     if (out_ty) *out_ty = fn_ty;

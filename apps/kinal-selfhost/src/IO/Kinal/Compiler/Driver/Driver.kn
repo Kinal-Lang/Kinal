@@ -3,11 +3,14 @@ Unit IO.Kinal.Compiler.Driver;
 Get IO.Console;
 Get IO.File;
 Get IO.Directory;
+Get IO.Host;
 Get IO.Path;
 Get IO.Text;
+Get IO.Kinal.Runtime;
 Get IO.Kinal.Compiler.Core.Diagnostics;
 Get IO.Kinal.Compiler.Core.CompileSession;
 Get IO.Kinal.Compiler.Source.SourceFile;
+Get IO.Kinal.Compiler.Source.SourcePath;
 Get IO.Kinal.Compiler.Lex.Lexer;
 Get IO.Kinal.Compiler.Lex.Token;
 Get IO.Kinal.Compiler.Syntax.Parser;
@@ -38,56 +41,48 @@ Class ProjectBuildRequest
     }
 }
 
-Safe Function string QuoteArgument(string value)
-{
-    If (IO.Text.Contains(value, "\"")) Return "";
-    Return "\"" + value + "\"";
-}
-
 Safe Function string WindowsLibraryName(string name)
 {
     Return IO.Text.IsEmpty(IO.Path.Extension(name)) ? name + ".lib" : name;
 }
 
-Trusted Function string HostTag()
+Safe Function bool HostIsWindows()
 {
-    string root = IO.Path.Directory(IO.Kinal.Compiler.Backend.LlvmBridge.ExecutablePath());
-    If (IO.File.Exists(IO.Path.Combine(root, "runtime/win-x64/kn_runtime.obj")))
-        Return "win-x64";
-    If (IO.File.Exists(IO.Path.Combine(root, "runtime/win-arm64/kn_runtime.obj")))
-        Return "win-arm64";
-    If (IO.File.Exists(IO.Path.Combine(root, "runtime/linux-x64/kn_runtime.o")))
-        Return "linux-x64";
-    If (IO.File.Exists(IO.Path.Combine(root, "runtime/linux-arm64/kn_runtime.o")))
-        Return "linux-arm64";
-    If (IO.File.Exists(IO.Path.Combine(root, "runtime/macos-x64/kn_runtime.o")))
-        Return "macos-x64";
-    If (IO.File.Exists(IO.Path.Combine(root, "runtime/macos-arm64/kn_runtime.o")))
-        Return "macos-arm64";
+    Return IO.Host.OS == IO.Host.OS.Windows;
+}
+
+Safe Function bool HostIsLinux()
+{
+    Return IO.Host.OS == IO.Host.OS.Linux;
+}
+
+Safe Function bool HostIsMacOS()
+{
+    Return IO.Host.OS == IO.Host.OS.MacOS;
+}
+
+Safe Function bool HostIsArm64()
+{
+    Return IO.Host.Arch == IO.Host.Arch.Arm64;
+}
+
+Safe Function bool HostIsX64()
+{
+    Return IO.Host.Arch == IO.Host.Arch.X64;
+}
+
+Safe Function string HostTag()
+{
+    If (HostIsWindows() && HostIsX64()) Return "win-x64";
+    If (HostIsWindows() && HostIsArm64()) Return "win-arm64";
+    If (HostIsLinux() && HostIsX64()) Return "linux-x64";
+    If (HostIsLinux() && HostIsArm64()) Return "linux-arm64";
+    If (HostIsMacOS() && HostIsX64()) Return "macos-x64";
+    If (HostIsMacOS() && HostIsArm64()) Return "macos-arm64";
     Return "unknown";
 }
 
-Trusted Function bool HostIsWindows()
-{
-    Return IO.Text.StartsWith(HostTag(), "win-");
-}
-
-Trusted Function bool HostIsLinux()
-{
-    Return IO.Text.StartsWith(HostTag(), "linux-");
-}
-
-Trusted Function bool HostIsMacOS()
-{
-    Return IO.Text.StartsWith(HostTag(), "macos-");
-}
-
-Trusted Function bool HostIsArm64()
-{
-    Return IO.Text.EndsWith(HostTag(), "-arm64");
-}
-
-Trusted Function bool LinkTargetMatchesHost(string target)
+Safe Function bool LinkTargetMatchesHost(string target)
 {
     If (target == HostTag()) Return true;
     If (HostIsWindows())
@@ -127,8 +122,8 @@ Safe Function string ResolveExternLinkFile(FunctionSymbol function, string value
         IO.Path.Directory(function.Syntax.Source.Path), value));
 }
 
-Trusted Function string AppendExternLinkSettings(string commandLine,
-                                                  SemanticCompilation semantics)
+Trusted Function void AppendExternLinkSettings(list arguments,
+                                                SemanticCompilation semantics)
 {
     list libraries = list.Create();
     list files = list.Create();
@@ -171,42 +166,40 @@ Trusted Function string AppendExternLinkSettings(string commandLine,
     int index = 0;
     While (index < files.Count())
     {
-        commandLine = commandLine + " " + QuoteArgument([string](files.Fetch(index)));
+        arguments.Add(files.Fetch(index));
         index = index + 1;
     }
     index = 0;
     While (index < libraries.Count())
     {
         string library = [string](libraries.Fetch(index));
-        commandLine = HostIsWindows() ?
-            commandLine + " " + QuoteArgument(WindowsLibraryName(library)) :
-            commandLine + " -l" + library;
+        arguments.Add(HostIsWindows() ? WindowsLibraryName(library) :
+            "-l" + library);
         index = index + 1;
     }
-    Return commandLine;
 }
 
-Trusted Function string AppendProjectLinkSettings(string commandLine, ProjectConfig project,
-                                                   ProjectProfileConfig profile,
-                                                   string defaultBridgeLlvm,
-                                                   string defaultBridgeRuntime)
+Trusted Function void AppendProjectLinkSettings(list arguments,
+                                                 ProjectConfig project,
+                                                 ProjectProfileConfig profile,
+                                                 string defaultBridgeLlvm,
+                                                 string defaultBridgeRuntime)
 {
     int index = 0;
     While (index < profile.LibDirs.Count())
     {
-        string directory = QuoteArgument(
-            project.ResolvePath([string](profile.LibDirs.Fetch(index))));
-        commandLine = HostIsWindows() ? commandLine + " /libpath:" + directory :
-            commandLine + " -L" + directory;
+        string directory = project.ResolvePath(
+            [string](profile.LibDirs.Fetch(index)));
+        arguments.Add(HostIsWindows() ? "/libpath:" + directory :
+            "-L" + directory);
         index = index + 1;
     }
     index = 0;
     While (index < profile.Libs.Count())
     {
         string library = [string](profile.Libs.Fetch(index));
-        commandLine = HostIsWindows() ?
-            commandLine + " " + QuoteArgument(WindowsLibraryName(library)) :
-            commandLine + " -l" + library;
+        arguments.Add(HostIsWindows() ? WindowsLibraryName(library) :
+            "-l" + library);
         index = index + 1;
     }
     index = 0;
@@ -217,18 +210,29 @@ Trusted Function string AppendProjectLinkSettings(string commandLine, ProjectCon
             IO.Path.FileName(file) != IO.Path.FileName(defaultBridgeRuntime) &&
             IO.Path.Normalize(file) != IO.Path.Normalize(defaultBridgeLlvm) &&
             IO.Path.FileName(file) != IO.Path.FileName(defaultBridgeLlvm))
-            commandLine = commandLine + " " + QuoteArgument(file);
+            arguments.Add(file);
         index = index + 1;
     }
     index = 0;
     While (index < profile.LinkArgs.Count())
     {
         string argument = [string](profile.LinkArgs.Fetch(index));
-        commandLine = HostIsWindows() ? commandLine + " " + argument :
-            commandLine + " -Xlinker " + QuoteArgument(argument);
+        If (!HostIsWindows()) arguments.Add("-Xlinker");
+        arguments.Add(argument);
         index = index + 1;
     }
-    Return commandLine;
+}
+
+Trusted Function int RunProcess(string executable, list arguments)
+{
+    string[] values = {};
+    int index = 0;
+    While (index < arguments.Count())
+    {
+        values = values.Add([string](arguments.Fetch(index)));
+        index = index + 1;
+    }
+    Return IO.Kinal.Runtime.ProcessRun(executable, values);
 }
 
 Trusted Function int LinkWindowsExecutable(string outputPath, string objectPath,
@@ -236,7 +240,7 @@ Trusted Function int LinkWindowsExecutable(string outputPath, string objectPath,
                                            ProjectProfileConfig profile,
                                            SemanticCompilation semantics)
 {
-    string root = IO.Path.Directory(IO.Kinal.Compiler.Backend.LlvmBridge.ExecutablePath());
+    string root = IO.Path.Directory(IO.Kinal.Runtime.ExecutablePath());
     string linker = IO.Path.Combine(root, "linker/lld-link.exe");
     string runtime = IO.Path.Combine(root, "runtime/" + HostTag());
     string llvm = IO.Path.Combine(root, "llvm/lib");
@@ -251,21 +255,33 @@ Trusted Function int LinkWindowsExecutable(string outputPath, string objectPath,
     string bridgeRuntime = IO.Path.Combine(bridge, "kn_selfhost_runtime.o");
     string bridgeLlvm = IO.Path.Combine(bridge, "kn_selfhost_llvm.o");
     string machine = HostIsArm64() ? "arm64" : "x64";
-    string commandLine = QuoteArgument(linker) +
-        " /nologo /timestamp:0 /machine:" + machine +
-        " /subsystem:console /stack:16777216 /entry:mainCRTStartup /out:" + QuoteArgument(outputPath) +
-        " " + QuoteArgument(objectPath) +
-        " " + QuoteArgument(IO.Path.Combine(runtime, "kn_runtime.obj")) +
-        " " + QuoteArgument(IO.Path.Combine(runtime, "kn_math.obj")) +
-        " " + QuoteArgument(bridgeLlvm) +
-        " " + QuoteArgument(bridgeRuntime) +
-        " /libpath:" + QuoteArgument(llvm) +
-        " /libpath:" + QuoteArgument(runtime) +
-        " LLVM-C.lib kernel32.lib user32.lib gdi32.lib oldnames.lib msvcrt.lib vcruntime.lib ucrt.lib";
-    commandLine = AppendProjectLinkSettings(commandLine, project, profile,
+    list arguments = list.Create();
+    arguments.Add("/nologo");
+    arguments.Add("/timestamp:0");
+    arguments.Add("/machine:" + machine);
+    arguments.Add("/subsystem:console");
+    arguments.Add("/stack:16777216");
+    arguments.Add("/entry:mainCRTStartup");
+    arguments.Add("/out:" + outputPath);
+    arguments.Add(objectPath);
+    arguments.Add(IO.Path.Combine(runtime, "kn_runtime.obj"));
+    arguments.Add(IO.Path.Combine(runtime, "kn_math.obj"));
+    arguments.Add(bridgeLlvm);
+    arguments.Add(bridgeRuntime);
+    arguments.Add("/libpath:" + llvm);
+    arguments.Add("/libpath:" + runtime);
+    arguments.Add("LLVM-C.lib");
+    arguments.Add("kernel32.lib");
+    arguments.Add("user32.lib");
+    arguments.Add("gdi32.lib");
+    arguments.Add("oldnames.lib");
+    arguments.Add("msvcrt.lib");
+    arguments.Add("vcruntime.lib");
+    arguments.Add("ucrt.lib");
+    AppendProjectLinkSettings(arguments, project, profile,
         bridgeLlvm, bridgeRuntime);
-    commandLine = AppendExternLinkSettings(commandLine, semantics);
-    Return IO.Kinal.Compiler.Backend.LlvmBridge.Execute(commandLine);
+    AppendExternLinkSettings(arguments, semantics);
+    Return RunProcess(linker, arguments);
 }
 
 Trusted Function int LinkPosixExecutable(string outputPath, string objectPath,
@@ -273,7 +289,7 @@ Trusted Function int LinkPosixExecutable(string outputPath, string objectPath,
                                          ProjectProfileConfig profile,
                                          SemanticCompilation semantics)
 {
-    string root = IO.Path.Directory(IO.Kinal.Compiler.Backend.LlvmBridge.ExecutablePath());
+    string root = IO.Path.Directory(IO.Kinal.Runtime.ExecutablePath());
     string clang = IO.Path.Combine(root, "linker/clang");
     string linkerName = HostIsMacOS() ? "ld64.lld" : "ld.lld";
     string linker = IO.Path.Combine(root, "linker/" + linkerName);
@@ -290,22 +306,29 @@ Trusted Function int LinkPosixExecutable(string outputPath, string objectPath,
         Return 1;
     }
 
-    string commandLine = QuoteArgument(clang) +
-        " -fuse-ld=lld --ld-path=" + QuoteArgument(linker) +
-        " -o " + QuoteArgument(outputPath) +
-        " " + QuoteArgument(objectPath) +
-        " " + QuoteArgument(IO.Path.Combine(runtime, "kn_runtime.o")) +
-        " " + QuoteArgument(IO.Path.Combine(runtime, "kn_math.o")) +
-        " " + QuoteArgument(bridgeLlvm) +
-        " " + QuoteArgument(bridgeRuntime) +
-        " -L" + QuoteArgument(llvm) + " -lLLVM";
-    commandLine = AppendProjectLinkSettings(commandLine, project, profile,
+    list arguments = list.Create();
+    If (HostIsLinux()) arguments.Add("-no-pie");
+    arguments.Add("-fuse-ld=lld");
+    arguments.Add("--ld-path=" + linker);
+    arguments.Add("-o");
+    arguments.Add(outputPath);
+    arguments.Add(objectPath);
+    arguments.Add(IO.Path.Combine(runtime, "kn_runtime.o"));
+    arguments.Add(IO.Path.Combine(runtime, "kn_math.o"));
+    arguments.Add(bridgeLlvm);
+    arguments.Add(bridgeRuntime);
+    arguments.Add("-L" + llvm);
+    arguments.Add("-lLLVM");
+    AppendProjectLinkSettings(arguments, project, profile,
         bridgeLlvm, bridgeRuntime);
-    commandLine = AppendExternLinkSettings(commandLine, semantics);
-    commandLine = HostIsMacOS() ?
-        commandLine + " -Wl,-rpath,@loader_path/llvm/lib -pthread -lm" :
-        commandLine + " -Wl,-rpath,\\$ORIGIN/llvm/lib -pthread -ldl -lm";
-    Return IO.Kinal.Compiler.Backend.LlvmBridge.Execute(commandLine);
+    AppendExternLinkSettings(arguments, semantics);
+    arguments.Add(HostIsMacOS() ?
+        "-Wl,-rpath,@loader_path/llvm/lib" :
+        "-Wl,-rpath,$ORIGIN/llvm/lib");
+    arguments.Add("-pthread");
+    If (!HostIsMacOS()) arguments.Add("-ldl");
+    arguments.Add("-lm");
+    Return RunProcess(clang, arguments);
 }
 
 Trusted Function int LinkExecutable(string outputPath, string objectPath,
@@ -414,8 +437,10 @@ Trusted Function int CompileProject(ProjectBuildRequest request)
     CompileSession session = New CompileSession();
     session.LoadProject(manifest, request.Profile);
     If (!session.HasErrors()) session.ParseProject();
-    If (!session.HasErrors()) DiscoverRelatedSources(session,
-        session.Project.ResolvePath(session.Profile.Entry), false);
+    string entryPath = session.Project.ResolvePath(session.Profile.Entry);
+    If (!session.HasErrors()) LoadRuntimeSources(session, entryPath);
+    If (!session.HasErrors() && session.Profile.AutoDiscovery)
+        DiscoverRelatedSources(session, entryPath, false);
     SemanticCompilation semantics = null;
     If (!session.HasErrors())
     {
@@ -451,7 +476,7 @@ Trusted Function int CompileProject(ProjectBuildRequest request)
 
 Safe Function bool SessionContainsSource(CompileSession session, string path)
 {
-    string normalized = IO.Path.Normalize(path);
+    string normalized = IO.Kinal.Compiler.Source.SourcePath.Canonical(path);
     CompilationUnit unit = session.FirstUnit;
     While (unit != null)
     {
@@ -463,11 +488,13 @@ Safe Function bool SessionContainsSource(CompileSession session, string path)
 
 Safe Function SyntaxTree ProbeSyntax(string path)
 {
-    SourceFile source = New SourceFile(IO.Path.Normalize(path), IO.File.ReadAllText(path));
+    SourceFile source = New SourceFile(
+        IO.Kinal.Compiler.Source.SourcePath.Canonical(path), IO.File.ReadAllText(path));
     list diagnostics = list.Create();
     list tokens = IO.Kinal.Compiler.Lex.Lexer.Tokenize(source, diagnostics);
     If (IO.Kinal.Compiler.Core.Diagnostics.HasAny(diagnostics)) Return null;
-    Return IO.Kinal.Compiler.Syntax.Parser.Build(source, tokens, diagnostics);
+    SyntaxTree syntax = IO.Kinal.Compiler.Syntax.Parser.Build(source, tokens, diagnostics);
+    Return IO.Kinal.Compiler.Core.Diagnostics.HasAny(diagnostics) ? null : syntax;
 }
 
 Safe Function bool IsRelatedUnit(CompileSession session, SyntaxTree candidate)
@@ -491,7 +518,11 @@ Safe Function bool IsRelatedUnit(CompileSession session, SyntaxTree candidate)
 
 Safe Function string FindStandardLibraryRoot(string entryPath)
 {
-    string directory = IO.Path.Directory(IO.Path.Normalize(entryPath));
+    string normalizedEntry = IO.Path.Normalize(entryPath);
+    If (IO.Path.IsRelative(normalizedEntry))
+        normalizedEntry = IO.Path.Normalize(
+            IO.Path.Combine(IO.Path.CurrentDirectory(), normalizedEntry));
+    string directory = IO.Path.Directory(normalizedEntry);
     int depth = 0;
     While (!IO.Text.IsEmpty(directory) && depth < 16)
     {
@@ -504,7 +535,7 @@ Safe Function string FindStandardLibraryRoot(string entryPath)
     }
 
     string compilerDirectory = IO.Path.Directory(
-        IO.Kinal.Compiler.Backend.LlvmBridge.ExecutablePath());
+        IO.Kinal.Runtime.ExecutablePath());
     string packagedCandidate = IO.Path.Combine(compilerDirectory, "stdlib-src");
     If (IO.Directory.Exists(packagedCandidate)) Return packagedCandidate;
 
@@ -522,6 +553,32 @@ Safe Function void AppendSourceFiles(list destination, string directory)
     {
         string path = [string](discovered.Fetch(index));
         If (IO.Text.EndsWith(path, ".kn")) destination.Add(path);
+        index = index + 1;
+    }
+}
+
+Safe Function string FindRuntimeSourceRoot(string entryPath)
+{
+    string standardLibraryRoot = FindStandardLibraryRoot(entryPath);
+    If (IO.Text.IsEmpty(standardLibraryRoot)) Return "";
+    string candidate = IO.Path.Combine(standardLibraryRoot,
+        "IO.Kinal.Runtime/1.0.0/src");
+    If (IO.Directory.Exists(candidate)) Return candidate;
+    Return "";
+}
+
+Safe Function void LoadRuntimeSources(CompileSession session, string entryPath)
+{
+    list sources = list.Create();
+    AppendSourceFiles(sources, FindRuntimeSourceRoot(entryPath));
+    int index = 0;
+    While (index < sources.Count())
+    {
+        string path = [string](sources.Fetch(index));
+        If (!SessionContainsSource(session, path))
+        {
+            session.ParseFile(path);
+        }
         index = index + 1;
     }
 }
@@ -702,8 +759,9 @@ Safe Function int Run(string[] args)
             If (sourceIndex == 1 && unit != null) session.EntryUnitName = unit.Syntax.UnitName;
             sourceIndex = sourceIndex + 1;
         }
-        If (command == "check-source-auto" && !session.HasErrors())
-            DiscoverRelatedSources(session, args[1], true);
+        If (!session.HasErrors()) LoadRuntimeSources(session, args[1]);
+        If (!session.HasErrors())
+            DiscoverRelatedSources(session, args[1], command == "check-source-auto");
         SemanticCompilation semantics = null;
         If (!session.HasErrors())
         {
@@ -744,7 +802,10 @@ Safe Function int Run(string[] args)
             If (session.HasErrors()) Return 1;
             If (command == "check" || command == "symbols")
             {
-                DiscoverRelatedSources(session, project.ResolvePath(profile.Entry), false);
+                string entryPath = project.ResolvePath(profile.Entry);
+                LoadRuntimeSources(session, entryPath);
+                If (!session.HasErrors() && profile.AutoDiscovery)
+                    DiscoverRelatedSources(session, entryPath, false);
                 SemanticCompilation semantics = New SemanticCompilation(session);
                 semantics.Analyze();
                 IO.Kinal.Compiler.Core.Diagnostics.PrintAll(session.Diagnostics);

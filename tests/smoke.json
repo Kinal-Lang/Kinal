@@ -338,6 +338,7 @@
   {
     "name": "stdlib_file_complete",
     "file": "tests/common/stdlib_file_complete.kn",
+    "auto_link": true,
     "expected": "true\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\n"
   },
   {

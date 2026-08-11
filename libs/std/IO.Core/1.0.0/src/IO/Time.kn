@@ -1,0 +1,160 @@
+Unit IO.Time;
+
+Get IO.Text;
+Get IO.Kinal.Runtime;
+
+// Calendar values and formatting policy belong to the Kinal standard library.
+// The native boundary below only exposes host clock and sleep primitives.
+
+[LinkName("__kn_time_tick")]
+Extern Unsafe Function u64 __TimeTick() By C;
+
+[LinkName("__kn_time_nano")]
+Extern Unsafe Function u64 __TimeNanoTick() By C;
+
+[LinkName("__kn_time_sleep")]
+Extern Unsafe Function void __TimeSleep(i32 milliseconds) By C;
+
+[LinkName("__kn_time_now_parts")]
+Extern Unsafe Function void __TimeNowParts(
+    i32* year, i32* month, i32* day,
+    i32* hour, i32* minute, i32* second,
+    i32* millisecond, i64* tickMilliseconds) By C;
+
+Class DateTime
+{
+    Public int Ticks;
+    Public int Year;
+    Public int Month;
+    Public int Day;
+    Public int Hour;
+    Public int Minute;
+    Public int Second;
+    Public int Millisecond;
+}
+
+[IO.Kinal.Runtime.KncIntrinsic(15)]
+Trusted Function int GetTick()
+{
+    Return [int](__TimeTick());
+}
+
+[IO.Kinal.Runtime.KncIntrinsic(17)]
+Trusted Function int GetNanoTick()
+{
+    Return [int](__TimeNanoTick());
+}
+
+[IO.Kinal.Runtime.KncIntrinsic(16)]
+Trusted Function void Sleep(int milliseconds)
+{
+    __TimeSleep([i32](milliseconds));
+}
+
+[IO.Kinal.Runtime.KncUnsupported("IO.Time.Now is not mapped in the bootstrap KNC emitter yet")]
+Trusted Function DateTime Now()
+{
+    i32 year = 0;
+    i32 month = 0;
+    i32 day = 0;
+    i32 hour = 0;
+    i32 minute = 0;
+    i32 second = 0;
+    i32 millisecond = 0;
+    i64 tickMilliseconds = 0;
+    __TimeNowParts(&year, &month, &day, &hour, &minute, &second,
+        &millisecond, &tickMilliseconds);
+
+    DateTime value = New DateTime();
+    value.Ticks = [int](tickMilliseconds);
+    value.Year = [int](year);
+    value.Month = [int](month);
+    value.Day = [int](day);
+    value.Hour = [int](hour);
+    value.Minute = [int](minute);
+    value.Second = [int](second);
+    value.Millisecond = [int](millisecond);
+    Return value;
+}
+
+Trusted Function string __TimePad(int value, int width)
+{
+    string result = [string](value);
+    While (IO.Text.Length(result) < width)
+    {
+        result = "0" + result;
+    }
+    Return result;
+}
+
+Trusted Function string Format(DateTime value, string pattern)
+{
+    If (pattern == null || pattern == "")
+    {
+        pattern = "yyyy-MM-dd HH:mm:ss";
+    }
+
+    DateTime dateTime = value;
+    If (dateTime == null)
+    {
+        dateTime = New DateTime();
+    }
+
+    char* characters = [char*](pattern);
+    int length = IO.Text.Length(pattern);
+    int index = 0;
+    string result = "";
+    While (index < length)
+    {
+        If (index + 3 < length &&
+            characters[index] == 'y' && characters[index + 1] == 'y' &&
+            characters[index + 2] == 'y' && characters[index + 3] == 'y')
+        {
+            result = result + __TimePad(dateTime.Year, 4);
+            index = index + 4;
+        }
+        ElseIf (index + 1 < length &&
+                characters[index] == 'M' && characters[index + 1] == 'M')
+        {
+            result = result + __TimePad(dateTime.Month, 2);
+            index = index + 2;
+        }
+        ElseIf (index + 1 < length &&
+                characters[index] == 'd' && characters[index + 1] == 'd')
+        {
+            result = result + __TimePad(dateTime.Day, 2);
+            index = index + 2;
+        }
+        ElseIf (index + 1 < length &&
+                characters[index] == 'H' && characters[index + 1] == 'H')
+        {
+            result = result + __TimePad(dateTime.Hour, 2);
+            index = index + 2;
+        }
+        ElseIf (index + 1 < length &&
+                characters[index] == 'm' && characters[index + 1] == 'm')
+        {
+            result = result + __TimePad(dateTime.Minute, 2);
+            index = index + 2;
+        }
+        ElseIf (index + 1 < length &&
+                characters[index] == 's' && characters[index + 1] == 's')
+        {
+            result = result + __TimePad(dateTime.Second, 2);
+            index = index + 2;
+        }
+        ElseIf (index + 2 < length &&
+                characters[index] == 'f' && characters[index + 1] == 'f' &&
+                characters[index + 2] == 'f')
+        {
+            result = result + __TimePad(dateTime.Millisecond, 3);
+            index = index + 3;
+        }
+        Else
+        {
+            result = result + [string](characters[index]);
+            index = index + 1;
+        }
+    }
+    Return result;
+}

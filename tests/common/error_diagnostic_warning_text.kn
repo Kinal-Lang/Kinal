@@ -1,0 +1,7 @@
+Unit Tests.ErrorDiagnosticWarningText;
+
+Static Function int Main()
+{
+    missing = "][warning] ";
+    Return 0;
+}

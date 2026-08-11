@@ -1,0 +1,112 @@
+Unit IO.Kinal.Runtime.Exception;
+
+Get IO.Kinal.Runtime;
+Get IO.Kinal.Runtime.Thread;
+Get IO.Kinal.Runtime.GarbageCollector;
+
+// Thread-state word layout.  The native layer supplies the TLS bytes only;
+// exception ownership, history, and trace construction stay in Kinal.
+Safe Function int CurrentIndex() { Return 2; }
+Safe Function int LastIndex() { Return 3; }
+Safe Function int TraceIndex() { Return 4; }
+Safe Function int LastTraceIndex() { Return 5; }
+
+Trusted Function u64* State()
+{
+    u64* state = IO.Kinal.Runtime.Thread.State();
+    If (state[6] == [u64](0) &&
+        IO.Kinal.Runtime.GarbageCollector.IsMainThread())
+    {
+        IO.Kinal.Runtime.GarbageCollector.AddGlobalRoot(
+            [byte*](&state[CurrentIndex()]), [usize](4) * [usize](8));
+        state[6] = [u64](1);
+    }
+    Return state;
+}
+
+Trusted Function void Set(byte* error)
+{
+    u64* state = State();
+    state[CurrentIndex()] = [u64]([usize](error));
+    state[TraceIndex()] = [u64]([usize]([char*]("")));
+}
+
+Trusted Function void SetWithTrace(byte* error, string trace)
+{
+    u64* state = State();
+    state[CurrentIndex()] = [u64]([usize](error));
+    state[TraceIndex()] = [u64]([usize]([char*](trace == null ? "" : trace)));
+}
+
+Trusted Function byte* Get()
+{
+    Return [byte*]([usize](State()[CurrentIndex()]));
+}
+
+Trusted Function i32 Has()
+{
+    Return State()[CurrentIndex()] == [u64](0) ? [i32](0) : [i32](1);
+}
+
+Trusted Function byte* Last()
+{
+    u64* state = State();
+    u64 current = state[CurrentIndex()];
+    Return [byte*]([usize](current == [u64](0) ? state[LastIndex()] : current));
+}
+
+Trusted Function void Clear()
+{
+    u64* state = State();
+    If (state[CurrentIndex()] != [u64](0))
+    {
+        state[LastIndex()] = state[CurrentIndex()];
+        state[LastTraceIndex()] = state[TraceIndex()];
+    }
+    state[CurrentIndex()] = [u64](0);
+    state[TraceIndex()] = [u64]([usize]([char*]("")));
+}
+
+// Used when a worker has copied its failure into the task object.  Unlike
+// Clear, Reset deliberately keeps no per-thread history behind.
+Trusted Function void Reset()
+{
+    u64* state = State();
+    state[CurrentIndex()] = [u64](0);
+    state[LastIndex()] = [u64](0);
+    state[TraceIndex()] = [u64]([usize]([char*]("")));
+    state[LastTraceIndex()] = [u64]([usize]([char*]("")));
+}
+
+Trusted Function void Push(string functionName)
+{
+    If ([char*](functionName) == null ||
+        IO.Kinal.Runtime.StringLength(functionName) == 0)
+    {
+        Return;
+    }
+
+    u64* state = State();
+    string trace = [string]([char*]([usize](state[TraceIndex()])));
+    If ([char*](trace) == null) trace = "";
+    string prefix = IO.Kinal.Runtime.StringLength(trace) == 0 ? "at " : "\nat ";
+    int required = IO.Kinal.Runtime.StringLength(trace) +
+        IO.Kinal.Runtime.StringLength(prefix) +
+        IO.Kinal.Runtime.StringLength(functionName);
+    If (required >= 4096)
+    {
+        Return;
+    }
+    state[TraceIndex()] = [u64]([usize]([char*](
+        IO.Kinal.Runtime.StringConcat(
+            IO.Kinal.Runtime.StringConcat(trace, prefix), functionName))));
+}
+
+Trusted Function string Trace()
+{
+    u64* state = State();
+    u64 value = state[CurrentIndex()] != [u64](0) ?
+        state[TraceIndex()] : state[LastTraceIndex()];
+    string trace = [string]([char*]([usize](value)));
+    Return trace == null ? "" : trace;
+}

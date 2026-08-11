@@ -1,0 +1,449 @@
+Unit IO.Text;
+
+Get IO.Kinal.Runtime;
+
+// Text algorithms and their managed storage are implemented by Kinal.  No
+// legacy C GC allocation may enter this package boundary.
+
+Trusted Function int __TextLengthChars(char* characters)
+{
+    If (characters == null)
+    {
+        Return 0;
+    }
+    int length = 0;
+    While (characters[length] != '\0')
+    {
+        length = length + 1;
+    }
+    Return length;
+}
+
+Trusted Function char* __TextAllocate(int length)
+{
+    If (length < 0)
+    {
+        length = 0;
+    }
+    byte* memory = IO.Kinal.Runtime.AllocateRaw([usize](length + 1));
+    If (memory == null)
+    {
+        Return null;
+    }
+    char* result = [char*](memory);
+    result[length] = '\0';
+    Return result;
+}
+
+Trusted Function bool __TextMatchesAt(char* source, int sourceLength,
+                                      char* pattern, int patternLength,
+                                      int offset)
+{
+    If (offset < 0 || patternLength < 0 || offset + patternLength > sourceLength)
+    {
+        Return false;
+    }
+    int index = 0;
+    While (index < patternLength)
+    {
+        If (source[offset + index] != pattern[index])
+        {
+            Return false;
+        }
+        index = index + 1;
+    }
+    Return true;
+}
+
+Trusted Function string __TextSliceChars(char* source, int sourceLength,
+                                         int start, int length)
+{
+    If (source == null)
+    {
+        sourceLength = 0;
+    }
+    If (start < 0)
+    {
+        start = 0;
+    }
+    If (length < 0)
+    {
+        length = 0;
+    }
+    If (start > sourceLength)
+    {
+        start = sourceLength;
+    }
+    If (length > sourceLength - start)
+    {
+        length = sourceLength - start;
+    }
+    char* result = __TextAllocate(length);
+    If (result == null)
+    {
+        Return "";
+    }
+    int index = 0;
+    While (index < length)
+    {
+        result[index] = source[start + index];
+        index = index + 1;
+    }
+    Return [string](result);
+}
+
+Trusted Function int Length(string text)
+{
+    Return __TextLengthChars([char*](text));
+}
+
+Trusted Function bool IsEmpty(string text)
+{
+    char* characters = [char*](text);
+    Return characters == null || characters[0] == '\0';
+}
+
+Trusted Function int IndexOf(string text, string value)
+{
+    char* source = [char*](text);
+    char* pattern = [char*](value);
+    int sourceLength = __TextLengthChars(source);
+    int patternLength = __TextLengthChars(pattern);
+    If (patternLength == 0)
+    {
+        Return 0;
+    }
+    If (sourceLength < patternLength)
+    {
+        Return -1;
+    }
+    int index = 0;
+    While (index + patternLength <= sourceLength)
+    {
+        If (__TextMatchesAt(source, sourceLength, pattern, patternLength, index))
+        {
+            Return index;
+        }
+        index = index + 1;
+    }
+    Return -1;
+}
+
+Trusted Function int LastIndexOf(string text, string value)
+{
+    char* source = [char*](text);
+    char* pattern = [char*](value);
+    int sourceLength = __TextLengthChars(source);
+    int patternLength = __TextLengthChars(pattern);
+    If (patternLength == 0)
+    {
+        Return sourceLength;
+    }
+    If (sourceLength < patternLength)
+    {
+        Return -1;
+    }
+    int index = sourceLength - patternLength;
+    While (index >= 0)
+    {
+        If (__TextMatchesAt(source, sourceLength, pattern, patternLength, index))
+        {
+            Return index;
+        }
+        index = index - 1;
+    }
+    Return -1;
+}
+
+[IO.Kinal.Runtime.KncIntrinsic(146)]
+Trusted Function bool Contains(string text, string value)
+{
+    Return IndexOf(text, value) >= 0;
+}
+
+Trusted Function bool StartsWith(string text, string prefix)
+{
+    char* source = [char*](text);
+    char* pattern = [char*](prefix);
+    Return __TextMatchesAt(source, __TextLengthChars(source), pattern,
+        __TextLengthChars(pattern), 0);
+}
+
+Trusted Function bool EndsWith(string text, string suffix)
+{
+    char* source = [char*](text);
+    char* pattern = [char*](suffix);
+    int sourceLength = __TextLengthChars(source);
+    int patternLength = __TextLengthChars(pattern);
+    Return __TextMatchesAt(source, sourceLength, pattern, patternLength,
+        sourceLength - patternLength);
+}
+
+Trusted Function string Slice(string text, int start, int length)
+{
+    char* source = [char*](text);
+    Return __TextSliceChars(source, __TextLengthChars(source), start, length);
+}
+
+Trusted Function string Trim(string text)
+{
+    char* source = [char*](text);
+    int length = __TextLengthChars(source);
+    int start = 0;
+    While (start < length &&
+           (source[start] == ' ' || source[start] == '\t' ||
+            source[start] == '\r' || source[start] == '\n'))
+    {
+        start = start + 1;
+    }
+    int end = length;
+    While (end > start &&
+           (source[end - 1] == ' ' || source[end - 1] == '\t' ||
+            source[end - 1] == '\r' || source[end - 1] == '\n'))
+    {
+        end = end - 1;
+    }
+    Return __TextSliceChars(source, length, start, end - start);
+}
+
+Trusted Function int Count(string text, string value)
+{
+    char* source = [char*](text);
+    char* pattern = [char*](value);
+    int sourceLength = __TextLengthChars(source);
+    int patternLength = __TextLengthChars(pattern);
+    If (patternLength == 0 || sourceLength < patternLength)
+    {
+        Return 0;
+    }
+    int count = 0;
+    int index = 0;
+    While (index + patternLength <= sourceLength)
+    {
+        If (__TextMatchesAt(source, sourceLength, pattern, patternLength, index))
+        {
+            count = count + 1;
+            index = index + patternLength;
+        }
+        Else
+        {
+            index = index + 1;
+        }
+    }
+    Return count;
+}
+
+Trusted Function string Replace(string text, string from, string to)
+{
+    char* source = [char*](text);
+    char* pattern = [char*](from);
+    char* replacement = [char*](to);
+    int sourceLength = __TextLengthChars(source);
+    int patternLength = __TextLengthChars(pattern);
+    int replacementLength = __TextLengthChars(replacement);
+    If (patternLength == 0)
+    {
+        Return __TextSliceChars(source, sourceLength, 0, sourceLength);
+    }
+
+    int matches = Count(text, from);
+    If (matches == 0)
+    {
+        Return __TextSliceChars(source, sourceLength, 0, sourceLength);
+    }
+    int outputLength = sourceLength + matches * (replacementLength - patternLength);
+    char* result = __TextAllocate(outputLength);
+    If (result == null)
+    {
+        Return "";
+    }
+
+    int readIndex = 0;
+    int writeIndex = 0;
+    While (readIndex < sourceLength)
+    {
+        If (__TextMatchesAt(source, sourceLength, pattern, patternLength, readIndex))
+        {
+            int replacementIndex = 0;
+            While (replacementIndex < replacementLength)
+            {
+                result[writeIndex] = replacement[replacementIndex];
+                writeIndex = writeIndex + 1;
+                replacementIndex = replacementIndex + 1;
+            }
+            readIndex = readIndex + patternLength;
+        }
+        Else
+        {
+            result[writeIndex] = source[readIndex];
+            writeIndex = writeIndex + 1;
+            readIndex = readIndex + 1;
+        }
+    }
+    Return [string](result);
+}
+
+Trusted Function string ToUpper(string text)
+{
+    char* source = [char*](text);
+    int length = __TextLengthChars(source);
+    char* result = __TextAllocate(length);
+    If (result == null)
+    {
+        Return "";
+    }
+    int index = 0;
+    While (index < length)
+    {
+        char value = source[index];
+        If (value >= 'a' && value <= 'z')
+        {
+            value = [char]([int](value) - ([int]('a') - [int]('A')));
+        }
+        result[index] = value;
+        index = index + 1;
+    }
+    Return [string](result);
+}
+
+Trusted Function string ToLower(string text)
+{
+    char* source = [char*](text);
+    int length = __TextLengthChars(source);
+    char* result = __TextAllocate(length);
+    If (result == null)
+    {
+        Return "";
+    }
+    int index = 0;
+    While (index < length)
+    {
+        char value = source[index];
+        If (value >= 'A' && value <= 'Z')
+        {
+            value = [char]([int](value) + ([int]('a') - [int]('A')));
+        }
+        result[index] = value;
+        index = index + 1;
+    }
+    Return [string](result);
+}
+
+Trusted Function list Split(string text, string separator)
+{
+    char* source = [char*](text);
+    char* pattern = [char*](separator);
+    int sourceLength = __TextLengthChars(source);
+    int patternLength = __TextLengthChars(pattern);
+    list result = list.Create();
+    If (patternLength == 0)
+    {
+        result.Add(__TextSliceChars(source, sourceLength, 0, sourceLength));
+        Return result;
+    }
+
+    int start = 0;
+    int index = 0;
+    While (index + patternLength <= sourceLength)
+    {
+        If (__TextMatchesAt(source, sourceLength, pattern, patternLength, index))
+        {
+            result.Add(__TextSliceChars(source, sourceLength, start, index - start));
+            index = index + patternLength;
+            start = index;
+        }
+        Else
+        {
+            index = index + 1;
+        }
+    }
+    result.Add(__TextSliceChars(source, sourceLength, start, sourceLength - start));
+    Return result;
+}
+
+Trusted Function list Lines(string text)
+{
+    char* source = [char*](text);
+    int length = __TextLengthChars(source);
+    list result = list.Create();
+    int start = 0;
+    int index = 0;
+    While (index < length)
+    {
+        If (source[index] == '\n')
+        {
+            int lineLength = index - start;
+            If (lineLength > 0 && source[start + lineLength - 1] == '\r')
+            {
+                lineLength = lineLength - 1;
+            }
+            result.Add(__TextSliceChars(source, length, start, lineLength));
+            start = index + 1;
+        }
+        index = index + 1;
+    }
+    int tailLength = length - start;
+    If (tailLength > 0 && source[start + tailLength - 1] == '\r')
+    {
+        tailLength = tailLength - 1;
+    }
+    result.Add(__TextSliceChars(source, length, start, tailLength));
+    Return result;
+}
+
+Trusted Function string Join(list values, string separator)
+{
+    If (values == null || values.Count() == 0)
+    {
+        Return "";
+    }
+    char* glue = [char*](separator);
+    int glueLength = __TextLengthChars(glue);
+    int totalLength = 0;
+    int index = 0;
+    While (index < values.Count())
+    {
+        any value = values.Fetch(index);
+        string part = value Is string ? [string](value) : "<any>";
+        totalLength = totalLength + Length(part);
+        If (index > 0)
+        {
+            totalLength = totalLength + glueLength;
+        }
+        index = index + 1;
+    }
+
+    char* result = __TextAllocate(totalLength);
+    If (result == null)
+    {
+        Return "";
+    }
+    int outputIndex = 0;
+    index = 0;
+    While (index < values.Count())
+    {
+        any value = values.Fetch(index);
+        string part = value Is string ? [string](value) : "<any>";
+        char* characters = [char*](part);
+        int partLength = __TextLengthChars(characters);
+        If (index > 0)
+        {
+            int glueIndex = 0;
+            While (glueIndex < glueLength)
+            {
+                result[outputIndex] = glue[glueIndex];
+                outputIndex = outputIndex + 1;
+                glueIndex = glueIndex + 1;
+            }
+        }
+        int partIndex = 0;
+        While (partIndex < partLength)
+        {
+            result[outputIndex] = characters[partIndex];
+            outputIndex = outputIndex + 1;
+            partIndex = partIndex + 1;
+        }
+        index = index + 1;
+    }
+    Return [string](result);
+}

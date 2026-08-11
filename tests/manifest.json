@@ -381,6 +381,11 @@
     "expected": "\nA 1 true\nB 2\n"
   },
   {
+    "name": "variadic_functions",
+    "file": "tests/common/variadic_functions.kn",
+    "expected": "7\n10\n"
+  },
+  {
     "name": "stdlib_more",
     "file": "tests/common/stdlib_more.kn",
     "expected": "hikinal\n7\neq\n5\n3\n7\n0\n",
@@ -1250,6 +1255,7 @@
   {
     "name": "error_file_write_lines_type",
     "file": "tests/common/error_file_write_lines_type.kn",
+    "auto_link": true,
     "expect_error": "[Sema] Type Mismatch"
   },
   {
@@ -1363,6 +1369,16 @@
     "name": "error_meta_wrong_target",
     "file": "tests/common/error_meta_wrong_target.kn",
     "expect_error": "[Sema] Invalid Attribute"
+  },
+  {
+    "name": "error_variadic_parameter",
+    "file": "tests/common/error_variadic_parameter.kn",
+    "expect_error": "[Sema] Invalid Variadic"
+  },
+  {
+    "name": "error_variadic_named_argument",
+    "file": "tests/common/error_variadic_named_argument.kn",
+    "expect_error": "[Sema] Invalid Named Argument"
   },
   {
     "name": "error_attribute_on_meta",
@@ -1489,6 +1505,7 @@
   {
     "name": "stdlib_file_complete",
     "file": "tests/common/stdlib_file_complete.kn",
+    "auto_link": true,
     "expected": "true\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\n"
   },
   {

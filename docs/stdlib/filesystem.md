@@ -46,7 +46,7 @@ IO.File.Touch("log.txt");            // Just ensure the file exists
 |----------|-----------|-------------|
 | `ReadAllText(path)` | `string → string` | Read all content |
 | `ReadFirstLine(path)` | `string → string` | Read the first line |
-| `ReadIfExists(path)` | `string → string` | Read if file exists, otherwise return `""` |
+| `ReadIfExists(path)` | `string → string` | Read if file exists, otherwise return `null` |
 | `ReadOrDefault(path, default)` | `string, string → string` | Read if file exists, otherwise return the default value |
 | `ReadOr(path, default)` | `string, string → string` | Same as `ReadOrDefault` (alias) |
 | `ReadLines(path)` | `string → list` | Read by lines, returns a `list` |

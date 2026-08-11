@@ -625,8 +625,7 @@ static Stmt *parse_local_named_function_stmt(Parser *p)
     Type ret = parse_type(p);
 
     Token *name_tok = cur(p);
-    expect(p, TOK_ID, "Expected Identifier", "Expected function name");
-    const char *name = tok_text(name_tok);
+    const char *name = parse_name_token(p, "Expected Identifier", "Expected function name");
     if (cur(p)->type == TOK_LT)
     {
         const char **tp = 0;

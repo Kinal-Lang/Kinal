@@ -1,10 +1,12 @@
 Unit IO.Kinal.Compiler.Core.CompileSession;
 
 Get IO.File;
+Get IO.Path;
 Get IO.Text;
 Get IO.Kinal.Compiler.Core.Diagnostics;
 Get IO.Kinal.Compiler.Source.SourceFile;
 Get IO.Kinal.Compiler.Source.SourceManager;
+Get IO.Kinal.Compiler.Source.SourcePath;
 Get IO.Kinal.Compiler.Lex.Lexer;
 Get IO.Kinal.Compiler.Syntax.Parser;
 Get IO.Kinal.Compiler.Syntax.SyntaxTree;
@@ -23,6 +25,22 @@ Class CompilationUnit
         This.Source = source;
         This.Tokens = tokens;
         This.Syntax = syntax;
+        This.Next = null;
+    }
+}
+
+Class ProjectSourceProbe
+{
+    Public string Path;
+    Public SyntaxTree Syntax;
+    Public bool Selected;
+    Public ProjectSourceProbe Next;
+
+    Public Safe Constructor(string path, SyntaxTree syntax)
+    {
+        This.Path = path;
+        This.Syntax = syntax;
+        This.Selected = false;
         This.Next = null;
     }
 }
@@ -70,10 +88,57 @@ Class CompileSession
                 This.Project.DefaultProfile : profileName);
             Return false;
         }
+        If (This.Profile.Mode != "FileOnly" &&
+            This.Profile.Mode != "EntryUnit" &&
+            This.Profile.Mode != "ReachableUnits" &&
+            This.Profile.Mode != "AllSources")
+            This.ReportProject("Unsupported project option",
+                "Source.Mode=" + This.Profile.Mode);
+        If (This.Profile.Backend != "Native")
+            This.ReportProject("Unsupported project option",
+                "Build.Backend=" + This.Profile.Backend);
+        If (This.Profile.Environment != "Hosted")
+            This.ReportProject("Unsupported project option",
+                "Build.Environment=" + This.Profile.Environment);
+        If (This.Profile.Runtime != "GC")
+            This.ReportProject("Unsupported project option",
+                "Build.Runtime=" + This.Profile.Runtime);
+        If (This.Profile.Panic != "Trap")
+            This.ReportProject("Unsupported project option",
+                "Build.Panic=" + This.Profile.Panic);
+        If (!IO.Text.IsEmpty(This.Profile.Target))
+            This.ReportProject("Unsupported project option",
+                "cross-target Build.Target=" + This.Profile.Target);
+        If (!IO.Text.IsEmpty(This.Profile.LinkScript))
+            This.ReportProject("Unsupported project option", "Link.Script");
+        If (This.Profile.NoCRT)
+            This.ReportProject("Unsupported project option", "Link.NoCRT=true");
+        If (This.Profile.NoDefaultLibs)
+            This.ReportProject("Unsupported project option", "Link.NoDefaultLibs=true");
+        If (This.Profile.LinkRoots.Count() > 0)
+            This.ReportProject("Unsupported project option", "Link.LinkRoots");
+        If (This.Project.PackageRoots.Count() > 0 ||
+            This.Project.OfficialPackageRoots.Count() > 0)
+            This.ReportProject("Unsupported project option", "Packages roots");
+        int selectedSet = 0;
+        While (selectedSet < This.Profile.Sets.Count())
+        {
+            string setName = [string](This.Profile.Sets.Fetch(selectedSet));
+            If (This.Project.FindSourceSet(setName) == null)
+                This.ReportProject("Unknown SourceSet", setName);
+            selectedSet = selectedSet + 1;
+        }
+        If (This.HasErrors()) Return false;
         This.SourcePaths = This.Project.DiscoverSources(This.Profile.Name);
         If (This.SourcePaths.Count() == 0)
         {
             This.ReportProject("No source files", "selected profile did not discover any Kinal sources");
+            Return false;
+        }
+        string entryPath = This.Project.ResolvePath(This.Profile.Entry);
+        If (!This.SourcePaths.Contains(entryPath))
+        {
+            This.ReportProject("Entry source not selected", entryPath);
             Return false;
         }
         Return true;
@@ -104,9 +169,120 @@ Class CompileSession
         If (This.HasErrors()) Return null;
         SyntaxTree syntax = IO.Kinal.Compiler.Syntax.Parser.Build(source, tokens, This.Diagnostics);
         If (syntax == null) Return null;
+        If (This.Project != null && This.Profile != null &&
+            This.Project.SourceRequiresUnit(This.Profile.Name, source.Path) &&
+            IO.Text.IsEmpty(syntax.UnitName))
+        {
+            IO.Kinal.Compiler.Core.Diagnostics.Add(This.Diagnostics, source,
+                "Project", "Unit required",
+                "SourceSet.RequireUnit requires an explicit Unit declaration",
+                1, 1, 1);
+            Return null;
+        }
         CompilationUnit unit = New CompilationUnit(source, tokens, syntax);
         This.AddUnit(unit);
         Return unit;
+    }
+
+    Public Safe Function ProjectSourceProbe ProbeProjectSource(string path)
+    {
+        SourceFile source = New SourceFile(
+            IO.Kinal.Compiler.Source.SourcePath.Canonical(path),
+            IO.File.ReadAllText(path));
+        list diagnostics = list.Create();
+        list tokens = IO.Kinal.Compiler.Lex.Lexer.Tokenize(source, diagnostics);
+        SyntaxTree syntax = IO.Kinal.Compiler.Syntax.Parser.Build(
+            source, tokens, diagnostics);
+        // Probing is used only to discover Unit/import relationships. Parser
+        // recovery can still provide that structure after an error; selected
+        // sources are parsed again through ParseFile so their diagnostics are
+        // reported exactly once, while unreachable files remain isolated.
+        If (syntax == null) Return null;
+        Return New ProjectSourceProbe(source.Path, syntax);
+    }
+
+    Public Safe Function ProjectSourceProbe BuildProjectProbes()
+    {
+        ProjectSourceProbe first = null;
+        ProjectSourceProbe last = null;
+        int index = 0;
+        While (index < This.SourcePaths.Count())
+        {
+            ProjectSourceProbe probe = This.ProbeProjectSource(
+                [string](This.SourcePaths.Fetch(index)));
+            If (probe != null)
+            {
+                If (first == null) first = probe;
+                Else last.Next = probe;
+                last = probe;
+            }
+            index = index + 1;
+        }
+        Return first;
+    }
+
+    Public Safe Function ProjectSourceProbe FindProjectProbe(
+        ProjectSourceProbe first, string path)
+    {
+        string normalized = IO.Kinal.Compiler.Source.SourcePath.Canonical(path);
+        ProjectSourceProbe probe = first;
+        While (probe != null)
+        {
+            If (probe.Path == normalized) Return probe;
+            probe = probe.Next;
+        }
+        Return null;
+    }
+
+    Public Safe Function void SelectProjectUnit(ProjectSourceProbe first,
+                                                 string unitName)
+    {
+        If (IO.Text.IsEmpty(unitName)) Return;
+        ProjectSourceProbe probe = first;
+        While (probe != null)
+        {
+            If (probe.Syntax.UnitName == unitName) probe.Selected = true;
+            probe = probe.Next;
+        }
+    }
+
+    Public Safe Function void SelectReachableProjectSources(
+        ProjectSourceProbe first, ProjectSourceProbe entry)
+    {
+        entry.Selected = true;
+        This.SelectProjectUnit(first, entry.Syntax.UnitName);
+        bool changed = true;
+        While (changed)
+        {
+            changed = false;
+            ProjectSourceProbe source = first;
+            While (source != null)
+            {
+                If (source.Selected)
+                {
+                    ImportDecl import = source.Syntax.FirstImport;
+                    While (import != null)
+                    {
+                        ProjectSourceProbe candidate = first;
+                        While (candidate != null)
+                        {
+                            string unitName = candidate.Syntax.UnitName;
+                            If (!candidate.Selected && !IO.Text.IsEmpty(unitName) &&
+                                (import.Target == unitName ||
+                                 IO.Text.StartsWith(import.Target, unitName + ".")))
+                            {
+                                candidate.Selected = true;
+                                This.SelectProjectUnit(first, unitName);
+                                changed = true;
+                            }
+                            candidate = candidate.Next;
+                        }
+                        import = import.Next;
+                    }
+                }
+                source = source.Next;
+            }
+        }
     }
 
     Public Safe Function bool ParseProject()
@@ -114,16 +290,60 @@ Class CompileSession
         If (This.Project == null || This.Profile == null) Return false;
         string entryPath = This.Project.ResolvePath(This.Profile.Entry);
         bool entryFound = false;
-        int i = 0;
-        While (i < This.SourcePaths.Count())
+        string mode = This.Profile.AutoDiscovery ? This.Profile.Mode : "FileOnly";
+        If (mode == "AllSources")
         {
-            CompilationUnit unit = This.ParseFile([string](This.SourcePaths.Fetch(i)));
-            If (unit != null && unit.Source.Path == entryPath)
+            int index = 0;
+            While (index < This.SourcePaths.Count())
+            {
+                CompilationUnit unit = This.ParseFile(
+                    [string](This.SourcePaths.Fetch(index)));
+                If (unit != null && unit.Source.Path == entryPath)
+                {
+                    This.EntryUnitName = unit.Syntax.UnitName;
+                    entryFound = true;
+                }
+                index = index + 1;
+            }
+        }
+        ElseIf (mode == "FileOnly")
+        {
+            CompilationUnit unit = This.ParseFile(entryPath);
+            If (unit != null)
             {
                 This.EntryUnitName = unit.Syntax.UnitName;
                 entryFound = true;
             }
-            i = i + 1;
+        }
+        Else
+        {
+            ProjectSourceProbe first = This.BuildProjectProbes();
+            ProjectSourceProbe entry = This.FindProjectProbe(first, entryPath);
+            If (entry == null)
+            {
+                This.ParseFile(entryPath);
+            }
+            Else
+            {
+                entry.Selected = true;
+                This.SelectProjectUnit(first, entry.Syntax.UnitName);
+                If (mode == "ReachableUnits")
+                    This.SelectReachableProjectSources(first, entry);
+                ProjectSourceProbe probe = first;
+                While (probe != null)
+                {
+                    If (probe.Selected)
+                    {
+                        CompilationUnit unit = This.ParseFile(probe.Path);
+                        If (unit != null && unit.Source.Path == entryPath)
+                        {
+                            This.EntryUnitName = unit.Syntax.UnitName;
+                            entryFound = true;
+                        }
+                    }
+                    probe = probe.Next;
+                }
+            }
         }
         If (!entryFound)
         {
@@ -151,6 +371,7 @@ Class CompileSession
         int types = 0;
         int fields = 0;
         int methods = 0;
+        int globals = 0;
         CompilationUnit current = This.FirstUnit;
         While (current != null)
         {
@@ -159,6 +380,7 @@ Class CompileSession
             types = types + current.Syntax.TypeCount();
             fields = fields + current.Syntax.FieldCount();
             methods = methods + current.Syntax.MethodCount();
+            globals = globals + current.Syntax.GlobalCount();
             current = current.Next;
         }
         Return "format=kinal-syntax-v1\n" +
@@ -169,6 +391,6 @@ Class CompileSession
                "types=" + [string](types) + "\n" +
                "fields=" + [string](fields) + "\n" +
                "methods=" + [string](methods) + "\n" +
-               "globals=0";
+               "globals=" + [string](globals);
     }
 }

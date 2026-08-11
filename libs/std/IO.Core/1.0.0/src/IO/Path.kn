@@ -1,0 +1,415 @@
+Unit IO.Path;
+
+Get IO.Text;
+Get IO.Kinal.Runtime;
+
+// Path policy is implemented in Kinal.  The native boundary only asks the
+// host operating system for its current working directory.
+
+[LinkName("kn_native_current_directory")]
+Extern Unsafe Function char* __PathNativeCurrentDirectory() By C;
+
+Safe Function bool __PathIsSeparator(char value)
+{
+    Return value == '/' || value == '\\';
+}
+
+Safe Function char __PathHostSeparator()
+{
+    If (IO.Host.OS == IO.Host.OS.Windows)
+    {
+        Return '\\';
+    }
+    Return '/';
+}
+
+Safe Function bool __PathIsAsciiLetter(char value)
+{
+    Return (value >= 'A' && value <= 'Z') ||
+        (value >= 'a' && value <= 'z');
+}
+
+Trusted Function string __PathSlice(string value, int start, int length)
+{
+    Return IO.Text.Slice(value, start, length);
+}
+
+Trusted Function string Combine(string left, string right)
+{
+    If (left == null || IO.Text.IsEmpty(left))
+    {
+        Return right == null ? "" : IO.Text.Slice(right, 0, IO.Text.Length(right));
+    }
+    If (right == null || IO.Text.IsEmpty(right))
+    {
+        Return IO.Text.Slice(left, 0, IO.Text.Length(left));
+    }
+
+    int leftLength = IO.Text.Length(left);
+    char* leftCharacters = [char*](left);
+    If (__PathIsSeparator(leftCharacters[leftLength - 1]))
+    {
+        Return left + right;
+    }
+    Return left + [string](__PathHostSeparator()) + right;
+}
+
+Trusted Function string Join(string left, string right)
+{
+    Return Combine(left, right);
+}
+
+Trusted Function string Join3(string first, string second, string third)
+{
+    Return Combine(Combine(first, second), third);
+}
+
+Trusted Function string Join4(string first, string second, string third, string fourth)
+{
+    Return Combine(Join3(first, second, third), fourth);
+}
+
+Trusted Function string FileName(string path)
+{
+    If (path == null)
+    {
+        Return "";
+    }
+    int length = IO.Text.Length(path);
+    char* characters = [char*](path);
+    int start = 0;
+    int index = 0;
+    While (index < length)
+    {
+        If (__PathIsSeparator(characters[index]))
+        {
+            start = index + 1;
+        }
+        index = index + 1;
+    }
+    Return __PathSlice(path, start, length - start);
+}
+
+Trusted Function string Extension(string path)
+{
+    If (path == null)
+    {
+        Return "";
+    }
+    int length = IO.Text.Length(path);
+    char* characters = [char*](path);
+    int dot = -1;
+    int index = 0;
+    While (index < length)
+    {
+        If (__PathIsSeparator(characters[index]))
+        {
+            dot = -1;
+        }
+        ElseIf (characters[index] == '.')
+        {
+            dot = index;
+        }
+        index = index + 1;
+    }
+    If (dot < 0 || dot + 1 >= length)
+    {
+        Return "";
+    }
+    Return __PathSlice(path, dot + 1, length - dot - 1);
+}
+
+Trusted Function string Directory(string path)
+{
+    If (path == null)
+    {
+        Return "";
+    }
+    int length = IO.Text.Length(path);
+    char* characters = [char*](path);
+    int cut = -1;
+    int index = 0;
+    While (index < length)
+    {
+        If (__PathIsSeparator(characters[index]))
+        {
+            cut = index;
+        }
+        index = index + 1;
+    }
+    Return cut < 0 ? "" : __PathSlice(path, 0, cut);
+}
+
+Trusted Function string Parent(string path)
+{
+    Return Directory(path);
+}
+
+Trusted Function string Normalize(string path)
+{
+    If (path == null)
+    {
+        Return "";
+    }
+
+    int length = IO.Text.Length(path);
+    If (length == 0)
+    {
+        Return "";
+    }
+
+    char separator = __PathHostSeparator();
+    string separatorText = [string](separator);
+    char* characters = [char*](path);
+    int index = 0;
+    bool absolute = false;
+    bool driveRelative = false;
+    bool unc = false;
+    string prefix = "";
+
+    If (IO.Host.OS == IO.Host.OS.Windows)
+    {
+        If (length >= 2 && __PathIsAsciiLetter(characters[0]) && characters[1] == ':')
+        {
+            prefix = __PathSlice(path, 0, 2);
+            index = 2;
+            If (index < length && __PathIsSeparator(characters[index]))
+            {
+                prefix = prefix + separatorText;
+                absolute = true;
+                While (index < length && __PathIsSeparator(characters[index]))
+                {
+                    index = index + 1;
+                }
+            }
+            Else
+            {
+                driveRelative = true;
+            }
+        }
+        ElseIf (length >= 2 && __PathIsSeparator(characters[0]) &&
+            __PathIsSeparator(characters[1]))
+        {
+            prefix = separatorText + separatorText;
+            index = 2;
+            absolute = true;
+            unc = true;
+            While (index < length && __PathIsSeparator(characters[index]))
+            {
+                index = index + 1;
+            }
+        }
+        ElseIf (__PathIsSeparator(characters[0]))
+        {
+            prefix = separatorText;
+            index = 1;
+            absolute = true;
+            While (index < length && __PathIsSeparator(characters[index]))
+            {
+                index = index + 1;
+            }
+        }
+    }
+    ElseIf (__PathIsSeparator(characters[0]))
+    {
+        prefix = separatorText;
+        index = 1;
+        absolute = true;
+        While (index < length && __PathIsSeparator(characters[index]))
+        {
+            index = index + 1;
+        }
+    }
+
+    list segments = list.Create();
+    int protectedSegments = 0;
+    While (index < length)
+    {
+        While (index < length && __PathIsSeparator(characters[index]))
+        {
+            index = index + 1;
+        }
+        If (index >= length)
+        {
+            Break;
+        }
+
+        int begin = index;
+        While (index < length && !__PathIsSeparator(characters[index]))
+        {
+            index = index + 1;
+        }
+        string segment = __PathSlice(path, begin, index - begin);
+        If (segment == ".")
+        {
+            Continue;
+        }
+        If (segment == "..")
+        {
+            int segmentCount = segments.Count();
+            If (segmentCount > protectedSegments)
+            {
+                string previous = [string](segments.Fetch(segmentCount - 1));
+                If (previous != "..")
+                {
+                    segments.RemoveAt(segmentCount - 1);
+                    Continue;
+                }
+            }
+            If (absolute)
+            {
+                Continue;
+            }
+        }
+
+        segments.Add(segment);
+        If (unc && protectedSegments < 2)
+        {
+            protectedSegments = protectedSegments + 1;
+        }
+    }
+
+    string result = prefix;
+    int segmentIndex = 0;
+    While (segmentIndex < segments.Count())
+    {
+        string segment = [string](segments.Fetch(segmentIndex));
+        bool needsSeparator = !IO.Text.IsEmpty(result) &&
+            !__PathIsSeparator([char*](result)[IO.Text.Length(result) - 1]) &&
+            !(driveRelative && IO.Text.Length(result) == 2);
+        If (needsSeparator)
+        {
+            result = result + separatorText;
+        }
+        result = result + segment;
+        segmentIndex = segmentIndex + 1;
+    }
+
+    If (IO.Text.IsEmpty(result))
+    {
+        Return ".";
+    }
+    Return result;
+}
+
+Trusted Function string CurrentDirectory()
+{
+    string path = IO.Kinal.Runtime.AdoptNativeText(
+        __PathNativeCurrentDirectory());
+    Return Normalize(path);
+}
+
+Trusted Function string Cwd()
+{
+    Return CurrentDirectory();
+}
+
+Trusted Function string ChangeExtension(string path, string extension)
+{
+    If (path == null)
+    {
+        Return "";
+    }
+    If (extension == null)
+    {
+        extension = "";
+    }
+
+    int length = IO.Text.Length(path);
+    char* characters = [char*](path);
+    int dot = -1;
+    int index = 0;
+    While (index < length)
+    {
+        If (__PathIsSeparator(characters[index]))
+        {
+            dot = -1;
+        }
+        ElseIf (characters[index] == '.')
+        {
+            dot = index;
+        }
+        index = index + 1;
+    }
+
+    int baseLength = dot < 0 ? length : dot;
+    string result = __PathSlice(path, 0, baseLength);
+    If (IO.Text.IsEmpty(extension))
+    {
+        Return result;
+    }
+    If ([char*](extension)[0] != '.')
+    {
+        result = result + ".";
+    }
+    Return result + extension;
+}
+
+Trusted Function bool IsAbsolute(string path)
+{
+    If (path == null || IO.Text.IsEmpty(path))
+    {
+        Return false;
+    }
+    char* characters = [char*](path);
+    int length = IO.Text.Length(path);
+    If (IO.Host.OS == IO.Host.OS.Windows)
+    {
+        If (length >= 2 && __PathIsSeparator(characters[0]) &&
+            __PathIsSeparator(characters[1]))
+        {
+            Return true;
+        }
+        Return length >= 3 && __PathIsAsciiLetter(characters[0]) &&
+            characters[1] == ':' && __PathIsSeparator(characters[2]);
+    }
+    Return characters[0] == '/';
+}
+
+Trusted Function bool IsRelative(string path)
+{
+    Return !IsAbsolute(path);
+}
+
+Trusted Function string BaseName(string path)
+{
+    string fileName = FileName(path);
+    int length = IO.Text.Length(fileName);
+    char* characters = [char*](fileName);
+    int dot = -1;
+    int index = 0;
+    While (index < length)
+    {
+        If (characters[index] == '.')
+        {
+            dot = index;
+        }
+        index = index + 1;
+    }
+    Return dot <= 0 ? fileName : __PathSlice(fileName, 0, dot);
+}
+
+Trusted Function string Stem(string path)
+{
+    Return BaseName(path);
+}
+
+Trusted Function bool HasExtension(string path)
+{
+    Return !IO.Text.IsEmpty(Extension(path));
+}
+
+Trusted Function string EnsureTrailingSeparator(string path)
+{
+    If (path == null || IO.Text.IsEmpty(path))
+    {
+        Return [string](__PathHostSeparator());
+    }
+    string normalized = Normalize(path);
+    int length = IO.Text.Length(normalized);
+    If (length > 0 && __PathIsSeparator([char*](normalized)[length - 1]))
+    {
+        Return normalized;
+    }
+    Return normalized + [string](__PathHostSeparator());
+}

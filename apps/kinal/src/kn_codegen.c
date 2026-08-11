@@ -341,6 +341,13 @@ static LLVMValueRef ensure_function(
     LLVMValueRef fn = LLVMGetNamedFunction(mod, name);
     if (!fn)
         fn = LLVMAddFunction(mod, name, type);
+    else if (LLVMGlobalGetValueType(fn) != type)
+    {
+        kn_write_str("conflicting LLVM function declaration: ");
+        kn_write_str(name);
+        kn_write_str("\n");
+        kn_die("LLVM function type mismatch");
+    }
     return fn;
 }
 

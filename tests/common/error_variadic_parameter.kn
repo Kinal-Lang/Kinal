@@ -1,0 +1,12 @@
+Unit Tests.ErrorVariadicParameter;
+
+[Variadic]
+Static Function int Invalid(int value)
+{
+    Return value;
+}
+
+Static Function int Main()
+{
+    Return Invalid(1);
+}

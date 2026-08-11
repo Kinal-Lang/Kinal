@@ -339,6 +339,7 @@ typedef struct
     int is_instance;
     const char *debug_name;
     int index;
+    int reachable;
     int built;
     int param_count;
     int reg_count;
@@ -1321,6 +1322,54 @@ static int program_find_function(KncProgram *program, const char *name)
     return -1;
 }
 
+static int knc_attribute_is(const Attribute *attribute, const char *qualified_name)
+{
+    const char *name;
+    if (!attribute || !qualified_name)
+        return 0;
+    name = attribute->resolved_name ? attribute->resolved_name : attribute->name;
+    return name && kn_strcmp(name, qualified_name) == 0;
+}
+
+static int record_knc_intrinsic_id(const KncFuncRecord *record)
+{
+    const Func *func;
+    if (!record || !(func = record->func))
+        return -1;
+    for (int i = 0; i < func->attrs.count; i++)
+    {
+        const Attribute *attribute = &func->attrs.items[i];
+        Expr *argument;
+        if (!knc_attribute_is(attribute, "IO.Kinal.Runtime.KncIntrinsic") ||
+            attribute->args.count != 1)
+            continue;
+        argument = attribute->args.items[0];
+        if (argument && argument->kind == EXPR_INT && argument->v.int_val >= 0 && argument->v.int_val <= 65535)
+            return (int)argument->v.int_val;
+    }
+    return -1;
+}
+
+static const char *record_knc_unsupported_reason(const KncFuncRecord *record)
+{
+    const Func *func;
+    if (!record || !(func = record->func))
+        return 0;
+    for (int i = 0; i < func->attrs.count; i++)
+    {
+        const Attribute *attribute = &func->attrs.items[i];
+        Expr *argument;
+        if (!knc_attribute_is(attribute, "IO.Kinal.Runtime.KncUnsupported") ||
+            attribute->args.count != 1)
+            continue;
+        argument = attribute->args.items[0];
+        if (argument && argument->kind == EXPR_STRING && argument->v.str_val.ptr)
+            return argument->v.str_val.ptr;
+        return "This function is not supported by the bootstrap KNC emitter yet";
+    }
+    return 0;
+}
+
 static int program_find_method_function(KncProgram *program, const char *owner_qname, int method_index)
 {
     int type_index = program_find_type(program, owner_qname);
@@ -1331,6 +1380,25 @@ static int program_find_method_function(KncProgram *program, const char *owner_q
     if (method_index >= program->types.items[type_index].direct_method_count)
         return -1;
     return program->types.items[type_index].direct_methods[method_index];
+}
+
+static void program_mark_function_reachable(KncProgram *program, int func_index)
+{
+    if (!program || func_index < 0 || func_index >= program->count)
+        return;
+    program->items[func_index].reachable = 1;
+}
+
+static void program_mark_virtual_slot_reachable(KncProgram *program, int slot_index)
+{
+    if (!program || slot_index < 0)
+        return;
+    for (int i = 0; i < program->types.count; i++)
+    {
+        KncTypeRecord *type = &program->types.items[i];
+        if (slot_index < type->vtable_count)
+            program_mark_function_reachable(program, type->vtable[slot_index]);
+    }
 }
 
 static int capturebuf_find_name(const CaptureBuf *buf, const char *name)
@@ -2424,6 +2492,7 @@ static int ensure_block_function_record(KncFuncState *st, Expr *e)
     rec.synthetic_is_block = 1;
     rec.synthetic_block_records = &e->v.block_lit.records;
     rec.captures = captures;
+    rec.reachable = 1;
     funcbuf_push(st->program, rec);
     return rec.index;
 }
@@ -2575,6 +2644,7 @@ static int ensure_anon_function_record(KncFuncState *st, Expr *e)
     rec.synthetic_id = e->v.anon_func.id;
     rec.synthetic_is_block = 0;
     rec.captures = captures;
+    rec.reachable = 1;
     funcbuf_push(st->program, rec);
     return rec.index;
 }
@@ -3079,33 +3149,48 @@ static KncValue compile_direct_call(KncFuncState *st, Expr *site, const char *na
     int arg_regs[4] = { 255, 255, 255, 255 };
     int arg_count = 0;
     int func_index = program_find_function(st->program, name);
+    int intrinsic_id = func_index >= 0 ? record_knc_intrinsic_id(&st->program->items[func_index]) : -1;
+    const char *unsupported_reason = func_index >= 0
+        ? record_knc_unsupported_reason(&st->program->items[func_index])
+        : 0;
 
     out.reg = 255;
     out.type = result_type;
 
+    if (unsupported_reason)
+    {
+        knc_diag_expr(st, site, unsupported_reason);
+        return out;
+    }
+
+    if (func_index < 0 && intrinsic_id < 0)
+        intrinsic_id = map_runtime_extern_symbol(name);
+
+    if (intrinsic_id >= 0)
+    {
+        for (int i = 0; args && i < args->count; i++)
+        {
+            KncValue av;
+            if (arg_count >= 4)
+            {
+                knc_diag_expr(st, args->items[i], "KNC bootstrap VM currently supports at most four function call arguments");
+                return out;
+            }
+            av = compile_expr(st, args->items[i]);
+            if (kn_diag_error_count() > 0)
+                return out;
+            arg_regs[arg_count++] = av.reg;
+        }
+        return emit_builtin_call_regs(st, result_type, intrinsic_id, arg_count, arg_regs);
+    }
+
     if (func_index < 0)
     {
-        int extern_builtin = map_runtime_extern_symbol(name);
-        if (extern_builtin >= 0)
-        {
-            for (int i = 0; args && i < args->count; i++)
-            {
-                KncValue av;
-                if (arg_count >= 4)
-                {
-                    knc_diag_expr(st, args->items[i], "KNC bootstrap VM currently supports at most four function call arguments");
-                    return out;
-                }
-                av = compile_expr(st, args->items[i]);
-                if (kn_diag_error_count() > 0)
-                    return out;
-                arg_regs[arg_count++] = av.reg;
-            }
-            return emit_builtin_call_regs(st, result_type, extern_builtin, arg_count, arg_regs);
-        }
         knc_diag_expr(st, site, "This function call target is not supported by the bootstrap KNC emitter yet");
         return out;
     }
+
+    program_mark_function_reachable(st->program, func_index);
 
     for (int i = 0; args && i < args->count; i++)
     {
@@ -3150,6 +3235,17 @@ static KncValue compile_call_func_index(KncFuncState *st, Expr *site, int func_i
         knc_diag_expr(st, site, "This function call target is not supported by the bootstrap KNC emitter yet");
         return out;
     }
+
+    {
+        const char *unsupported_reason = record_knc_unsupported_reason(&st->program->items[func_index]);
+        if (unsupported_reason)
+        {
+            knc_diag_expr(st, site, unsupported_reason);
+            return out;
+        }
+    }
+
+    program_mark_function_reachable(st->program, func_index);
 
     for (int i = 0; args && i < args->count; i++)
     {
@@ -3199,6 +3295,18 @@ static KncValue compile_direct_method_call(KncFuncState *st,
         return out;
     }
 
+
+    {
+        const char *unsupported_reason = record_knc_unsupported_reason(&st->program->items[func_index]);
+        if (unsupported_reason)
+        {
+            knc_diag_expr(st, site, unsupported_reason);
+            return out;
+        }
+    }
+
+    program_mark_function_reachable(st->program, func_index);
+
     arg_regs[arg_count++] = recv.reg;
     for (int i = 0; args && i < args->count; i++)
     {
@@ -3241,6 +3349,8 @@ static KncValue compile_virtual_method_call(KncFuncState *st,
 
     out.reg = 255;
     out.type = result_type;
+
+    program_mark_virtual_slot_reachable(st->program, slot_index);
 
     for (int i = 0; args && i < args->count; i++)
     {
@@ -4841,7 +4951,16 @@ static KncValue compile_expr(KncFuncState *st, Expr *e)
         else if (e->v.func_ref.qname)
         {
             target_index = program_find_function(st->program, e->v.func_ref.qname);
-            if (target_index < 0)
+            if (target_index >= 0)
+            {
+                int intrinsic_id = record_knc_intrinsic_id(&st->program->items[target_index]);
+                if (intrinsic_id >= 0)
+                {
+                    target_kind = 1;
+                    target_index = intrinsic_id;
+                }
+            }
+            else
             {
                 target_kind = 1;
                 target_index = map_runtime_extern_symbol(e->v.func_ref.qname);
@@ -4853,6 +4972,9 @@ static KncValue compile_expr(KncFuncState *st, Expr *e)
             knc_diag_expr(st, e, "This function reference target is not supported by the bootstrap KNC emitter yet");
             return out;
         }
+
+        if (target_kind == 0)
+            program_mark_function_reachable(st->program, target_index);
 
         emit_make_function(st, out.reg, function_type_index, target_kind, target_index, 255);
         return out;
@@ -5826,34 +5948,47 @@ static int compile_stmt(KncFuncState *st, Stmt *s)
 
 static int compile_function_body(KncProgram *program, KncFuncRecord *record)
 {
+    KncFuncRecord meta;
     KncFuncState st;
+    ByteBuf code;
     ParamList *params;
     Stmt *body;
     Type ret_type;
+    int func_index;
+
+    if (!program || !record)
+        return -1;
+
+    /* Function literals discovered while compiling this body may grow and move
+       program->items. Keep the active bytecode buffer and read-only metadata
+       outside that relocatable array until the body is complete. */
+    meta = *record;
+    code = meta.code;
+    func_index = meta.index;
 
     kn_memset(&st, 0, sizeof(st));
     st.program = program;
-    st.func = record->func;
-    st.src = record_src(record) ? record_src(record) : program->fallback_src;
-    st.func_index = record->index;
-    st.code = &record->code;
+    st.func = meta.func;
+    st.src = record_src(&meta) ? record_src(&meta) : program->fallback_src;
+    st.func_index = func_index;
+    st.code = &code;
     st.next_reg = 0;
     st.max_reg = 0;
-    params = record_params(record);
-    body = record_body(record);
-    ret_type = record_return_type(record);
+    params = record_params(&meta);
+    body = record_body(&meta);
+    ret_type = record_return_type(&meta);
 
-    if (record->callable_kind == KNC_CALLABLE_METHOD && record->is_instance)
+    if (meta.callable_kind == KNC_CALLABLE_METHOD && meta.is_instance)
     {
         st.has_this = 1;
-        st.self_type = record_receiver_type(record);
+        st.self_type = record_receiver_type(&meta);
         add_local(&st, "This", st.self_type, st.next_reg);
         st.next_reg++;
         st.max_reg = st.next_reg;
     }
 
-    for (int i = 0; i < record->captures.count; i++)
-        add_capture_local(&st, record->captures.items[i].name, record->captures.items[i].type, record->captures.items[i].slot);
+    for (int i = 0; i < meta.captures.count; i++)
+        add_capture_local(&st, meta.captures.items[i].name, meta.captures.items[i].type, meta.captures.items[i].slot);
 
     for (int i = 0; params && i < params->count; i++)
     {
@@ -5869,11 +6004,11 @@ static int compile_function_body(KncProgram *program, KncFuncRecord *record)
         st.max_reg = st.next_reg;
     }
 
-    if (record->synthetic_is_block)
+    if (meta.synthetic_is_block)
     {
         KncLocal *start_local = find_local(&st, "__knc_block_start");
         KncLocal *until_local = find_local(&st, "__knc_block_until");
-        int record_count = record->synthetic_block_records ? record->synthetic_block_records->count : 0;
+        int record_count = meta.synthetic_block_records ? meta.synthetic_block_records->count : 0;
 
         if (!start_local || !until_local)
         {
@@ -5884,7 +6019,7 @@ static int compile_function_body(KncProgram *program, KncFuncRecord *record)
         st.in_runtime_block = 1;
         st.block_start_reg = start_local->reg;
         st.block_until_reg = until_local->reg;
-        st.block_records = record->synthetic_block_records;
+        st.block_records = meta.synthetic_block_records;
         st.block_body_start_ip = -1;
 
         if (record_count > 0)
@@ -5908,7 +6043,7 @@ static int compile_function_body(KncProgram *program, KncFuncRecord *record)
             return -1;
     }
 
-    if (record->synthetic_is_block)
+    if (meta.synthetic_is_block)
     {
         patch_all(st.code, &st.block_start_patches, st.block_body_start_ip);
         if (st.block_records)
@@ -5936,10 +6071,30 @@ static int compile_function_body(KncProgram *program, KncFuncRecord *record)
         emit_u8(st.code, ret_reg);
     }
 
-    record->param_count = (params ? params->count : 0) + (record->callable_kind == KNC_CALLABLE_METHOD && record->is_instance ? 1 : 0);
+    record = &program->items[func_index];
+    record->code = code;
+    record->param_count = (params ? params->count : 0) + (meta.callable_kind == KNC_CALLABLE_METHOD && meta.is_instance ? 1 : 0);
     record->reg_count = st.max_reg;
     record->return_kind = value_kind_from_type(ret_type);
     record->built = 1;
+    return 0;
+}
+
+static int compile_reachable_functions(KncProgram *program)
+{
+    int progressed;
+    do
+    {
+        progressed = 0;
+        for (int i = 0; i < program->count; i++)
+        {
+            if (!program->items[i].reachable || program->items[i].built)
+                continue;
+            progressed = 1;
+            if (compile_function_body(program, &program->items[i]) != 0)
+                return -1;
+        }
+    } while (progressed);
     return 0;
 }
 
@@ -5947,6 +6102,7 @@ static int build_global_init_function(KncProgram *program, StmtList *globals)
 {
     KncFuncRecord rec;
     KncFuncState st;
+    ByteBuf code;
     int func_index;
 
     if ((!globals || globals->count == 0) && program->static_fields.count == 0)
@@ -5960,10 +6116,11 @@ static int build_global_init_function(KncProgram *program, StmtList *globals)
     func_index = program->count - 1;
 
     kn_memset(&st, 0, sizeof(st));
+    kn_memset(&code, 0, sizeof(code));
     st.program = program;
     st.src = program->fallback_src;
     st.func_index = func_index;
-    st.code = &program->items[func_index].code;
+    st.code = &code;
 
     if (globals)
     {
@@ -6052,6 +6209,7 @@ static int build_global_init_function(KncProgram *program, StmtList *globals)
     program->items[func_index].param_count = 0;
     program->items[func_index].reg_count = st.max_reg;
     program->items[func_index].return_kind = KNC_VALUE_NULL;
+    program->items[func_index].code = code;
     program->items[func_index].built = 1;
     return func_index;
 }
@@ -6824,22 +6982,32 @@ int kn_emit_knc(const char *out_path,
     }
 
     program.main_entry_index = program.entry_index;
+    program_mark_function_reachable(&program, program.main_entry_index);
 
-    for (int i = 0; i < program.count; i++)
-        if (!program.items[i].built && compile_function_body(&program, &program.items[i]) != 0)
-            return -1;
-
-    if (program.globals.count > 0)
     {
-        int init_index = build_global_init_function(&program, globals);
-        if (init_index < 0)
-            return -1;
-        for (int i = 0; i < program.count; i++)
-            if (!program.items[i].built && compile_function_body(&program, &program.items[i]) != 0)
+        int init_index = -1;
+        if (program.globals.count > 0 || program.static_fields.count > 0)
+        {
+            init_index = build_global_init_function(&program, globals);
+            if (init_index < 0)
                 return -1;
-        program.entry_index = build_entry_wrapper_function(&program, program.main_entry_index, init_index);
-        if (program.entry_index < 0)
+        }
+
+        if (compile_reachable_functions(&program) != 0)
             return -1;
+
+        if (init_index >= 0)
+        {
+            program.entry_index = build_entry_wrapper_function(&program, program.main_entry_index, init_index);
+            if (program.entry_index < 0)
+                return -1;
+        }
+    }
+
+    if (program.entry_index < 0)
+    {
+        knc_diag(program.fallback_src, 1, 1, "KNC entry function was not built");
+        return -1;
     }
 
     if (write_program_file(out_path, &program) != 0)

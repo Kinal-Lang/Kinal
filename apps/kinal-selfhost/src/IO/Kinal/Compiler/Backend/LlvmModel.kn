@@ -152,6 +152,22 @@ Class LlvmVariable
     }
 }
 
+Class LlvmExpressionRoot
+{
+    Public HirExpression Expression;
+    Public TypeSymbol Type;
+    Public byte* Address;
+    Public LlvmExpressionRoot Next;
+
+    Public Safe Constructor(HirExpression expression, TypeSymbol type, byte* address)
+    {
+        This.Expression = expression;
+        This.Type = type;
+        This.Address = address;
+        This.Next = null;
+    }
+}
+
 Class LlvmRecordBinding
 {
     Public string Name;
@@ -221,6 +237,7 @@ Class LlvmFunctionContext
 {
     Public LlvmFunctionBinding Binding;
     Public LlvmVariable FirstVariable;
+    Public LlvmExpressionRoot FirstExpressionRoot;
     Public LlvmBlockBinding FirstBlock;
     Public LlvmBlockBinding ActiveBlock;
     Public byte* BreakTarget;
@@ -235,6 +252,7 @@ Class LlvmFunctionContext
     {
         This.Binding = binding;
         This.FirstVariable = null;
+        This.FirstExpressionRoot = null;
         This.FirstBlock = null;
         This.ActiveBlock = null;
         This.BreakTarget = null;
@@ -257,7 +275,25 @@ Class LlvmFunctionContext
         LlvmVariable current = This.FirstVariable;
         While (current != null)
         {
-            If ((symbol != null && current.Symbol == symbol) || current.Name == name) Return current;
+            If ((symbol != null && current.Symbol == symbol) ||
+                (symbol == null && current.Name == name)) Return current;
+            current = current.Next;
+        }
+        Return null;
+    }
+
+    Public Safe Function void AddExpressionRoot(LlvmExpressionRoot root)
+    {
+        root.Next = This.FirstExpressionRoot;
+        This.FirstExpressionRoot = root;
+    }
+
+    Public Safe Function LlvmExpressionRoot FindExpressionRoot(HirExpression expression)
+    {
+        LlvmExpressionRoot current = This.FirstExpressionRoot;
+        While (current != null)
+        {
+            If (current.Expression == expression) Return current;
             current = current.Next;
         }
         Return null;

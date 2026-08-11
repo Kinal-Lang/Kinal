@@ -29,6 +29,8 @@ typedef struct
     const char *host_dynamic_library_suffix;
     const char *host_static_library_suffix;
     int runtime_backend;
+    const char **known_standard_modules;
+    int known_standard_module_count;
 } KnSemaOptions;
 
 enum
@@ -64,5 +66,4 @@ enum
 int kn_sema_check(const KnSource *src, MetaList *metas, FuncList *funcs, ImportList *imports, ClassList *classes,
                   InterfaceList *interfaces, StructList *structs, EnumList *enums, StmtList *globals,
                   const KnSemaOptions *opts);
-
 

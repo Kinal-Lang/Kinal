@@ -205,6 +205,8 @@ def build_runtime_for_host(stage_runtime: Path, llvm_bin: Path) -> None:
                     "-fno-asynchronous-unwind-tables",
                     "-I",
                     str(RUNTIME_INCLUDE),
+                    "-I",
+                    str(SELFHOST_UTIL_HOSTLIB_SRC.parents[1] / "include"),
                 ]
             )
 

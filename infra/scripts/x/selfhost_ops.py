@@ -88,6 +88,8 @@ def build_selfhost_bridge() -> Path:
             "-Wall",
             "-Wextra",
             "-Werror",
+            "-I",
+            SELFHOST_APP_DIR / "bridge" / "include",
             "-c",
             SELFHOST_APP_DIR / "bridge" / "src" / "kn_selfhost_runtime.c",
             "-o",
@@ -190,11 +192,15 @@ def freeze_selfhost_stage0_bundle(bundle_dir: Path) -> Path:
     compiler = bundle / exe_name("kinal")
     required = [
         compiler,
-        bundle / "linker",
         bundle / "llvm" / "lib",
         bundle / "runtime",
         bundle / "stdpkg",
     ]
+    # Windows release bundles carry lld-link. POSIX bundles may omit the linker
+    # because package_selfhost_toolchain creates a small clang/lld wrapper from
+    # the LLVM installation selected by the workflow.
+    if is_windows():
+        required.append(bundle / "linker")
     missing = [path for path in required if not path.exists()]
     if missing:
         details = "\n".join(f"  - {path}" for path in missing)

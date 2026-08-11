@@ -16,18 +16,11 @@ void *kn_sh_llvm_module_create(const char *name);
 void kn_sh_llvm_module_dispose(void *module_handle);
 int kn_sh_llvm_build_probe(void *module_handle, const char *function_name,
                            int return_value);
-const char *kn_sh_llvm_module_ir(void *module_handle);
+/* The returned IR text is malloc-owned and must be released by the caller. */
+char *kn_sh_llvm_module_ir(void *module_handle);
 int kn_sh_llvm_emit_object(void *module_handle, const char *target_triple,
                            const char *output_path);
 const char *kn_sh_llvm_last_error(void);
-const char *kn_sh_rt_executable_path(void);
-int kn_sh_rt_execute(const char *command_line);
-
-/* Small bridge-owned vectors keep Kinal arrays out of the C ABI. */
-void *kn_sh_llvm_handles_create(void);
-int kn_sh_llvm_handles_add(void *handles, void *handle);
-int kn_sh_llvm_handles_count(void *handles);
-void *kn_sh_llvm_handles_get(void *handles, int index);
 
 /* Types. */
 void *kn_sh_llvm_type_void(void *module_handle);
@@ -36,11 +29,11 @@ void *kn_sh_llvm_type_float(void *module_handle, int bits);
 void *kn_sh_llvm_type_pointer(void *element_type);
 void *kn_sh_llvm_type_named_struct(void *module_handle, const char *name);
 void *kn_sh_llvm_type_literal_struct(void *module_handle, void *fields,
-                                    int packed);
+                                    int field_count, int packed);
 int kn_sh_llvm_type_set_struct_body(void *struct_type, void *fields,
-                                    int packed);
+                                    int field_count, int packed);
 void *kn_sh_llvm_type_function(void *return_type, void *parameters,
-                               int variadic);
+                               int parameter_count, int variadic);
 void *kn_sh_llvm_type_array(void *element_type, int count);
 void *kn_sh_llvm_type_of(void *value);
 
@@ -53,6 +46,7 @@ void *kn_sh_llvm_append_block(void *module_handle, void *function,
                               const char *name);
 void kn_sh_llvm_position_at_end(void *module_handle, void *block);
 void *kn_sh_llvm_current_block(void *module_handle);
+void *kn_sh_llvm_current_function(void *module_handle);
 int kn_sh_llvm_block_is_terminated(void *block);
 void *kn_sh_llvm_const_int(void *integer_type, int64_t value,
                            int sign_extend);
@@ -74,8 +68,8 @@ void *kn_sh_llvm_build_store(void *module_handle, void *value, void *pointer);
 void *kn_sh_llvm_build_struct_gep(void *module_handle, void *struct_type,
                                   void *pointer, int index, const char *name);
 void *kn_sh_llvm_build_gep(void *module_handle, void *element_type,
-                           void *pointer, void *indices, int in_bounds,
-                           const char *name);
+                           void *pointer, void *indices, int index_count,
+                           int in_bounds, const char *name);
 void *kn_sh_llvm_build_extract_value(void *module_handle, void *aggregate,
                                      int index, const char *name);
 void *kn_sh_llvm_build_insert_value(void *module_handle, void *aggregate,
@@ -158,7 +152,7 @@ void *kn_sh_llvm_build_fp_to_ui(void *module_handle, void *value, void *type,
 /* Calls and control flow. */
 void *kn_sh_llvm_build_call(void *module_handle, void *function_type,
                             void *function, void *arguments,
-                            const char *name);
+                            int argument_count, const char *name);
 void *kn_sh_llvm_build_return(void *module_handle, void *value);
 void *kn_sh_llvm_build_return_void(void *module_handle);
 void *kn_sh_llvm_build_branch(void *module_handle, void *destination);

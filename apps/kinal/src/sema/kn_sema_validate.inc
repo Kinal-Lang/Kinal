@@ -324,7 +324,8 @@ enum
     KN_BUILTIN_META_LINK_LIB_TARGET = 5,
     KN_BUILTIN_META_LINK_FILE_TARGET = 6,
     KN_BUILTIN_META_CAST = 7,
-    KN_BUILTIN_META_OVERLOAD = 8
+    KN_BUILTIN_META_OVERLOAD = 8,
+    KN_BUILTIN_META_VARIADIC = 9
 };
 
 typedef struct
@@ -348,6 +349,7 @@ static const BuiltinMetaSpec g_builtin_metas[] = {
     { "LinkFileTarget", KN_META_TARGET_EXTERN_FUNCTION, KN_META_KEEP_COMPILE, 1, KN_BUILTIN_META_LINK_FILE_TARGET },
     { "SymbolName", KN_META_TARGET_FUNCTION | KN_META_TARGET_DELEGATE_FUNCTION | KN_META_TARGET_METHOD, KN_META_KEEP_COMPILE, 0, KN_BUILTIN_META_SYMBOL_NAME },
     { "Overload",   KN_META_TARGET_FUNCTION | KN_META_TARGET_METHOD, KN_META_KEEP_COMPILE, 0, KN_BUILTIN_META_OVERLOAD },
+    { "Variadic",   KN_META_TARGET_FUNCTION, KN_META_KEEP_COMPILE, 0, KN_BUILTIN_META_VARIADIC },
     { "Cast",       KN_META_TARGET_METHOD,            KN_META_KEEP_COMPILE, 0, KN_BUILTIN_META_CAST }
 };
 
@@ -715,11 +717,16 @@ static void validate_attr_list(Sema *s, AttrList *attrs, uint32_t owner_mask,
                 continue;
             }
 
-            if (spec.builtin->builtin_kind == KN_BUILTIN_META_OVERLOAD)
+            if (spec.builtin->builtin_kind == KN_BUILTIN_META_OVERLOAD ||
+                spec.builtin->builtin_kind == KN_BUILTIN_META_VARIADIC)
             {
                 if (a->args.count != 0)
+                {
                     attr_error_at(s, owner_src, owner_line, owner_col, a, "Invalid Attribute",
-                                  "Overload requires no arguments");
+                                  spec.builtin->builtin_kind == KN_BUILTIN_META_VARIADIC ?
+                                      "Variadic requires no arguments" :
+                                      "Overload requires no arguments");
+                }
                 continue;
             }
 
@@ -773,11 +780,13 @@ static void validate_func_attrs(Sema *s, Func *f)
     f->delegate_symbol_name = 0;
     f->symbol_name = 0;
     f->is_overload = 0;
+    f->is_variadic = 0;
     validate_attr_list(s, &f->attrs,
                        f->is_extern ? KN_META_TARGET_EXTERN_FUNCTION :
                        (f->is_delegate ? KN_META_TARGET_DELEGATE_FUNCTION : KN_META_TARGET_FUNCTION),
                        f->src, f->line, f->col, f);
     f->is_overload = attr_list_has_named(&f->attrs, "Overload") ? 1 : 0;
+    f->is_variadic = attr_list_has_named(&f->attrs, "Variadic") ? 1 : 0;
     if (!f->symbol_name)
         f->symbol_name = attr_list_string_value(&f->attrs, "SymbolName");
     if (has_symbol_name && !f->is_overload && !(f->is_delegate && f->delegate_abi == KN_DELEGATE_ABI_C))
@@ -788,6 +797,33 @@ static void validate_func_attrs(Sema *s, Func *f)
         sema_error(s, f->line, f->col, 1, "Invalid Overload", "Delegate function cannot use Overload");
     if (f->is_overload && f->type_param_count > 0)
         sema_error(s, f->line, f->col, 1, "Invalid Overload", "Generic function cannot use Overload yet");
+    if (f->is_variadic)
+    {
+        int valid_variadic = 1;
+        if (f->is_extern || f->is_delegate)
+        {
+            sema_error(s, f->line, f->col, 1, "Invalid Variadic", "Variadic requires a Kinal function body");
+            valid_variadic = 0;
+        }
+        if (f->type_param_count > 0)
+        {
+            sema_error(s, f->line, f->col, 1, "Invalid Variadic", "Generic variadic functions are not supported yet");
+            valid_variadic = 0;
+        }
+        if (f->params.count <= 0 || f->params.items[f->params.count - 1].type.kind != TY_ARRAY)
+        {
+            sema_error(s, f->line, f->col, 1, "Invalid Variadic", "The final parameter of a variadic function must be an array");
+            valid_variadic = 0;
+        }
+        for (int i = 0; i < f->params.count; i++)
+            if (f->params.items[i].default_value)
+            {
+                sema_error(s, f->line, f->col, 1, "Invalid Variadic", "Variadic functions cannot declare default parameters");
+                valid_variadic = 0;
+            }
+        if (!valid_variadic)
+            f->is_variadic = 0;
+    }
 }
 
 static void validate_interface_decl(Sema *s, InterfaceDecl *i)
@@ -1931,14 +1967,16 @@ static FuncSym *functable_find_visible_qualified(FuncTable *t, Sema *s, const ch
     {
         const char *expanded = expand_alias_qualified_name(s, name);
         if (expanded != name)
-            return functable_find(t, expanded);
+            return functable_find(t, expand_imported_symbol_qualified_name(s, expanded));
+        name = expand_imported_symbol_qualified_name(s, name);
     }
 
     {
         FuncSym *fn = functable_find(t, name);
         if (!fn || !fn->func || !fn->func->unit)
             return 0;
-        return module_accessible_by_namespace(s, fn->func->unit) ? fn : 0;
+        return (module_accessible_by_namespace(s, fn->func->unit) ||
+                import_has_module_symbol(s, fn->func->unit, fn->func->name)) ? fn : 0;
     }
 }
 
@@ -2633,7 +2671,9 @@ static int array_literal_matches_expected(Sema *s, Expr *e, Type expected)
         if (!item || item->kind == EXPR_DEFAULT)
             continue;
         Type it;
-        if (item->kind == EXPR_ARRAY && elem.kind == TY_ARRAY)
+        if (item->type.kind != TY_UNKNOWN)
+            it = item->type;
+        else if (item->kind == EXPR_ARRAY && elem.kind == TY_ARRAY)
             it = sema_array_literal(s, item, type_immediate_elem(elem), true);
         else
             it = sema_expr_with_expected(s, item, elem, "Default literal requires array element type");
@@ -2788,7 +2828,8 @@ static int types_support_switch_match(Type lhs, Type rhs)
 }
 
 static int prepare_call_args(Sema *s, int call_line, int call_col, ExprList *args, NameList *arg_names,
-                             ParamList *typed_args, const Param *params, int param_count,
+                             ParamList *typed_args, int is_variadic,
+                             const Param *params, int param_count,
                              const char **param_names, const char *call_name,
                              int emit_errors, int materialize_defaults)
 {
@@ -2798,6 +2839,100 @@ static int prepare_call_args(Sema *s, int call_line, int call_col, ExprList *arg
         return 1;
 
     int argc = args->count;
+    if (is_variadic)
+    {
+        int fixed_count = param_count - 1;
+        int ok = 1;
+        Expr **new_items;
+        const char **new_names;
+        Param *new_typed;
+        Expr *packed;
+        if (param_count <= 0 || !params || params[param_count - 1].type.kind != TY_ARRAY)
+            return 0;
+        if (call_has_named_args(arg_names))
+        {
+            if (emit_errors)
+            {
+                sema_error(s, call_line, call_col, 1, "Invalid Named Argument",
+                           "Named arguments are not supported for variadic functions");
+                ok = 0;
+            }
+        }
+        if (argc < fixed_count)
+        {
+            if (emit_errors)
+                sema_error_arg_count_named(s, call_line, call_col, 1,
+                                           call_name ? call_name : "callable", fixed_count);
+            ok = 0;
+        }
+
+        new_items = (Expr **)kn_malloc(sizeof(Expr *) * (size_t)param_count);
+        new_names = (const char **)kn_malloc(sizeof(const char *) * (size_t)param_count);
+        new_typed = typed_args ? (Param *)kn_malloc(sizeof(Param) * (size_t)param_count) : 0;
+        if (!new_items || !new_names || (typed_args && !new_typed))
+        {
+            if (new_items) kn_free(new_items);
+            if (new_names) kn_free((void *)new_names);
+            if (new_typed) kn_free(new_typed);
+            return 0;
+        }
+        for (int i = 0; i < param_count; i++)
+        {
+            new_items[i] = 0;
+            new_names[i] = 0;
+            if (new_typed) kn_memset(&new_typed[i], 0, sizeof(Param));
+        }
+        for (int i = 0; i < fixed_count; i++)
+        {
+            if (i < argc)
+            {
+                new_items[i] = args->items[i];
+                if (new_typed) new_typed[i] = typed_args->items[i];
+            }
+            else
+            {
+                Expr *dummy = new_expr(EXPR_DEFAULT, call_line, call_col);
+                dummy->type = params[i].type;
+                new_items[i] = dummy;
+                if (new_typed)
+                {
+                    new_typed[i].name = params[i].name;
+                    new_typed[i].type = params[i].type;
+                    new_typed[i].src = params[i].src;
+                }
+            }
+        }
+
+        packed = new_expr(EXPR_ARRAY, call_line, call_col);
+        packed->type = params[param_count - 1].type;
+        for (int i = fixed_count; i < argc; i++)
+            exprlist_push(&packed->v.array.items, args->items[i]);
+        new_items[param_count - 1] = packed;
+        if (new_typed)
+        {
+            new_typed[param_count - 1].name = params[param_count - 1].name;
+            new_typed[param_count - 1].type = params[param_count - 1].type;
+            new_typed[param_count - 1].src = params[param_count - 1].src;
+        }
+
+        if (args->items) kn_free(args->items);
+        if (arg_names->items) kn_free((void *)arg_names->items);
+        args->items = new_items;
+        args->count = param_count;
+        args->cap = param_count;
+        arg_names->items = new_names;
+        arg_names->count = param_count;
+        arg_names->cap = param_count;
+        if (typed_args)
+        {
+            if (typed_args->items) kn_free(typed_args->items);
+            typed_args->items = new_typed;
+            typed_args->count = param_count;
+            typed_args->cap = param_count;
+        }
+        return ok;
+    }
+
     if (param_count <= 0)
     {
         if (call_has_named_args(arg_names) && emit_errors)
@@ -3005,7 +3140,7 @@ static int prepare_call_args(Sema *s, int call_line, int call_col, ExprList *arg
 
 static int call_args_match_params(Sema *s, int call_line, int call_col, const ExprList *raw_args,
                                   const NameList *raw_names, const ParamList *raw_types,
-                                  const ParamList *params)
+                                  const ParamList *params, int is_variadic)
 {
     if (!params)
         return 0;
@@ -3014,7 +3149,7 @@ static int call_args_match_params(Sema *s, int call_line, int call_col, const Ex
     NameList names = clone_namelist(raw_names);
     ParamList types = clone_paramlist_shallow(raw_types);
     const char **param_names = alloc_param_names_from_paramlist(params);
-    int ok = prepare_call_args(s, call_line, call_col, &args, &names, &types,
+    int ok = prepare_call_args(s, call_line, call_col, &args, &names, &types, is_variadic,
                                params->items, params->count, param_names, 0, 0, 0);
     if (param_names) kn_free((void *)param_names);
     if (!ok)
@@ -3042,7 +3177,7 @@ static int call_args_match_params(Sema *s, int call_line, int call_col, const Ex
 
 static int call_args_shape_match_params(Sema *s, int call_line, int call_col, const ExprList *raw_args,
                                         const NameList *raw_names, const ParamList *raw_types,
-                                        const ParamList *params)
+                                        const ParamList *params, int is_variadic)
 {
     if (!params)
         return 0;
@@ -3051,7 +3186,7 @@ static int call_args_shape_match_params(Sema *s, int call_line, int call_col, co
     NameList names = clone_namelist(raw_names);
     ParamList types = clone_paramlist_shallow(raw_types);
     const char **param_names = alloc_param_names_from_paramlist(params);
-    int ok = prepare_call_args(s, call_line, call_col, &args, &names, &types,
+    int ok = prepare_call_args(s, call_line, call_col, &args, &names, &types, is_variadic,
                                params->items, params->count, param_names, 0, 0, 0);
     if (param_names) kn_free((void *)param_names);
     if (args.items) kn_free(args.items);
@@ -3087,10 +3222,12 @@ static FuncSym *functable_find_call_match(FuncTable *t, Sema *s, const char *nam
             continue;
         if (func_is_generic_template(f))
         {
-            if (!call_args_shape_match_params(s, 0, 0, raw_args, raw_names, arg_types, &f->params))
+            if (!call_args_shape_match_params(s, 0, 0, raw_args, raw_names, arg_types,
+                                              &f->params, f->is_variadic))
                 continue;
         }
-        else if (!call_args_match_params(s, 0, 0, raw_args, raw_names, arg_types, &f->params))
+        else if (!call_args_match_params(s, 0, 0, raw_args, raw_names, arg_types,
+                                         &f->params, f->is_variadic))
             continue;
         if (best)
         {
@@ -3124,10 +3261,11 @@ static FuncSym *functable_find_visible_qualified_call(FuncTable *t, Sema *s, con
     if (ambiguous_out) *ambiguous_out = 0;
     if (!t || !s || !name || !qname_has_dot(name)) return 0;
 
+    int alias_authorized = 0;
     {
         const char *expanded = expand_alias_qualified_name(s, name);
-        if (expanded != name)
-            return functable_find_visible_qualified_call(t, s, expanded, raw_args, raw_names, arg_types, ambiguous_out);
+        alias_authorized = expanded != name;
+        name = expand_imported_symbol_qualified_name(s, expanded);
     }
 
     FuncSym *best = 0;
@@ -3137,16 +3275,19 @@ static FuncSym *functable_find_visible_qualified_call(FuncTable *t, Sema *s, con
         Func *f = cand->func;
         if (!f || !f->unit)
             continue;
-        if (!module_accessible_by_namespace(s, f->unit))
+        if (!alias_authorized && !module_accessible_by_namespace(s, f->unit) &&
+            !import_has_module_symbol(s, f->unit, f->name))
             continue;
         if (!cand->qname || kn_strcmp(cand->qname, name) != 0)
             continue;
         if (func_is_generic_template(f))
         {
-            if (!call_args_shape_match_params(s, 0, 0, raw_args, raw_names, arg_types, &f->params))
+            if (!call_args_shape_match_params(s, 0, 0, raw_args, raw_names, arg_types,
+                                              &f->params, f->is_variadic))
                 continue;
         }
-        else if (!call_args_match_params(s, 0, 0, raw_args, raw_names, arg_types, &f->params))
+        else if (!call_args_match_params(s, 0, 0, raw_args, raw_names, arg_types,
+                                         &f->params, f->is_variadic))
             continue;
         if (best)
         {
@@ -3201,6 +3342,7 @@ static Func *instantiate_generic_func(Sema *s, Func *tmpl, Type *type_args, int 
     inst.delegate_symbol_name = tmpl->delegate_symbol_name;
     inst.symbol_name = tmpl->symbol_name;
     inst.is_overload = tmpl->is_overload;
+    inst.is_variadic = tmpl->is_variadic;
     inst.is_static = tmpl->is_static;
     inst.is_async = tmpl->is_async;
     inst.async_result_type = subst_type(&subst, tmpl->async_result_type);
@@ -3450,7 +3592,7 @@ static Method *find_ctor(Sema *s, ClassDecl *c, const ExprList *raw_args, const 
     {
         Method *m = &c->methods.items[i];
         if (!m->is_constructor) continue;
-        if (call_args_match_params(s, 0, 0, raw_args, raw_names, arg_types, &m->params))
+        if (call_args_match_params(s, 0, 0, raw_args, raw_names, arg_types, &m->params, 0))
         {
             if (out_index) *out_index = i;
             return m;
@@ -3523,7 +3665,7 @@ static Method *find_method_hierarchy_call(Sema *s, ClassDecl *c, const char *nam
             if (m->is_constructor) continue;
             if (m->is_static != is_static) continue;
             if (kn_strcmp(m->name, name) != 0) continue;
-            if (!call_args_match_params(s, 0, 0, raw_args, raw_names, arg_types, &m->params))
+            if (!call_args_match_params(s, 0, 0, raw_args, raw_names, arg_types, &m->params, 0))
                 continue;
             if (best)
             {
@@ -4087,6 +4229,19 @@ static bool std_module_is_always_available(const char *module)
            kn_strcmp(module, "IO.Collection.set") == 0;
 }
 
+static bool sema_knows_standard_module(Sema *s, const char *module)
+{
+    if (!module)
+        return false;
+    if (kn_std_module_has(module))
+        return true;
+    for (int i = 0; s && i < s->known_standard_module_count; i++)
+        if (s->known_standard_modules[i] &&
+            kn_strcmp(s->known_standard_modules[i], module) == 0)
+            return true;
+    return false;
+}
+
 static bool std_module_accessible(Sema *s, const char *module, const char *name)
 {
     if (!s || !module || !name) return false;
@@ -4175,6 +4330,8 @@ static bool alias_target_is_visible(Sema *s, const char *target)
     const char *owner_name = 0;
     bool visible = false;
     if (!s || !target || !target[0]) return false;
+
+    target = expand_local_symbol_alias(s, target);
 
     if (resolve_std_by_qualified_name(s, target))
         return true;
@@ -4777,7 +4934,7 @@ static int sema_try_current_class_method_call(Sema *s, Expr *e, Type *out_type)
     {
         const char **param_names = alloc_param_names_from_paramlist(&m->params);
         (void)prepare_call_args(s, e->line, e->col, &e->v.call.args, &e->v.call.arg_names,
-                                &args, m->params.items, m->params.count,
+                                &args, 0, m->params.items, m->params.count,
                                 param_names, m->name, 1, 1);
         retype_prepared_args(s, &e->v.call.args, &args, m->params.items, m->params.count,
                              "Default literal requires parameter type");
@@ -4832,6 +4989,13 @@ static Type sema_array_literal(Sema *s, Expr *e, Type expected_elem, bool has_ex
         if (item && item->kind == EXPR_DEFAULT && has_expected)
         {
             bind_default_literal_type(s, item, expected_elem, "Default literal requires array element type");
+            it = item->type;
+        }
+        else if (item && item->type.kind != TY_UNKNOWN)
+        {
+            // Calls can be wrapped into a synthetic array by [Variadic] lowering after
+            // their semantic result is already known. Reusing that result keeps
+            // argument preparation idempotent and avoids packing the same call twice.
             it = item->type;
         }
         else

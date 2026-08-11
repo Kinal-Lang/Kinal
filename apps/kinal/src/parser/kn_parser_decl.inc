@@ -1351,8 +1351,7 @@ static Func parse_func(Parser *p)
     Token *ret_tok = cur(p);
     Type ret = parse_type(p);
     Token *name_tok = cur(p);
-    expect(p, TOK_ID, "Expected Identifier", "Expected function name");
-    const char *name = tok_text(name_tok);
+    const char *name = parse_name_token(p, "Expected Identifier", "Expected function name");
     const char **type_params = 0;
     int type_param_count = 0;
     int type_param_cap = 0;

@@ -4,6 +4,7 @@ Get IO.Directory;
 Get IO.File;
 Get IO.Path;
 Get IO.Text;
+Get IO.Kinal.Compiler.Source.SourcePath;
 Get IO.Kinal.Compiler.Project.Glob;
 
 Class SourceSetConfig
@@ -23,7 +24,7 @@ Class SourceSetConfig
         This.Files = list.Create();
         This.Includes = list.Create();
         This.Excludes = list.Create();
-        This.RequireUnit = false;
+        This.RequireUnit = true;
         This.Next = null;
     }
 
@@ -109,16 +110,22 @@ Class ProjectConfig
     Public string ManifestPath;
     Public string RootDirectory;
     Public string DefaultProfile;
+    Public list PackageRoots;
+    Public list OfficialPackageRoots;
+    Public list WorkspaceIgnores;
     Public SourceSetConfig FirstSourceSet;
     Public ProjectProfileConfig FirstProfile;
 
     Public Safe Constructor(string manifestPath)
     {
         This.Name = "";
-        This.ManifestPath = IO.Path.Normalize(manifestPath);
+        This.ManifestPath = IO.Kinal.Compiler.Source.SourcePath.Canonical(manifestPath);
         This.RootDirectory = IO.Path.Directory(This.ManifestPath);
         If (IO.Text.IsEmpty(This.RootDirectory)) This.RootDirectory = ".";
         This.DefaultProfile = "";
+        This.PackageRoots = list.Create();
+        This.OfficialPackageRoots = list.Create();
+        This.WorkspaceIgnores = list.Create();
         This.FirstSourceSet = null;
         This.FirstProfile = null;
     }
@@ -172,14 +179,36 @@ Class ProjectConfig
 
     Public Safe Function string ResolvePath(string path)
     {
-        If (IO.Path.IsAbsolute(path)) Return IO.Path.Normalize(path);
-        Return IO.Path.Normalize(IO.Path.Combine(This.RootDirectory, path));
+        If (IO.Path.IsAbsolute(path))
+            Return IO.Kinal.Compiler.Source.SourcePath.Canonical(path);
+        Return IO.Kinal.Compiler.Source.SourcePath.Canonical(
+            IO.Path.Combine(This.RootDirectory, path));
     }
 
     Public Safe Function void AddUniqueSource(list sources, string path)
     {
-        string normalized = IO.Path.Normalize(path);
+        string normalized = IO.Kinal.Compiler.Source.SourcePath.Canonical(path);
         If (!sources.Contains(normalized)) sources.Add(normalized);
+    }
+
+    Public Safe Function bool IsWorkspaceIgnored(string path)
+    {
+        string normalized = IO.Kinal.Compiler.Source.SourcePath.Canonical(path);
+        string prefix = IO.Path.EnsureTrailingSeparator(This.RootDirectory);
+        string relative = normalized;
+        If (IO.Text.StartsWith(normalized, prefix))
+        {
+            relative = IO.Text.Slice(normalized, IO.Text.Length(prefix),
+                IO.Text.Length(normalized) - IO.Text.Length(prefix));
+        }
+        int index = 0;
+        While (index < This.WorkspaceIgnores.Count())
+        {
+            If (IO.Kinal.Compiler.Project.Glob.Match(
+                [string](This.WorkspaceIgnores.Fetch(index)), relative)) Return true;
+            index = index + 1;
+        }
+        Return false;
     }
 
     Public Safe Function void DiscoverSourceSet(list sources, SourceSetConfig sourceSet)
@@ -188,7 +217,8 @@ Class ProjectConfig
         While (i < sourceSet.Files.Count())
         {
             string explicitFile = This.ResolvePath([string](sourceSet.Files.Fetch(i)));
-            If (IO.File.Exists(explicitFile)) This.AddUniqueSource(sources, explicitFile);
+            If (IO.File.Exists(explicitFile) && !This.IsWorkspaceIgnored(explicitFile))
+                This.AddUniqueSource(sources, explicitFile);
             i = i + 1;
         }
 
@@ -201,7 +231,8 @@ Class ProjectConfig
             int fileIndex = 0;
             While (fileIndex < discovered.Count())
             {
-                string file = IO.Path.Normalize([string](discovered.Fetch(fileIndex)));
+                string file = IO.Kinal.Compiler.Source.SourcePath.Canonical(
+                    [string](discovered.Fetch(fileIndex)));
                 If (IO.Path.Extension(file) == "kn")
                 {
                     string relative = file;
@@ -210,12 +241,67 @@ Class ProjectConfig
                         relative = IO.Text.Slice(file, IO.Text.Length(rootPrefix),
                                                  IO.Text.Length(file) - IO.Text.Length(rootPrefix));
                     }
-                    If (sourceSet.Matches(relative)) This.AddUniqueSource(sources, file);
+                    If (sourceSet.Matches(relative) && !This.IsWorkspaceIgnored(file))
+                        This.AddUniqueSource(sources, file);
                 }
                 fileIndex = fileIndex + 1;
             }
             i = i + 1;
         }
+    }
+
+    Public Safe Function bool SourceSetContainsPath(SourceSetConfig sourceSet,
+                                                    string path)
+    {
+        string normalized = IO.Kinal.Compiler.Source.SourcePath.Canonical(path);
+        int index = 0;
+        While (index < sourceSet.Files.Count())
+        {
+            If (This.ResolvePath([string](sourceSet.Files.Fetch(index))) == normalized)
+                Return true;
+            index = index + 1;
+        }
+        index = 0;
+        While (index < sourceSet.Roots.Count())
+        {
+            string root = This.ResolvePath([string](sourceSet.Roots.Fetch(index)));
+            string prefix = IO.Path.EnsureTrailingSeparator(root);
+            If (IO.Text.StartsWith(normalized, prefix))
+            {
+                string relative = IO.Text.Slice(normalized, IO.Text.Length(prefix),
+                    IO.Text.Length(normalized) - IO.Text.Length(prefix));
+                Return sourceSet.Matches(relative);
+            }
+            index = index + 1;
+        }
+        Return false;
+    }
+
+    Public Safe Function bool SourceRequiresUnit(string profileName, string path)
+    {
+        ProjectProfileConfig profile = This.FindProfile(profileName);
+        If (profile == null) Return false;
+        If (profile.Sets.Count() == 0)
+        {
+            SourceSetConfig sourceSet = This.FirstSourceSet;
+            While (sourceSet != null)
+            {
+                If (This.SourceSetContainsPath(sourceSet, path))
+                    Return sourceSet.RequireUnit;
+                sourceSet = sourceSet.Next;
+            }
+            Return false;
+        }
+        int index = 0;
+        While (index < profile.Sets.Count())
+        {
+            SourceSetConfig sourceSet = This.FindSourceSet(
+                [string](profile.Sets.Fetch(index)));
+            If (sourceSet != null && This.SourceSetContainsPath(sourceSet, path))
+                Return sourceSet.RequireUnit;
+            index = index + 1;
+        }
+        Return false;
     }
 
     Public Safe Function list DiscoverSources(string profileName)
@@ -245,7 +331,8 @@ Class ProjectConfig
         }
 
         string entry = This.ResolvePath(profile.Entry);
-        If (!IO.Text.IsEmpty(profile.Entry) && IO.File.Exists(entry)) This.AddUniqueSource(sources, entry);
+        If (This.FirstSourceSet == null && !IO.Text.IsEmpty(profile.Entry) &&
+            IO.File.Exists(entry)) This.AddUniqueSource(sources, entry);
         Return sources;
     }
 }

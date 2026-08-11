@@ -2,6 +2,13 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <limits.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <errno.h>
+
+#if defined(_WIN32) || defined(_WIN64)
+#include <process.h>
+#endif
 
 #if !defined(_WIN32) && !defined(_WIN64)
 #include <pthread.h>
@@ -156,6 +163,10 @@ static KN_TLS uint64_t g_exc_trace_len = 0;
 static KN_TLS char g_exc_last_trace[4096];
 static KN_TLS uint64_t g_exc_last_trace_len = 0;
 
+// Opaque TLS storage for the Kinal runtime.  C defines neither its layout nor
+// the semantics of the values stored here; it is only the platform TLS leaf.
+static KN_TLS uintptr_t g_kn_runtime_thread_storage[16];
+
 typedef struct
 {
     uint16_t *ptr;
@@ -179,12 +190,113 @@ enum
 };
 
 void *__kn_gc_alloc(uint64_t size);
+static void rt_spin_lock(volatile int *lock);
+static void rt_spin_unlock(volatile int *lock);
+static int rt_atomic_load_i32(volatile int *value);
+
+void *kn_native_runtime_thread_storage(void)
+{
+    return g_kn_runtime_thread_storage;
+}
+
+void *kn_native_heap_allocate(uint64_t size)
+{
+    if (size == 0) size = 1;
+    return malloc((size_t)size);
+}
+
+void kn_native_heap_free(void *memory)
+{
+    free(memory);
+}
+
+void kn_native_memory_copy(void *destination, const void *source, uint64_t count)
+{
+    unsigned char *target = (unsigned char *)destination;
+    const unsigned char *input = (const unsigned char *)source;
+    if (!target || !input) return;
+    for (uint64_t index = 0; index < count; index++) target[index] = input[index];
+}
+
+void kn_native_memory_set(void *destination, uint8_t value, uint64_t count)
+{
+    unsigned char *target = (unsigned char *)destination;
+    if (!target) return;
+    for (uint64_t index = 0; index < count; index++) target[index] = value;
+}
+
+int32_t kn_native_memory_compare(const void *left, const void *right, uint64_t count)
+{
+    const unsigned char *a = (const unsigned char *)left;
+    const unsigned char *b = (const unsigned char *)right;
+    if (a == b || count == 0) return 0;
+    if (!a) return -1;
+    if (!b) return 1;
+    for (uint64_t index = 0; index < count; index++)
+    {
+        if (a[index] < b[index]) return -1;
+        if (a[index] > b[index]) return 1;
+    }
+    return 0;
+}
+
+void kn_native_spin_lock(volatile int32_t *lock)
+{
+    if (lock) rt_spin_lock((volatile int *)lock);
+}
+
+void kn_native_spin_unlock(volatile int32_t *lock)
+{
+    if (lock) rt_spin_unlock((volatile int *)lock);
+}
+
+int32_t kn_native_async_live_task_count(void)
+{
+    return (int32_t)rt_atomic_load_i32(&g_async_live_tasks);
+}
+
+void kn_native_console_write(const char *text)
+{
+    fputs(text ? text : "", stdout);
+    fflush(stdout);
+}
+
+char *kn_native_console_read_line(void)
+{
+    uint64_t length = 0;
+    uint64_t capacity = 128;
+    char *temporary = (char *)malloc((size_t)capacity);
+    int current;
+    if (!temporary) return 0;
+    while ((current = fgetc(stdin)) != EOF && current != '\n')
+    {
+        char *next;
+        if (current == '\r') continue;
+        if (length + 1 < capacity)
+        {
+            temporary[length++] = (char)current;
+            continue;
+        }
+        capacity *= 2;
+        next = (char *)realloc(temporary, (size_t)capacity);
+        if (!next)
+        {
+            free(temporary);
+            return 0;
+        }
+        temporary = next;
+        temporary[length++] = (char)current;
+    }
+    temporary[length] = 0;
+    return temporary;
+}
 void *__kn_exc_get(void);
 int __kn_exc_has(void);
 const char *__kn_exc_trace(void);
 static void rt_memcpy(void *dst, const void *src, size_t n);
 static uint64_t rt_strlen(const char *s);
 static char *rt_strdup_gc(const char *s);
+static char *rt_strdup_native(const char *s);
 static int rt_is_path_sep(char c);
 static void rt_meta_register_main_module(const KnMetaExportModule *module);
 static void rt_meta_register_loaded_module(void *handle, const KnMetaExportModule *module);
@@ -254,6 +366,26 @@ static int rt_atomic_inc_i32(volatile int *value)
 static int rt_atomic_dec_i32(volatile int *value)
 {
     return __sync_sub_and_fetch(value, 1);
+}
+
+int32_t kn_native_atomic_compare_exchange_i32(volatile int32_t *address,
+                                               int32_t expected,
+                                               int32_t desired)
+{
+    if (!address) return 0;
+    return __sync_bool_compare_and_swap(address, expected, desired) ? 1 : 0;
+}
+
+int32_t kn_native_atomic_load_i32(volatile int32_t *address)
+{
+    return address ? __sync_add_and_fetch(address, 0) : 0;
+}
+
+void kn_native_atomic_store_i32(volatile int32_t *address, int32_t value)
+{
+    if (!address) return;
+    __sync_synchronize();
+    __sync_lock_test_and_set(address, value);
 }
 
 static int rt_async_task_begin_finish(KnAsyncTask *task)
@@ -491,6 +623,26 @@ int __kn_sys_exec(const char *command_line)
     CloseHandle(pi.hThread);
     CloseHandle(pi.hProcess);
     return (int)exit_code;
+}
+
+int kn_native_process_run(const char *executable,
+                          const char *const *arguments,
+                          int argument_count)
+{
+    char **argv;
+    int result;
+    if (!executable || !executable[0] || argument_count < 0)
+        return -1;
+    argv = (char **)malloc(sizeof(char *) * (size_t)(argument_count + 2));
+    if (!argv)
+        return -1;
+    argv[0] = (char *)executable;
+    for (int i = 0; i < argument_count; i++)
+        argv[i + 1] = (char *)(arguments ? arguments[i] : 0);
+    argv[argument_count + 1] = 0;
+    result = (int)_spawnv(_P_WAIT, executable, (const char *const *)argv);
+    free(argv);
+    return result;
 }
 
 void *__kn_async_process_spawn(const char *command_line)
@@ -914,6 +1066,53 @@ int __kn_sys_exec(const char *command_line)
     return rc;
 }
 
+int kn_native_process_run(const char *executable,
+                          const char *const *arguments,
+                          int argument_count)
+{
+    char **argv;
+    pid_t child;
+    int status = 0;
+    int result;
+    if (!executable || !executable[0] || argument_count < 0)
+        return -1;
+    argv = (char **)malloc(sizeof(char *) * (size_t)(argument_count + 2));
+    if (!argv)
+        return -1;
+    argv[0] = (char *)executable;
+    for (int i = 0; i < argument_count; i++)
+        argv[i + 1] = (char *)(arguments ? arguments[i] : 0);
+    argv[argument_count + 1] = 0;
+
+    child = fork();
+    if (child == 0)
+    {
+        execv(executable, argv);
+        _exit(127);
+    }
+    if (child < 0)
+    {
+        free(argv);
+        return -1;
+    }
+    while (waitpid(child, &status, 0) < 0)
+    {
+        if (errno != EINTR)
+        {
+            free(argv);
+            return -1;
+        }
+    }
+    if (WIFEXITED(status))
+        result = WEXITSTATUS(status);
+    else if (WIFSIGNALED(status))
+        result = 128 + WTERMSIG(status);
+    else
+        result = -1;
+    free(argv);
+    return result;
+}
+
 void *__kn_async_process_spawn(const char *command_line)
 {
     pid_t pid = 0;
@@ -1198,6 +1397,33 @@ int __kn_sys_close_library(void *handle)
 }
 #endif
 
+char *kn_native_executable_path(void)
+{
+    return rt_strdup_native(__kn_sys_executable_path());
+}
+
+char *kn_native_format_f64(double value)
+{
+    char temporary[64];
+    int length = snprintf(temporary, sizeof(temporary), "%.17g", value);
+    char *result;
+    if (length < 0 || (size_t)length >= sizeof(temporary)) return 0;
+    result = (char *)malloc((size_t)length + 1u);
+    if (!result) return 0;
+    for (int i = 0; i <= length; i++) result[i] = temporary[i];
+    return result;
+}
+
+double kn_native_parse_f64(const char *text)
+{
+    return text ? strtod(text, 0) : 0.0;
+}
+
+float kn_native_parse_f32(const char *text)
+{
+    return text ? (float)strtod(text, 0) : 0.0f;
+}
+
 static void rt_exc_set_with_trace(void *err, const char *trace, uint64_t trace_len)
 {
     g_exc_current = err;
@@ -1395,6 +1621,112 @@ void *__kn_async_task_sleep(int32_t ms)
 void *__kn_async_task_yield(void)
 {
     return __kn_async_task_spawn(rt_async_task_yield_worker, 0);
+}
+
+typedef struct
+{
+    KnAsyncTaskEntryFn entry;
+    void *environment;
+    void *task;
+} KnNativeTaskLaunch;
+
+#if defined(_WIN32) || defined(_WIN64)
+static KN_DWORD KN_STDCALL kn_native_task_thread_main(void *parameter)
+#else
+static void *kn_native_task_thread_main(void *parameter)
+#endif
+{
+    KnNativeTaskLaunch *launch = (KnNativeTaskLaunch *)parameter;
+    KnAsyncTaskEntryFn entry = launch ? launch->entry : 0;
+    void *environment = launch ? launch->environment : 0;
+    void *task = launch ? launch->task : 0;
+    free(launch);
+    if (entry) entry(environment, task);
+    rt_atomic_dec_i32(&g_async_live_tasks);
+#if defined(_WIN32) || defined(_WIN64)
+    return 0;
+#else
+    return 0;
+#endif
+}
+
+int32_t kn_native_task_spawn(KnAsyncTaskEntryFn entry,
+                             void *environment,
+                             void *task)
+{
+    KnNativeTaskLaunch *launch;
+    if (!entry || !task) return 0;
+    launch = (KnNativeTaskLaunch *)malloc(sizeof(KnNativeTaskLaunch));
+    if (!launch) return 0;
+    launch->entry = entry;
+    launch->environment = environment;
+    launch->task = task;
+    rt_atomic_inc_i32(&g_async_live_tasks);
+#if defined(_WIN32) || defined(_WIN64)
+    {
+        KN_HANDLE thread = CreateThread(0, 0, kn_native_task_thread_main,
+                                        launch, 0, 0);
+        if (!thread)
+        {
+            rt_atomic_dec_i32(&g_async_live_tasks);
+            free(launch);
+            return 0;
+        }
+        CloseHandle(thread);
+    }
+#else
+    {
+        pthread_t thread;
+        if (pthread_create(&thread, 0, kn_native_task_thread_main, launch) != 0)
+        {
+            rt_atomic_dec_i32(&g_async_live_tasks);
+            free(launch);
+            return 0;
+        }
+        pthread_detach(thread);
+    }
+#endif
+    return 1;
+}
+
+void kn_native_task_wait_idle(void)
+{
+    __kn_time_sleep(1);
+}
+
+void kn_native_task_yield_now(void)
+{
+    rt_async_task_yield_now();
+}
+
+void kn_native_task_sleep_ms(int32_t milliseconds)
+{
+    if (milliseconds > 0) __kn_time_sleep(milliseconds);
+}
+
+void *kn_native_process_spawn(const char *command_line)
+{
+    return __kn_async_process_spawn(command_line);
+}
+
+int32_t kn_native_process_is_completed(void *handle)
+{
+    return __kn_async_process_is_completed(handle);
+}
+
+int32_t kn_native_process_wait(void *handle, int64_t timeout_ms)
+{
+    return __kn_async_process_wait(handle, timeout_ms);
+}
+
+int32_t kn_native_process_exit_code(void *handle)
+{
+    return __kn_async_process_exit_code(handle);
+}
+
+int32_t kn_native_process_close(void *handle)
+{
+    return __kn_async_process_close(handle);
 }
 
 void __kn_exc_set(void *err)
@@ -2564,50 +2896,65 @@ const char *__kn_path_normalize(const char *p)
     return out;
 }
 
-const char *__kn_path_cwd(void)
+char *kn_native_current_directory(void)
 {
 #if defined(_WIN32) || defined(_WIN64)
     KN_DWORD cap = KN_MAX_PATH;
     for (;;)
     {
-        char *buf = (char *)rt_alloc((size_t)cap);
+        char *buf = (char *)malloc((size_t)cap);
         KN_DWORD written = 0;
-        if (!buf) return "";
+        if (!buf) return 0;
         written = GetCurrentDirectoryA(cap, buf);
         if (written == 0)
         {
-            rt_free(buf);
-            return "";
+            free(buf);
+            return 0;
         }
         if (written < cap)
-        {
-            const char *out = __kn_path_normalize(buf);
-            rt_free(buf);
-            return out;
-        }
-        rt_free(buf);
+            return buf;
+        free(buf);
         if (written >= 65535u)
-            return "";
+            return 0;
         cap = written + 1u;
     }
 #else
     size_t cap = 256;
     for (;;)
     {
-        char *buf = (char *)rt_alloc(cap);
-        if (!buf) return "";
+        char *buf = (char *)malloc(cap);
+        if (!buf) return 0;
         if (getcwd(buf, cap))
-        {
-            const char *out = __kn_path_normalize(buf);
-            rt_free(buf);
-            return out;
-        }
-        rt_free(buf);
+            return buf;
+        free(buf);
         if (cap >= 65536u)
-            return "";
+            return 0;
         cap <<= 1u;
     }
 #endif
+}
+
+const char *__kn_sys_get_cwd(void)
+{
+    char *native = kn_native_current_directory();
+    char *managed = rt_strdup_gc(native ? native : "");
+    free(native);
+    return managed ? managed : "";
+}
+
+static char *rt_strdup_native(const char *s)
+{
+    uint64_t length = rt_strlen(s ? s : "");
+    char *result = (char *)malloc((size_t)length + 1u);
+    if (!result) return 0;
+    if (length > 0) rt_memcpy(result, s, (size_t)length);
+    result[length] = 0;
+    return result;
+}
+
+const char *__kn_path_cwd(void)
+{
+    return __kn_path_normalize(__kn_sys_get_cwd());
 }
 
 const char *__kn_path_change_extension(const char *p, const char *ext)
@@ -3163,6 +3510,7 @@ typedef struct
     char **items;
     uint64_t count;
     uint64_t cap;
+    uint64_t cursor;
 } KnNativePathList;
 
 static char *rt_path_join_alloc(const char *dir, const char *name)
@@ -3216,6 +3564,7 @@ static void rt_path_list_dispose(KnNativePathList *paths)
     paths->items = 0;
     paths->count = 0;
     paths->cap = 0;
+    paths->cursor = 0;
 }
 
 static int rt_path_list_push(KnNativePathList *paths, char *path)
@@ -3347,6 +3696,38 @@ static void rt_collect_files(const char *directory, int recursive, KnNativePathL
 #endif
 }
 
+void *kn_native_directory_scan_open(const char *path, int32_t recursive)
+{
+    KnNativePathList *paths = (KnNativePathList *)rt_alloc(sizeof(KnNativePathList));
+    char *root = 0;
+    if (!paths) return 0;
+    paths->items = 0;
+    paths->count = 0;
+    paths->cap = 0;
+    paths->cursor = 0;
+
+    root = rt_norm_path_alloc(path);
+    if (root && root[0])
+        rt_collect_files(root, recursive != 0, paths);
+    rt_free(root);
+    return paths;
+}
+
+const char *kn_native_directory_scan_next(void *scan)
+{
+    KnNativePathList *paths = (KnNativePathList *)scan;
+    if (!paths || paths->cursor >= paths->count) return 0;
+    return paths->items[paths->cursor++];
+}
+
+void kn_native_directory_scan_close(void *scan)
+{
+    KnNativePathList *paths = (KnNativePathList *)scan;
+    if (!paths) return;
+    rt_path_list_dispose(paths);
+    rt_free(paths);
+}
+
 void *__kn_dir_files(const char *path, int recursive)
 {
     KnNativePathList paths = { 0 };
@@ -3409,32 +3790,33 @@ int __kn_file_touch(const char *path)
 #endif
 }
 
-const char *__kn_file_read_all_text(const char *path)
+char *kn_native_file_read_all_text(const char *path)
 {
-    if (!path || !path[0]) return "";
+    if (!path || !path[0]) return 0;
 #if defined(_WIN32) || defined(_WIN64)
     KN_HANDLE h = CreateFileA(path, KN_GENERIC_READ, KN_FILE_SHARE_READ, 0, KN_OPEN_EXISTING, KN_FILE_ATTRIBUTE_NORMAL, 0);
-    if (h == KN_INVALID_HANDLE_VALUE) return "";
+    if (h == KN_INVALID_HANDLE_VALUE) return 0;
     int64_t fsz = 0;
     if (!GetFileSizeEx(h, &fsz) || fsz < 0)
     {
         CloseHandle(h);
-        return "";
+        return 0;
     }
     uint64_t n = (uint64_t)fsz;
-    char *buf = (char *)__kn_gc_alloc(n + 1);
+    char *buf = (char *)malloc((size_t)n + 1u);
     if (!buf)
     {
         CloseHandle(h);
-        return "";
+        return 0;
     }
     KN_DWORD rd = 0;
     if (n > 0)
     {
         if (!ReadFile(h, buf, (KN_DWORD)n, &rd, 0))
         {
+            free(buf);
             CloseHandle(h);
-            return "";
+            return 0;
         }
     }
     buf[(uint64_t)rd] = 0;
@@ -3442,19 +3824,19 @@ const char *__kn_file_read_all_text(const char *path)
     return buf;
 #else
     int fd = open(path, O_RDONLY);
-    if (fd < 0) return "";
+    if (fd < 0) return 0;
     struct stat st;
     if (fstat(fd, &st) != 0 || st.st_size < 0)
     {
         close(fd);
-        return "";
+        return 0;
     }
     uint64_t n = (uint64_t)st.st_size;
-    char *buf = (char *)__kn_gc_alloc(n + 1);
+    char *buf = (char *)malloc((size_t)n + 1u);
     if (!buf)
     {
         close(fd);
-        return "";
+        return 0;
     }
     uint64_t off = 0;
     while (off < n)
@@ -3462,8 +3844,9 @@ const char *__kn_file_read_all_text(const char *path)
         ssize_t r = read(fd, buf + off, (size_t)(n - off));
         if (r <= 0)
         {
+            free(buf);
             close(fd);
-            return "";
+            return 0;
         }
         off += (uint64_t)r;
     }
@@ -3471,6 +3854,14 @@ const char *__kn_file_read_all_text(const char *path)
     buf[off] = 0;
     return buf;
 #endif
+}
+
+const char *__kn_file_read_all_text(const char *path)
+{
+    char *native = kn_native_file_read_all_text(path);
+    char *managed = rt_strdup_gc(native ? native : "");
+    free(native);
+    return managed ? managed : "";
 }
 
 const char *__kn_file_read_first_line(const char *path)
@@ -3695,6 +4086,96 @@ int __kn_file_replace_text(const char *path, const char *from, const char *to)
     text = __kn_file_read_all_text(path);
     next = __kn_text_replace(text, from ? from : "", to ? to : "");
     return __kn_file_write_all_text(path, next);
+}
+
+int kn_native_file_exists(const char *path)
+{
+    return __kn_sys_file_exists(path);
+}
+
+int kn_native_file_create(const char *path)
+{
+    return __kn_file_create(path);
+}
+
+int kn_native_file_touch(const char *path)
+{
+    return __kn_file_touch(path);
+}
+
+int kn_native_file_write_all_text(const char *path, const char *text)
+{
+    return __kn_file_write_all_text(path, text);
+}
+
+int kn_native_file_delete(const char *path)
+{
+    return __kn_file_delete(path);
+}
+
+int64_t kn_native_file_size(const char *path)
+{
+    return __kn_file_size(path);
+}
+
+int kn_native_file_copy(const char *source, const char *destination)
+{
+    return __kn_file_copy(source, destination);
+}
+
+int kn_native_file_move(const char *source, const char *destination)
+{
+    return __kn_file_move(source, destination);
+}
+
+int kn_native_directory_exists(const char *path)
+{
+    return __kn_dir_exists(path);
+}
+
+int kn_native_directory_create(const char *path)
+{
+    return __kn_dir_create(path);
+}
+
+int kn_native_directory_delete(const char *path)
+{
+    return __kn_dir_delete(path);
+}
+
+const char *kn_native_system_command_line(void)
+{
+    return __kn_sys_command_line();
+}
+
+void kn_native_system_exit(int32_t code)
+{
+    __kn_sys_exit((int)code);
+}
+
+int32_t kn_native_system_exec(const char *command_line)
+{
+    return (int32_t)__kn_sys_exec(command_line);
+}
+
+void *kn_native_system_load_library(const char *path)
+{
+    return __kn_sys_load_library(path);
+}
+
+int kn_native_system_close_library(void *library)
+{
+    return __kn_sys_close_library(library);
+}
+
+void *kn_native_system_get_symbol(void *library, const char *name)
+{
+    return __kn_sys_get_symbol(library, name);
+}
+
+char *kn_native_system_last_error(void)
+{
+    return rt_strdup_native(g_sys_last_error);
 }
 
 void __kn_gc_init(void)

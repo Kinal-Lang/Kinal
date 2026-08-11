@@ -151,6 +151,15 @@ Class ProjectReader
         Return value;
     }
 
+    Public Safe Function bool ReadBooleanAssignment(string field)
+    {
+        string value = This.ReadScalarAssignment();
+        If (value == "true") Return true;
+        If (value == "false") Return false;
+        This.Report("Invalid Boolean", field + " requires true or false");
+        Return false;
+    }
+
     Public Safe Function list ReadListAssignment()
     {
         If (!This.ExpectKind(TokenKind.Assign, "Expected '='", "field requires an assignment"))
@@ -197,6 +206,64 @@ Class ProjectReader
         This.MatchKind(TokenKind.Semicolon);
     }
 
+    Public Safe Function void RejectUnknownField(string scope, string field)
+    {
+        This.Report("Unknown Field", scope + "." + field);
+        This.SkipUnknownField();
+    }
+
+    Public Safe Function void ReadPackages(ProjectConfig project)
+    {
+        If (!This.ExpectKind(TokenKind.LeftBrace, "Expected '{'",
+                             "Packages body is missing")) Return;
+        While (!This.AtEnd() && This.Kind() != TokenKind.RightBrace)
+        {
+            string field = This.Text();
+            This.Advance();
+            If (field == "Roots")
+                This.CopyList(project.PackageRoots, This.ReadListAssignment());
+            ElseIf (field == "OfficialRoots")
+                This.CopyList(project.OfficialPackageRoots, This.ReadListAssignment());
+            Else This.RejectUnknownField("Packages", field);
+        }
+        This.ExpectKind(TokenKind.RightBrace, "Expected '}'",
+            "Packages body is not closed");
+    }
+
+    Public Safe Function void ReadWorkspace(ProjectConfig project)
+    {
+        If (!This.ExpectKind(TokenKind.LeftBrace, "Expected '{'",
+                             "Workspace body is missing")) Return;
+        While (!This.AtEnd() && This.Kind() != TokenKind.RightBrace)
+        {
+            string field = This.Text();
+            This.Advance();
+            If (field == "Ignore")
+                This.CopyList(project.WorkspaceIgnores, This.ReadListAssignment());
+            Else This.RejectUnknownField("Workspace", field);
+        }
+        This.ExpectKind(TokenKind.RightBrace, "Expected '}'",
+            "Workspace body is not closed");
+    }
+
+    Public Safe Function void ReadLsp()
+    {
+        If (!This.ExpectKind(TokenKind.LeftBrace, "Expected '{'",
+                             "Lsp body is missing")) Return;
+        While (!This.AtEnd() && This.Kind() != TokenKind.RightBrace)
+        {
+            string field = This.Text();
+            This.Advance();
+            If (field == "Profile") This.ReadScalarAssignment();
+            ElseIf (field == "ExtraSets") This.ReadListAssignment();
+            ElseIf (field == "StrictProjectScope")
+                This.ReadBooleanAssignment("Lsp.StrictProjectScope");
+            Else This.RejectUnknownField("Lsp", field);
+        }
+        This.ExpectKind(TokenKind.RightBrace, "Expected '}'",
+            "Lsp body is not closed");
+    }
+
     Public Safe Function SourceSetConfig ReadSourceSet()
     {
         string name = This.ReadScalar();
@@ -210,8 +277,9 @@ Class ProjectReader
             ElseIf (field == "Files") This.CopyList(sourceSet.Files, This.ReadListAssignment());
             ElseIf (field == "Include") This.CopyList(sourceSet.Includes, This.ReadListAssignment());
             ElseIf (field == "Exclude") This.CopyList(sourceSet.Excludes, This.ReadListAssignment());
-            ElseIf (field == "RequireUnit") sourceSet.RequireUnit = This.ReadScalarAssignment() == "true";
-            Else This.SkipUnknownField();
+            ElseIf (field == "RequireUnit")
+                sourceSet.RequireUnit = This.ReadBooleanAssignment("SourceSet.RequireUnit");
+            Else This.RejectUnknownField("SourceSet", field);
         }
         This.ExpectKind(TokenKind.RightBrace, "Expected '}'", "SourceSet body is not closed");
         Return sourceSet;
@@ -227,8 +295,9 @@ Class ProjectReader
             If (field == "Entry") profile.Entry = This.ReadScalarAssignment();
             ElseIf (field == "Sets") This.CopyList(profile.Sets, This.ReadListAssignment());
             ElseIf (field == "Mode") profile.Mode = This.ReadScalarAssignment();
-            ElseIf (field == "AutoDiscovery") profile.AutoDiscovery = This.ReadScalarAssignment() == "true";
-            Else This.SkipUnknownField();
+            ElseIf (field == "AutoDiscovery")
+                profile.AutoDiscovery = This.ReadBooleanAssignment("Source.AutoDiscovery");
+            Else This.RejectUnknownField("Source", field);
         }
         This.ExpectKind(TokenKind.RightBrace, "Expected '}'", "Source body is not closed");
     }
@@ -246,7 +315,7 @@ Class ProjectReader
             ElseIf (field == "Panic") profile.Panic = This.ReadScalarAssignment();
             ElseIf (field == "Target") profile.Target = This.ReadScalarAssignment();
             ElseIf (field == "Output") profile.Output = This.ReadScalarAssignment();
-            Else This.SkipUnknownField();
+            Else This.RejectUnknownField("Build", field);
         }
         This.ExpectKind(TokenKind.RightBrace, "Expected '}'", "Build body is not closed");
     }
@@ -259,15 +328,16 @@ Class ProjectReader
             string field = This.Text();
             This.Advance();
             If (field == "Script") profile.LinkScript = This.ReadScalarAssignment();
-            ElseIf (field == "NoCRT") profile.NoCRT = This.ReadScalarAssignment() == "true";
+            ElseIf (field == "NoCRT")
+                profile.NoCRT = This.ReadBooleanAssignment("Link.NoCRT");
             ElseIf (field == "NoDefaultLibs")
-                profile.NoDefaultLibs = This.ReadScalarAssignment() == "true";
+                profile.NoDefaultLibs = This.ReadBooleanAssignment("Link.NoDefaultLibs");
             ElseIf (field == "LibDirs") This.CopyList(profile.LibDirs, This.ReadListAssignment());
             ElseIf (field == "Libs") This.CopyList(profile.Libs, This.ReadListAssignment());
             ElseIf (field == "LinkFiles") This.CopyList(profile.LinkFiles, This.ReadListAssignment());
             ElseIf (field == "LinkArgs") This.CopyList(profile.LinkArgs, This.ReadListAssignment());
             ElseIf (field == "LinkRoots") This.CopyList(profile.LinkRoots, This.ReadListAssignment());
-            Else This.SkipUnknownField();
+            Else This.RejectUnknownField("Link", field);
         }
         This.ExpectKind(TokenKind.RightBrace, "Expected '}'", "Link body is not closed");
     }
@@ -283,7 +353,7 @@ Class ProjectReader
             If (section == "Source") This.ReadProfileSource(profile);
             ElseIf (section == "Build") This.ReadProfileBuild(profile);
             ElseIf (section == "Link") This.ReadProfileLink(profile);
-            Else This.SkipUnknownField();
+            Else This.RejectUnknownField("Profile", section);
         }
         This.ExpectKind(TokenKind.RightBrace, "Expected '}'", "Profile body is not closed");
         Return profile;
@@ -304,7 +374,10 @@ Class ProjectReader
             If (field == "DefaultProfile") project.DefaultProfile = This.ReadScalarAssignment();
             ElseIf (field == "SourceSet") project.AddSourceSet(This.ReadSourceSet());
             ElseIf (field == "Profile") project.AddProfile(This.ReadProfile());
-            Else This.SkipUnknownField();
+            ElseIf (field == "Packages") This.ReadPackages(project);
+            ElseIf (field == "Workspace") This.ReadWorkspace(project);
+            ElseIf (field == "Lsp") This.ReadLsp();
+            Else This.RejectUnknownField("Project", field);
         }
         This.ExpectKind(TokenKind.RightBrace, "Expected '}'", "Project body is not closed");
         Return project;

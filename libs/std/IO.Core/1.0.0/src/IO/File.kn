@@ -1,0 +1,168 @@
+Unit IO.File;
+
+Get IO.Text;
+Get IO.Kinal.Runtime;
+
+// IO.File is a standard-library unit.  The public surface is implemented in
+// Kinal; only the narrow runtime ABI remains in C.
+
+[LinkName("kn_native_file_exists")]
+Extern Unsafe Function bool __FileExists(string path) By C;
+
+[LinkName("kn_native_file_create")]
+Extern Unsafe Function bool __FileCreate(string path) By C;
+
+[LinkName("kn_native_file_touch")]
+Extern Unsafe Function bool __FileTouch(string path) By C;
+
+[LinkName("kn_native_file_read_all_text")]
+Extern Unsafe Function char* __FileReadAllTextNative(string path) By C;
+
+[LinkName("kn_native_file_write_all_text")]
+Extern Unsafe Function bool __FileWriteAllText(string path, string text) By C;
+
+[LinkName("kn_native_file_delete")]
+Extern Unsafe Function bool __FileDelete(string path) By C;
+
+[LinkName("kn_native_file_size")]
+Extern Unsafe Function i64 __FileSize(string path) By C;
+
+[LinkName("kn_native_file_copy")]
+Extern Unsafe Function bool __FileCopy(string source, string destination) By C;
+
+[LinkName("kn_native_file_move")]
+Extern Unsafe Function bool __FileMove(string source, string destination) By C;
+
+Trusted Function string __FileReadAllText(string path)
+{
+    Return IO.Kinal.Runtime.AdoptNativeText(__FileReadAllTextNative(path));
+}
+
+[IO.Kinal.Runtime.KncIntrinsic(145)]
+Trusted Function bool Exists(string path)
+{
+    Return __FileExists(path);
+}
+
+[IO.Kinal.Runtime.KncIntrinsic(85)]
+Trusted Function bool Create(string path)
+{
+    Return __FileCreate(path);
+}
+
+[IO.Kinal.Runtime.KncIntrinsic(86)]
+Trusted Function bool Touch(string path)
+{
+    Return __FileTouch(path);
+}
+
+[IO.Kinal.Runtime.KncIntrinsic(87)]
+Trusted Function string ReadAllText(string path)
+{
+    Return __FileReadAllText(path);
+}
+
+[IO.Kinal.Runtime.KncIntrinsic(88)]
+Trusted Function string ReadFirstLine(string path)
+{
+    string text = __FileReadAllText(path);
+    int newline = IO.Text.IndexOf(text, "\n");
+    int length = newline < 0 ? IO.Text.Length(text) : newline;
+    If (length > 0 && ([char*](text))[length - 1] == '\r')
+    {
+        length = length - 1;
+    }
+    Return IO.Text.Slice(text, 0, length);
+}
+
+[IO.Kinal.Runtime.KncIntrinsic(99)]
+Trusted Function string ReadIfExists(string path)
+{
+    Return __FileExists(path) ? __FileReadAllText(path) : null;
+}
+
+[IO.Kinal.Runtime.KncIntrinsic(98)]
+Trusted Function string ReadOrDefault(string path, string fallback)
+{
+    Return __FileExists(path) ? __FileReadAllText(path) : fallback;
+}
+
+[IO.Kinal.Runtime.KncIntrinsic(100)]
+Trusted Function string ReadOr(string path, string fallback)
+{
+    Return ReadOrDefault(path, fallback);
+}
+
+[IO.Kinal.Runtime.KncIntrinsic(89)]
+Trusted Function bool WriteAllText(string path, string text)
+{
+    Return __FileWriteAllText(path, text);
+}
+
+[IO.Kinal.Runtime.KncIntrinsic(90)]
+Trusted Function bool AppendAllText(string path, string text)
+{
+    string current = __FileReadAllText(path);
+    Return __FileWriteAllText(path, current + (text == null ? "" : text));
+}
+
+[IO.Kinal.Runtime.KncIntrinsic(91)]
+Trusted Function bool AppendLine(string path, string text)
+{
+    Return AppendAllText(path, (text == null ? "" : text) + "\n");
+}
+
+[IO.Kinal.Runtime.KncIntrinsic(92)]
+Trusted Function bool Delete(string path)
+{
+    Return __FileDelete(path);
+}
+
+[IO.Kinal.Runtime.KncIntrinsic(93)]
+Trusted Function bool DeleteIfExists(string path)
+{
+    Return !__FileExists(path) || __FileDelete(path);
+}
+
+[IO.Kinal.Runtime.KncIntrinsic(94)]
+Trusted Function int Size(string path)
+{
+    Return [int](__FileSize(path));
+}
+
+[IO.Kinal.Runtime.KncIntrinsic(95)]
+Trusted Function bool IsEmpty(string path)
+{
+    Return __FileSize(path) == [i64](0);
+}
+
+[IO.Kinal.Runtime.KncIntrinsic(96)]
+Trusted Function bool Copy(string source, string destination)
+{
+    Return __FileCopy(source, destination);
+}
+
+[IO.Kinal.Runtime.KncIntrinsic(97)]
+Trusted Function bool Move(string source, string destination)
+{
+    Return __FileMove(source, destination);
+}
+
+[IO.Kinal.Runtime.KncIntrinsic(103)]
+Trusted Function bool ReplaceText(string path, string from, string to)
+{
+    If (!__FileExists(path)) Return false;
+    string text = __FileReadAllText(path);
+    Return __FileWriteAllText(path, IO.Text.Replace(text,
+        from == null ? "" : from, to == null ? "" : to));
+}
+
+Trusted Function list ReadLines(string path)
+{
+    Return IO.Text.Lines(__FileReadAllText(path));
+}
+
+Trusted Function bool WriteLines(string path, list lines)
+{
+    Return __FileWriteAllText(path, IO.Text.Join(lines, "\n"));
+}

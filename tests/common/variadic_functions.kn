@@ -1,0 +1,23 @@
+Unit Tests.VariadicFunctions;
+
+Get IO.Console;
+
+[Variadic]
+Static Function int Sum(int first, int[] remaining)
+{
+    int result = first;
+    int index = 0;
+    While (index < remaining.Length())
+    {
+        result = result + remaining[index];
+        index = index + 1;
+    }
+    Return result;
+}
+
+Static Function int Main()
+{
+    IO.Console.PrintLine(Sum(7));
+    IO.Console.PrintLine(Sum(1, 2, 3, 4));
+    Return 0;
+}

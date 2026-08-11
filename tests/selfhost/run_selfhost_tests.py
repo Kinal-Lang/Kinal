@@ -616,6 +616,8 @@ def main() -> int:
         ("error_meta_wrong_target.kn", "Sema", ("Invalid Attribute",)),
         ("error_invalid_cast_method.kn", "Sema", ("Invalid Cast Method",)),
         ("error_cast_duplicate.kn", "Sema", ("Ambiguous Cast", "Invalid Cast")),
+        ("error_diagnostic_warning_text.kn", "Sema",
+         ("Unknown Variable", "Type Mismatch")),
     ]
     for source_name, stage, expected_titles in phase5_diagnostic_fixtures:
         source = root / "tests" / "common" / source_name
@@ -742,6 +744,10 @@ def main() -> int:
 
     source_root = root / "apps" / "kinal-selfhost" / "src"
     source_files = sorted(source_root.rglob("*.kn"))
+    runtime_source_root = (
+        root / "libs" / "std" / "IO.Kinal.Runtime" / "1.0.0" / "src"
+    )
+    project_source_files = source_files + sorted(runtime_source_root.rglob("*.kn"))
     token_source = source_root / "IO" / "Kinal" / "Compiler" / "Lex" / "Token.kn"
     token_text = token_source.read_text(encoding="utf-8")
     for declaration in (
@@ -766,17 +772,18 @@ def main() -> int:
     results.append({"name": "structured_token_boundary", "ok": True})
 
     project_file = root / "apps" / "kinal-selfhost" / "kinal.knproj"
-    project = run([str(compiler), "project", str(project_file)], cwd=root)
+    project_argument = project_file.relative_to(root)
+    project = run([str(compiler), "project", str(project_argument)], cwd=root)
     require(project.returncode == 0, "stage1 project loader failed", project)
     project_rows = project.stdout.replace("\r\n", "\n").splitlines()
     for expected in (
         "format=kinal-project-v1",
         "name=KinalSelfhost",
         "profile=stage1",
-        f"sources={len(source_files)}",
+        f"sources={len(project_source_files)}",
     ):
         require(expected in project_rows, f"stage1 project output missing {expected!r}", project)
-    results.append({"name": "project_self", "ok": True, "files": len(source_files)})
+    results.append({"name": "project_self", "ok": True, "files": len(project_source_files)})
 
     stage0_project_ast_path = out_dir / "stage0-project.kast"
     stage0_project_ast = run(
@@ -795,23 +802,28 @@ def main() -> int:
         cwd=root,
     )
     require(stage0_project_ast.returncode == 0, "stage0 project syntax emit failed", stage0_project_ast)
-    stage1_project_ast = run([str(compiler), "project-ast", str(project_file), "stage1"], cwd=root)
+    stage1_project_ast = run(
+        [str(compiler), "project-ast", str(project_argument), "stage1"], cwd=root
+    )
     require(stage1_project_ast.returncode == 0, "stage1 project syntax build failed", stage1_project_ast)
     require(
         stage0_project_ast_path.read_text(encoding="utf-8").replace("\r\n", "\n").strip()
         == stage1_project_ast.stdout.replace("\r\n", "\n").strip(),
         "stage0/stage1 project syntax mismatch",
     )
-    results.append({"name": "project_syntax_differential", "ok": True, "files": len(source_files)})
+    results.append({"name": "project_syntax_differential", "ok": True,
+                    "files": len(project_source_files)})
 
-    semantic = run([str(compiler), "check", str(project_file), "stage1"], cwd=root)
+    semantic = run([str(compiler), "check", str(project_argument), "stage1"], cwd=root)
     require(semantic.returncode == 0, "stage1 semantic declaration check failed", semantic)
     semantic_rows = semantic.stdout.replace("\r\n", "\n").splitlines()
     require("format=kinal-selfhost-sema-v1" in semantic_rows, "stage1 semantic summary is missing", semantic)
     require("unresolved_imports=0" in semantic_rows, "stage1 left unresolved imports", semantic)
     require("unresolved_types=0" in semantic_rows, "stage1 left unresolved declaration types", semantic)
     require("unresolved_expressions=0" in semantic_rows, "stage1 left unresolved expressions", semantic)
-    results.append({"name": "semantic_declarations", "ok": True, "files": len(source_files)})
+    results.append({"name": "semantic_declarations", "ok": True,
+                    "files": len(project_source_files)})
+    results.append({"name": "canonical_project_source_identity", "ok": True})
 
     executable_suffix = ".exe" if compiler.suffix.lower() == ".exe" else ""
     backend_project = root / "tests" / "selfhost" / "fixtures" / "backend_core" / "kinal.knproj"
@@ -903,10 +915,38 @@ def main() -> int:
         cwd=root,
     )
     require(stdlib_build.returncode == 0, "stage1 standard-library fixture build failed", stdlib_build)
+    stdlib_ir = out_dir / "stdlib-core.ll"
+    stdlib_ir_build = run(
+        [str(compiler), "build-ir", str(stdlib_project), str(stdlib_ir), "test"],
+        cwd=root,
+    )
+    require(stdlib_ir_build.returncode == 0 and stdlib_ir.is_file(),
+            "stage1 standard-library fixture IR emit failed", stdlib_ir_build)
+    stdlib_ir_text = stdlib_ir.read_text(encoding="utf-8")
+    require("__kn_text_" not in stdlib_ir_text and "__kn_path_" not in stdlib_ir_text and
+            "@__kn_dir_ensure" not in stdlib_ir_text and
+            "@__kn_dir_files" not in stdlib_ir_text and
+            "@__kn_sys_get_cwd" not in stdlib_ir_text and
+            "kn_sh_rt_datetime" not in stdlib_ir_text and "@__kn_time_format" not in stdlib_ir_text,
+            "public Text/Path/Time behavior bypassed Kinal standard-library sources")
+    require("__kn_sh_IO_Text_Trim_1" in stdlib_ir_text and
+            "__kn_sh_IO_Path_Normalize_1" in stdlib_ir_text and
+            "__kn_sh_IO_Memory_Copy_3" in stdlib_ir_text and
+            "__kn_sh_IO_Time_Now_0" in stdlib_ir_text and
+            "__kn_sh_IO_Time_Format_2" in stdlib_ir_text and
+            "__kn_sh_IO_System_CommandLine_0" in stdlib_ir_text and
+            "__kn_sh_IO_System_FileExists_1" in stdlib_ir_text and
+            "@kn_native_directory_scan_open" in stdlib_ir_text and
+            "@kn_native_current_directory" in stdlib_ir_text,
+            "Kinal Text/Path/Memory/Time/System implementations or the cwd OS leaf are missing")
     stdlib_run = run([str(stdlib_executable)], cwd=root)
     require(stdlib_run.returncode == 0, "stage1 standard-library fixture execution failed", stdlib_run)
+    stdlib_expected = "\n".join(
+        ["R", "7", "kinal", "true", "1.5"] +
+        (["true"] * 23) + ["alpha"] + (["true"] * 5)
+    )
     require(
-        stdlib_run.stdout.replace("\r\n", "\n").strip() == "R\n7\nkinal\ntrue",
+        stdlib_run.stdout.replace("\r\n", "\n").strip() == stdlib_expected,
         "stage1 standard-library fixture output differs",
         stdlib_run,
     )
@@ -1482,12 +1522,43 @@ def main() -> int:
     )
     collection_executable = out_dir / f"collection-runtime{executable_suffix}"
     collection_stage0_executable = out_dir / f"collection-runtime-stage0{executable_suffix}"
+    collection_ir = out_dir / "collection-runtime.ll"
     collection_build = run(
         [str(compiler), "build", str(collection_project), str(collection_executable), "test"],
         cwd=root,
     )
     require(collection_build.returncode == 0,
             "stage1 collection-runtime fixture build failed", collection_build)
+    collection_ir_build = run(
+        [str(compiler), "build-ir", str(collection_project), str(collection_ir), "test"],
+        cwd=root,
+    )
+    require(collection_ir_build.returncode == 0 and collection_ir.is_file(),
+            "stage1 collection-runtime fixture IR emit failed", collection_ir_build)
+    collection_ir_text = collection_ir.read_text(encoding="utf-8")
+    require(
+        "@__kn_list_" not in collection_ir_text
+        and "@__kn_dict_" not in collection_ir_text
+        and "@__kn_set_" not in collection_ir_text
+        and "@__kn_string_to_chars" not in collection_ir_text
+        and "@__kn_gc_" not in collection_ir_text
+        and "@__kn_exc_" not in collection_ir_text
+        and "@__kn_async_task_" not in collection_ir_text
+        and "@__kn_async_process_" not in collection_ir_text
+        and "@__kn_sys_get_symbol" not in collection_ir_text
+        and "@kn_sh_llvm_handles_" not in collection_ir_text
+        and "define ptr @__kn_sh_IO_Kinal_Runtime_StringToChars_2" in collection_ir_text
+        and "define ptr @__kn_sh_IO_Kinal_Runtime_Collections_ListNew_0" in collection_ir_text
+        and "define ptr @__kn_sh_IO_Kinal_Runtime_Collections_DictionaryNew_0" in collection_ir_text
+        and "define ptr @__kn_sh_IO_Kinal_Runtime_Collections_SetNew_0" in collection_ir_text
+        and "define ptr @__kn_sh_IO_Kinal_Runtime_GarbageCollector_Allocate_1"
+        in collection_ir_text
+        and "define i32 @__kn_sh_IO_Kinal_Runtime_Exception_Has_0"
+        in collection_ir_text
+        and "define ptr @__kn_sh_IO_Kinal_Runtime_Async_TaskSpawn_2"
+        in collection_ir_text,
+        "collection policy bypassed the Kinal runtime implementation",
+    )
     collection_stage0_build = run(
         [
             str(stage0),
@@ -1521,6 +1592,46 @@ def main() -> int:
         collection_run,
     )
     results.append({"name": "collection_runtime", "ok": True})
+
+    runtime_gc_project = (
+        root / "tests" / "selfhost" / "fixtures" / "runtime_gc" / "kinal.knproj"
+    )
+    runtime_gc_executable = out_dir / f"runtime-gc{executable_suffix}"
+    runtime_gc_stage0_executable = out_dir / f"runtime-gc-stage0{executable_suffix}"
+    runtime_gc_build = run(
+        [str(compiler), "build", str(runtime_gc_project), str(runtime_gc_executable), "test"],
+        cwd=root,
+    )
+    require(runtime_gc_build.returncode == 0,
+            "stage1 Kinal GC fixture build failed", runtime_gc_build)
+    runtime_gc_stage0_build = run(
+        [
+            str(stage0),
+            "build",
+            "--project",
+            str(runtime_gc_project.parent),
+            "--profile",
+            "test",
+            "-o",
+            str(runtime_gc_stage0_executable),
+        ],
+        cwd=root,
+    )
+    require(runtime_gc_stage0_build.returncode == 0,
+            "stage0 GC fixture build failed", runtime_gc_stage0_build)
+    runtime_gc_run = run([str(runtime_gc_executable)], cwd=root)
+    runtime_gc_stage0_run = run([str(runtime_gc_stage0_executable)], cwd=root)
+    runtime_gc_expected = "100000\nAB"
+    require(
+        runtime_gc_run.returncode == 0
+        and runtime_gc_stage0_run.returncode == 0
+        and runtime_gc_run.stdout.replace("\r\n", "\n").strip() == runtime_gc_expected
+        and runtime_gc_stage0_run.stdout.replace("\r\n", "\n").strip()
+        == runtime_gc_expected,
+        "stage0/Kinal-runtime GC behavior differs",
+        runtime_gc_run,
+    )
+    results.append({"name": "kinal_runtime_gc", "ok": True})
 
     ffi_arrays_project = (
         root / "tests" / "selfhost" / "fixtures" / "ffi_arrays" / "kinal.knproj"
@@ -2020,12 +2131,26 @@ def main() -> int:
 
     array_project = root / "tests" / "selfhost" / "fixtures" / "array_types" / "kinal.knproj"
     array_executable = out_dir / f"array-types{executable_suffix}"
+    array_ir = out_dir / "array-types.ll"
     array_build = run(
         [str(compiler), "build", str(array_project), str(array_executable), "test"],
         cwd=root,
     )
     require(array_build.returncode == 0, "stage1 array fixture build failed", array_build)
     require(array_executable.is_file(), "stage1 array fixture executable is missing")
+    array_ir_build = run(
+        [str(compiler), "build-ir", str(array_project), str(array_ir), "test"],
+        cwd=root,
+    )
+    require(array_ir_build.returncode == 0 and array_ir.is_file(),
+            "stage1 array fixture IR emit failed", array_ir_build)
+    array_ir_text = array_ir.read_text(encoding="utf-8")
+    require(
+        "@__kn_sys_args_from_argv" not in array_ir_text
+        and "define { ptr, i64 } @__kn_sh_IO_Kinal_Runtime_ArgumentsFromArgv_2"
+        in array_ir_text,
+        "Main(string[]) bypassed the Kinal runtime argument owner",
+    )
     array_run = run([str(array_executable), "alpha", "beta"], cwd=root)
     require(array_run.returncode == 0, "stage1 array fixture execution failed", array_run)
     results.append({"name": "array_types_fixture", "ok": True})
@@ -2216,7 +2341,8 @@ def main() -> int:
     kinalvm_disasm = run([str(kinalvm_executable), "--disasm", str(kinalvm_smoke_knc)], cwd=root)
     require(kinalvm_disasm.returncode == 0, "self-built KinalVM disassembly failed", kinalvm_disasm)
     require(
-        "LoopIntLtInc" in kinalvm_disasm.stdout and "IntToString" in kinalvm_disasm.stdout,
+        "LoopIntLtInc" in kinalvm_disasm.stdout
+        and "IO.Type.any.ToString" in kinalvm_disasm.stdout,
         "self-built KinalVM disassembly is incomplete",
         kinalvm_disasm,
     )

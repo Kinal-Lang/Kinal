@@ -1,0 +1,64 @@
+Unit IO.System;
+
+Get IO.File;
+Get IO.Kinal.Runtime;
+
+// Public system operations live in the standard package.  These foreign
+// declarations are limited to process and dynamic-loader ABI leaves.
+
+[LinkName("kn_native_system_command_line")]
+Extern Unsafe Function char* __SystemCommandLine() By C;
+
+[LinkName("kn_native_system_exit")]
+Extern Unsafe Function void __SystemExit(i32 code) By C;
+
+[LinkName("kn_native_system_exec")]
+Extern Unsafe Function i32 __SystemExec(string commandLine) By C;
+
+[LinkName("kn_native_system_load_library")]
+Extern Unsafe Function byte* __SystemLoadLibrary(string path) By C;
+
+[LinkName("kn_native_system_close_library")]
+Extern Unsafe Function bool __SystemCloseLibrary(byte* library) By C;
+
+[LinkName("kn_native_system_last_error")]
+Extern Unsafe Function char* __SystemLastError() By C;
+
+Trusted Function string CommandLine()
+{
+    Return IO.Kinal.Runtime.CopyNativeText(__SystemCommandLine());
+}
+
+Trusted Function void Exit(int code)
+{
+    __SystemExit([i32](code));
+}
+
+Trusted Function bool FileExists(string path)
+{
+    Return IO.File.Exists(path);
+}
+
+Trusted Function int Exec(string commandLine)
+{
+    Return [int](__SystemExec(commandLine));
+}
+
+Trusted Function byte* LoadLibrary(string path)
+{
+    Return __SystemLoadLibrary(path);
+}
+
+// GetSymbol remains a compiler intrinsic while its delegate argument carries
+// compile-time SymbolName metadata.  The actual loader call is still a host
+// ABI leaf; the remaining APIs in this unit are ordinary Kinal functions.
+
+Trusted Function bool CloseLibrary(byte* library)
+{
+    Return __SystemCloseLibrary(library);
+}
+
+Trusted Function string LastError()
+{
+    Return IO.Kinal.Runtime.AdoptNativeText(__SystemLastError());
+}

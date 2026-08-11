@@ -570,6 +570,7 @@ typedef struct
     const char *delegate_symbol_name;
     const char *symbol_name;
     int is_overload;
+    int is_variadic;
     int is_static;
     int is_async;
     Type async_result_type;

@@ -1,0 +1,55 @@
+Unit Tests.Selfhost.RuntimeGc;
+
+Get IO.Console;
+Get IO.GC;
+
+Class ChainNode
+{
+    Public ChainNode Next;
+    Public string Text;
+
+    Public Safe Constructor(ChainNode next, string text)
+    {
+        This.Next = next;
+        This.Text = text;
+    }
+}
+
+Safe Function ChainNode MakeNode(string value)
+{
+    Return New ChainNode(null, value);
+}
+
+Safe Function ChainNode MakeSecondNode()
+{
+    IO.GC.Collect();
+    Return New ChainNode(null, "B");
+}
+
+Safe Function string JoinNodes(ChainNode left, ChainNode right)
+{
+    Return left.Text + right.Text;
+}
+
+Static Function int Main()
+{
+    ChainNode head = null;
+    int index = 0;
+    While (index < 100000)
+    {
+        head = New ChainNode(head, "node-" + [string](index));
+        index = index + 1;
+    }
+    IO.GC.Collect();
+
+    int count = 0;
+    ChainNode current = head;
+    While (current != null)
+    {
+        count = count + 1;
+        current = current.Next;
+    }
+    IO.Console.PrintLine([string](count));
+    IO.Console.PrintLine(JoinNodes(MakeNode("A"), MakeSecondNode()));
+    Return 0;
+}

@@ -1,0 +1,38 @@
+Unit IO.Console;
+
+Get IO.Kinal.Runtime;
+
+// Formatting and argument policy belong to the Kinal standard library.  The
+// runtime package exposes only raw console I/O leaves.
+
+Safe Function void __PrintValues(any[] values)
+{
+    int index = 0;
+    While (index < values.Length())
+    {
+        If (index > 0)
+        {
+            IO.Kinal.Runtime.ConsoleWrite(" ");
+        }
+        IO.Kinal.Runtime.ConsoleWrite(IO.Kinal.Runtime.AnyToString(values[index]));
+        index = index + 1;
+    }
+}
+
+[Variadic]
+Safe Function void Print(any[] values)
+{
+    __PrintValues(values);
+}
+
+[Variadic]
+Safe Function void PrintLine(any[] values)
+{
+    __PrintValues(values);
+    IO.Kinal.Runtime.ConsoleWrite("\n");
+}
+
+Safe Function string ReadLine()
+{
+    Return IO.Kinal.Runtime.ConsoleReadLine();
+}

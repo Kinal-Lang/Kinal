@@ -1,0 +1,614 @@
+Unit IO.Kinal.Runtime;
+
+Get IO.Type.any;
+Get IO.Target;
+Get IO.Kinal.Runtime.GarbageCollector;
+
+// KNC selects the KinalVM implementation of these private runtime operations.
+// Native compilation continues to use the Kinal function body.
+Meta KncIntrinsic(int id)
+{
+    On @function;
+    Keep @compile;
+}
+
+// A package can explicitly declare that a function has no KinalVM lowering.
+// Keeping this as metadata avoids compiler switches on public library names and
+// lets KNC report the unsupported call at the user's call site.
+Meta KncUnsupported(string reason)
+{
+    On @function;
+    Keep @compile;
+}
+
+// Runtime policy lives in Kinal.  Native entry points in this unit are limited
+// to allocation and numeric conversion services that require the host ABI.
+
+Trusted Function byte* AllocateRaw(usize size)
+{
+    Return IO.Kinal.Runtime.GarbageCollector.Allocate(size);
+}
+
+[LinkName("kn_native_format_f64")]
+Extern Unsafe Function char* NativeFormatF64(f64 value) By C;
+
+[LinkName("kn_native_parse_f32")]
+Extern Unsafe Function f32 NativeParseF32(string text) By C;
+
+[LinkName("kn_native_parse_f64")]
+Extern Unsafe Function f64 NativeParseF64(string text) By C;
+
+[LinkName("kn_native_executable_path")]
+Extern Unsafe Function char* NativeExecutablePath() By C;
+
+[LinkName("kn_native_process_run")]
+Extern Unsafe Function int NativeProcessRun(string executable,
+                                             string[] arguments,
+                                             int argumentCount) By C;
+
+[LinkName("kn_native_console_write")]
+Extern Unsafe Function void NativeConsoleWrite(string text) By C;
+
+[LinkName("kn_native_console_read_line")]
+Extern Unsafe Function char* NativeConsoleReadLine() By C;
+
+[LinkName("kn_native_heap_free")]
+Extern Unsafe Function void NativeRelease(byte* memory) By C;
+
+[LinkName("kn_native_memory_copy")]
+Extern Unsafe Function void NativeMemoryCopy(byte* destination, byte* source,
+                                              usize count) By C;
+
+[LinkName("kn_native_memory_set")]
+Extern Unsafe Function void NativeMemorySet(byte* destination, byte value,
+                                             usize count) By C;
+
+[LinkName("kn_native_memory_compare")]
+Extern Unsafe Function i32 NativeMemoryCompare(byte* left, byte* right,
+                                                usize count) By C;
+
+[LinkName("kn_native_system_get_symbol")]
+Extern Unsafe Function byte* NativeSystemGetSymbol(byte* library,
+                                                    string name) By C;
+
+[LinkName("kn_native_task_sleep_ms")]
+Extern Unsafe Function void NativeSleep(int milliseconds) By C;
+
+Trusted Function string ExecutablePath()
+{
+    Return AdoptNativeText(NativeExecutablePath());
+}
+
+Trusted Function int ProcessRun(string executable, string[] arguments)
+{
+    Return NativeProcessRun(executable, arguments, arguments.Length());
+}
+
+[KncIntrinsic(1)]
+Trusted Function void ConsoleWrite(string text)
+{
+    NativeConsoleWrite(text == null ? "" : text);
+}
+
+Trusted Function void ConsoleWriteLine(string text)
+{
+    NativeConsoleWrite(text == null ? "" : text);
+    NativeConsoleWrite("\n");
+}
+
+[KncIntrinsic(2)]
+Trusted Function string ConsoleReadLine()
+{
+    Return AdoptNativeText(NativeConsoleReadLine());
+}
+
+Trusted Function char* AllocateText(int length)
+{
+    byte* memory = AllocateRaw([usize](length + 1));
+    If (memory == null)
+    {
+        Return null;
+    }
+    char* text = [char*](memory);
+    text[length] = '\0';
+    Return text;
+}
+
+Trusted Function string CopyNativeText(char* text)
+{
+    If (text == null) Return "";
+    int length = 0;
+    While (text[length] != '\0') length = length + 1;
+    char* result = AllocateText(length);
+    If (result == null) Return "";
+    NativeMemoryCopy([byte*](result), [byte*](text), [usize](length));
+    Return [string](result);
+}
+
+Trusted Function string AdoptNativeText(char* text)
+{
+    If (text == null) Return "";
+    string result = CopyNativeText(text);
+    NativeRelease([byte*](text));
+    Return result;
+}
+
+// argc/argv are borrowed process-startup values.  Array construction and
+// ownership belong to the Kinal runtime; argv[0] remains excluded for
+// compatibility with the stage0 Main(string[]) contract.
+Trusted Function string[] ArgumentsFromArgv(i32 argc, char** argv)
+{
+    string[] arguments = {};
+    int index = 1;
+    While (index < [int](argc))
+    {
+        arguments = arguments.Add(CopyNativeText(argv[index]));
+        index = index + 1;
+    }
+    Return arguments;
+}
+
+Trusted Function byte* SystemGetSymbol(byte* library, string name)
+{
+    Return NativeSystemGetSymbol(library, name);
+}
+
+Trusted Function int StringLength(string text)
+{
+    If ([char*](text) == null)
+    {
+        Return 0;
+    }
+    char* characters = [char*](text);
+    int length = 0;
+    While (characters[length] != '\0')
+    {
+        length = length + 1;
+    }
+    Return length;
+}
+
+Trusted Function i32 StringEqual(string left, string right)
+{
+    If ([char*](left) == [char*](right))
+    {
+        Return [i32](1);
+    }
+    If ([char*](left) == null || [char*](right) == null)
+    {
+        Return [i32](0);
+    }
+    char* leftCharacters = [char*](left);
+    char* rightCharacters = [char*](right);
+    int index = 0;
+    While (leftCharacters[index] != '\0' && rightCharacters[index] != '\0')
+    {
+        If (leftCharacters[index] != rightCharacters[index])
+        {
+            Return [i32](0);
+        }
+        index = index + 1;
+    }
+    Return leftCharacters[index] == rightCharacters[index] ? [i32](1) : [i32](0);
+}
+
+Trusted Function string StringConcat(string left, string right)
+{
+    int leftLength = StringLength(left);
+    int rightLength = StringLength(right);
+    char* result = AllocateText(leftLength + rightLength);
+    If (result == null)
+    {
+        Return "";
+    }
+    char* leftCharacters = [char*](left);
+    char* rightCharacters = [char*](right);
+    int index = 0;
+    While (index < leftLength)
+    {
+        result[index] = leftCharacters[index];
+        index = index + 1;
+    }
+    index = 0;
+    While (index < rightLength)
+    {
+        result[leftLength + index] = rightCharacters[index];
+        index = index + 1;
+    }
+    Return [string](result);
+}
+
+Trusted Function byte* StringToChars(string text, u64* outLength)
+{
+    int length = StringLength(text);
+    If (outLength != null)
+    {
+        outLength[0] = [u64](length);
+    }
+    If (length == 0)
+    {
+        Return null;
+    }
+
+    byte* result = AllocateRaw([usize](length));
+    If (result == null)
+    {
+        Return null;
+    }
+    MemoryCopy(result, [byte*](text), [usize](length));
+    Return result;
+}
+
+// The compiler exception ABI uses the ordinary IO.Error object layout:
+// vtable, runtime type id, Title, Message, Trace, Inner.  Keeping the small
+// amount of object policy here makes the native bridge an allocation/OS leaf.
+Trusted Function byte* ErrorNew(i64 runtimeTypeId, string title, string message)
+{
+    int pointerBytes = IO.Target.PointerBits / 8;
+    byte* memory = AllocateRaw([usize](pointerBytes * 6));
+    If (memory == null)
+    {
+        Return null;
+    }
+
+    byte** pointers = [byte**](memory);
+    i64* integers = [i64*](memory);
+    pointers[0] = null;
+    integers[1] = runtimeTypeId;
+    pointers[2] = [byte*](title == null ? "Error" : title);
+    pointers[3] = [byte*](message == null ? "" : message);
+    pointers[4] = [byte*]("");
+    pointers[5] = null;
+    Return memory;
+}
+
+Trusted Function string ErrorTitle(byte* value)
+{
+    Return value == null ? null : [string](([byte**](value))[2]);
+}
+
+Trusted Function string ErrorMessage(byte* value)
+{
+    Return value == null ? null : [string](([byte**](value))[3]);
+}
+
+Trusted Function string ErrorTrace(byte* value)
+{
+    Return value == null ? null : [string](([byte**](value))[4]);
+}
+
+Trusted Function byte* ErrorInner(byte* value)
+{
+    Return value == null ? null : ([byte**](value))[5];
+}
+
+Trusted Function void ErrorLinkInner(byte* value, byte* inner)
+{
+    If (value == null || inner == null || value == inner)
+    {
+        Return;
+    }
+    byte** pointers = [byte**](value);
+    If (pointers[5] == null)
+    {
+        pointers[5] = inner;
+    }
+}
+
+Trusted Function void ErrorSetTrace(byte* value, string trace)
+{
+    If (value != null)
+    {
+        ([byte**](value))[4] = [byte*](trace == null ? "" : trace);
+    }
+}
+
+Trusted Function string Int64ToString(i64 value)
+{
+    bool negative = value < 0;
+    u64 magnitude = negative ? [u64](-(value + 1)) + [u64](1) : [u64](value);
+    int digits = 1;
+    u64 remaining = magnitude;
+    While (remaining >= [u64](10))
+    {
+        remaining = remaining / [u64](10);
+        digits = digits + 1;
+    }
+
+    int prefix = negative ? 1 : 0;
+    char* result = AllocateText(prefix + digits);
+    If (result == null)
+    {
+        Return "";
+    }
+    If (negative)
+    {
+        result[0] = '-';
+    }
+    int index = prefix + digits - 1;
+    While (index >= prefix)
+    {
+        result[index] = [char]([int]('0') + [int](magnitude % [u64](10)));
+        magnitude = magnitude / [u64](10);
+        index = index - 1;
+    }
+    Return [string](result);
+}
+
+Trusted Function string Float64ToString(f64 value)
+{
+    Return AdoptNativeText(NativeFormatF64(value));
+}
+
+Trusted Function string CharToString(char value)
+{
+    char* result = AllocateText(1);
+    If (result == null)
+    {
+        Return "";
+    }
+    result[0] = value;
+    Return [string](result);
+}
+
+Safe Function char HexDigit(int value)
+{
+    Return value < 10 ? [char]([int]('0') + value) :
+        [char]([int]('a') + value - 10);
+}
+
+Trusted Function string PointerToString(byte* value)
+{
+    usize number = [usize](value);
+    If (number == [usize](0))
+    {
+        Return "0x0";
+    }
+
+    int digits = 0;
+    usize remaining = number;
+    While (remaining != [usize](0))
+    {
+        digits = digits + 1;
+        remaining = remaining / [usize](16);
+    }
+
+    char* text = AllocateText(digits + 2);
+    If (text == null)
+    {
+        Return "";
+    }
+    text[0] = '0';
+    text[1] = 'x';
+    int index = digits + 1;
+    remaining = number;
+    While (index >= 2)
+    {
+        text[index] = HexDigit([int](remaining % [usize](16)));
+        remaining = remaining / [usize](16);
+        index = index - 1;
+    }
+    Return [string](text);
+}
+
+[KncIntrinsic(131)]
+Trusted Function string AnyToString(any value)
+{
+    If (value Is string text)
+    {
+        Return text;
+    }
+    If (value Is bool boolean)
+    {
+        Return boolean ? "true" : "false";
+    }
+    If (value Is char character)
+    {
+        Return CharToString(character);
+    }
+    If (value Is f64 floating)
+    {
+        Return Float64ToString(floating);
+    }
+    If (value Is int integer)
+    {
+        Return Int64ToString([i64](integer));
+    }
+    If (IO.Type.any.IsPointer(value))
+    {
+        Return PointerToString([byte*](value));
+    }
+    Return "<any>";
+}
+
+Trusted Function i64 StringToInt64(string text)
+{
+    If ([char*](text) == null)
+    {
+        Return 0;
+    }
+    char* characters = [char*](text);
+    int index = 0;
+    While (characters[index] == ' ' || characters[index] == '\t')
+    {
+        index = index + 1;
+    }
+
+    bool negative = false;
+    If (characters[index] == '+' || characters[index] == '-')
+    {
+        negative = characters[index] == '-';
+        index = index + 1;
+    }
+
+    u64 radix = [u64](10);
+    If (characters[index] == '0' &&
+        (characters[index + 1] == 'x' || characters[index + 1] == 'X'))
+    {
+        radix = [u64](16);
+        index = index + 2;
+    }
+
+    u64 value = [u64](0);
+    While (characters[index] != '\0')
+    {
+        char current = characters[index];
+        int digit = -1;
+        If (current >= '0' && current <= '9')
+        {
+            digit = [int](current) - [int]('0');
+        }
+        ElseIf (current >= 'a' && current <= 'f')
+        {
+            digit = [int](current) - [int]('a') + 10;
+        }
+        ElseIf (current >= 'A' && current <= 'F')
+        {
+            digit = [int](current) - [int]('A') + 10;
+        }
+        If (digit < 0 || [u64](digit) >= radix)
+        {
+            Break;
+        }
+        value = value * radix + [u64](digit);
+        index = index + 1;
+    }
+    Return negative ? -[i64](value) : [i64](value);
+}
+
+Trusted Function f32 StringToFloat32(string text)
+{
+    Return NativeParseF32(text);
+}
+
+Trusted Function f64 StringToFloat64(string text)
+{
+    Return NativeParseF64(text);
+}
+
+Trusted Function i32 StringToBool(string text)
+{
+    If ([char*](text) == null)
+    {
+        Return [i32](0);
+    }
+    char* characters = [char*](text);
+    Return characters[0] == 't' || characters[0] == '1' ? [i32](1) : [i32](0);
+}
+
+Trusted Function char StringToChar(string text)
+{
+    Return [char*](text) == null ? '\0' : ([char*](text))[0];
+}
+
+Trusted Function void MemoryCopy(byte* destination, byte* source, usize count)
+{
+    NativeMemoryCopy(destination, source, count);
+}
+
+Trusted Function void MemorySet(byte* destination, byte value, usize count)
+{
+    NativeMemorySet(destination, value, count);
+}
+
+Trusted Function void MemoryZero(byte* destination, usize count)
+{
+    MemorySet(destination, [byte](0), count);
+}
+
+Trusted Function i32 MemoryCompare(byte* left, byte* right, usize count)
+{
+    Return NativeMemoryCompare(left, right, count);
+}
+
+Trusted Function string TraceFormat(string trace)
+{
+    char* sourceText = [char*](trace);
+    If (sourceText == null)
+    {
+        Return "";
+    }
+    int length = 0;
+    While (sourceText[length] != '\0')
+    {
+        length = length + 1;
+    }
+    int source = 0;
+    int outputLength = 0;
+    bool first = true;
+    While (source < length)
+    {
+        int lineStart = source;
+        While (source < length && sourceText[source] != '\n')
+        {
+            source = source + 1;
+        }
+        int lineEnd = source;
+        If (lineEnd >= lineStart + 3 && sourceText[lineStart] == 'a' &&
+            sourceText[lineStart + 1] == 't' && sourceText[lineStart + 2] == ' ')
+        {
+            lineStart = lineStart + 3;
+        }
+        If (lineEnd > lineStart)
+        {
+            If (!first)
+            {
+                outputLength = outputLength + 4;
+            }
+            outputLength = outputLength + lineEnd - lineStart;
+            first = false;
+        }
+        If (source < length && sourceText[source] == '\n')
+        {
+            source = source + 1;
+        }
+    }
+
+    byte* memory = AllocateRaw([usize](outputLength + 1));
+    If (memory == null)
+    {
+        Return "";
+    }
+    char* result = [char*](memory);
+    result[outputLength] = '\0';
+    source = 0;
+    int destination = 0;
+    first = true;
+    While (source < length)
+    {
+        int lineStart = source;
+        While (source < length && sourceText[source] != '\n')
+        {
+            source = source + 1;
+        }
+        int lineEnd = source;
+        If (lineEnd >= lineStart + 3 && sourceText[lineStart] == 'a' &&
+            sourceText[lineStart + 1] == 't' && sourceText[lineStart + 2] == ' ')
+        {
+            lineStart = lineStart + 3;
+        }
+        If (lineEnd > lineStart)
+        {
+            If (!first)
+            {
+                result[destination] = ' ';
+                result[destination + 1] = '-';
+                result[destination + 2] = '>';
+                result[destination + 3] = ' ';
+                destination = destination + 4;
+            }
+            While (lineStart < lineEnd)
+            {
+                result[destination] = sourceText[lineStart];
+                destination = destination + 1;
+                lineStart = lineStart + 1;
+            }
+            first = false;
+        }
+        If (source < length && sourceText[source] == '\n')
+        {
+            source = source + 1;
+        }
+    }
+    Return [string](result);
+}

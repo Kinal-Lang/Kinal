@@ -102,6 +102,8 @@ typedef struct
     const char *host_dynamic_library_suffix;
     const char *host_static_library_suffix;
     int runtime_backend;
+    const char **known_standard_modules;
+    int known_standard_module_count;
     int expr_depth;
     int stmt_depth;
     int const_eval_depth;
@@ -346,6 +348,24 @@ static bool module_accessible_by_namespace(Sema *s, const char *module)
     return import_has_open_module(s, module);
 }
 
+static bool import_has_module_symbol(Sema *s, const char *module, const char *symbol)
+{
+    if (!s || !s->imports || !module || !symbol)
+        return false;
+    for (int i = 0; i < s->imports->count; i++)
+    {
+        ImportMap *m = &s->imports->items[i];
+        if (m->unit && m->unit[0] && s->current_unit && s->current_unit[0] &&
+            kn_strcmp(m->unit, s->current_unit) != 0)
+            continue;
+        if (m->kind != IMPORT_SYMBOL || !m->module || !m->remote)
+            continue;
+        if (kn_strcmp(m->module, module) == 0 && kn_strcmp(m->remote, symbol) == 0)
+            return true;
+    }
+    return false;
+}
+
 static bool qname_uses_hidden_module_alias(Sema *s, const char *name)
 {
     if (!s || !s->imports || !name || !qname_has_dot(name)) return false;
@@ -402,17 +422,32 @@ static const char *expand_builtin_core_alias(const char *name)
 static const char *expand_local_symbol_alias(Sema *s, const char *name)
 {
     if (!s || !s->imports || !name || qname_has_dot(name)) return name;
-    for (int i = 0; i < s->imports->count; i++)
+    const char *current = name;
+    for (int depth = 0; depth <= s->imports->count; depth++)
     {
-        ImportMap *m = &s->imports->items[i];
-        if (m->unit && m->unit[0] && s->current_unit && s->current_unit[0] &&
-            kn_strcmp(m->unit, s->current_unit) != 0)
-            continue;
-        if (m->kind != IMPORT_LOCAL_ALIAS || !m->local || !m->remote) continue;
-        if (kn_strcmp(m->local, name) == 0)
-            return m->remote;
+        const char *next = current;
+        if (qname_has_dot(current))
+            return current;
+        for (int i = 0; i < s->imports->count; i++)
+        {
+            ImportMap *m = &s->imports->items[i];
+            if (m->unit && m->unit[0] && s->current_unit && s->current_unit[0] &&
+                kn_strcmp(m->unit, s->current_unit) != 0)
+                continue;
+            if (!m->local || !m->remote || kn_strcmp(m->local, current) != 0)
+                continue;
+            if (m->kind == IMPORT_LOCAL_ALIAS)
+                next = m->remote;
+            else if (m->kind == IMPORT_SYMBOL && m->global && m->module)
+                next = join_qualified_name(m->module, m->remote);
+            if (next != current)
+                break;
+        }
+        if (next == current)
+            return current;
+        current = next;
     }
-    return name;
+    return current;
 }
 
 static bool builtin_type_qname_globally_visible(const char *qname)
@@ -457,6 +492,37 @@ static const char *expand_alias_qualified_name(Sema *s, const char *name)
         if (kn_strlen(m->local) != alias_len) continue;
         if (kn_strncmp(m->local, name, alias_len) != 0) continue;
         return join_qualified_name(m->module, dot + 1);
+    }
+    return name;
+}
+
+static const char *expand_imported_symbol_qualified_name(Sema *s, const char *name)
+{
+    if (!s || !s->imports || !name)
+        return name;
+    const char *last = 0;
+    for (const char *p = name; *p; p++)
+        if (*p == '.') last = p;
+    if (!last || last == name || !last[1])
+        return name;
+
+    size_t module_length = (size_t)(last - name);
+    for (int i = 0; i < s->imports->count; i++)
+    {
+        ImportMap *m = &s->imports->items[i];
+        if (m->unit && m->unit[0] && s->current_unit && s->current_unit[0] &&
+            kn_strcmp(m->unit, s->current_unit) != 0)
+            continue;
+        if (m->kind != IMPORT_SYMBOL || m->global || !m->module ||
+            !m->local || !m->remote)
+            continue;
+        if (kn_strlen(m->module) != module_length ||
+            kn_strncmp(m->module, name, module_length) != 0 ||
+            kn_strcmp(m->local, last + 1) != 0)
+            continue;
+        if (kn_strcmp(m->local, m->remote) == 0)
+            return name;
+        return join_qualified_name(m->module, m->remote);
     }
     return name;
 }

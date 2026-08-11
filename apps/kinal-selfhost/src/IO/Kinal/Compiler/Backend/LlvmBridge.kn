@@ -1,5 +1,8 @@
 Unit IO.Kinal.Compiler.Backend.LlvmBridge;
 
+Get IO.Target;
+Get IO.Kinal.Runtime;
+
 [LinkName("kn_sh_llvm_version_major")]
 Extern Function int NativeVersionMajor() By C;
 
@@ -13,26 +16,13 @@ Extern Function void NativeModuleDispose(byte* module) By C;
 Extern Function int NativeBuildProbe(byte* module, string functionName, int returnValue) By C;
 
 [LinkName("kn_sh_llvm_module_ir")]
-Extern Function string NativeModuleIr(byte* module) By C;
+Extern Function char* NativeModuleIr(byte* module) By C;
 
 [LinkName("kn_sh_llvm_emit_object")]
 Extern Function int NativeEmitObject(byte* module, string targetTriple, string outputPath) By C;
 
 [LinkName("kn_sh_llvm_last_error")]
-Extern Function string NativeLastError() By C;
-[LinkName("kn_sh_rt_executable_path")]
-Extern Function string NativeExecutablePath() By C;
-[LinkName("kn_sh_rt_execute")]
-Extern Function int NativeExecute(string commandLine) By C;
-
-[LinkName("kn_sh_llvm_handles_create")]
-Extern Function byte* NativeHandlesCreate() By C;
-[LinkName("kn_sh_llvm_handles_add")]
-Extern Function int NativeHandlesAdd(byte* handles, byte* handle) By C;
-[LinkName("kn_sh_llvm_handles_count")]
-Extern Function int NativeHandlesCount(byte* handles) By C;
-[LinkName("kn_sh_llvm_handles_get")]
-Extern Function byte* NativeHandlesGet(byte* handles, int index) By C;
+Extern Function char* NativeLastError() By C;
 
 [LinkName("kn_sh_llvm_type_void")]
 Extern Function byte* NativeTypeVoid(byte* module) By C;
@@ -45,11 +35,11 @@ Extern Function byte* NativeTypePointer(byte* elementType) By C;
 [LinkName("kn_sh_llvm_type_named_struct")]
 Extern Function byte* NativeTypeNamedStruct(byte* module, string name) By C;
 [LinkName("kn_sh_llvm_type_literal_struct")]
-Extern Function byte* NativeTypeLiteralStruct(byte* module, byte* fields, int packed) By C;
+Extern Function byte* NativeTypeLiteralStruct(byte* module, byte* fields, int fieldCount, int packed) By C;
 [LinkName("kn_sh_llvm_type_set_struct_body")]
-Extern Function int NativeTypeSetStructBody(byte* structType, byte* fields, int packed) By C;
+Extern Function int NativeTypeSetStructBody(byte* structType, byte* fields, int fieldCount, int packed) By C;
 [LinkName("kn_sh_llvm_type_function")]
-Extern Function byte* NativeTypeFunction(byte* returnType, byte* parameters, int variadic) By C;
+Extern Function byte* NativeTypeFunction(byte* returnType, byte* parameters, int parameterCount, int variadic) By C;
 [LinkName("kn_sh_llvm_type_array")]
 Extern Function byte* NativeTypeArray(byte* elementType, int count) By C;
 [LinkName("kn_sh_llvm_type_of")]
@@ -67,6 +57,8 @@ Extern Function byte* NativeAppendBlock(byte* module, byte* function, string nam
 Extern Function void NativePositionAtEnd(byte* module, byte* block) By C;
 [LinkName("kn_sh_llvm_current_block")]
 Extern Function byte* NativeCurrentBlock(byte* module) By C;
+[LinkName("kn_sh_llvm_current_function")]
+Extern Function byte* NativeCurrentFunction(byte* module) By C;
 [LinkName("kn_sh_llvm_block_is_terminated")]
 Extern Function int NativeBlockIsTerminated(byte* block) By C;
 [LinkName("kn_sh_llvm_const_int")]
@@ -95,7 +87,7 @@ Extern Function byte* NativeBuildStore(byte* module, byte* value, byte* pointer)
 [LinkName("kn_sh_llvm_build_struct_gep")]
 Extern Function byte* NativeBuildStructGep(byte* module, byte* structType, byte* pointer, int index, string name) By C;
 [LinkName("kn_sh_llvm_build_gep")]
-Extern Function byte* NativeBuildGep(byte* module, byte* elementType, byte* pointer, byte* indices, int inBounds, string name) By C;
+Extern Function byte* NativeBuildGep(byte* module, byte* elementType, byte* pointer, byte* indices, int indexCount, int inBounds, string name) By C;
 [LinkName("kn_sh_llvm_build_extract_value")]
 Extern Function byte* NativeBuildExtractValue(byte* module, byte* aggregate, int index, string name) By C;
 [LinkName("kn_sh_llvm_build_insert_value")]
@@ -175,7 +167,7 @@ Extern Function byte* NativeBuildFloatToSignedInt(byte* module, byte* value, byt
 Extern Function byte* NativeBuildFloatToUnsignedInt(byte* module, byte* value, byte* type, string name) By C;
 
 [LinkName("kn_sh_llvm_build_call")]
-Extern Function byte* NativeBuildCall(byte* module, byte* functionType, byte* function, byte* arguments, string name) By C;
+Extern Function byte* NativeBuildCall(byte* module, byte* functionType, byte* function, byte* arguments, int argumentCount, string name) By C;
 [LinkName("kn_sh_llvm_build_return")]
 Extern Function byte* NativeBuildReturn(byte* module, byte* value) By C;
 [LinkName("kn_sh_llvm_build_return_void")]
@@ -222,53 +214,68 @@ Trusted Function int VersionMajor()
 
 Trusted Function string LastError()
 {
-    string detail = NativeLastError();
-    Return detail == null ? "" : detail;
-}
-
-Trusted Function string ExecutablePath()
-{
-    string path = NativeExecutablePath();
-    Return path == null ? "" : path;
-}
-
-Trusted Function int Execute(string commandLine)
-{
-    Return NativeExecute(commandLine);
+    Return IO.Kinal.Runtime.CopyNativeText(NativeLastError());
 }
 
 Class LlvmHandles
 {
-    Private byte* Handle;
+    Private byte* Items;
+    Private int CountValue;
+    Private int Capacity;
 
     Public Trusted Constructor()
     {
-        This.Handle = NativeHandlesCreate();
+        This.CountValue = 0;
+        This.Capacity = 8;
+        This.Items = IO.Kinal.Runtime.AllocateRaw(
+            [usize](This.Capacity * (IO.Target.PointerBits / 8)));
+        If (This.Items == null) This.Capacity = 0;
     }
 
     Public Safe Function bool IsValid()
     {
-        Return This.Handle != null;
+        Return This.Items != null;
     }
 
     Public Trusted Function bool Add(byte* handle)
     {
-        Return This.Handle != null && handle != null && NativeHandlesAdd(This.Handle, handle) != 0;
+        If (This.Items == null || handle == null) Return false;
+        usize* items = [usize*](This.Items);
+        If (This.CountValue >= This.Capacity)
+        {
+            int nextCapacity = This.Capacity <= 0 ? 8 : This.Capacity * 2;
+            usize* next = [usize*](IO.Kinal.Runtime.AllocateRaw(
+                [usize](nextCapacity * (IO.Target.PointerBits / 8))));
+            If (next == null) Return false;
+            int index = 0;
+            While (index < This.CountValue)
+            {
+                next[index] = items[index];
+                index = index + 1;
+            }
+            items = next;
+            This.Items = [byte*](items);
+            This.Capacity = nextCapacity;
+        }
+        items[This.CountValue] = [usize](handle);
+        This.CountValue = This.CountValue + 1;
+        Return true;
     }
 
     Public Trusted Function int Count()
     {
-        Return This.Handle == null ? 0 : NativeHandlesCount(This.Handle);
+        Return This.CountValue;
     }
 
     Public Trusted Function byte* Fetch(int index)
     {
-        Return This.Handle == null ? null : NativeHandlesGet(This.Handle, index);
+        If (This.Items == null || index < 0 || index >= This.CountValue) Return null;
+        Return [byte*](([usize*](This.Items))[index]);
     }
 
-    Public Safe Function byte* Raw()
+    Public Safe Function byte* ItemsRaw()
     {
-        Return This.Handle;
+        Return This.Items;
     }
 }
 
@@ -295,7 +302,7 @@ Class LlvmModule
     Public Trusted Function string Ir()
     {
         If (This.Handle == null) Return "";
-        Return NativeModuleIr(This.Handle);
+        Return IO.Kinal.Runtime.AdoptNativeText(NativeModuleIr(This.Handle));
     }
 
     Public Trusted Function bool EmitObject(string targetTriple, string outputPath)
@@ -311,15 +318,15 @@ Class LlvmModule
     Public Trusted Function byte* NamedStructType(string name) { Return NativeTypeNamedStruct(This.Handle, name); }
     Public Trusted Function byte* LiteralStructType(LlvmHandles fields, bool packed)
     {
-        Return NativeTypeLiteralStruct(This.Handle, fields.Raw(), packed ? 1 : 0);
+        Return NativeTypeLiteralStruct(This.Handle, fields.ItemsRaw(), fields.Count(), packed ? 1 : 0);
     }
     Public Trusted Function bool SetStructBody(byte* type, LlvmHandles fields, bool packed)
     {
-        Return NativeTypeSetStructBody(type, fields.Raw(), packed ? 1 : 0) != 0;
+        Return NativeTypeSetStructBody(type, fields.ItemsRaw(), fields.Count(), packed ? 1 : 0) != 0;
     }
     Public Trusted Function byte* FunctionType(byte* returnType, LlvmHandles parameters, bool variadic)
     {
-        Return NativeTypeFunction(returnType, parameters.Raw(), variadic ? 1 : 0);
+        Return NativeTypeFunction(returnType, parameters.ItemsRaw(), parameters.Count(), variadic ? 1 : 0);
     }
     Public Trusted Function byte* ArrayType(byte* elementType, int count) { Return NativeTypeArray(elementType, count); }
     Public Trusted Function byte* TypeOf(byte* value) { Return NativeTypeOf(value); }
@@ -336,6 +343,7 @@ Class LlvmModule
     }
     Public Trusted Function void PositionAtEnd(byte* block) { NativePositionAtEnd(This.Handle, block); }
     Public Trusted Function byte* CurrentBlock() { Return NativeCurrentBlock(This.Handle); }
+    Public Trusted Function byte* CurrentFunction() { Return NativeCurrentFunction(This.Handle); }
     Public Trusted Function bool IsTerminated(byte* block) { Return NativeBlockIsTerminated(block) != 0; }
     Public Trusted Function byte* ConstInt(byte* type, int value)
     {
@@ -374,7 +382,7 @@ Class LlvmModule
     }
     Public Trusted Function byte* Gep(byte* elementType, byte* pointer, LlvmHandles indices, bool inBounds, string name)
     {
-        Return NativeBuildGep(This.Handle, elementType, pointer, indices.Raw(), inBounds ? 1 : 0, name);
+        Return NativeBuildGep(This.Handle, elementType, pointer, indices.ItemsRaw(), indices.Count(), inBounds ? 1 : 0, name);
     }
     Public Trusted Function byte* ExtractValue(byte* aggregate, int index, string name)
     {
@@ -433,7 +441,7 @@ Class LlvmModule
 
     Public Trusted Function byte* Call(byte* functionType, byte* function, LlvmHandles arguments, string name)
     {
-        Return NativeBuildCall(This.Handle, functionType, function, arguments.Raw(), name);
+        Return NativeBuildCall(This.Handle, functionType, function, arguments.ItemsRaw(), arguments.Count(), name);
     }
     Public Trusted Function byte* ReturnValue(byte* value) { Return NativeBuildReturn(This.Handle, value); }
     Public Trusted Function byte* ReturnVoid() { Return NativeBuildReturnVoid(This.Handle); }

@@ -18,7 +18,9 @@ static int class_exists(ClassList *classes, const char *name)
     if (!classes || !name) return 0;
     for (int i = 0; i < classes->count; i++)
     {
-        if (kn_strcmp(classes->items[i].name, name) == 0)
+        if (kn_strcmp(classes->items[i].name, name) == 0 ||
+            (classes->items[i].qname &&
+             kn_strcmp(classes->items[i].qname, name) == 0))
             return 1;
     }
     return 0;

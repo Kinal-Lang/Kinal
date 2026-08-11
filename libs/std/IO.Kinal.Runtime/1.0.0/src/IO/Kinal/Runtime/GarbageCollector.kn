@@ -1,0 +1,477 @@
+Unit IO.Kinal.Runtime.GarbageCollector;
+
+Get IO.Target;
+Get IO.Kinal.Runtime.Thread;
+
+// malloc/free and the atomic lock are irreducible host mechanisms.  All
+// managed-heap metadata, roots, marking, traversal, thresholds, and sweeping
+// are owned by this Kinal unit.
+[LinkName("kn_native_heap_allocate")]
+Extern Unsafe Function byte* NativeAllocate(usize size) By C;
+
+[LinkName("kn_native_heap_free")]
+Extern Unsafe Function void NativeFree(byte* memory) By C;
+
+[LinkName("kn_native_memory_copy")]
+Extern Unsafe Function void NativeMemoryCopy(byte* destination, byte* source,
+                                              usize count) By C;
+
+[LinkName("kn_native_memory_set")]
+Extern Unsafe Function void NativeMemorySet(byte* destination, byte value,
+                                             usize count) By C;
+
+[LinkName("kn_native_spin_lock")]
+Extern Unsafe Function void NativeLock(i32* lock) By C;
+
+[LinkName("kn_native_spin_unlock")]
+Extern Unsafe Function void NativeUnlock(i32* lock) By C;
+
+[LinkName("kn_native_async_live_task_count")]
+Extern Unsafe Function i32 NativeLiveTaskCount() By C;
+
+byte* ManagedBlocks = null;
+byte* GlobalRoots = null;
+int GlobalRootCount = 0;
+int GlobalRootCapacity = 0;
+u64 ManagedBytes = [u64](0);
+u64 CollectionThreshold = [u64](8388608);
+i32 CollectorLock = [i32](0);
+bool Collecting = false;
+byte* MainThreadStorage = null;
+
+Safe Function usize PointerBytes()
+{
+    Return [usize](IO.Target.PointerBits / 8);
+}
+
+Safe Function usize MetadataWordBytes()
+{
+    Return [usize](8);
+}
+
+Trusted Function void RawZero(byte* memory, usize count)
+{
+    NativeMemorySet(memory, [byte](0), count);
+}
+
+Trusted Function void RawCopy(byte* destination, byte* source, usize count)
+{
+    NativeMemoryCopy(destination, source, count);
+}
+
+Trusted Function byte* ThreadStorage()
+{
+    Return [byte*](IO.Kinal.Runtime.Thread.State());
+}
+
+Trusted Function byte* CurrentFrame()
+{
+    u64* state = [u64*](ThreadStorage());
+    Return [byte*]([usize](state[0]));
+}
+
+Trusted Function void SetCurrentFrame(byte* frame)
+{
+    ([u64*](ThreadStorage()))[0] = [u64]([usize](frame));
+}
+
+Trusted Function usize StackBase()
+{
+    Return [usize](([u64*](ThreadStorage()))[1]);
+}
+
+Trusted Function void SetStackBase(usize value)
+{
+    ([u64*](ThreadStorage()))[1] = [u64](value);
+}
+
+Trusted Function bool IsMainThread()
+{
+    Return MainThreadStorage != null && ThreadStorage() == MainThreadStorage;
+}
+
+Trusted Function void Initialize()
+{
+    usize marker = [usize](0);
+    byte* storage = ThreadStorage();
+    If (MainThreadStorage == null) MainThreadStorage = storage;
+    SetStackBase([usize](&marker));
+}
+
+Trusted Function byte* BlockNext(byte* block)
+{
+    Return block == null ? null : [byte*]([usize](([u64*](block))[0]));
+}
+
+Trusted Function void SetBlockNext(byte* block, byte* next)
+{
+    ([u64*](block))[0] = [u64]([usize](next));
+}
+
+Trusted Function byte* BlockData(byte* block)
+{
+    Return block == null ? null : [byte*]([usize](([u64*](block))[1]));
+}
+
+Trusted Function u64 BlockSize(byte* block)
+{
+    Return block == null ? [u64](0) : ([u64*](block))[2];
+}
+
+Trusted Function bool BlockMarked(byte* block)
+{
+    Return block != null && ([u64*](block))[3] != [u64](0);
+}
+
+Trusted Function void SetBlockMarked(byte* block, bool marked)
+{
+    ([u64*](block))[3] = marked ? [u64](1) : [u64](0);
+}
+
+Trusted Function byte* Allocate(usize requestedSize)
+{
+    usize marker = [usize](0);
+    If (StackBase() == [usize](0))
+    {
+        SetStackBase([usize](&marker));
+    }
+    usize size = requestedSize == [usize](0) ? [usize](1) : requestedSize;
+    usize headerSize = MetadataWordBytes() * [usize](4);
+
+    NativeLock(&CollectorLock);
+    byte* block = NativeAllocate(headerSize + size);
+    If (block == null)
+    {
+        NativeUnlock(&CollectorLock);
+        Return null;
+    }
+    RawZero(block, headerSize + size);
+    byte* memory = [byte*]([usize](block) + headerSize);
+    u64* words = [u64*](block);
+    words[0] = [u64]([usize](ManagedBlocks));
+    words[1] = [u64]([usize](memory));
+    words[2] = [u64](size);
+    words[3] = [u64](0);
+    ManagedBlocks = block;
+    ManagedBytes = ManagedBytes + [u64](size);
+    NativeUnlock(&CollectorLock);
+    Return memory;
+}
+
+// Collection is requested only at compiler-inserted statement boundaries.
+// At those boundaries every live managed value has reached a registered local,
+// parameter, capture, or global root and no expression temporary is in flight.
+Trusted Function void MaybeCollect()
+{
+    If (!Collecting &&
+        ManagedBytes > CollectionThreshold &&
+        NativeLiveTaskCount() == [i32](0))
+    {
+        Collect();
+    }
+}
+
+Trusted Function byte* PushFrame()
+{
+    byte* frame = NativeAllocate(MetadataWordBytes() * [usize](4));
+    If (frame == null) Return null;
+    RawZero(frame, MetadataWordBytes() * [usize](4));
+    ([u64*](frame))[0] = [u64]([usize](CurrentFrame()));
+    SetCurrentFrame(frame);
+    Return frame;
+}
+
+Trusted Function void AddRoot(byte* frame, byte* address, usize size)
+{
+    If (frame == null || address == null || size == [usize](0)) Return;
+    u64* words = [u64*](frame);
+    int count = [int](words[1]);
+    int capacity = [int](words[2]);
+    If (count + 1 > capacity)
+    {
+        int nextCapacity = capacity == 0 ? 8 : capacity * 2;
+        usize bytes = [usize](nextCapacity) * MetadataWordBytes() * [usize](2);
+        byte* roots = NativeAllocate(bytes);
+        If (roots == null) Return;
+        RawZero(roots, bytes);
+        If (words[3] != [u64](0) && count > 0)
+        {
+            RawCopy(roots, [byte*]([usize](words[3])),
+                [usize](count) * MetadataWordBytes() * [usize](2));
+            NativeFree([byte*]([usize](words[3])));
+        }
+        words[2] = [u64](nextCapacity);
+        words[3] = [u64]([usize](roots));
+    }
+    u64* roots = [u64*]([usize](words[3]));
+    roots[count * 2] = [u64]([usize](address));
+    roots[count * 2 + 1] = [u64](size);
+    words[1] = [u64](count + 1);
+}
+
+Trusted Function void AddGlobalRoot(byte* address, usize size)
+{
+    If (address == null || size == [usize](0)) Return;
+    NativeLock(&CollectorLock);
+    If (GlobalRootCount + 1 > GlobalRootCapacity)
+    {
+        int nextCapacity = GlobalRootCapacity == 0 ? 16 : GlobalRootCapacity * 2;
+        usize bytes = [usize](nextCapacity) * MetadataWordBytes() * [usize](2);
+        byte* roots = NativeAllocate(bytes);
+        If (roots == null)
+        {
+            NativeUnlock(&CollectorLock);
+            Return;
+        }
+        RawZero(roots, bytes);
+        If (GlobalRoots != null && GlobalRootCount > 0)
+        {
+            RawCopy(roots, GlobalRoots,
+                [usize](GlobalRootCount) * MetadataWordBytes() * [usize](2));
+            NativeFree(GlobalRoots);
+        }
+        GlobalRoots = roots;
+        GlobalRootCapacity = nextCapacity;
+    }
+    u64* rootWords = [u64*](GlobalRoots);
+    rootWords[GlobalRootCount * 2] = [u64]([usize](address));
+    rootWords[GlobalRootCount * 2 + 1] = [u64](size);
+    GlobalRootCount = GlobalRootCount + 1;
+    NativeUnlock(&CollectorLock);
+}
+
+Trusted Function void PopFrame(byte* frame)
+{
+    If (frame == null) Return;
+    u64* words = [u64*](frame);
+    SetCurrentFrame([byte*]([usize](words[0])));
+    If (words[3] != [u64](0)) NativeFree([byte*]([usize](words[3])));
+    NativeFree(frame);
+}
+
+Trusted Function void IndexSiftDown(u64* items, int count, int root)
+{
+    While (true)
+    {
+        int child = root * 2 + 1;
+        If (child >= count) Return;
+        byte* childBlock = [byte*]([usize](items[child]));
+        If (child + 1 < count)
+        {
+            byte* rightBlock = [byte*]([usize](items[child + 1]));
+            If ([usize](BlockData(childBlock)) < [usize](BlockData(rightBlock)))
+            {
+                child = child + 1;
+                childBlock = rightBlock;
+            }
+        }
+        byte* rootBlock = [byte*]([usize](items[root]));
+        If ([usize](BlockData(rootBlock)) >= [usize](BlockData(childBlock))) Return;
+        u64 swap = items[root];
+        items[root] = items[child];
+        items[child] = swap;
+        root = child;
+    }
+}
+
+Trusted Function void IndexSort(u64* items, int count)
+{
+    If (items == null || count < 2) Return;
+    int index = count / 2;
+    While (index > 0)
+    {
+        IndexSiftDown(items, count, index - 1);
+        index = index - 1;
+    }
+    int end = count - 1;
+    While (end > 0)
+    {
+        u64 swap = items[0];
+        items[0] = items[end];
+        items[end] = swap;
+        IndexSiftDown(items, end, 0);
+        end = end - 1;
+    }
+}
+
+Trusted Function byte* FindBlock(byte* pointer, u64* index, int count)
+{
+    If (pointer == null || index == null || count <= 0) Return null;
+    usize value = [usize](pointer);
+    int low = 0;
+    int high = count;
+    While (low < high)
+    {
+        int middle = low + (high - low) / 2;
+        byte* block = [byte*]([usize](index[middle]));
+        If ([usize](BlockData(block)) <= value) low = middle + 1;
+        Else high = middle;
+    }
+    If (low == 0) Return null;
+    byte* candidate = [byte*]([usize](index[low - 1]));
+    usize start = [usize](BlockData(candidate));
+    Return value >= start && [u64](value - start) < BlockSize(candidate) ?
+        candidate : null;
+}
+
+Trusted Function int MarkPointer(byte* pointer, u64* index, int indexCount,
+                                 u64* stack, int stackPointer, int capacity)
+{
+    byte* block = FindBlock(pointer, index, indexCount);
+    If (block == null || BlockMarked(block)) Return stackPointer;
+    SetBlockMarked(block, true);
+    If (stackPointer < capacity)
+    {
+        stack[stackPointer] = [u64]([usize](block));
+        stackPointer = stackPointer + 1;
+    }
+    Return stackPointer;
+}
+
+Trusted Function int ScanRegion(byte* address, usize size,
+                                u64* index, int indexCount,
+                                u64* stack, int stackPointer, int capacity)
+{
+    If (address == null || size < PointerBytes()) Return stackPointer;
+    usize offset = [usize](0);
+    While (offset + PointerBytes() <= size)
+    {
+        usize value = ([usize*](address))[offset / PointerBytes()];
+        stackPointer = MarkPointer([byte*](value), index, indexCount,
+            stack, stackPointer, capacity);
+        offset = offset + PointerBytes();
+    }
+    Return stackPointer;
+}
+
+Trusted Function int ScanNativeStack(u64* index, int indexCount,
+                                     u64* stack, int stackPointer, int capacity)
+{
+    usize marker = [usize](0);
+    usize current = [usize](&marker);
+    usize base = StackBase();
+    usize low = current < base ? current : base;
+    usize high = current < base ? base : current;
+    If (base == [usize](0) || high < low ||
+        [u64](high - low) > [u64](134217728))
+    {
+        Return stackPointer;
+    }
+    Return ScanRegion([byte*](low), high - low + PointerBytes(),
+        index, indexCount, stack, stackPointer, capacity);
+}
+
+Trusted Function void Collect()
+{
+    If (NativeLiveTaskCount() > [i32](0)) Return;
+    NativeLock(&CollectorLock);
+    If (Collecting || NativeLiveTaskCount() > [i32](0))
+    {
+        NativeUnlock(&CollectorLock);
+        Return;
+    }
+    Collecting = true;
+
+    int blockCount = 0;
+    byte* block = ManagedBlocks;
+    While (block != null)
+    {
+        blockCount = blockCount + 1;
+        block = BlockNext(block);
+    }
+    If (blockCount == 0)
+    {
+        Collecting = false;
+        NativeUnlock(&CollectorLock);
+        Return;
+    }
+
+    usize indexBytes = [usize](blockCount) * MetadataWordBytes();
+    u64* index = [u64*](NativeAllocate(indexBytes));
+    u64* stack = [u64*](NativeAllocate(indexBytes));
+    If (index == null || stack == null)
+    {
+        If (index != null) NativeFree([byte*](index));
+        If (stack != null) NativeFree([byte*](stack));
+        Collecting = false;
+        NativeUnlock(&CollectorLock);
+        Return;
+    }
+
+    int indexCount = 0;
+    block = ManagedBlocks;
+    While (block != null)
+    {
+        index[indexCount] = [u64]([usize](block));
+        indexCount = indexCount + 1;
+        SetBlockMarked(block, false);
+        block = BlockNext(block);
+    }
+    IndexSort(index, indexCount);
+
+    int stackPointer = ScanNativeStack(index, indexCount, stack, 0, blockCount);
+    byte* frame = CurrentFrame();
+    While (frame != null)
+    {
+        u64* frameWords = [u64*](frame);
+        int rootCount = [int](frameWords[1]);
+        u64* roots = [u64*]([usize](frameWords[3]));
+        int rootIndex = 0;
+        While (roots != null && rootIndex < rootCount)
+        {
+            stackPointer = ScanRegion(
+                [byte*]([usize](roots[rootIndex * 2])),
+                [usize](roots[rootIndex * 2 + 1]),
+                index, indexCount, stack, stackPointer, blockCount);
+            rootIndex = rootIndex + 1;
+        }
+        frame = [byte*]([usize](frameWords[0]));
+    }
+
+    u64* globalRootWords = [u64*](GlobalRoots);
+    int globalIndex = 0;
+    While (globalRootWords != null && globalIndex < GlobalRootCount)
+    {
+        stackPointer = ScanRegion(
+            [byte*]([usize](globalRootWords[globalIndex * 2])),
+            [usize](globalRootWords[globalIndex * 2 + 1]),
+            index, indexCount, stack, stackPointer, blockCount);
+        globalIndex = globalIndex + 1;
+    }
+
+    While (stackPointer > 0)
+    {
+        stackPointer = stackPointer - 1;
+        byte* reachable = [byte*]([usize](stack[stackPointer]));
+        stackPointer = ScanRegion(BlockData(reachable), [usize](BlockSize(reachable)),
+            index, indexCount, stack, stackPointer, blockCount);
+    }
+
+    byte* previous = null;
+    byte* currentBlock = ManagedBlocks;
+    ManagedBytes = [u64](0);
+    While (currentBlock != null)
+    {
+        byte* next = BlockNext(currentBlock);
+        If (!BlockMarked(currentBlock))
+        {
+            NativeFree(currentBlock);
+            If (previous == null) ManagedBlocks = next;
+            Else SetBlockNext(previous, next);
+        }
+        Else
+        {
+            ManagedBytes = ManagedBytes + BlockSize(currentBlock);
+            previous = currentBlock;
+        }
+        currentBlock = next;
+    }
+
+    NativeFree([byte*](index));
+    NativeFree([byte*](stack));
+    CollectionThreshold = ManagedBytes * [u64](2);
+    If (CollectionThreshold < [u64](8388608))
+        CollectionThreshold = [u64](8388608);
+    Collecting = false;
+    NativeUnlock(&CollectorLock);
+}

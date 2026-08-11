@@ -5,5 +5,8 @@
   "summary": "Official core std package bundled with Kinal.",
   "source_root": "src",
   "klib": "lib/IO.Core.klib",
-  "entry": "src/IO/Char.kn"
+  "entry": "src/IO/Char.kn",
+  "dependencies": [
+    "IO.Kinal.Runtime"
+  ]
 }

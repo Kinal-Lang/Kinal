@@ -691,6 +691,8 @@ int kn_sema_check(const KnSource *src, MetaList *metas, FuncList *funcs, ImportL
         s.host_dynamic_library_suffix = opts->host_dynamic_library_suffix;
         s.host_static_library_suffix = opts->host_static_library_suffix;
         s.runtime_backend = opts->runtime_backend;
+        s.known_standard_modules = opts->known_standard_modules;
+        s.known_standard_module_count = opts->known_standard_module_count;
     }
 
     // register functions
@@ -698,6 +700,7 @@ int kn_sema_check(const KnSource *src, MetaList *metas, FuncList *funcs, ImportL
     {
         Func *f = &funcs->items[i];
         f->is_overload = attr_list_has_named(&f->attrs, "Overload") ? 1 : 0;
+        f->is_variadic = attr_list_has_named(&f->attrs, "Variadic") ? 1 : 0;
         if (!f->symbol_name)
             f->symbol_name = attr_list_string_value(&f->attrs, "SymbolName");
         if (f->is_overload && f->symbol_name && f->symbol_name[0])
@@ -706,6 +709,7 @@ int kn_sema_check(const KnSource *src, MetaList *metas, FuncList *funcs, ImportL
         {
             Func *prev = &funcs->items[j];
             prev->is_overload = attr_list_has_named(&prev->attrs, "Overload") ? 1 : 0;
+            prev->is_variadic = attr_list_has_named(&prev->attrs, "Variadic") ? 1 : 0;
             if (!prev->symbol_name)
                 prev->symbol_name = attr_list_string_value(&prev->attrs, "SymbolName");
             if (!funcs_share_visible_name(prev, f))

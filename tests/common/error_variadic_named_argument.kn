@@ -1,0 +1,12 @@
+Unit Tests.ErrorVariadicNamedArgument;
+
+[Variadic]
+Static Function int Sum(int first, int[] remaining)
+{
+    Return first;
+}
+
+Static Function int Main()
+{
+    Return Sum(first = 1, remaining = 2);
+}

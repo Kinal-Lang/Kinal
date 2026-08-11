@@ -6,9 +6,9 @@ import subprocess
 from pathlib import Path
 
 
-def collect_cases(root: Path, platform: str) -> list[tuple[str, list[Path], str]]:
+def collect_cases(root: Path, platform: str) -> list[tuple[str, list[Path], str, bool]]:
     manifest = json.loads((root / "tests" / "manifest.json").read_text(encoding="utf-8"))
-    cases: list[tuple[str, list[Path], str]] = []
+    cases: list[tuple[str, list[Path], str, bool]] = []
     for case in manifest:
         expected = case.get("expect_error")
         if not expected:
@@ -22,7 +22,7 @@ def collect_cases(root: Path, platform: str) -> list[tuple[str, list[Path], str]
                 values = [values]
             sources.extend((root / value).resolve() for value in values if value.endswith(".kn"))
         if sources:
-            cases.append((case["name"], sources, expected))
+            cases.append((case["name"], sources, expected, bool(case.get("auto_link"))))
     return cases
 
 
@@ -101,9 +101,10 @@ def main() -> int:
     )
     if stage0:
         stage0_out.mkdir(parents=True, exist_ok=True)
-    for name, sources, expected in cases:
+    for name, sources, expected, auto_link in cases:
+        selfhost_command = "check-source-auto" if auto_link else "check-source"
         result = subprocess.run(
-            [str(compiler), "check-source", *(str(source) for source in sources)],
+            [str(compiler), selfhost_command, *(str(source) for source in sources)],
             cwd=root,
             text=True,
             capture_output=True,
@@ -119,11 +120,11 @@ def main() -> int:
                 output.splitlines()[0] if output else "no diagnostic",
             )
         if stage0:
-            stage0_result = subprocess.run(
+            stage0_command = [str(stage0), "build"]
+            if not auto_link:
+                stage0_command.append("--no-module-discovery")
+            stage0_command.extend(
                 [
-                    str(stage0),
-                    "build",
-                    "--no-module-discovery",
                     "--color",
                     "never",
                     "--emit",
@@ -131,7 +132,10 @@ def main() -> int:
                     *(str(source) for source in sources),
                     "-o",
                     str(stage0_out / f"{name}.kcheck"),
-                ],
+                ]
+            )
+            stage0_result = subprocess.run(
+                stage0_command,
                 cwd=root,
                 text=True,
                 capture_output=True,

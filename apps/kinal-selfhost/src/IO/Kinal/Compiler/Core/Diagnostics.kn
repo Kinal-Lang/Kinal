@@ -4,6 +4,38 @@ Get IO.Console;
 Get IO.Text;
 Get IO.Kinal.Compiler.Source.SourceFile;
 
+Enum DiagnosticSeverity By int
+{
+    Error = 0,
+    Warning = 1
+}
+
+Class Diagnostic
+{
+    Public DiagnosticSeverity Severity;
+    Public string Stage;
+    Public string Title;
+    Public string Detail;
+    Public SourceFile Source;
+    Public int Line;
+    Public int Column;
+    Public int Length;
+
+    Public Safe Constructor(DiagnosticSeverity severity, string stage,
+                            string title, string detail, SourceFile source,
+                            int line, int column, int length)
+    {
+        This.Severity = severity;
+        This.Stage = stage;
+        This.Title = title;
+        This.Detail = detail;
+        This.Source = source;
+        This.Line = line;
+        This.Column = column;
+        This.Length = length;
+    }
+}
+
 Safe Function string Repeat(string text, int count)
 {
     string result = "";
@@ -23,22 +55,9 @@ Safe Function void AddCore(list diagnostics, SourceFile source, string stage,
     int safeLine = line < 1 ? 1 : line;
     int safeColumn = column < 1 ? 1 : column;
     int safeLength = length < 1 ? 1 : length;
-    string lineText = source.GetLine(safeLine);
-    string lineNumber = [string](safeLine);
-    string prefix = Repeat(" ", IO.Text.Length(lineNumber) + 3 + safeColumn - 1);
-    string message = "[" + stage + "]";
-    If (isWarning) message = message + "[warning]";
-    message = message + " " + title;
-    If (!IO.Text.IsEmpty(detail))
-    {
-        message = message + ": " + detail;
-    }
-    message = message + [string]([char](10)) +
-              "in <" + source.Path + "> at " + [string](safeLine) + ":" + [string](safeColumn) +
-              [string]([char](10)) + [string]([char](10)) +
-              lineNumber + " | " + lineText + [string]([char](10)) +
-              prefix + Repeat("^", safeLength);
-    diagnostics.Add(message);
+    diagnostics.Add(New Diagnostic(isWarning ? DiagnosticSeverity.Warning :
+        DiagnosticSeverity.Error, stage, title, detail, source, safeLine,
+        safeColumn, safeLength));
 }
 
 Safe Function void Add(list diagnostics, SourceFile source, string stage,
@@ -53,19 +72,37 @@ Safe Function void AddWarning(list diagnostics, SourceFile source, string stage,
     AddCore(diagnostics, source, stage, title, detail, line, column, length, true);
 }
 
+Safe Function string Format(Diagnostic diagnostic)
+{
+    string lineText = diagnostic.Source.GetLine(diagnostic.Line);
+    string lineNumber = [string](diagnostic.Line);
+    string prefix = Repeat(" ", IO.Text.Length(lineNumber) + 3 +
+        diagnostic.Column - 1);
+    string message = "[" + diagnostic.Stage + "]";
+    If (diagnostic.Severity == DiagnosticSeverity.Warning)
+    {
+        message = message + "[warning]";
+    }
+    message = message + " " + diagnostic.Title;
+    If (!IO.Text.IsEmpty(diagnostic.Detail))
+    {
+        message = message + ": " + diagnostic.Detail;
+    }
+    Return message + [string]([char](10)) +
+        "in <" + diagnostic.Source.Path + "> at " + [string](diagnostic.Line) +
+        ":" + [string](diagnostic.Column) + [string]([char](10)) +
+        [string]([char](10)) + lineNumber + " | " + lineText +
+        [string]([char](10)) + prefix + Repeat("^", diagnostic.Length);
+}
+
 Safe Function void PrintAll(list diagnostics)
 {
     int i = 0;
     While (i < diagnostics.Count())
     {
-        IO.Console.PrintLine([string](diagnostics.Fetch(i)));
+        IO.Console.PrintLine(Format([Diagnostic](diagnostics.Fetch(i))));
         i = i + 1;
     }
-}
-
-Safe Function bool IsWarningMessage(string message)
-{
-    Return IO.Text.Contains(message, "][warning] ");
 }
 
 Safe Function bool HasAny(list diagnostics)
@@ -73,8 +110,8 @@ Safe Function bool HasAny(list diagnostics)
     int i = 0;
     While (i < diagnostics.Count())
     {
-        string diagnostic = [string](diagnostics.Fetch(i));
-        If (!IsWarningMessage(diagnostic)) Return true;
+        Diagnostic diagnostic = [Diagnostic](diagnostics.Fetch(i));
+        If (diagnostic.Severity != DiagnosticSeverity.Warning) Return true;
         i = i + 1;
     }
     Return false;
@@ -86,8 +123,8 @@ Safe Function int ErrorCount(list diagnostics)
     int i = 0;
     While (i < diagnostics.Count())
     {
-        string diagnostic = [string](diagnostics.Fetch(i));
-        If (!IsWarningMessage(diagnostic)) count = count + 1;
+        Diagnostic diagnostic = [Diagnostic](diagnostics.Fetch(i));
+        If (diagnostic.Severity != DiagnosticSeverity.Warning) count = count + 1;
         i = i + 1;
     }
     Return count;

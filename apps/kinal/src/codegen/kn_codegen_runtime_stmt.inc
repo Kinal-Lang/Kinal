@@ -1,4 +1,4 @@
-﻿// Internal codegen fragment: runtime emission, closures, statements, and globals
+// Internal codegen fragment: runtime emission, closures, statements, and globals
 
 static void maybe_call_global_init(Codegen *g);
 static void emit_meta_module_export(Codegen *g);
@@ -55,224 +55,224 @@ static void build_runtime_hosted_declarations(Codegen *g, HostedPlatformApi *pla
     }
 
     platform->getstd_ty = LLVMFunctionType(t_i8ptr, &t_i32, 1, 0);
-    platform->getstd = LLVMAddFunction(g->mod, "GetStdHandle", platform->getstd_ty);
+    platform->getstd = ensure_function(g->mod, "GetStdHandle", platform->getstd_ty);
     platform->setcp_ty = LLVMFunctionType(g->i1, &t_i32, 1, 0);
-    platform->set_console_output_cp = LLVMAddFunction(g->mod, "SetConsoleOutputCP", platform->setcp_ty);
-    platform->set_console_input_cp = LLVMAddFunction(g->mod, "SetConsoleCP", platform->setcp_ty);
+    platform->set_console_output_cp = ensure_function(g->mod, "SetConsoleOutputCP", platform->setcp_ty);
+    platform->set_console_input_cp = ensure_function(g->mod, "SetConsoleCP", platform->setcp_ty);
     LLVMTypeRef get_console_mode_args[2] = { t_i8ptr, LLVMPointerType(t_i32, 0) };
     platform->get_console_mode_ty = LLVMFunctionType(g->i1, get_console_mode_args, 2, 0);
-    platform->get_console_mode = LLVMAddFunction(g->mod, "GetConsoleMode", platform->get_console_mode_ty);
+    platform->get_console_mode = ensure_function(g->mod, "GetConsoleMode", platform->get_console_mode_ty);
     LLVMTypeRef set_console_mode_args[2] = { t_i8ptr, t_i32 };
     platform->set_console_mode_ty = LLVMFunctionType(g->i1, set_console_mode_args, 2, 0);
-    platform->set_console_mode = LLVMAddFunction(g->mod, "SetConsoleMode", platform->set_console_mode_ty);
+    platform->set_console_mode = ensure_function(g->mod, "SetConsoleMode", platform->set_console_mode_ty);
 
     LLVMTypeRef wf_args[5] = { t_i8ptr, t_i8ptr, t_i32, LLVMPointerType(t_i32, 0), t_i8ptr };
     platform->writefile_ty = LLVMFunctionType(g->i1, wf_args, 5, 0);
-    platform->writefile = LLVMAddFunction(g->mod, "WriteFile", platform->writefile_ty);
-    platform->readfile = LLVMAddFunction(g->mod, "ReadFile", platform->writefile_ty);
+    platform->writefile = ensure_function(g->mod, "WriteFile", platform->writefile_ty);
+    platform->readfile = ensure_function(g->mod, "ReadFile", platform->writefile_ty);
 
     g->fn_gc_alloc_ty = LLVMFunctionType(t_i8ptr, &t_i64, 1, 0);
-    g->fn_gc_alloc = LLVMAddFunction(g->mod, "__kn_gc_alloc", g->fn_gc_alloc_ty);
+    g->fn_gc_alloc = ensure_function(g->mod, "__kn_gc_alloc", g->fn_gc_alloc_ty);
     g->fn_gc_collect_ty = LLVMFunctionType(t_void, 0, 0, 0);
-    g->fn_gc_collect = LLVMAddFunction(g->mod, "__kn_gc_collect", g->fn_gc_collect_ty);
+    g->fn_gc_collect = ensure_function(g->mod, "__kn_gc_collect", g->fn_gc_collect_ty);
     g->fn_gc_push_ty = LLVMFunctionType(t_i8ptr, 0, 0, 0);
-    g->fn_gc_push = LLVMAddFunction(g->mod, "__kn_gc_push_frame", g->fn_gc_push_ty);
+    g->fn_gc_push = ensure_function(g->mod, "__kn_gc_push_frame", g->fn_gc_push_ty);
     LLVMTypeRef gc_root_args[3] = { t_i8ptr, t_i8ptr, t_i64 };
     g->fn_gc_add_root_ty = LLVMFunctionType(t_void, gc_root_args, 3, 0);
-    g->fn_gc_add_root = LLVMAddFunction(g->mod, "__kn_gc_add_root", g->fn_gc_add_root_ty);
+    g->fn_gc_add_root = ensure_function(g->mod, "__kn_gc_add_root", g->fn_gc_add_root_ty);
     LLVMTypeRef gc_global_root_args[2] = { t_i8ptr, t_i64 };
     g->fn_gc_add_global_root_ty = LLVMFunctionType(t_void, gc_global_root_args, 2, 0);
-    g->fn_gc_add_global_root = LLVMAddFunction(g->mod, "__kn_gc_add_global_root", g->fn_gc_add_global_root_ty);
+    g->fn_gc_add_global_root = ensure_function(g->mod, "__kn_gc_add_global_root", g->fn_gc_add_global_root_ty);
     g->fn_gc_pop_ty = LLVMFunctionType(t_void, &t_i8ptr, 1, 0);
-    g->fn_gc_pop = LLVMAddFunction(g->mod, "__kn_gc_pop_frame", g->fn_gc_pop_ty);
+    g->fn_gc_pop = ensure_function(g->mod, "__kn_gc_pop_frame", g->fn_gc_pop_ty);
     g->fn_gc_init_ty = LLVMFunctionType(t_void, 0, 0, 0);
-    g->fn_gc_init = LLVMAddFunction(g->mod, "__kn_gc_init", g->fn_gc_init_ty);
+    g->fn_gc_init = ensure_function(g->mod, "__kn_gc_init", g->fn_gc_init_ty);
 
     g->fn_sys_exit_ty = LLVMFunctionType(t_void, &t_i32, 1, 0);
-    g->fn_sys_exit = LLVMAddFunction(g->mod, "__kn_sys_exit", g->fn_sys_exit_ty);
+    g->fn_sys_exit = ensure_function(g->mod, "__kn_sys_exit", g->fn_sys_exit_ty);
     g->fn_sys_cmdline_ty = LLVMFunctionType(t_i8ptr, 0, 0, 0);
-    g->fn_sys_cmdline = LLVMAddFunction(g->mod, "__kn_sys_command_line", g->fn_sys_cmdline_ty);
+    g->fn_sys_cmdline = ensure_function(g->mod, "__kn_sys_command_line", g->fn_sys_cmdline_ty);
     {
         LLVMTypeRef out_args[2] = { LLVMPointerType(LLVMPointerType(t_i8ptr, 0), 0), LLVMPointerType(t_i64, 0) };
         g->fn_sys_args_ty = LLVMFunctionType(t_void, out_args, 2, 0);
-        g->fn_sys_args = LLVMAddFunction(g->mod, "__kn_sys_args", g->fn_sys_args_ty);
+        g->fn_sys_args = ensure_function(g->mod, "__kn_sys_args", g->fn_sys_args_ty);
 
         LLVMTypeRef argv_args[4] = { t_i32, LLVMPointerType(t_i8ptr, 0), LLVMPointerType(LLVMPointerType(t_i8ptr, 0), 0), LLVMPointerType(t_i64, 0) };
         g->fn_sys_args_from_argv_ty = LLVMFunctionType(t_void, argv_args, 4, 0);
-        g->fn_sys_args_from_argv = LLVMAddFunction(g->mod, "__kn_sys_args_from_argv", g->fn_sys_args_from_argv_ty);
+        g->fn_sys_args_from_argv = ensure_function(g->mod, "__kn_sys_args_from_argv", g->fn_sys_args_from_argv_ty);
     }
     g->fn_sys_file_exists_ty = LLVMFunctionType(t_i32, &t_i8ptr, 1, 0);
-    g->fn_sys_file_exists = LLVMAddFunction(g->mod, "__kn_sys_file_exists", g->fn_sys_file_exists_ty);
+    g->fn_sys_file_exists = ensure_function(g->mod, "__kn_sys_file_exists", g->fn_sys_file_exists_ty);
     g->fn_sys_exec_ty = LLVMFunctionType(t_i32, &t_i8ptr, 1, 0);
-    g->fn_sys_exec = LLVMAddFunction(g->mod, "__kn_sys_exec", g->fn_sys_exec_ty);
+    g->fn_sys_exec = ensure_function(g->mod, "__kn_sys_exec", g->fn_sys_exec_ty);
     g->fn_sys_load_library_ty = LLVMFunctionType(t_i8ptr, &t_i8ptr, 1, 0);
-    g->fn_sys_load_library = LLVMAddFunction(g->mod, "__kn_sys_load_library", g->fn_sys_load_library_ty);
+    g->fn_sys_load_library = ensure_function(g->mod, "__kn_sys_load_library", g->fn_sys_load_library_ty);
     {
         LLVMTypeRef args_dynsym[2] = { t_i8ptr, t_i8ptr };
         g->fn_sys_get_symbol_ty = LLVMFunctionType(t_i8ptr, args_dynsym, 2, 0);
-        g->fn_sys_get_symbol = LLVMAddFunction(g->mod, "__kn_sys_get_symbol", g->fn_sys_get_symbol_ty);
+        g->fn_sys_get_symbol = ensure_function(g->mod, "__kn_sys_get_symbol", g->fn_sys_get_symbol_ty);
     }
     g->fn_sys_close_library_ty = LLVMFunctionType(t_i32, &t_i8ptr, 1, 0);
-    g->fn_sys_close_library = LLVMAddFunction(g->mod, "__kn_sys_close_library", g->fn_sys_close_library_ty);
+    g->fn_sys_close_library = ensure_function(g->mod, "__kn_sys_close_library", g->fn_sys_close_library_ty);
     g->fn_sys_last_error_ty = LLVMFunctionType(t_i8ptr, 0, 0, 0);
-    g->fn_sys_last_error = LLVMAddFunction(g->mod, "__kn_sys_last_error", g->fn_sys_last_error_ty);
+    g->fn_sys_last_error = ensure_function(g->mod, "__kn_sys_last_error", g->fn_sys_last_error_ty);
     g->fn_async_spawn_ty = LLVMFunctionType(t_i8ptr, &t_i8ptr, 1, 0);
-    g->fn_async_spawn = LLVMAddFunction(g->mod, "__kn_async_process_spawn", g->fn_async_spawn_ty);
+    g->fn_async_spawn = ensure_function(g->mod, "__kn_async_process_spawn", g->fn_async_spawn_ty);
     g->fn_async_is_completed_ty = LLVMFunctionType(t_i32, &t_i8ptr, 1, 0);
-    g->fn_async_is_completed = LLVMAddFunction(g->mod, "__kn_async_process_is_completed", g->fn_async_is_completed_ty);
+    g->fn_async_is_completed = ensure_function(g->mod, "__kn_async_process_is_completed", g->fn_async_is_completed_ty);
     {
         LLVMTypeRef args_async_wait[2] = { t_i8ptr, t_i64 };
         g->fn_async_wait_ty = LLVMFunctionType(t_i32, args_async_wait, 2, 0);
-        g->fn_async_wait = LLVMAddFunction(g->mod, "__kn_async_process_wait", g->fn_async_wait_ty);
+        g->fn_async_wait = ensure_function(g->mod, "__kn_async_process_wait", g->fn_async_wait_ty);
     }
     g->fn_async_exit_code_ty = LLVMFunctionType(t_i32, &t_i8ptr, 1, 0);
-    g->fn_async_exit_code = LLVMAddFunction(g->mod, "__kn_async_process_exit_code", g->fn_async_exit_code_ty);
+    g->fn_async_exit_code = ensure_function(g->mod, "__kn_async_process_exit_code", g->fn_async_exit_code_ty);
     g->fn_async_close_ty = LLVMFunctionType(t_i32, &t_i8ptr, 1, 0);
-    g->fn_async_close = LLVMAddFunction(g->mod, "__kn_async_process_close", g->fn_async_close_ty);
+    g->fn_async_close = ensure_function(g->mod, "__kn_async_process_close", g->fn_async_close_ty);
     {
         LLVMTypeRef args_spawn[2] = { t_i8ptr, t_i8ptr };
         g->fn_async_task_spawn_ty = LLVMFunctionType(t_i8ptr, args_spawn, 2, 0);
-        g->fn_async_task_spawn = LLVMAddFunction(g->mod, "__kn_async_task_spawn", g->fn_async_task_spawn_ty);
+        g->fn_async_task_spawn = ensure_function(g->mod, "__kn_async_task_spawn", g->fn_async_task_spawn_ty);
         LLVMTypeRef args_run[3] = { t_i8ptr, LLVMPointerType(t_i64, 0), LLVMPointerType(t_i64, 0) };
         g->fn_async_task_run_ty = LLVMFunctionType(t_void, args_run, 3, 0);
-        g->fn_async_task_run = LLVMAddFunction(g->mod, "__kn_async_task_run", g->fn_async_task_run_ty);
+        g->fn_async_task_run = ensure_function(g->mod, "__kn_async_task_run", g->fn_async_task_run_ty);
         LLVMTypeRef args_complete[3] = { t_i8ptr, t_i64, t_i64 };
         g->fn_async_task_complete_ty = LLVMFunctionType(t_void, args_complete, 3, 0);
-        g->fn_async_task_complete = LLVMAddFunction(g->mod, "__kn_async_task_complete", g->fn_async_task_complete_ty);
+        g->fn_async_task_complete = ensure_function(g->mod, "__kn_async_task_complete", g->fn_async_task_complete_ty);
         LLVMTypeRef args_fail[3] = { t_i8ptr, t_i8ptr, t_i8ptr };
         g->fn_async_task_fail_ty = LLVMFunctionType(t_void, args_fail, 3, 0);
-        g->fn_async_task_fail = LLVMAddFunction(g->mod, "__kn_async_task_fail", g->fn_async_task_fail_ty);
+        g->fn_async_task_fail = ensure_function(g->mod, "__kn_async_task_fail", g->fn_async_task_fail_ty);
         g->fn_async_task_sleep_ty = LLVMFunctionType(t_i8ptr, &t_i32, 1, 0);
-        g->fn_async_task_sleep = LLVMAddFunction(g->mod, "__kn_async_task_sleep", g->fn_async_task_sleep_ty);
+        g->fn_async_task_sleep = ensure_function(g->mod, "__kn_async_task_sleep", g->fn_async_task_sleep_ty);
         g->fn_async_task_yield_ty = LLVMFunctionType(t_i8ptr, 0, 0, 0);
-        g->fn_async_task_yield = LLVMAddFunction(g->mod, "__kn_async_task_yield", g->fn_async_task_yield_ty);
+        g->fn_async_task_yield = ensure_function(g->mod, "__kn_async_task_yield", g->fn_async_task_yield_ty);
     }
     g->fn_meta_register_main_ty = LLVMFunctionType(t_void, &t_i8ptr, 1, 0);
-    g->fn_meta_register_main = LLVMAddFunction(g->mod, "__kn_meta_register_main", g->fn_meta_register_main_ty);
+    g->fn_meta_register_main = ensure_function(g->mod, "__kn_meta_register_main", g->fn_meta_register_main_ty);
     g->fn_meta_query_ty = LLVMFunctionType(t_i8ptr, &t_i8ptr, 1, 0);
-    g->fn_meta_query = LLVMAddFunction(g->mod, "__kn_meta_query", g->fn_meta_query_ty);
+    g->fn_meta_query = ensure_function(g->mod, "__kn_meta_query", g->fn_meta_query_ty);
     g->fn_meta_of_ty = LLVMFunctionType(t_i8ptr, &t_i8ptr, 1, 0);
-    g->fn_meta_of = LLVMAddFunction(g->mod, "__kn_meta_of", g->fn_meta_of_ty);
+    g->fn_meta_of = ensure_function(g->mod, "__kn_meta_of", g->fn_meta_of_ty);
     {
         LLVMTypeRef meta_has_args[2] = { t_i8ptr, t_i8ptr };
         g->fn_meta_has_ty = LLVMFunctionType(t_i32, meta_has_args, 2, 0);
-        g->fn_meta_has = LLVMAddFunction(g->mod, "__kn_meta_has", g->fn_meta_has_ty);
+        g->fn_meta_has = ensure_function(g->mod, "__kn_meta_has", g->fn_meta_has_ty);
         g->fn_meta_find_ty = LLVMFunctionType(t_i8ptr, meta_has_args, 2, 0);
-        g->fn_meta_find = LLVMAddFunction(g->mod, "__kn_meta_find", g->fn_meta_find_ty);
+        g->fn_meta_find = ensure_function(g->mod, "__kn_meta_find", g->fn_meta_find_ty);
     }
     g->fn_meta_get_module_ty = LLVMFunctionType(t_i8ptr, 0, 0, 0);
-    g->fn_meta_get_module = LLVMAddFunction(g->mod, "__kn_meta_get_module", g->fn_meta_get_module_ty);
+    g->fn_meta_get_module = ensure_function(g->mod, "__kn_meta_get_module", g->fn_meta_get_module_ty);
 
     {
         LLVMTypeRef args_s2c[2] = { t_i8ptr, LLVMPointerType(t_i64, 0) };
         g->fn_string_to_chars_ty = LLVMFunctionType(t_i8ptr, args_s2c, 2, 0);
-        g->fn_string_to_chars = LLVMAddFunction(g->mod, "__kn_string_to_chars", g->fn_string_to_chars_ty);
+        g->fn_string_to_chars = ensure_function(g->mod, "__kn_string_to_chars", g->fn_string_to_chars_ty);
     }
 
     g->fn_dict_new_ty = LLVMFunctionType(t_i8ptr, 0, 0, 0);
-    g->fn_dict_new = LLVMAddFunction(g->mod, "__kn_dict_new", g->fn_dict_new_ty);
+    g->fn_dict_new = ensure_function(g->mod, "__kn_dict_new", g->fn_dict_new_ty);
     {
         LLVMTypeRef args_set[4] = { t_i8ptr, t_i8ptr, t_i64, t_i64 };
         g->fn_dict_set_ty = LLVMFunctionType(t_void, args_set, 4, 0);
-        g->fn_dict_set = LLVMAddFunction(g->mod, "__kn_dict_set", g->fn_dict_set_ty);
+        g->fn_dict_set = ensure_function(g->mod, "__kn_dict_set", g->fn_dict_set_ty);
     }
     {
         LLVMTypeRef args_get[4] = { t_i8ptr, t_i8ptr, LLVMPointerType(t_i64, 0), LLVMPointerType(t_i64, 0) };
         g->fn_dict_get_ty = LLVMFunctionType(t_void, args_get, 4, 0);
-        g->fn_dict_get = LLVMAddFunction(g->mod, "__kn_dict_get", g->fn_dict_get_ty);
+        g->fn_dict_get = ensure_function(g->mod, "__kn_dict_get", g->fn_dict_get_ty);
     }
     {
         LLVMTypeRef args_has[2] = { t_i8ptr, t_i8ptr };
         g->fn_dict_contains_ty = LLVMFunctionType(t_i32, args_has, 2, 0);
-        g->fn_dict_contains = LLVMAddFunction(g->mod, "__kn_dict_contains", g->fn_dict_contains_ty);
+        g->fn_dict_contains = ensure_function(g->mod, "__kn_dict_contains", g->fn_dict_contains_ty);
     }
     {
         LLVMTypeRef args_count[1] = { t_i8ptr };
         g->fn_dict_count_ty = LLVMFunctionType(t_i64, args_count, 1, 0);
-        g->fn_dict_count = LLVMAddFunction(g->mod, "__kn_dict_count", g->fn_dict_count_ty);
+        g->fn_dict_count = ensure_function(g->mod, "__kn_dict_count", g->fn_dict_count_ty);
     }
     {
         LLVMTypeRef args_remove[2] = { t_i8ptr, t_i8ptr };
         g->fn_dict_remove_ty = LLVMFunctionType(t_i32, args_remove, 2, 0);
-        g->fn_dict_remove = LLVMAddFunction(g->mod, "__kn_dict_remove", g->fn_dict_remove_ty);
+        g->fn_dict_remove = ensure_function(g->mod, "__kn_dict_remove", g->fn_dict_remove_ty);
         LLVMTypeRef args_empty[1] = { t_i8ptr };
         g->fn_dict_is_empty_ty = LLVMFunctionType(t_i32, args_empty, 1, 0);
-        g->fn_dict_is_empty = LLVMAddFunction(g->mod, "__kn_dict_is_empty", g->fn_dict_is_empty_ty);
+        g->fn_dict_is_empty = ensure_function(g->mod, "__kn_dict_is_empty", g->fn_dict_is_empty_ty);
         g->fn_dict_keys_ty = LLVMFunctionType(t_i8ptr, args_empty, 1, 0);
-        g->fn_dict_keys = LLVMAddFunction(g->mod, "__kn_dict_keys", g->fn_dict_keys_ty);
+        g->fn_dict_keys = ensure_function(g->mod, "__kn_dict_keys", g->fn_dict_keys_ty);
         g->fn_dict_values_ty = LLVMFunctionType(t_i8ptr, args_empty, 1, 0);
-        g->fn_dict_values = LLVMAddFunction(g->mod, "__kn_dict_values", g->fn_dict_values_ty);
+        g->fn_dict_values = ensure_function(g->mod, "__kn_dict_values", g->fn_dict_values_ty);
     }
     g->fn_list_new_ty = LLVMFunctionType(t_i8ptr, 0, 0, 0);
-    g->fn_list_new = LLVMAddFunction(g->mod, "__kn_list_new", g->fn_list_new_ty);
+    g->fn_list_new = ensure_function(g->mod, "__kn_list_new", g->fn_list_new_ty);
     {
         LLVMTypeRef args_add[3] = { t_i8ptr, t_i64, t_i64 };
         g->fn_list_add_ty = LLVMFunctionType(t_void, args_add, 3, 0);
-        g->fn_list_add = LLVMAddFunction(g->mod, "__kn_list_add", g->fn_list_add_ty);
+        g->fn_list_add = ensure_function(g->mod, "__kn_list_add", g->fn_list_add_ty);
     }
     {
         LLVMTypeRef args_get[4] = { t_i8ptr, t_i64, LLVMPointerType(t_i64, 0), LLVMPointerType(t_i64, 0) };
         g->fn_list_get_ty = LLVMFunctionType(t_void, args_get, 4, 0);
-        g->fn_list_get = LLVMAddFunction(g->mod, "__kn_list_get", g->fn_list_get_ty);
+        g->fn_list_get = ensure_function(g->mod, "__kn_list_get", g->fn_list_get_ty);
     }
     {
         LLVMTypeRef args_set[4] = { t_i8ptr, t_i64, t_i64, t_i64 };
         g->fn_list_set_ty = LLVMFunctionType(t_void, args_set, 4, 0);
-        g->fn_list_set = LLVMAddFunction(g->mod, "__kn_list_set", g->fn_list_set_ty);
+        g->fn_list_set = ensure_function(g->mod, "__kn_list_set", g->fn_list_set_ty);
         g->fn_list_insert_ty = LLVMFunctionType(t_void, args_set, 4, 0);
-        g->fn_list_insert = LLVMAddFunction(g->mod, "__kn_list_insert", g->fn_list_insert_ty);
+        g->fn_list_insert = ensure_function(g->mod, "__kn_list_insert", g->fn_list_insert_ty);
     }
     {
         LLVMTypeRef args_count[1] = { t_i8ptr };
         g->fn_list_count_ty = LLVMFunctionType(t_i64, args_count, 1, 0);
-        g->fn_list_count = LLVMAddFunction(g->mod, "__kn_list_count", g->fn_list_count_ty);
+        g->fn_list_count = ensure_function(g->mod, "__kn_list_count", g->fn_list_count_ty);
         g->fn_list_clear_ty = LLVMFunctionType(t_void, args_count, 1, 0);
-        g->fn_list_clear = LLVMAddFunction(g->mod, "__kn_list_clear", g->fn_list_clear_ty);
+        g->fn_list_clear = ensure_function(g->mod, "__kn_list_clear", g->fn_list_clear_ty);
     }
     {
         LLVMTypeRef args_rm[4] = { t_i8ptr, t_i64, LLVMPointerType(t_i64, 0), LLVMPointerType(t_i64, 0) };
         g->fn_list_remove_at_ty = LLVMFunctionType(t_void, args_rm, 4, 0);
-        g->fn_list_remove_at = LLVMAddFunction(g->mod, "__kn_list_remove_at", g->fn_list_remove_at_ty);
+        g->fn_list_remove_at = ensure_function(g->mod, "__kn_list_remove_at", g->fn_list_remove_at_ty);
     }
     {
         LLVMTypeRef args_contains[3] = { t_i8ptr, t_i64, t_i64 };
         g->fn_list_contains_ty = LLVMFunctionType(t_i32, args_contains, 3, 0);
-        g->fn_list_contains = LLVMAddFunction(g->mod, "__kn_list_contains", g->fn_list_contains_ty);
+        g->fn_list_contains = ensure_function(g->mod, "__kn_list_contains", g->fn_list_contains_ty);
         LLVMTypeRef args_pop[3] = { t_i8ptr, LLVMPointerType(t_i64, 0), LLVMPointerType(t_i64, 0) };
         g->fn_list_pop_ty = LLVMFunctionType(t_void, args_pop, 3, 0);
-        g->fn_list_pop = LLVMAddFunction(g->mod, "__kn_list_pop", g->fn_list_pop_ty);
+        g->fn_list_pop = ensure_function(g->mod, "__kn_list_pop", g->fn_list_pop_ty);
         g->fn_list_index_of_ty = LLVMFunctionType(t_i64, args_contains, 3, 0);
-        g->fn_list_index_of = LLVMAddFunction(g->mod, "__kn_list_index_of", g->fn_list_index_of_ty);
+        g->fn_list_index_of = ensure_function(g->mod, "__kn_list_index_of", g->fn_list_index_of_ty);
         LLVMTypeRef args_empty[1] = { t_i8ptr };
         g->fn_list_is_empty_ty = LLVMFunctionType(t_i32, args_empty, 1, 0);
-        g->fn_list_is_empty = LLVMAddFunction(g->mod, "__kn_list_is_empty", g->fn_list_is_empty_ty);
+        g->fn_list_is_empty = ensure_function(g->mod, "__kn_list_is_empty", g->fn_list_is_empty_ty);
     }
 
     g->fn_set_new_ty = LLVMFunctionType(t_i8ptr, 0, 0, 0);
-    g->fn_set_new = LLVMAddFunction(g->mod, "__kn_set_new", g->fn_set_new_ty);
+    g->fn_set_new = ensure_function(g->mod, "__kn_set_new", g->fn_set_new_ty);
     {
         LLVMTypeRef args_add[2] = { t_i8ptr, t_i8ptr };
         g->fn_set_add_ty = LLVMFunctionType(t_void, args_add, 2, 0);
-        g->fn_set_add = LLVMAddFunction(g->mod, "__kn_set_add", g->fn_set_add_ty);
+        g->fn_set_add = ensure_function(g->mod, "__kn_set_add", g->fn_set_add_ty);
         g->fn_set_contains_ty = LLVMFunctionType(t_i32, args_add, 2, 0);
-        g->fn_set_contains = LLVMAddFunction(g->mod, "__kn_set_contains", g->fn_set_contains_ty);
+        g->fn_set_contains = ensure_function(g->mod, "__kn_set_contains", g->fn_set_contains_ty);
     }
     {
         LLVMTypeRef args_count[1] = { t_i8ptr };
         g->fn_set_count_ty = LLVMFunctionType(t_i64, args_count, 1, 0);
-        g->fn_set_count = LLVMAddFunction(g->mod, "__kn_set_count", g->fn_set_count_ty);
+        g->fn_set_count = ensure_function(g->mod, "__kn_set_count", g->fn_set_count_ty);
         LLVMTypeRef args_clear[1] = { t_i8ptr };
         g->fn_set_clear_ty = LLVMFunctionType(t_void, args_clear, 1, 0);
-        g->fn_set_clear = LLVMAddFunction(g->mod, "__kn_set_clear", g->fn_set_clear_ty);
+        g->fn_set_clear = ensure_function(g->mod, "__kn_set_clear", g->fn_set_clear_ty);
         g->fn_set_is_empty_ty = LLVMFunctionType(t_i32, args_count, 1, 0);
-        g->fn_set_is_empty = LLVMAddFunction(g->mod, "__kn_set_is_empty", g->fn_set_is_empty_ty);
+        g->fn_set_is_empty = ensure_function(g->mod, "__kn_set_is_empty", g->fn_set_is_empty_ty);
         g->fn_set_values_ty = LLVMFunctionType(t_i8ptr, args_count, 1, 0);
-        g->fn_set_values = LLVMAddFunction(g->mod, "__kn_set_values", g->fn_set_values_ty);
+        g->fn_set_values = ensure_function(g->mod, "__kn_set_values", g->fn_set_values_ty);
     }
     {
         LLVMTypeRef args_remove[2] = { t_i8ptr, t_i8ptr };
         g->fn_set_remove_ty = LLVMFunctionType(t_i32, args_remove, 2, 0);
-        g->fn_set_remove = LLVMAddFunction(g->mod, "__kn_set_remove", g->fn_set_remove_ty);
+        g->fn_set_remove = ensure_function(g->mod, "__kn_set_remove", g->fn_set_remove_ty);
     }
 
     {
@@ -281,29 +281,29 @@ static void build_runtime_hosted_declarations(Codegen *g, HostedPlatformApi *pla
         LLVMTypeRef args_path4[4] = { t_i8ptr, t_i8ptr, t_i8ptr, t_i8ptr };
         LLVMTypeRef args_path1[1] = { t_i8ptr };
         g->fn_path_combine_ty = LLVMFunctionType(t_i8ptr, args_path2, 2, 0);
-        g->fn_path_combine = LLVMAddFunction(g->mod, "__kn_path_combine", g->fn_path_combine_ty);
+        g->fn_path_combine = ensure_function(g->mod, "__kn_path_combine", g->fn_path_combine_ty);
         g->fn_path_join3_ty = LLVMFunctionType(t_i8ptr, args_path3, 3, 0);
-        g->fn_path_join3 = LLVMAddFunction(g->mod, "__kn_path_join3", g->fn_path_join3_ty);
+        g->fn_path_join3 = ensure_function(g->mod, "__kn_path_join3", g->fn_path_join3_ty);
         g->fn_path_join4_ty = LLVMFunctionType(t_i8ptr, args_path4, 4, 0);
-        g->fn_path_join4 = LLVMAddFunction(g->mod, "__kn_path_join4", g->fn_path_join4_ty);
+        g->fn_path_join4 = ensure_function(g->mod, "__kn_path_join4", g->fn_path_join4_ty);
         g->fn_path_file_name_ty = LLVMFunctionType(t_i8ptr, args_path1, 1, 0);
-        g->fn_path_file_name = LLVMAddFunction(g->mod, "__kn_path_file_name", g->fn_path_file_name_ty);
+        g->fn_path_file_name = ensure_function(g->mod, "__kn_path_file_name", g->fn_path_file_name_ty);
         g->fn_path_extension_ty = LLVMFunctionType(t_i8ptr, args_path1, 1, 0);
-        g->fn_path_extension = LLVMAddFunction(g->mod, "__kn_path_extension", g->fn_path_extension_ty);
+        g->fn_path_extension = ensure_function(g->mod, "__kn_path_extension", g->fn_path_extension_ty);
         g->fn_path_directory_ty = LLVMFunctionType(t_i8ptr, args_path1, 1, 0);
-        g->fn_path_directory = LLVMAddFunction(g->mod, "__kn_path_directory", g->fn_path_directory_ty);
+        g->fn_path_directory = ensure_function(g->mod, "__kn_path_directory", g->fn_path_directory_ty);
         g->fn_path_normalize_ty = LLVMFunctionType(t_i8ptr, args_path1, 1, 0);
-        g->fn_path_normalize = LLVMAddFunction(g->mod, "__kn_path_normalize", g->fn_path_normalize_ty);
+        g->fn_path_normalize = ensure_function(g->mod, "__kn_path_normalize", g->fn_path_normalize_ty);
         g->fn_path_cwd_ty = LLVMFunctionType(t_i8ptr, 0, 0, 0);
-        g->fn_path_cwd = LLVMAddFunction(g->mod, "__kn_path_cwd", g->fn_path_cwd_ty);
+        g->fn_path_cwd = ensure_function(g->mod, "__kn_path_cwd", g->fn_path_cwd_ty);
         g->fn_path_change_extension_ty = LLVMFunctionType(t_i8ptr, args_path2, 2, 0);
-        g->fn_path_change_extension = LLVMAddFunction(g->mod, "__kn_path_change_extension", g->fn_path_change_extension_ty);
+        g->fn_path_change_extension = ensure_function(g->mod, "__kn_path_change_extension", g->fn_path_change_extension_ty);
         g->fn_path_is_absolute_ty = LLVMFunctionType(t_i32, args_path1, 1, 0);
-        g->fn_path_is_absolute = LLVMAddFunction(g->mod, "__kn_path_is_absolute", g->fn_path_is_absolute_ty);
+        g->fn_path_is_absolute = ensure_function(g->mod, "__kn_path_is_absolute", g->fn_path_is_absolute_ty);
         g->fn_path_base_name_ty = LLVMFunctionType(t_i8ptr, args_path1, 1, 0);
-        g->fn_path_base_name = LLVMAddFunction(g->mod, "__kn_path_base_name", g->fn_path_base_name_ty);
+        g->fn_path_base_name = ensure_function(g->mod, "__kn_path_base_name", g->fn_path_base_name_ty);
         g->fn_path_ensure_trailing_separator_ty = LLVMFunctionType(t_i8ptr, args_path1, 1, 0);
-        g->fn_path_ensure_trailing_separator = LLVMAddFunction(g->mod, "__kn_path_ensure_trailing_separator", g->fn_path_ensure_trailing_separator_ty);
+        g->fn_path_ensure_trailing_separator = ensure_function(g->mod, "__kn_path_ensure_trailing_separator", g->fn_path_ensure_trailing_separator_ty);
     }
 
     {
@@ -312,33 +312,33 @@ static void build_runtime_hosted_declarations(Codegen *g, HostedPlatformApi *pla
         LLVMTypeRef args_text3[3] = { t_i8ptr, t_i8ptr, t_i8ptr };
         LLVMTypeRef args_text_slice[3] = { t_i8ptr, t_i64, t_i64 };
         g->fn_text_contains_ty = LLVMFunctionType(t_i32, args_text2, 2, 0);
-        g->fn_text_contains = LLVMAddFunction(g->mod, "__kn_text_contains", g->fn_text_contains_ty);
+        g->fn_text_contains = ensure_function(g->mod, "__kn_text_contains", g->fn_text_contains_ty);
         g->fn_text_starts_with_ty = LLVMFunctionType(t_i32, args_text2, 2, 0);
-        g->fn_text_starts_with = LLVMAddFunction(g->mod, "__kn_text_starts_with", g->fn_text_starts_with_ty);
+        g->fn_text_starts_with = ensure_function(g->mod, "__kn_text_starts_with", g->fn_text_starts_with_ty);
         g->fn_text_ends_with_ty = LLVMFunctionType(t_i32, args_text2, 2, 0);
-        g->fn_text_ends_with = LLVMAddFunction(g->mod, "__kn_text_ends_with", g->fn_text_ends_with_ty);
+        g->fn_text_ends_with = ensure_function(g->mod, "__kn_text_ends_with", g->fn_text_ends_with_ty);
         g->fn_text_index_of_ty = LLVMFunctionType(t_i64, args_text2, 2, 0);
-        g->fn_text_index_of = LLVMAddFunction(g->mod, "__kn_text_index_of", g->fn_text_index_of_ty);
+        g->fn_text_index_of = ensure_function(g->mod, "__kn_text_index_of", g->fn_text_index_of_ty);
         g->fn_text_last_index_of_ty = LLVMFunctionType(t_i64, args_text2, 2, 0);
-        g->fn_text_last_index_of = LLVMAddFunction(g->mod, "__kn_text_last_index_of", g->fn_text_last_index_of_ty);
+        g->fn_text_last_index_of = ensure_function(g->mod, "__kn_text_last_index_of", g->fn_text_last_index_of_ty);
         g->fn_text_trim_ty = LLVMFunctionType(t_i8ptr, args_text1, 1, 0);
-        g->fn_text_trim = LLVMAddFunction(g->mod, "__kn_text_trim", g->fn_text_trim_ty);
+        g->fn_text_trim = ensure_function(g->mod, "__kn_text_trim", g->fn_text_trim_ty);
         g->fn_text_replace_ty = LLVMFunctionType(t_i8ptr, args_text3, 3, 0);
-        g->fn_text_replace = LLVMAddFunction(g->mod, "__kn_text_replace", g->fn_text_replace_ty);
+        g->fn_text_replace = ensure_function(g->mod, "__kn_text_replace", g->fn_text_replace_ty);
         g->fn_text_to_upper_ty = LLVMFunctionType(t_i8ptr, args_text1, 1, 0);
-        g->fn_text_to_upper = LLVMAddFunction(g->mod, "__kn_text_to_upper", g->fn_text_to_upper_ty);
+        g->fn_text_to_upper = ensure_function(g->mod, "__kn_text_to_upper", g->fn_text_to_upper_ty);
         g->fn_text_to_lower_ty = LLVMFunctionType(t_i8ptr, args_text1, 1, 0);
-        g->fn_text_to_lower = LLVMAddFunction(g->mod, "__kn_text_to_lower", g->fn_text_to_lower_ty);
+        g->fn_text_to_lower = ensure_function(g->mod, "__kn_text_to_lower", g->fn_text_to_lower_ty);
         g->fn_text_slice_ty = LLVMFunctionType(t_i8ptr, args_text_slice, 3, 0);
-        g->fn_text_slice = LLVMAddFunction(g->mod, "__kn_text_slice", g->fn_text_slice_ty);
+        g->fn_text_slice = ensure_function(g->mod, "__kn_text_slice", g->fn_text_slice_ty);
         g->fn_text_count_ty = LLVMFunctionType(t_i64, args_text2, 2, 0);
-        g->fn_text_count = LLVMAddFunction(g->mod, "__kn_text_count", g->fn_text_count_ty);
+        g->fn_text_count = ensure_function(g->mod, "__kn_text_count", g->fn_text_count_ty);
         g->fn_text_split_ty = LLVMFunctionType(t_i8ptr, args_text2, 2, 0);
-        g->fn_text_split = LLVMAddFunction(g->mod, "__kn_text_split", g->fn_text_split_ty);
+        g->fn_text_split = ensure_function(g->mod, "__kn_text_split", g->fn_text_split_ty);
         g->fn_text_join_ty = LLVMFunctionType(t_i8ptr, args_text2, 2, 0);
-        g->fn_text_join = LLVMAddFunction(g->mod, "__kn_text_join", g->fn_text_join_ty);
+        g->fn_text_join = ensure_function(g->mod, "__kn_text_join", g->fn_text_join_ty);
         g->fn_text_lines_ty = LLVMFunctionType(t_i8ptr, args_text1, 1, 0);
-        g->fn_text_lines = LLVMAddFunction(g->mod, "__kn_text_lines", g->fn_text_lines_ty);
+        g->fn_text_lines = ensure_function(g->mod, "__kn_text_lines", g->fn_text_lines_ty);
     }
 
     {
@@ -347,65 +347,65 @@ static void build_runtime_hosted_declarations(Codegen *g, HostedPlatformApi *pla
         LLVMTypeRef args_file3[3] = { t_i8ptr, t_i8ptr, t_i8ptr };
         LLVMTypeRef args_dir_files[2] = { t_i8ptr, t_i32 };
         g->fn_file_create_ty = LLVMFunctionType(t_i32, args_file1, 1, 0);
-        g->fn_file_create = LLVMAddFunction(g->mod, "__kn_file_create", g->fn_file_create_ty);
+        g->fn_file_create = ensure_function(g->mod, "__kn_file_create", g->fn_file_create_ty);
         g->fn_file_touch_ty = LLVMFunctionType(t_i32, args_file1, 1, 0);
-        g->fn_file_touch = LLVMAddFunction(g->mod, "__kn_file_touch", g->fn_file_touch_ty);
+        g->fn_file_touch = ensure_function(g->mod, "__kn_file_touch", g->fn_file_touch_ty);
         g->fn_file_read_all_text_ty = LLVMFunctionType(t_i8ptr, args_file1, 1, 0);
-        g->fn_file_read_all_text = LLVMAddFunction(g->mod, "__kn_file_read_all_text", g->fn_file_read_all_text_ty);
+        g->fn_file_read_all_text = ensure_function(g->mod, "__kn_file_read_all_text", g->fn_file_read_all_text_ty);
         g->fn_file_read_first_line_ty = LLVMFunctionType(t_i8ptr, args_file1, 1, 0);
-        g->fn_file_read_first_line = LLVMAddFunction(g->mod, "__kn_file_read_first_line", g->fn_file_read_first_line_ty);
+        g->fn_file_read_first_line = ensure_function(g->mod, "__kn_file_read_first_line", g->fn_file_read_first_line_ty);
         g->fn_file_write_all_text_ty = LLVMFunctionType(t_i32, args_file2, 2, 0);
-        g->fn_file_write_all_text = LLVMAddFunction(g->mod, "__kn_file_write_all_text", g->fn_file_write_all_text_ty);
+        g->fn_file_write_all_text = ensure_function(g->mod, "__kn_file_write_all_text", g->fn_file_write_all_text_ty);
         g->fn_file_append_all_text_ty = LLVMFunctionType(t_i32, args_file2, 2, 0);
-        g->fn_file_append_all_text = LLVMAddFunction(g->mod, "__kn_file_append_all_text", g->fn_file_append_all_text_ty);
+        g->fn_file_append_all_text = ensure_function(g->mod, "__kn_file_append_all_text", g->fn_file_append_all_text_ty);
         g->fn_file_append_line_ty = LLVMFunctionType(t_i32, args_file2, 2, 0);
-        g->fn_file_append_line = LLVMAddFunction(g->mod, "__kn_file_append_line", g->fn_file_append_line_ty);
+        g->fn_file_append_line = ensure_function(g->mod, "__kn_file_append_line", g->fn_file_append_line_ty);
         g->fn_file_delete_ty = LLVMFunctionType(t_i32, args_file1, 1, 0);
-        g->fn_file_delete = LLVMAddFunction(g->mod, "__kn_file_delete", g->fn_file_delete_ty);
+        g->fn_file_delete = ensure_function(g->mod, "__kn_file_delete", g->fn_file_delete_ty);
         g->fn_file_delete_if_exists_ty = LLVMFunctionType(t_i32, args_file1, 1, 0);
-        g->fn_file_delete_if_exists = LLVMAddFunction(g->mod, "__kn_file_delete_if_exists", g->fn_file_delete_if_exists_ty);
+        g->fn_file_delete_if_exists = ensure_function(g->mod, "__kn_file_delete_if_exists", g->fn_file_delete_if_exists_ty);
         g->fn_file_size_ty = LLVMFunctionType(t_i64, args_file1, 1, 0);
-        g->fn_file_size = LLVMAddFunction(g->mod, "__kn_file_size", g->fn_file_size_ty);
+        g->fn_file_size = ensure_function(g->mod, "__kn_file_size", g->fn_file_size_ty);
         g->fn_file_is_empty_ty = LLVMFunctionType(t_i32, args_file1, 1, 0);
-        g->fn_file_is_empty = LLVMAddFunction(g->mod, "__kn_file_is_empty", g->fn_file_is_empty_ty);
+        g->fn_file_is_empty = ensure_function(g->mod, "__kn_file_is_empty", g->fn_file_is_empty_ty);
         g->fn_file_copy_ty = LLVMFunctionType(t_i32, args_file2, 2, 0);
-        g->fn_file_copy = LLVMAddFunction(g->mod, "__kn_file_copy", g->fn_file_copy_ty);
+        g->fn_file_copy = ensure_function(g->mod, "__kn_file_copy", g->fn_file_copy_ty);
         g->fn_file_move_ty = LLVMFunctionType(t_i32, args_file2, 2, 0);
-        g->fn_file_move = LLVMAddFunction(g->mod, "__kn_file_move", g->fn_file_move_ty);
+        g->fn_file_move = ensure_function(g->mod, "__kn_file_move", g->fn_file_move_ty);
         g->fn_file_read_lines_ty = LLVMFunctionType(t_i8ptr, args_file1, 1, 0);
-        g->fn_file_read_lines = LLVMAddFunction(g->mod, "__kn_file_read_lines", g->fn_file_read_lines_ty);
+        g->fn_file_read_lines = ensure_function(g->mod, "__kn_file_read_lines", g->fn_file_read_lines_ty);
         g->fn_file_write_lines_ty = LLVMFunctionType(t_i32, args_file2, 2, 0);
-        g->fn_file_write_lines = LLVMAddFunction(g->mod, "__kn_file_write_lines", g->fn_file_write_lines_ty);
+        g->fn_file_write_lines = ensure_function(g->mod, "__kn_file_write_lines", g->fn_file_write_lines_ty);
         g->fn_file_replace_text_ty = LLVMFunctionType(t_i32, args_file3, 3, 0);
-        g->fn_file_replace_text = LLVMAddFunction(g->mod, "__kn_file_replace_text", g->fn_file_replace_text_ty);
+        g->fn_file_replace_text = ensure_function(g->mod, "__kn_file_replace_text", g->fn_file_replace_text_ty);
         g->fn_dir_exists_ty = LLVMFunctionType(t_i32, args_file1, 1, 0);
-        g->fn_dir_exists = LLVMAddFunction(g->mod, "__kn_dir_exists", g->fn_dir_exists_ty);
+        g->fn_dir_exists = ensure_function(g->mod, "__kn_dir_exists", g->fn_dir_exists_ty);
         g->fn_dir_create_ty = LLVMFunctionType(t_i32, args_file1, 1, 0);
-        g->fn_dir_create = LLVMAddFunction(g->mod, "__kn_dir_create", g->fn_dir_create_ty);
+        g->fn_dir_create = ensure_function(g->mod, "__kn_dir_create", g->fn_dir_create_ty);
         g->fn_dir_ensure_ty = LLVMFunctionType(t_i32, args_file1, 1, 0);
-        g->fn_dir_ensure = LLVMAddFunction(g->mod, "__kn_dir_ensure", g->fn_dir_ensure_ty);
+        g->fn_dir_ensure = ensure_function(g->mod, "__kn_dir_ensure", g->fn_dir_ensure_ty);
         g->fn_dir_delete_ty = LLVMFunctionType(t_i32, args_file1, 1, 0);
-        g->fn_dir_delete = LLVMAddFunction(g->mod, "__kn_dir_delete", g->fn_dir_delete_ty);
+        g->fn_dir_delete = ensure_function(g->mod, "__kn_dir_delete", g->fn_dir_delete_ty);
         g->fn_dir_delete_if_exists_ty = LLVMFunctionType(t_i32, args_file1, 1, 0);
-        g->fn_dir_delete_if_exists = LLVMAddFunction(g->mod, "__kn_dir_delete_if_exists", g->fn_dir_delete_if_exists_ty);
+        g->fn_dir_delete_if_exists = ensure_function(g->mod, "__kn_dir_delete_if_exists", g->fn_dir_delete_if_exists_ty);
         g->fn_dir_files_ty = LLVMFunctionType(t_i8ptr, args_dir_files, 2, 0);
-        g->fn_dir_files = LLVMAddFunction(g->mod, "__kn_dir_files", g->fn_dir_files_ty);
+        g->fn_dir_files = ensure_function(g->mod, "__kn_dir_files", g->fn_dir_files_ty);
     }
 
     g->fn_exc_set_ty = LLVMFunctionType(t_void, &t_i8ptr, 1, 0);
-    g->fn_exc_set = LLVMAddFunction(g->mod, "__kn_exc_set", g->fn_exc_set_ty);
+    g->fn_exc_set = ensure_function(g->mod, "__kn_exc_set", g->fn_exc_set_ty);
     g->fn_exc_get_ty = LLVMFunctionType(t_i8ptr, 0, 0, 0);
-    g->fn_exc_get = LLVMAddFunction(g->mod, "__kn_exc_get", g->fn_exc_get_ty);
+    g->fn_exc_get = ensure_function(g->mod, "__kn_exc_get", g->fn_exc_get_ty);
     g->fn_exc_has_ty = LLVMFunctionType(t_i32, 0, 0, 0);
-    g->fn_exc_has = LLVMAddFunction(g->mod, "__kn_exc_has", g->fn_exc_has_ty);
+    g->fn_exc_has = ensure_function(g->mod, "__kn_exc_has", g->fn_exc_has_ty);
     g->fn_exc_last_ty = LLVMFunctionType(t_i8ptr, 0, 0, 0);
-    g->fn_exc_last = LLVMAddFunction(g->mod, "__kn_exc_last", g->fn_exc_last_ty);
+    g->fn_exc_last = ensure_function(g->mod, "__kn_exc_last", g->fn_exc_last_ty);
     g->fn_exc_clear_ty = LLVMFunctionType(t_void, 0, 0, 0);
-    g->fn_exc_clear = LLVMAddFunction(g->mod, "__kn_exc_clear", g->fn_exc_clear_ty);
+    g->fn_exc_clear = ensure_function(g->mod, "__kn_exc_clear", g->fn_exc_clear_ty);
     g->fn_exc_push_ty = LLVMFunctionType(t_void, &t_i8ptr, 1, 0);
-    g->fn_exc_push = LLVMAddFunction(g->mod, "__kn_exc_push", g->fn_exc_push_ty);
+    g->fn_exc_push = ensure_function(g->mod, "__kn_exc_push", g->fn_exc_push_ty);
     g->fn_exc_trace_ty = LLVMFunctionType(t_i8ptr, 0, 0, 0);
-    g->fn_exc_trace = LLVMAddFunction(g->mod, "__kn_exc_trace", g->fn_exc_trace_ty);
+    g->fn_exc_trace = ensure_function(g->mod, "__kn_exc_trace", g->fn_exc_trace_ty);
 }
 
 static void build_runtime_hosted_console(Codegen *g, const HostedPlatformApi *platform)
@@ -425,7 +425,7 @@ static void build_runtime_hosted_console(Codegen *g, const HostedPlatformApi *pl
     // __kn_print (no newline)
     LLVMTypeRef println_ty = LLVMFunctionType(t_void, &t_i8ptr, 1, 0);
     g->fn_print_ty = println_ty;
-    g->fn_print = LLVMAddFunction(g->mod, "__kn_print", println_ty);
+    g->fn_print = ensure_function(g->mod, "__kn_print", println_ty);
     {
         LLVMBasicBlockRef entry = LLVMAppendBasicBlockInContext(g->ctx, g->fn_print, "entry");
         LLVMBasicBlockRef len_loop = LLVMAppendBasicBlockInContext(g->ctx, g->fn_print, "len.loop");
@@ -468,7 +468,7 @@ static void build_runtime_hosted_console(Codegen *g, const HostedPlatformApi *pl
 
     // __kn_println (with newline)
     g->fn_println_ty = println_ty;
-    g->fn_println = LLVMAddFunction(g->mod, "__kn_println", println_ty);
+    g->fn_println = ensure_function(g->mod, "__kn_println", println_ty);
     {
         LLVMBasicBlockRef entry = LLVMAppendBasicBlockInContext(g->ctx, g->fn_println, "entry");
         LLVMPositionBuilderAtEnd(g->builder, entry);
@@ -484,7 +484,7 @@ static void build_runtime_hosted_console(Codegen *g, const HostedPlatformApi *pl
 
     // __kn_panic (print message and exit)
     g->fn_panic_ty = LLVMFunctionType(t_void, &t_i8ptr, 1, 0);
-    g->fn_panic = LLVMAddFunction(g->mod, "__kn_panic", g->fn_panic_ty);
+    g->fn_panic = ensure_function(g->mod, "__kn_panic", g->fn_panic_ty);
     {
         LLVMBasicBlockRef entry = LLVMAppendBasicBlockInContext(g->ctx, g->fn_panic, "entry");
         LLVMBasicBlockRef done = LLVMAppendBasicBlockInContext(g->ctx, g->fn_panic, "done");
@@ -505,7 +505,7 @@ static void build_runtime_hosted_console(Codegen *g, const HostedPlatformApi *pl
     {
         LLVMTypeRef pc_ty = LLVMFunctionType(t_void, &g->i8, 1, 0);
         g->fn_print_char_ty = pc_ty;
-        g->fn_print_char = LLVMAddFunction(g->mod, "__kn_print_char", pc_ty);
+        g->fn_print_char = ensure_function(g->mod, "__kn_print_char", pc_ty);
 
         LLVMBasicBlockRef entry = LLVMAppendBasicBlockInContext(g->ctx, g->fn_print_char, "entry");
         LLVMPositionBuilderAtEnd(g->builder, entry);
@@ -523,7 +523,7 @@ static void build_runtime_hosted_console(Codegen *g, const HostedPlatformApi *pl
     {
         LLVMTypeRef pb_ty = LLVMFunctionType(t_void, &g->i1, 1, 0);
         g->fn_print_bool_ty = pb_ty;
-        g->fn_print_bool = LLVMAddFunction(g->mod, "__kn_print_bool", pb_ty);
+        g->fn_print_bool = ensure_function(g->mod, "__kn_print_bool", pb_ty);
 
         LLVMBasicBlockRef entry = LLVMAppendBasicBlockInContext(g->ctx, g->fn_print_bool, "entry");
         LLVMBasicBlockRef true_bb = LLVMAppendBasicBlockInContext(g->ctx, g->fn_print_bool, "true");
@@ -552,7 +552,7 @@ static void build_runtime_hosted_console(Codegen *g, const HostedPlatformApi *pl
     {
         LLVMTypeRef pi_ty = LLVMFunctionType(t_void, &t_i64, 1, 0);
         g->fn_print_i64_ty = pi_ty;
-        g->fn_print_i64 = LLVMAddFunction(g->mod, "__kn_print_i64", pi_ty);
+        g->fn_print_i64 = ensure_function(g->mod, "__kn_print_i64", pi_ty);
 
         LLVMBasicBlockRef entry = LLVMAppendBasicBlockInContext(g->ctx, g->fn_print_i64, "entry");
         LLVMBasicBlockRef zero_bb = LLVMAppendBasicBlockInContext(g->ctx, g->fn_print_i64, "zero");
@@ -629,7 +629,7 @@ static void build_runtime_hosted_console(Codegen *g, const HostedPlatformApi *pl
     {
         LLVMTypeRef readline_ty = LLVMFunctionType(t_i8ptr, 0, 0, 0);
         g->fn_readline_ty = readline_ty;
-        g->fn_readline = LLVMAddFunction(g->mod, "__kn_readline", readline_ty);
+        g->fn_readline = ensure_function(g->mod, "__kn_readline", readline_ty);
 
         LLVMBasicBlockRef entry = LLVMAppendBasicBlockInContext(g->ctx, g->fn_readline, "entry");
         LLVMBasicBlockRef loop_bb = LLVMAppendBasicBlockInContext(g->ctx, g->fn_readline, "loop");
@@ -688,7 +688,7 @@ static void build_runtime_hosted_string_core(Codegen *g)
 
     // __kn_strlen
     g->fn_strlen_ty = LLVMFunctionType(t_i64, &t_i8ptr, 1, 0);
-    g->fn_strlen = LLVMAddFunction(g->mod, "__kn_strlen", g->fn_strlen_ty);
+    g->fn_strlen = ensure_function(g->mod, "__kn_strlen", g->fn_strlen_ty);
     {
         LLVMBasicBlockRef entry = LLVMAppendBasicBlockInContext(g->ctx, g->fn_strlen, "entry");
         LLVMBasicBlockRef loop_bb = LLVMAppendBasicBlockInContext(g->ctx, g->fn_strlen, "loop");
@@ -723,7 +723,7 @@ static void build_runtime_hosted_string_core(Codegen *g)
     {
         LLVMTypeRef concat_args[2] = { t_i8ptr, t_i8ptr };
         g->fn_str_concat_ty = LLVMFunctionType(t_i8ptr, concat_args, 2, 0);
-        g->fn_str_concat = LLVMAddFunction(g->mod, "__kn_str_concat", g->fn_str_concat_ty);
+        g->fn_str_concat = ensure_function(g->mod, "__kn_str_concat", g->fn_str_concat_ty);
 
         LLVMBasicBlockRef entry = LLVMAppendBasicBlockInContext(g->ctx, g->fn_str_concat, "entry");
         LLVMBasicBlockRef copya_cond = LLVMAppendBasicBlockInContext(g->ctx, g->fn_str_concat, "copya.cond");
@@ -792,7 +792,7 @@ static void build_runtime_hosted_string_core(Codegen *g)
     {
         LLVMTypeRef eq_args[2] = { t_i8ptr, t_i8ptr };
         g->fn_str_eq_ty = LLVMFunctionType(g->i1, eq_args, 2, 0);
-        g->fn_str_eq = LLVMAddFunction(g->mod, "__kn_str_eq", g->fn_str_eq_ty);
+        g->fn_str_eq = ensure_function(g->mod, "__kn_str_eq", g->fn_str_eq_ty);
 
         LLVMBasicBlockRef entry = LLVMAppendBasicBlockInContext(g->ctx, g->fn_str_eq, "entry");
         LLVMBasicBlockRef loop_bb = LLVMAppendBasicBlockInContext(g->ctx, g->fn_str_eq, "loop");
@@ -849,7 +849,7 @@ static void build_runtime_hosted_string_core(Codegen *g)
 
     // __kn_mem_compare
     g->fn_mem_compare_ty = LLVMFunctionType(g->i32, (LLVMTypeRef[]){ t_i8ptr, t_i8ptr, t_i64 }, 3, 0);
-    g->fn_mem_compare = LLVMAddFunction(g->mod, "__kn_mem_compare", g->fn_mem_compare_ty);
+    g->fn_mem_compare = ensure_function(g->mod, "__kn_mem_compare", g->fn_mem_compare_ty);
     {
         LLVMBasicBlockRef entry = LLVMAppendBasicBlockInContext(g->ctx, g->fn_mem_compare, "entry");
         LLVMBasicBlockRef loop_bb = LLVMAppendBasicBlockInContext(g->ctx, g->fn_mem_compare, "loop");
@@ -915,7 +915,7 @@ static void build_runtime_hosted_numeric_stringify(Codegen *g)
 
     // __kn_i64_to_string
     g->fn_i64_to_string_ty = LLVMFunctionType(t_i8ptr, &t_i64, 1, 0);
-    g->fn_i64_to_string = LLVMAddFunction(g->mod, "__kn_i64_to_string", g->fn_i64_to_string_ty);
+    g->fn_i64_to_string = ensure_function(g->mod, "__kn_i64_to_string", g->fn_i64_to_string_ty);
     {
         LLVMBasicBlockRef entry = LLVMAppendBasicBlockInContext(g->ctx, g->fn_i64_to_string, "entry");
         LLVMBasicBlockRef zero_bb = LLVMAppendBasicBlockInContext(g->ctx, g->fn_i64_to_string, "zero");
@@ -991,7 +991,7 @@ static void build_runtime_hosted_numeric_stringify(Codegen *g)
 
     // __kn_char_to_string
     g->fn_char_to_string_ty = LLVMFunctionType(t_i8ptr, &g->i8, 1, 0);
-    g->fn_char_to_string = LLVMAddFunction(g->mod, "__kn_char_to_string", g->fn_char_to_string_ty);
+    g->fn_char_to_string = ensure_function(g->mod, "__kn_char_to_string", g->fn_char_to_string_ty);
     {
         LLVMBasicBlockRef entry = LLVMAppendBasicBlockInContext(g->ctx, g->fn_char_to_string, "entry");
         LLVMPositionBuilderAtEnd(g->builder, entry);
@@ -1006,7 +1006,7 @@ static void build_runtime_hosted_numeric_stringify(Codegen *g)
 
     // __kn_ptr_to_string
     g->fn_ptr_to_string_ty = LLVMFunctionType(t_i8ptr, &t_i8ptr, 1, 0);
-    g->fn_ptr_to_string = LLVMAddFunction(g->mod, "__kn_ptr_to_string", g->fn_ptr_to_string_ty);
+    g->fn_ptr_to_string = ensure_function(g->mod, "__kn_ptr_to_string", g->fn_ptr_to_string_ty);
     {
         LLVMBasicBlockRef entry = LLVMAppendBasicBlockInContext(g->ctx, g->fn_ptr_to_string, "entry");
         LLVMBasicBlockRef zero_bb = LLVMAppendBasicBlockInContext(g->ctx, g->fn_ptr_to_string, "zero");
@@ -1089,7 +1089,7 @@ static void build_runtime_hosted_numeric_stringify(Codegen *g)
 
     // __kn_f64_to_string (truncate to int)
     g->fn_f64_to_string_ty = LLVMFunctionType(t_i8ptr, &g->f64, 1, 0);
-    g->fn_f64_to_string = LLVMAddFunction(g->mod, "__kn_f64_to_string", g->fn_f64_to_string_ty);
+    g->fn_f64_to_string = ensure_function(g->mod, "__kn_f64_to_string", g->fn_f64_to_string_ty);
     {
         LLVMBasicBlockRef entry = LLVMAppendBasicBlockInContext(g->ctx, g->fn_f64_to_string, "entry");
         LLVMPositionBuilderAtEnd(g->builder, entry);
@@ -1107,7 +1107,7 @@ static void build_runtime_hosted_string_parse(Codegen *g)
 
     // __kn_string_to_i64
     g->fn_string_to_i64_ty = LLVMFunctionType(t_i64, &t_i8ptr, 1, 0);
-    g->fn_string_to_i64 = LLVMAddFunction(g->mod, "__kn_string_to_i64", g->fn_string_to_i64_ty);
+    g->fn_string_to_i64 = ensure_function(g->mod, "__kn_string_to_i64", g->fn_string_to_i64_ty);
     {
         LLVMBasicBlockRef entry = LLVMAppendBasicBlockInContext(g->ctx, g->fn_string_to_i64, "entry");
         LLVMBasicBlockRef loop_bb = LLVMAppendBasicBlockInContext(g->ctx, g->fn_string_to_i64, "loop");
@@ -1171,7 +1171,7 @@ static void build_runtime_hosted_string_parse(Codegen *g)
 
     // __kn_string_to_bool
     g->fn_string_to_bool_ty = LLVMFunctionType(g->i1, &t_i8ptr, 1, 0);
-    g->fn_string_to_bool = LLVMAddFunction(g->mod, "__kn_string_to_bool", g->fn_string_to_bool_ty);
+    g->fn_string_to_bool = ensure_function(g->mod, "__kn_string_to_bool", g->fn_string_to_bool_ty);
     {
         LLVMBasicBlockRef entry = LLVMAppendBasicBlockInContext(g->ctx, g->fn_string_to_bool, "entry");
         LLVMPositionBuilderAtEnd(g->builder, entry);
@@ -1196,7 +1196,7 @@ static void build_runtime_hosted_string_parse(Codegen *g)
 
     // __kn_string_to_char
     g->fn_string_to_char_ty = LLVMFunctionType(g->i8, &t_i8ptr, 1, 0);
-    g->fn_string_to_char = LLVMAddFunction(g->mod, "__kn_string_to_char", g->fn_string_to_char_ty);
+    g->fn_string_to_char = ensure_function(g->mod, "__kn_string_to_char", g->fn_string_to_char_ty);
     {
         LLVMBasicBlockRef entry = LLVMAppendBasicBlockInContext(g->ctx, g->fn_string_to_char, "entry");
         LLVMPositionBuilderAtEnd(g->builder, entry);
@@ -1219,7 +1219,7 @@ static void build_runtime_hosted_string_parse(Codegen *g)
     // integer-only implementation silently truncated "1.5" to 1 before
     // converting it to f64.
     g->fn_string_to_f64_ty = LLVMFunctionType(g->f64, &t_i8ptr, 1, 0);
-    g->fn_string_to_f64 = LLVMAddFunction(g->mod, "__kn_string_to_f64", g->fn_string_to_f64_ty);
+    g->fn_string_to_f64 = ensure_function(g->mod, "__kn_string_to_f64", g->fn_string_to_f64_ty);
     {
         LLVMBasicBlockRef entry = LLVMAppendBasicBlockInContext(g->ctx, g->fn_string_to_f64, "entry");
         LLVMBasicBlockRef parse_bb = LLVMAppendBasicBlockInContext(g->ctx, g->fn_string_to_f64, "parse");
@@ -1236,7 +1236,7 @@ static void build_runtime_hosted_string_parse(Codegen *g)
         LLVMTypeRef strtod_ty = LLVMFunctionType(g->f64, strtod_params, 2, 0);
         LLVMValueRef strtod_fn = LLVMGetNamedFunction(g->mod, "strtod");
         if (!strtod_fn)
-            strtod_fn = LLVMAddFunction(g->mod, "strtod", strtod_ty);
+            strtod_fn = ensure_function(g->mod, "strtod", strtod_ty);
         LLVMValueRef strtod_args[2] = { s, LLVMConstNull(endptr_ty) };
         LLVMValueRef parsed = LLVMBuildCall2(g->builder, strtod_ty, strtod_fn,
                                               strtod_args, 2, "s2f");
@@ -1254,7 +1254,7 @@ static void build_runtime_hosted_any_conversions(Codegen *g)
 
     // __kn_any_to_i64
     g->fn_any_to_i64_ty = LLVMFunctionType(t_i64, &g->any_ty, 1, 0);
-    g->fn_any_to_i64 = LLVMAddFunction(g->mod, "__kn_any_to_i64", g->fn_any_to_i64_ty);
+    g->fn_any_to_i64 = ensure_function(g->mod, "__kn_any_to_i64", g->fn_any_to_i64_ty);
     {
         LLVMBasicBlockRef entry = LLVMAppendBasicBlockInContext(g->ctx, g->fn_any_to_i64, "entry");
         LLVMBasicBlockRef done_bb = LLVMAppendBasicBlockInContext(g->ctx, g->fn_any_to_i64, "done");
@@ -1314,7 +1314,7 @@ static void build_runtime_hosted_any_conversions(Codegen *g)
 
     // __kn_any_to_f64
     g->fn_any_to_f64_ty = LLVMFunctionType(g->f64, &g->any_ty, 1, 0);
-    g->fn_any_to_f64 = LLVMAddFunction(g->mod, "__kn_any_to_f64", g->fn_any_to_f64_ty);
+    g->fn_any_to_f64 = ensure_function(g->mod, "__kn_any_to_f64", g->fn_any_to_f64_ty);
     {
         LLVMBasicBlockRef entry = LLVMAppendBasicBlockInContext(g->ctx, g->fn_any_to_f64, "entry");
         LLVMBasicBlockRef done_bb = LLVMAppendBasicBlockInContext(g->ctx, g->fn_any_to_f64, "done");
@@ -1370,7 +1370,7 @@ static void build_runtime_hosted_any_conversions(Codegen *g)
 
     // __kn_any_to_bool
     g->fn_any_to_bool_ty = LLVMFunctionType(g->i1, &g->any_ty, 1, 0);
-    g->fn_any_to_bool = LLVMAddFunction(g->mod, "__kn_any_to_bool", g->fn_any_to_bool_ty);
+    g->fn_any_to_bool = ensure_function(g->mod, "__kn_any_to_bool", g->fn_any_to_bool_ty);
     {
         LLVMBasicBlockRef entry = LLVMAppendBasicBlockInContext(g->ctx, g->fn_any_to_bool, "entry");
         LLVMBasicBlockRef done_bb = LLVMAppendBasicBlockInContext(g->ctx, g->fn_any_to_bool, "done");
@@ -1441,7 +1441,7 @@ static void build_runtime_hosted_any_conversions(Codegen *g)
 
     // __kn_any_to_char
     g->fn_any_to_char_ty = LLVMFunctionType(g->i8, &g->any_ty, 1, 0);
-    g->fn_any_to_char = LLVMAddFunction(g->mod, "__kn_any_to_char", g->fn_any_to_char_ty);
+    g->fn_any_to_char = ensure_function(g->mod, "__kn_any_to_char", g->fn_any_to_char_ty);
     {
         LLVMBasicBlockRef entry = LLVMAppendBasicBlockInContext(g->ctx, g->fn_any_to_char, "entry");
         LLVMBasicBlockRef done_bb = LLVMAppendBasicBlockInContext(g->ctx, g->fn_any_to_char, "done");
@@ -1493,7 +1493,7 @@ static void build_runtime_hosted_any_conversions(Codegen *g)
 
     // __kn_any_to_ptr
     g->fn_any_to_ptr_ty = LLVMFunctionType(t_i8ptr, &g->any_ty, 1, 0);
-    g->fn_any_to_ptr = LLVMAddFunction(g->mod, "__kn_any_to_ptr", g->fn_any_to_ptr_ty);
+    g->fn_any_to_ptr = ensure_function(g->mod, "__kn_any_to_ptr", g->fn_any_to_ptr_ty);
     {
         LLVMBasicBlockRef entry = LLVMAppendBasicBlockInContext(g->ctx, g->fn_any_to_ptr, "entry");
         LLVMBasicBlockRef done_bb = LLVMAppendBasicBlockInContext(g->ctx, g->fn_any_to_ptr, "done");
@@ -1546,7 +1546,7 @@ static void build_runtime_hosted_any_conversions(Codegen *g)
 
     // __kn_any_to_string
     g->fn_any_to_string_ty = LLVMFunctionType(t_i8ptr, &g->any_ty, 1, 0);
-    g->fn_any_to_string = LLVMAddFunction(g->mod, "__kn_any_to_string", g->fn_any_to_string_ty);
+    g->fn_any_to_string = ensure_function(g->mod, "__kn_any_to_string", g->fn_any_to_string_ty);
     {
         LLVMBasicBlockRef entry = LLVMAppendBasicBlockInContext(g->ctx, g->fn_any_to_string, "entry");
         LLVMBasicBlockRef done_bb = LLVMAppendBasicBlockInContext(g->ctx, g->fn_any_to_string, "done");
@@ -1639,9 +1639,9 @@ static void build_runtime_hosted_time(Codegen *g)
 
     // Time functions
     g->fn_time_tick_ty = LLVMFunctionType(t_i64, 0, 0, 0);
-    g->fn_time_tick = LLVMAddFunction(g->mod, "__kn_time_tick", g->fn_time_tick_ty);
+    g->fn_time_tick = ensure_function(g->mod, "__kn_time_tick", g->fn_time_tick_ty);
     g->fn_time_sleep_ty = LLVMFunctionType(t_void, &t_i32, 1, 0);
-    g->fn_time_sleep = LLVMAddFunction(g->mod, "__kn_time_sleep", g->fn_time_sleep_ty);
+    g->fn_time_sleep = ensure_function(g->mod, "__kn_time_sleep", g->fn_time_sleep_ty);
     {
         LLVMTypeRef args_parts[8] = {
             LLVMPointerType(t_i32, 0), LLVMPointerType(t_i32, 0),
@@ -1650,15 +1650,15 @@ static void build_runtime_hosted_time(Codegen *g)
             LLVMPointerType(t_i32, 0), LLVMPointerType(t_i64, 0)
         };
         g->fn_time_parts_ty = LLVMFunctionType(t_void, args_parts, 8, 0);
-        g->fn_time_parts = LLVMAddFunction(g->mod, "__kn_time_now_parts", g->fn_time_parts_ty);
+        g->fn_time_parts = ensure_function(g->mod, "__kn_time_now_parts", g->fn_time_parts_ty);
     }
     {
         LLVMTypeRef args_fmt[2] = { t_i64, t_i8ptr };
         g->fn_time_format_ty = LLVMFunctionType(t_i8ptr, args_fmt, 2, 0);
-        g->fn_time_format = LLVMAddFunction(g->mod, "__kn_time_format", g->fn_time_format_ty);
+        g->fn_time_format = ensure_function(g->mod, "__kn_time_format", g->fn_time_format_ty);
     }
     g->fn_time_nano_ty = LLVMFunctionType(t_i64, 0, 0, 0);
-    g->fn_time_nano = LLVMAddFunction(g->mod, "__kn_time_nano", g->fn_time_nano_ty);
+    g->fn_time_nano = ensure_function(g->mod, "__kn_time_nano", g->fn_time_nano_ty);
 }
 
 static void build_runtime_hosted_entry(Codegen *g, const HostedPlatformApi *platform)
@@ -1681,7 +1681,7 @@ static void build_runtime_hosted_entry(Codegen *g, const HostedPlatformApi *plat
         {
             LLVMTypeRef main_args[2] = { t_i32, LLVMPointerType(t_i8ptr, 0) };
             LLVMTypeRef main_ty = LLVMFunctionType(t_i32, main_args, 2, 0);
-            LLVMValueRef main_fn = LLVMAddFunction(g->mod, "main", main_ty);
+            LLVMValueRef main_fn = ensure_function(g->mod, "main", main_ty);
             LLVMBasicBlockRef m_entry = LLVMAppendBasicBlockInContext(g->ctx, main_fn, "entry");
             LLVMPositionBuilderAtEnd(g->builder, m_entry);
 
@@ -1762,7 +1762,7 @@ static void build_runtime_hosted_entry(Codegen *g, const HostedPlatformApi *plat
         {
             LLVMTypeRef main_args[2] = { t_i32, LLVMPointerType(t_i8ptr, 0) };
             LLVMTypeRef main_ty = LLVMFunctionType(t_i32, main_args, 2, 0);
-            LLVMValueRef main_fn = LLVMAddFunction(g->mod, "main", main_ty);
+            LLVMValueRef main_fn = ensure_function(g->mod, "main", main_ty);
             LLVMBasicBlockRef m_entry = LLVMAppendBasicBlockInContext(g->ctx, main_fn, "entry");
             LLVMPositionBuilderAtEnd(g->builder, m_entry);
 
@@ -1855,145 +1855,145 @@ static void declare_freestanding_optional_runtime(Codegen *g)
         return;
 
     g->fn_gc_alloc_ty = LLVMFunctionType(t_i8ptr, &t_i64, 1, 0);
-    g->fn_gc_alloc = LLVMAddFunction(g->mod, "__kn_gc_alloc", g->fn_gc_alloc_ty);
+    g->fn_gc_alloc = ensure_function(g->mod, "__kn_gc_alloc", g->fn_gc_alloc_ty);
     g->fn_gc_collect_ty = LLVMFunctionType(t_void, 0, 0, 0);
-    g->fn_gc_collect = LLVMAddFunction(g->mod, "__kn_gc_collect", g->fn_gc_collect_ty);
+    g->fn_gc_collect = ensure_function(g->mod, "__kn_gc_collect", g->fn_gc_collect_ty);
     g->fn_gc_push_ty = LLVMFunctionType(t_i8ptr, 0, 0, 0);
-    g->fn_gc_push = LLVMAddFunction(g->mod, "__kn_gc_push_frame", g->fn_gc_push_ty);
+    g->fn_gc_push = ensure_function(g->mod, "__kn_gc_push_frame", g->fn_gc_push_ty);
     LLVMTypeRef gc_root_args[3] = { t_i8ptr, t_i8ptr, t_i64 };
     g->fn_gc_add_root_ty = LLVMFunctionType(t_void, gc_root_args, 3, 0);
-    g->fn_gc_add_root = LLVMAddFunction(g->mod, "__kn_gc_add_root", g->fn_gc_add_root_ty);
+    g->fn_gc_add_root = ensure_function(g->mod, "__kn_gc_add_root", g->fn_gc_add_root_ty);
     LLVMTypeRef gc_global_root_args[2] = { t_i8ptr, t_i64 };
     g->fn_gc_add_global_root_ty = LLVMFunctionType(t_void, gc_global_root_args, 2, 0);
-    g->fn_gc_add_global_root = LLVMAddFunction(g->mod, "__kn_gc_add_global_root", g->fn_gc_add_global_root_ty);
+    g->fn_gc_add_global_root = ensure_function(g->mod, "__kn_gc_add_global_root", g->fn_gc_add_global_root_ty);
     g->fn_gc_pop_ty = LLVMFunctionType(t_void, &t_i8ptr, 1, 0);
-    g->fn_gc_pop = LLVMAddFunction(g->mod, "__kn_gc_pop_frame", g->fn_gc_pop_ty);
+    g->fn_gc_pop = ensure_function(g->mod, "__kn_gc_pop_frame", g->fn_gc_pop_ty);
     g->fn_gc_init_ty = LLVMFunctionType(t_void, 0, 0, 0);
-    g->fn_gc_init = LLVMAddFunction(g->mod, "__kn_gc_init", g->fn_gc_init_ty);
+    g->fn_gc_init = ensure_function(g->mod, "__kn_gc_init", g->fn_gc_init_ty);
 
     LLVMTypeRef str2_ty = LLVMFunctionType(t_i8ptr, (LLVMTypeRef[]){ t_i8ptr, t_i8ptr }, 2, 0);
     g->fn_str_concat_ty = str2_ty;
-    g->fn_str_concat = LLVMAddFunction(g->mod, "__kn_str_concat", str2_ty);
+    g->fn_str_concat = ensure_function(g->mod, "__kn_str_concat", str2_ty);
     g->fn_any_to_string_ty = LLVMFunctionType(t_i8ptr, &g->any_ty, 1, 0);
-    g->fn_any_to_string = LLVMAddFunction(g->mod, "__kn_any_to_string", g->fn_any_to_string_ty);
+    g->fn_any_to_string = ensure_function(g->mod, "__kn_any_to_string", g->fn_any_to_string_ty);
     {
         LLVMTypeRef args_s2c[2] = { t_i8ptr, LLVMPointerType(t_i64, 0) };
         g->fn_string_to_chars_ty = LLVMFunctionType(t_i8ptr, args_s2c, 2, 0);
-        g->fn_string_to_chars = LLVMAddFunction(g->mod, "__kn_string_to_chars", g->fn_string_to_chars_ty);
+        g->fn_string_to_chars = ensure_function(g->mod, "__kn_string_to_chars", g->fn_string_to_chars_ty);
     }
 
     g->fn_dict_new_ty = LLVMFunctionType(t_i8ptr, 0, 0, 0);
-    g->fn_dict_new = LLVMAddFunction(g->mod, "__kn_dict_new", g->fn_dict_new_ty);
+    g->fn_dict_new = ensure_function(g->mod, "__kn_dict_new", g->fn_dict_new_ty);
     {
         LLVMTypeRef args_set[4] = { t_i8ptr, t_i8ptr, t_i64, t_i64 };
         g->fn_dict_set_ty = LLVMFunctionType(t_void, args_set, 4, 0);
-        g->fn_dict_set = LLVMAddFunction(g->mod, "__kn_dict_set", g->fn_dict_set_ty);
+        g->fn_dict_set = ensure_function(g->mod, "__kn_dict_set", g->fn_dict_set_ty);
         LLVMTypeRef args_get[4] = { t_i8ptr, t_i8ptr, LLVMPointerType(t_i64, 0), LLVMPointerType(t_i64, 0) };
         g->fn_dict_get_ty = LLVMFunctionType(t_void, args_get, 4, 0);
-        g->fn_dict_get = LLVMAddFunction(g->mod, "__kn_dict_get", g->fn_dict_get_ty);
+        g->fn_dict_get = ensure_function(g->mod, "__kn_dict_get", g->fn_dict_get_ty);
         LLVMTypeRef args_has[2] = { t_i8ptr, t_i8ptr };
         g->fn_dict_contains_ty = LLVMFunctionType(g->i1, args_has, 2, 0);
-        g->fn_dict_contains = LLVMAddFunction(g->mod, "__kn_dict_contains", g->fn_dict_contains_ty);
+        g->fn_dict_contains = ensure_function(g->mod, "__kn_dict_contains", g->fn_dict_contains_ty);
         LLVMTypeRef args_count[1] = { t_i8ptr };
         g->fn_dict_count_ty = LLVMFunctionType(t_i64, args_count, 1, 0);
-        g->fn_dict_count = LLVMAddFunction(g->mod, "__kn_dict_count", g->fn_dict_count_ty);
+        g->fn_dict_count = ensure_function(g->mod, "__kn_dict_count", g->fn_dict_count_ty);
         g->fn_dict_remove_ty = LLVMFunctionType(g->i1, args_has, 2, 0);
-        g->fn_dict_remove = LLVMAddFunction(g->mod, "__kn_dict_remove", g->fn_dict_remove_ty);
+        g->fn_dict_remove = ensure_function(g->mod, "__kn_dict_remove", g->fn_dict_remove_ty);
         g->fn_dict_is_empty_ty = LLVMFunctionType(g->i1, args_count, 1, 0);
-        g->fn_dict_is_empty = LLVMAddFunction(g->mod, "__kn_dict_is_empty", g->fn_dict_is_empty_ty);
+        g->fn_dict_is_empty = ensure_function(g->mod, "__kn_dict_is_empty", g->fn_dict_is_empty_ty);
         g->fn_dict_keys_ty = LLVMFunctionType(t_i8ptr, args_count, 1, 0);
-        g->fn_dict_keys = LLVMAddFunction(g->mod, "__kn_dict_keys", g->fn_dict_keys_ty);
+        g->fn_dict_keys = ensure_function(g->mod, "__kn_dict_keys", g->fn_dict_keys_ty);
         g->fn_dict_values_ty = LLVMFunctionType(t_i8ptr, args_count, 1, 0);
-        g->fn_dict_values = LLVMAddFunction(g->mod, "__kn_dict_values", g->fn_dict_values_ty);
+        g->fn_dict_values = ensure_function(g->mod, "__kn_dict_values", g->fn_dict_values_ty);
     }
 
     g->fn_list_new_ty = LLVMFunctionType(t_i8ptr, 0, 0, 0);
-    g->fn_list_new = LLVMAddFunction(g->mod, "__kn_list_new", g->fn_list_new_ty);
+    g->fn_list_new = ensure_function(g->mod, "__kn_list_new", g->fn_list_new_ty);
     {
         LLVMTypeRef args_add[3] = { t_i8ptr, t_i64, t_i64 };
         g->fn_list_add_ty = LLVMFunctionType(t_void, args_add, 3, 0);
-        g->fn_list_add = LLVMAddFunction(g->mod, "__kn_list_add", g->fn_list_add_ty);
+        g->fn_list_add = ensure_function(g->mod, "__kn_list_add", g->fn_list_add_ty);
         LLVMTypeRef args_get[4] = { t_i8ptr, t_i64, LLVMPointerType(t_i64, 0), LLVMPointerType(t_i64, 0) };
         g->fn_list_get_ty = LLVMFunctionType(t_void, args_get, 4, 0);
-        g->fn_list_get = LLVMAddFunction(g->mod, "__kn_list_get", g->fn_list_get_ty);
+        g->fn_list_get = ensure_function(g->mod, "__kn_list_get", g->fn_list_get_ty);
         LLVMTypeRef args_set[4] = { t_i8ptr, t_i64, t_i64, t_i64 };
         g->fn_list_set_ty = LLVMFunctionType(t_void, args_set, 4, 0);
-        g->fn_list_set = LLVMAddFunction(g->mod, "__kn_list_set", g->fn_list_set_ty);
+        g->fn_list_set = ensure_function(g->mod, "__kn_list_set", g->fn_list_set_ty);
         g->fn_list_insert_ty = LLVMFunctionType(t_void, args_set, 4, 0);
-        g->fn_list_insert = LLVMAddFunction(g->mod, "__kn_list_insert", g->fn_list_insert_ty);
+        g->fn_list_insert = ensure_function(g->mod, "__kn_list_insert", g->fn_list_insert_ty);
         LLVMTypeRef args_count[1] = { t_i8ptr };
         g->fn_list_count_ty = LLVMFunctionType(t_i64, args_count, 1, 0);
-        g->fn_list_count = LLVMAddFunction(g->mod, "__kn_list_count", g->fn_list_count_ty);
+        g->fn_list_count = ensure_function(g->mod, "__kn_list_count", g->fn_list_count_ty);
         g->fn_list_clear_ty = LLVMFunctionType(t_void, args_count, 1, 0);
-        g->fn_list_clear = LLVMAddFunction(g->mod, "__kn_list_clear", g->fn_list_clear_ty);
+        g->fn_list_clear = ensure_function(g->mod, "__kn_list_clear", g->fn_list_clear_ty);
         LLVMTypeRef args_rm[4] = { t_i8ptr, t_i64, LLVMPointerType(t_i64, 0), LLVMPointerType(t_i64, 0) };
         g->fn_list_remove_at_ty = LLVMFunctionType(t_void, args_rm, 4, 0);
-        g->fn_list_remove_at = LLVMAddFunction(g->mod, "__kn_list_remove_at", g->fn_list_remove_at_ty);
+        g->fn_list_remove_at = ensure_function(g->mod, "__kn_list_remove_at", g->fn_list_remove_at_ty);
         LLVMTypeRef args_contains[3] = { t_i8ptr, t_i64, t_i64 };
         g->fn_list_contains_ty = LLVMFunctionType(g->i1, args_contains, 3, 0);
-        g->fn_list_contains = LLVMAddFunction(g->mod, "__kn_list_contains", g->fn_list_contains_ty);
+        g->fn_list_contains = ensure_function(g->mod, "__kn_list_contains", g->fn_list_contains_ty);
         LLVMTypeRef args_pop[3] = { t_i8ptr, LLVMPointerType(t_i64, 0), LLVMPointerType(t_i64, 0) };
         g->fn_list_pop_ty = LLVMFunctionType(t_void, args_pop, 3, 0);
-        g->fn_list_pop = LLVMAddFunction(g->mod, "__kn_list_pop", g->fn_list_pop_ty);
+        g->fn_list_pop = ensure_function(g->mod, "__kn_list_pop", g->fn_list_pop_ty);
         g->fn_list_index_of_ty = LLVMFunctionType(t_i64, args_contains, 3, 0);
-        g->fn_list_index_of = LLVMAddFunction(g->mod, "__kn_list_index_of", g->fn_list_index_of_ty);
+        g->fn_list_index_of = ensure_function(g->mod, "__kn_list_index_of", g->fn_list_index_of_ty);
         g->fn_list_is_empty_ty = LLVMFunctionType(g->i1, args_count, 1, 0);
-        g->fn_list_is_empty = LLVMAddFunction(g->mod, "__kn_list_is_empty", g->fn_list_is_empty_ty);
+        g->fn_list_is_empty = ensure_function(g->mod, "__kn_list_is_empty", g->fn_list_is_empty_ty);
     }
 
     g->fn_set_new_ty = LLVMFunctionType(t_i8ptr, 0, 0, 0);
-    g->fn_set_new = LLVMAddFunction(g->mod, "__kn_set_new", g->fn_set_new_ty);
+    g->fn_set_new = ensure_function(g->mod, "__kn_set_new", g->fn_set_new_ty);
     {
         LLVMTypeRef args_add[2] = { t_i8ptr, t_i8ptr };
         g->fn_set_add_ty = LLVMFunctionType(t_void, args_add, 2, 0);
-        g->fn_set_add = LLVMAddFunction(g->mod, "__kn_set_add", g->fn_set_add_ty);
+        g->fn_set_add = ensure_function(g->mod, "__kn_set_add", g->fn_set_add_ty);
         g->fn_set_contains_ty = LLVMFunctionType(g->i1, args_add, 2, 0);
-        g->fn_set_contains = LLVMAddFunction(g->mod, "__kn_set_contains", g->fn_set_contains_ty);
+        g->fn_set_contains = ensure_function(g->mod, "__kn_set_contains", g->fn_set_contains_ty);
         LLVMTypeRef args_count[1] = { t_i8ptr };
         g->fn_set_count_ty = LLVMFunctionType(t_i64, args_count, 1, 0);
-        g->fn_set_count = LLVMAddFunction(g->mod, "__kn_set_count", g->fn_set_count_ty);
+        g->fn_set_count = ensure_function(g->mod, "__kn_set_count", g->fn_set_count_ty);
         g->fn_set_clear_ty = LLVMFunctionType(t_void, args_count, 1, 0);
-        g->fn_set_clear = LLVMAddFunction(g->mod, "__kn_set_clear", g->fn_set_clear_ty);
+        g->fn_set_clear = ensure_function(g->mod, "__kn_set_clear", g->fn_set_clear_ty);
         g->fn_set_is_empty_ty = LLVMFunctionType(g->i1, args_count, 1, 0);
-        g->fn_set_is_empty = LLVMAddFunction(g->mod, "__kn_set_is_empty", g->fn_set_is_empty_ty);
+        g->fn_set_is_empty = ensure_function(g->mod, "__kn_set_is_empty", g->fn_set_is_empty_ty);
         g->fn_set_values_ty = LLVMFunctionType(t_i8ptr, args_count, 1, 0);
-        g->fn_set_values = LLVMAddFunction(g->mod, "__kn_set_values", g->fn_set_values_ty);
+        g->fn_set_values = ensure_function(g->mod, "__kn_set_values", g->fn_set_values_ty);
         g->fn_set_remove_ty = LLVMFunctionType(g->i1, args_add, 2, 0);
-        g->fn_set_remove = LLVMAddFunction(g->mod, "__kn_set_remove", g->fn_set_remove_ty);
+        g->fn_set_remove = ensure_function(g->mod, "__kn_set_remove", g->fn_set_remove_ty);
     }
 
     g->fn_exc_set_ty = LLVMFunctionType(t_void, &t_i8ptr, 1, 0);
-    g->fn_exc_set = LLVMAddFunction(g->mod, "__kn_exc_set", g->fn_exc_set_ty);
+    g->fn_exc_set = ensure_function(g->mod, "__kn_exc_set", g->fn_exc_set_ty);
     g->fn_exc_get_ty = LLVMFunctionType(t_i8ptr, 0, 0, 0);
-    g->fn_exc_get = LLVMAddFunction(g->mod, "__kn_exc_get", g->fn_exc_get_ty);
+    g->fn_exc_get = ensure_function(g->mod, "__kn_exc_get", g->fn_exc_get_ty);
     g->fn_exc_has_ty = LLVMFunctionType(g->i1, 0, 0, 0);
-    g->fn_exc_has = LLVMAddFunction(g->mod, "__kn_exc_has", g->fn_exc_has_ty);
+    g->fn_exc_has = ensure_function(g->mod, "__kn_exc_has", g->fn_exc_has_ty);
     g->fn_exc_last_ty = LLVMFunctionType(t_i8ptr, 0, 0, 0);
-    g->fn_exc_last = LLVMAddFunction(g->mod, "__kn_exc_last", g->fn_exc_last_ty);
+    g->fn_exc_last = ensure_function(g->mod, "__kn_exc_last", g->fn_exc_last_ty);
     g->fn_exc_clear_ty = LLVMFunctionType(t_void, 0, 0, 0);
-    g->fn_exc_clear = LLVMAddFunction(g->mod, "__kn_exc_clear", g->fn_exc_clear_ty);
+    g->fn_exc_clear = ensure_function(g->mod, "__kn_exc_clear", g->fn_exc_clear_ty);
     g->fn_exc_push_ty = LLVMFunctionType(t_void, &t_i8ptr, 1, 0);
-    g->fn_exc_push = LLVMAddFunction(g->mod, "__kn_exc_push", g->fn_exc_push_ty);
+    g->fn_exc_push = ensure_function(g->mod, "__kn_exc_push", g->fn_exc_push_ty);
     g->fn_exc_trace_ty = LLVMFunctionType(t_i8ptr, 0, 0, 0);
-    g->fn_exc_trace = LLVMAddFunction(g->mod, "__kn_exc_trace", g->fn_exc_trace_ty);
+    g->fn_exc_trace = ensure_function(g->mod, "__kn_exc_trace", g->fn_exc_trace_ty);
 
     {
         LLVMTypeRef args_spawn[2] = { t_i8ptr, t_i8ptr };
         g->fn_async_task_spawn_ty = LLVMFunctionType(t_i8ptr, args_spawn, 2, 0);
-        g->fn_async_task_spawn = LLVMAddFunction(g->mod, "__kn_async_task_spawn", g->fn_async_task_spawn_ty);
+        g->fn_async_task_spawn = ensure_function(g->mod, "__kn_async_task_spawn", g->fn_async_task_spawn_ty);
         LLVMTypeRef args_run[3] = { t_i8ptr, LLVMPointerType(t_i64, 0), LLVMPointerType(t_i64, 0) };
         g->fn_async_task_run_ty = LLVMFunctionType(t_void, args_run, 3, 0);
-        g->fn_async_task_run = LLVMAddFunction(g->mod, "__kn_async_task_run", g->fn_async_task_run_ty);
+        g->fn_async_task_run = ensure_function(g->mod, "__kn_async_task_run", g->fn_async_task_run_ty);
         LLVMTypeRef args_complete[3] = { t_i8ptr, t_i64, t_i64 };
         g->fn_async_task_complete_ty = LLVMFunctionType(t_void, args_complete, 3, 0);
-        g->fn_async_task_complete = LLVMAddFunction(g->mod, "__kn_async_task_complete", g->fn_async_task_complete_ty);
+        g->fn_async_task_complete = ensure_function(g->mod, "__kn_async_task_complete", g->fn_async_task_complete_ty);
         LLVMTypeRef args_fail[3] = { t_i8ptr, t_i8ptr, t_i8ptr };
         g->fn_async_task_fail_ty = LLVMFunctionType(t_void, args_fail, 3, 0);
-        g->fn_async_task_fail = LLVMAddFunction(g->mod, "__kn_async_task_fail", g->fn_async_task_fail_ty);
+        g->fn_async_task_fail = ensure_function(g->mod, "__kn_async_task_fail", g->fn_async_task_fail_ty);
         g->fn_async_task_sleep_ty = LLVMFunctionType(t_i8ptr, &t_i32, 1, 0);
-        g->fn_async_task_sleep = LLVMAddFunction(g->mod, "__kn_async_task_sleep", g->fn_async_task_sleep_ty);
+        g->fn_async_task_sleep = ensure_function(g->mod, "__kn_async_task_sleep", g->fn_async_task_sleep_ty);
         g->fn_async_task_yield_ty = LLVMFunctionType(t_i8ptr, 0, 0, 0);
-        g->fn_async_task_yield = LLVMAddFunction(g->mod, "__kn_async_task_yield", g->fn_async_task_yield_ty);
+        g->fn_async_task_yield = ensure_function(g->mod, "__kn_async_task_yield", g->fn_async_task_yield_ty);
     }
 }
 
@@ -2066,7 +2066,7 @@ static void build_freestanding_core_string_helpers(Codegen *g)
     {
         LLVMTypeRef concat_args[2] = { t_i8ptr, t_i8ptr };
         g->fn_str_concat_ty = LLVMFunctionType(t_i8ptr, concat_args, 2, 0);
-        g->fn_str_concat = LLVMAddFunction(g->mod, "__kn_str_concat", g->fn_str_concat_ty);
+        g->fn_str_concat = ensure_function(g->mod, "__kn_str_concat", g->fn_str_concat_ty);
         LLVMSetLinkage(g->fn_str_concat, LLVMInternalLinkage);
 
         LLVMBasicBlockRef entry = LLVMAppendBasicBlockInContext(g->ctx, g->fn_str_concat, "entry");
@@ -2137,7 +2137,7 @@ static void build_freestanding_core_string_helpers(Codegen *g)
 
     // __kn_i64_to_string
     g->fn_i64_to_string_ty = LLVMFunctionType(t_i8ptr, &t_i64, 1, 0);
-    g->fn_i64_to_string = LLVMAddFunction(g->mod, "__kn_i64_to_string", g->fn_i64_to_string_ty);
+    g->fn_i64_to_string = ensure_function(g->mod, "__kn_i64_to_string", g->fn_i64_to_string_ty);
     LLVMSetLinkage(g->fn_i64_to_string, LLVMInternalLinkage);
     {
         LLVMBasicBlockRef entry = LLVMAppendBasicBlockInContext(g->ctx, g->fn_i64_to_string, "entry");
@@ -2213,7 +2213,7 @@ static void build_freestanding_core_string_helpers(Codegen *g)
 
     // __kn_char_to_string
     g->fn_char_to_string_ty = LLVMFunctionType(t_i8ptr, &g->i8, 1, 0);
-    g->fn_char_to_string = LLVMAddFunction(g->mod, "__kn_char_to_string", g->fn_char_to_string_ty);
+    g->fn_char_to_string = ensure_function(g->mod, "__kn_char_to_string", g->fn_char_to_string_ty);
     LLVMSetLinkage(g->fn_char_to_string, LLVMInternalLinkage);
     {
         LLVMBasicBlockRef entry = LLVMAppendBasicBlockInContext(g->ctx, g->fn_char_to_string, "entry");
@@ -2228,7 +2228,7 @@ static void build_freestanding_core_string_helpers(Codegen *g)
 
     // __kn_ptr_to_string
     g->fn_ptr_to_string_ty = LLVMFunctionType(t_i8ptr, &t_i8ptr, 1, 0);
-    g->fn_ptr_to_string = LLVMAddFunction(g->mod, "__kn_ptr_to_string", g->fn_ptr_to_string_ty);
+    g->fn_ptr_to_string = ensure_function(g->mod, "__kn_ptr_to_string", g->fn_ptr_to_string_ty);
     LLVMSetLinkage(g->fn_ptr_to_string, LLVMInternalLinkage);
     {
         LLVMBasicBlockRef entry = LLVMAppendBasicBlockInContext(g->ctx, g->fn_ptr_to_string, "entry");
@@ -2309,7 +2309,7 @@ static void build_freestanding_core_string_helpers(Codegen *g)
 
     // __kn_f64_to_string (truncate to int)
     g->fn_f64_to_string_ty = LLVMFunctionType(t_i8ptr, &g->f64, 1, 0);
-    g->fn_f64_to_string = LLVMAddFunction(g->mod, "__kn_f64_to_string", g->fn_f64_to_string_ty);
+    g->fn_f64_to_string = ensure_function(g->mod, "__kn_f64_to_string", g->fn_f64_to_string_ty);
     LLVMSetLinkage(g->fn_f64_to_string, LLVMInternalLinkage);
     {
         LLVMBasicBlockRef entry = LLVMAppendBasicBlockInContext(g->ctx, g->fn_f64_to_string, "entry");
@@ -2322,7 +2322,7 @@ static void build_freestanding_core_string_helpers(Codegen *g)
 
     // __kn_any_to_string
     g->fn_any_to_string_ty = LLVMFunctionType(t_i8ptr, &g->any_ty, 1, 0);
-    g->fn_any_to_string = LLVMAddFunction(g->mod, "__kn_any_to_string", g->fn_any_to_string_ty);
+    g->fn_any_to_string = ensure_function(g->mod, "__kn_any_to_string", g->fn_any_to_string_ty);
     LLVMSetLinkage(g->fn_any_to_string, LLVMInternalLinkage);
     {
         LLVMBasicBlockRef entry = LLVMAppendBasicBlockInContext(g->ctx, g->fn_any_to_string, "entry");
@@ -2417,7 +2417,7 @@ static void build_runtime_freestanding(Codegen *g)
     declare_freestanding_optional_runtime(g);
 
     g->fn_panic_ty = LLVMFunctionType(t_void, &t_i8ptr, 1, 0);
-    g->fn_panic = LLVMAddFunction(g->mod, "__kn_panic", g->fn_panic_ty);
+    g->fn_panic = ensure_function(g->mod, "__kn_panic", g->fn_panic_ty);
     {
         LLVMBasicBlockRef entry = LLVMAppendBasicBlockInContext(g->ctx, g->fn_panic, "entry");
         LLVMPositionBuilderAtEnd(g->builder, entry);
@@ -2435,7 +2435,7 @@ static void build_runtime_freestanding(Codegen *g)
     }
 
     g->fn_strlen_ty = LLVMFunctionType(t_i64, &t_i8ptr, 1, 0);
-    g->fn_strlen = LLVMAddFunction(g->mod, "__kn_strlen", g->fn_strlen_ty);
+    g->fn_strlen = ensure_function(g->mod, "__kn_strlen", g->fn_strlen_ty);
     {
         LLVMBasicBlockRef entry = LLVMAppendBasicBlockInContext(g->ctx, g->fn_strlen, "entry");
         LLVMBasicBlockRef loop_bb = LLVMAppendBasicBlockInContext(g->ctx, g->fn_strlen, "loop");
@@ -2465,7 +2465,7 @@ static void build_runtime_freestanding(Codegen *g)
     }
 
     g->fn_str_eq_ty = LLVMFunctionType(g->i1, (LLVMTypeRef[]){ t_i8ptr, t_i8ptr }, 2, 0);
-    g->fn_str_eq = LLVMAddFunction(g->mod, "__kn_str_eq", g->fn_str_eq_ty);
+    g->fn_str_eq = ensure_function(g->mod, "__kn_str_eq", g->fn_str_eq_ty);
     {
         LLVMBasicBlockRef entry = LLVMAppendBasicBlockInContext(g->ctx, g->fn_str_eq, "entry");
         LLVMBasicBlockRef loop_bb = LLVMAppendBasicBlockInContext(g->ctx, g->fn_str_eq, "loop");
@@ -2514,7 +2514,7 @@ static void build_runtime_freestanding(Codegen *g)
     }
 
     g->fn_mem_compare_ty = LLVMFunctionType(g->i32, (LLVMTypeRef[]){ t_i8ptr, t_i8ptr, t_i64 }, 3, 0);
-    g->fn_mem_compare = LLVMAddFunction(g->mod, "__kn_mem_compare", g->fn_mem_compare_ty);
+    g->fn_mem_compare = ensure_function(g->mod, "__kn_mem_compare", g->fn_mem_compare_ty);
     {
         LLVMBasicBlockRef entry = LLVMAppendBasicBlockInContext(g->ctx, g->fn_mem_compare, "entry");
         LLVMBasicBlockRef loop_bb = LLVMAppendBasicBlockInContext(g->ctx, g->fn_mem_compare, "loop");
@@ -2616,7 +2616,7 @@ static void emit_freestanding_entry_wrapper(Codegen *g)
     LLVMTypeRef entry_ty = LLVMFunctionType(g->voidt, entry_args, param_count > 0 ? 1 : 0, 0);
     LLVMValueRef entry_fn = LLVMGetNamedFunction(g->mod, wrapper_name);
     if (!entry_fn)
-        entry_fn = LLVMAddFunction(g->mod, wrapper_name, entry_ty);
+        entry_fn = ensure_function(g->mod, wrapper_name, entry_ty);
     LLVMSetSection(entry_fn, ".text.kn.entry");
     if (LLVMCountBasicBlocks(entry_fn) != 0)
         return;
@@ -3143,7 +3143,7 @@ static void codegen_global_init(Codegen *g, StmtList *globals)
         return;
 
     g->fn_global_init_ty = LLVMFunctionType(g->voidt, 0, 0, 0);
-    g->fn_global_init = LLVMAddFunction(g->mod, "__kn_global_init", g->fn_global_init_ty);
+    g->fn_global_init = ensure_function(g->mod, "__kn_global_init", g->fn_global_init_ty);
     LLVMSetLinkage(g->fn_global_init, LLVMInternalLinkage);
 
     g->gv_global_init_done = LLVMAddGlobal(g->mod, g->i1, "__kn_global_init_done");

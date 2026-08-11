@@ -672,6 +672,26 @@ static Type sema_cast_expr(Sema *s, Expr *e)
         return e->type;
     }
 
+    // Official runtime packages occasionally exchange an opaque collection
+    // handle with C.  Keep that reinterpretation explicit and restricted to
+    // Trusted/Unsafe code instead of exposing collection layouts in FFI v1.
+    bool cast_collection = cast_type.kind == TY_CLASS && cast_type.name &&
+        (kn_strcmp(cast_type.name, "IO.Collection.list") == 0 ||
+         kn_strcmp(cast_type.name, "IO.Collection.dict") == 0 ||
+         kn_strcmp(cast_type.name, "IO.Collection.set") == 0);
+    bool value_collection = value_type.kind == TY_CLASS && value_type.name &&
+        (kn_strcmp(value_type.name, "IO.Collection.list") == 0 ||
+         kn_strcmp(value_type.name, "IO.Collection.dict") == 0 ||
+         kn_strcmp(value_type.name, "IO.Collection.set") == 0);
+    if ((cast_collection && value_type.kind == TY_PTR) ||
+        (cast_type.kind == TY_PTR && value_collection))
+    {
+        check_ptr_safety(s, e->line, e->col, 1,
+                         "Safe function cannot reinterpret an opaque collection handle");
+        e->type = cast_type;
+        return e->type;
+    }
+
     // Dynamic collections expose elements as `any`. An explicit cast back to
     // an object reference is the typed boundary for callers; codegen performs
     // the same runtime hierarchy check used by ordinary object casts.
@@ -901,7 +921,8 @@ static Type sema_invoke_expr(Sema *s, Expr *e)
                 {
                     const char **param_names = alloc_param_names_from_paramlist(&fs->func->params);
                     (void)prepare_call_args(s, e->line, e->col, &e->v.invoke.args, &e->v.invoke.arg_names,
-                                            &args, fs->func->params.items, fs->func->params.count,
+                                            &args, fs->func->is_variadic,
+                                            fs->func->params.items, fs->func->params.count,
                                             param_names, fs->func->name, 1, 1);
                     retype_prepared_args(s, &e->v.invoke.args, &args, fs->func->params.items, fs->func->params.count,
                                          "Default literal requires parameter type");
@@ -923,7 +944,7 @@ static Type sema_invoke_expr(Sema *s, Expr *e)
                 const char **param_names = alloc_param_names_from_params(v->origin->v.anon_func.params,
                                                                          v->origin->v.anon_func.param_count);
                 (void)prepare_call_args(s, e->line, e->col, &e->v.invoke.args, &e->v.invoke.arg_names,
-                                        &args, v->origin->v.anon_func.params,
+                                        &args, 0, v->origin->v.anon_func.params,
                                         v->origin->v.anon_func.param_count, param_names,
                                         e->v.invoke.callee->v.var.name, 1, 1);
                 retype_prepared_args(s, &e->v.invoke.args, &args, v->origin->v.anon_func.params,
@@ -992,7 +1013,7 @@ static Type sema_new_expr(Sema *s, Expr *e)
     {
         const char **param_names = alloc_param_names_from_paramlist(&ctor->params);
         (void)prepare_call_args(s, e->line, e->col, &e->v.new_expr.args, &e->v.new_expr.arg_names,
-                                &params, ctor->params.items, ctor->params.count,
+                                &params, 0, ctor->params.items, ctor->params.count,
                                 param_names, c->name, 1, 1);
         retype_prepared_args(s, &e->v.new_expr.args, &params, ctor->params.items, ctor->params.count,
                              "Default literal requires parameter type");
@@ -1819,7 +1840,8 @@ static Type sema_call_expr(Sema *s, Expr *e)
     {
         const char **param_names = alloc_param_names_from_paramlist(&fn->func->params);
         (void)prepare_call_args(s, e->line, e->col, &e->v.call.args, &e->v.call.arg_names,
-                                0, fn->func->params.items, fn->func->params.count,
+                                0, fn->func->is_variadic,
+                                fn->func->params.items, fn->func->params.count,
                                 param_names, fn->func->name, 1, 1);
         if (param_names) kn_free((void *)param_names);
     }
@@ -2618,7 +2640,7 @@ static Type sema_expr_impl(Sema *s, Expr *e)
                         {
                             const char **param_names = alloc_param_names_from_paramlist(&m->params);
                             (void)prepare_call_args(s, e->line, e->col, &e->v.member_call.args, &e->v.member_call.arg_names,
-                                                    &args, m->params.items, m->params.count,
+                                                    &args, 0, m->params.items, m->params.count,
                                                     param_names, m->name, 1, 1);
                             retype_prepared_args(s, &e->v.member_call.args, &args, m->params.items, m->params.count,
                                                  "Default literal requires parameter type");
@@ -2649,6 +2671,7 @@ static Type sema_expr_impl(Sema *s, Expr *e)
             const char *qname = build_qualified_call_name(s, recv, e->v.member_call.name);
             if (qname)
             {
+                int known_accessible_source_module = 0;
                 const char *last = 0;
                 for (const char *p = qname; *p; p++)
                     if (*p == '.') last = p;
@@ -2679,7 +2702,7 @@ static Type sema_expr_impl(Sema *s, Expr *e)
                             {
                                 const char **param_names = alloc_param_names_from_paramlist(&m->params);
                                 (void)prepare_call_args(s, e->line, e->col, &e->v.member_call.args, &e->v.member_call.arg_names,
-                                                        &args, m->params.items, m->params.count,
+                                                        &args, 0, m->params.items, m->params.count,
                                                         param_names, m->name, 1, 1);
                                 retype_prepared_args(s, &e->v.member_call.args, &args, m->params.items, m->params.count,
                                                      "Default literal requires parameter type");
@@ -2699,8 +2722,19 @@ static Type sema_expr_impl(Sema *s, Expr *e)
                         }
 
                         const char *std_mod = qc ? class_qname(qc) : mod;
-                        if (kn_std_module_has(std_mod) && !std_module_accessible(s, std_mod, fname))
+                        known_accessible_source_module =
+                            !kn_std_module_has(std_mod) &&
+                            sema_knows_standard_module(s, std_mod) &&
+                            (module_accessible_by_namespace(s, std_mod) ||
+                             std_module_accessible(s, std_mod, fname));
+                        if (sema_knows_standard_module(s, std_mod) &&
+                            !module_accessible_by_namespace(s, std_mod) &&
+                            !std_module_accessible(s, std_mod, fname))
+                        {
                             sema_error(s, e->line, e->col, 1, "Missing Get", "Standard module not imported; add a Get statement");
+                            e->type = type_make(TY_UNKNOWN);
+                            return e->type;
+                        }
 
                         const KnStdFunc *stdq = 0;
                         if (kn_std_module_has(std_mod))
@@ -2831,7 +2865,8 @@ static Type sema_expr_impl(Sema *s, Expr *e)
                     {
                         const char **param_names = alloc_param_names_from_paramlist(&qfn->func->params);
                         (void)prepare_call_args(s, e->line, e->col, &e->v.member_call.args, &e->v.member_call.arg_names,
-                                                &args, qfn->func->params.items, qfn->func->params.count,
+                                                &args, qfn->func->is_variadic,
+                                                qfn->func->params.items, qfn->func->params.count,
                                                 param_names, qfn->func->name, 1, 1);
                         retype_prepared_args(s, &e->v.member_call.args, &args, qfn->func->params.items, qfn->func->params.count,
                                              "Default literal requires parameter type");
@@ -2862,6 +2897,12 @@ static Type sema_expr_impl(Sema *s, Expr *e)
                         e->type = type_make(TY_UNKNOWN);
                         return e->type;
                     }
+                }
+                if (known_accessible_source_module)
+                {
+                    sema_error(s, e->line, e->col, 1, "Unknown Symbol", "Symbol not found in module");
+                    e->type = type_make(TY_UNKNOWN);
+                    return e->type;
                 }
             }
         }
@@ -2945,7 +2986,7 @@ static Type sema_expr_impl(Sema *s, Expr *e)
                     Method *m = &iface->methods.items[i];
                     if (kn_strcmp(m->name, e->v.member_call.name) != 0) continue;
                     if (call_args_match_params(s, e->line, e->col, &e->v.member_call.args,
-                                               &e->v.member_call.arg_names, &args, &m->params))
+                                               &e->v.member_call.arg_names, &args, &m->params, 0))
                     {
                         im = m;
                         midx = i;
@@ -2961,7 +3002,7 @@ static Type sema_expr_impl(Sema *s, Expr *e)
                 {
                     const char **param_names = alloc_param_names_from_paramlist(&im->params);
                     (void)prepare_call_args(s, e->line, e->col, &e->v.member_call.args, &e->v.member_call.arg_names,
-                                            &args, im->params.items, im->params.count,
+                                            &args, 0, im->params.items, im->params.count,
                                             param_names, im->name, 1, 1);
                     retype_prepared_args(s, &e->v.member_call.args, &args, im->params.items, im->params.count,
                                          "Default literal requires parameter type");
@@ -2997,7 +3038,7 @@ static Type sema_expr_impl(Sema *s, Expr *e)
         {
             const char **param_names = alloc_param_names_from_paramlist(&m->params);
             (void)prepare_call_args(s, e->line, e->col, &e->v.member_call.args, &e->v.member_call.arg_names,
-                                    &args, m->params.items, m->params.count,
+                                    &args, 0, m->params.items, m->params.count,
                                     param_names, m->name, 1, 1);
             retype_prepared_args(s, &e->v.member_call.args, &args, m->params.items, m->params.count,
                                  "Default literal requires parameter type");

@@ -14,20 +14,6 @@
 
 static KN_STD_THREAD_LOCAL int g_std_profile = KN_STD_PROFILE_HOSTED;
 
-static const KnStdFunc g_console_funcs[] = {
-    { "IO.Console", "PrintLine", KN_BUILTIN_IO_CONSOLE_PRINTLINE, { TY_VOID, TY_UNKNOWN, 0 }, 1, { { TY_ANY, TY_UNKNOWN, 0 } }, SAFETY_SAFE },
-    { "IO.Console", "Print",     KN_BUILTIN_IO_CONSOLE_PRINT,     { TY_VOID, TY_UNKNOWN, 0 }, 1, { { TY_ANY, TY_UNKNOWN, 0 } }, SAFETY_SAFE },
-    { "IO.Console", "ReadLine",  KN_BUILTIN_IO_CONSOLE_READLINE,  { TY_STRING, TY_UNKNOWN, 0 }, 0, { { TY_UNKNOWN, TY_UNKNOWN, 0 } }, SAFETY_SAFE },
-};
-
-static const KnStdFunc g_time_funcs[] = {
-    { "IO.Time", "Now",         KN_BUILTIN_IO_TIME_NOW,      { TY_CLASS, TY_UNKNOWN, 0, 0, "IO.Time.DateTime" }, 0, { { TY_UNKNOWN, TY_UNKNOWN, 0 } }, SAFETY_SAFE },
-    { "IO.Time", "GetTick",     KN_BUILTIN_IO_TIME_GETTICK,  { TY_INT, TY_UNKNOWN, 0 },  0, { { TY_UNKNOWN, TY_UNKNOWN, 0 } }, SAFETY_SAFE },
-    { "IO.Time", "Sleep",       KN_BUILTIN_IO_TIME_SLEEP,    { TY_VOID, TY_UNKNOWN, 0 }, 1, { { TY_INT, TY_UNKNOWN, 0 } }, SAFETY_SAFE },
-    { "IO.Time", "GetNanoTick", KN_BUILTIN_IO_TIME_NANOTICK, { TY_INT, TY_UNKNOWN, 0 },  0, { { TY_UNKNOWN, TY_UNKNOWN, 0 } }, SAFETY_SAFE },
-    { "IO.Time", "Format",      KN_BUILTIN_IO_TIME_FORMAT,   { TY_STRING, TY_UNKNOWN, 0 }, 2, { { TY_CLASS, TY_UNKNOWN, 0, 0, "IO.Time.DateTime" }, { TY_STRING, TY_UNKNOWN, 0 } }, SAFETY_SAFE },
-};
-
 static const KnStdFunc g_string_funcs[] = {
     { "IO.Type.string", "Length",  KN_BUILTIN_IO_STRING_LENGTH,  { TY_INT, TY_UNKNOWN, 0 }, 1, { { TY_STRING, TY_UNKNOWN, 0 } }, SAFETY_SAFE },
     { "IO.Type.string", "Concat",  KN_BUILTIN_IO_STRING_CONCAT,  { TY_STRING, TY_UNKNOWN, 0 }, 2, { { TY_STRING, TY_UNKNOWN, 0 }, { TY_STRING, TY_UNKNOWN, 0 } }, SAFETY_SAFE },
@@ -147,78 +133,6 @@ static const KnStdFunc g_meta_funcs[] = {
     { "IO.Meta", "Find",  KN_BUILTIN_IO_META_FIND,  { TY_CLASS, TY_UNKNOWN, 0, 0, "IO.Collection.dict" }, 2, { { TY_STRING, TY_UNKNOWN, 0 }, { TY_STRING, TY_UNKNOWN, 0 } }, SAFETY_SAFE },
 };
 
-static const KnStdFunc g_path_funcs[] = {
-    { "IO.Path", "Combine",   KN_BUILTIN_IO_PATH_COMBINE,   { TY_STRING, TY_UNKNOWN, 0 }, 2, { { TY_STRING, TY_UNKNOWN, 0 }, { TY_STRING, TY_UNKNOWN, 0 } }, SAFETY_SAFE },
-    { "IO.Path", "Join",      KN_BUILTIN_IO_PATH_COMBINE,   { TY_STRING, TY_UNKNOWN, 0 }, 2, { { TY_STRING, TY_UNKNOWN, 0 }, { TY_STRING, TY_UNKNOWN, 0 } }, SAFETY_SAFE },
-    { "IO.Path", "Join3",     KN_BUILTIN_IO_PATH_JOIN3,     { TY_STRING, TY_UNKNOWN, 0 }, 3, { { TY_STRING, TY_UNKNOWN, 0 }, { TY_STRING, TY_UNKNOWN, 0 }, { TY_STRING, TY_UNKNOWN, 0 } }, SAFETY_SAFE },
-    { "IO.Path", "Join4",     KN_BUILTIN_IO_PATH_JOIN4,     { TY_STRING, TY_UNKNOWN, 0 }, 4, { { TY_STRING, TY_UNKNOWN, 0 }, { TY_STRING, TY_UNKNOWN, 0 }, { TY_STRING, TY_UNKNOWN, 0 }, { TY_STRING, TY_UNKNOWN, 0 } }, SAFETY_SAFE },
-    { "IO.Path", "FileName",  KN_BUILTIN_IO_PATH_FILE_NAME, { TY_STRING, TY_UNKNOWN, 0 }, 1, { { TY_STRING, TY_UNKNOWN, 0 } }, SAFETY_SAFE },
-    { "IO.Path", "Extension", KN_BUILTIN_IO_PATH_EXTENSION, { TY_STRING, TY_UNKNOWN, 0 }, 1, { { TY_STRING, TY_UNKNOWN, 0 } }, SAFETY_SAFE },
-    { "IO.Path", "Directory", KN_BUILTIN_IO_PATH_DIRECTORY, { TY_STRING, TY_UNKNOWN, 0 }, 1, { { TY_STRING, TY_UNKNOWN, 0 } }, SAFETY_SAFE },
-    { "IO.Path", "Parent",    KN_BUILTIN_IO_PATH_DIRECTORY, { TY_STRING, TY_UNKNOWN, 0 }, 1, { { TY_STRING, TY_UNKNOWN, 0 } }, SAFETY_SAFE },
-    { "IO.Path", "Normalize", KN_BUILTIN_IO_PATH_NORMALIZE, { TY_STRING, TY_UNKNOWN, 0 }, 1, { { TY_STRING, TY_UNKNOWN, 0 } }, SAFETY_SAFE },
-    { "IO.Path", "Cwd", KN_BUILTIN_IO_PATH_CWD, { TY_STRING, TY_UNKNOWN, 0 }, 0, { { TY_UNKNOWN, TY_UNKNOWN, 0 } }, SAFETY_SAFE },
-    { "IO.Path", "CurrentDirectory", KN_BUILTIN_IO_PATH_CWD, { TY_STRING, TY_UNKNOWN, 0 }, 0, { { TY_UNKNOWN, TY_UNKNOWN, 0 } }, SAFETY_SAFE },
-    { "IO.Path", "ChangeExtension", KN_BUILTIN_IO_PATH_CHANGE_EXTENSION, { TY_STRING, TY_UNKNOWN, 0 }, 2, { { TY_STRING, TY_UNKNOWN, 0 }, { TY_STRING, TY_UNKNOWN, 0 } }, SAFETY_SAFE },
-    { "IO.Path", "HasExtension", KN_BUILTIN_IO_PATH_HAS_EXTENSION, { TY_BOOL, TY_UNKNOWN, 0 }, 1, { { TY_STRING, TY_UNKNOWN, 0 } }, SAFETY_SAFE },
-    { "IO.Path", "IsAbsolute", KN_BUILTIN_IO_PATH_IS_ABSOLUTE, { TY_BOOL, TY_UNKNOWN, 0 }, 1, { { TY_STRING, TY_UNKNOWN, 0 } }, SAFETY_SAFE },
-    { "IO.Path", "IsRelative", KN_BUILTIN_IO_PATH_IS_RELATIVE, { TY_BOOL, TY_UNKNOWN, 0 }, 1, { { TY_STRING, TY_UNKNOWN, 0 } }, SAFETY_SAFE },
-    { "IO.Path", "BaseName", KN_BUILTIN_IO_PATH_BASE_NAME, { TY_STRING, TY_UNKNOWN, 0 }, 1, { { TY_STRING, TY_UNKNOWN, 0 } }, SAFETY_SAFE },
-    { "IO.Path", "Stem", KN_BUILTIN_IO_PATH_BASE_NAME, { TY_STRING, TY_UNKNOWN, 0 }, 1, { { TY_STRING, TY_UNKNOWN, 0 } }, SAFETY_SAFE },
-    { "IO.Path", "EnsureTrailingSeparator", KN_BUILTIN_IO_PATH_ENSURE_TRAILING_SEPARATOR, { TY_STRING, TY_UNKNOWN, 0 }, 1, { { TY_STRING, TY_UNKNOWN, 0 } }, SAFETY_SAFE },
-};
-
-static const KnStdFunc g_text_funcs[] = {
-    { "IO.Text", "Length",     KN_BUILTIN_IO_TEXT_LENGTH,      { TY_INT, TY_UNKNOWN, 0 }, 1, { { TY_STRING, TY_UNKNOWN, 0 } }, SAFETY_SAFE },
-    { "IO.Text", "IsEmpty",    KN_BUILTIN_IO_TEXT_IS_EMPTY,    { TY_BOOL, TY_UNKNOWN, 0 }, 1, { { TY_STRING, TY_UNKNOWN, 0 } }, SAFETY_SAFE },
-    { "IO.Text", "Count",      KN_BUILTIN_IO_TEXT_COUNT,       { TY_INT, TY_UNKNOWN, 0 }, 2, { { TY_STRING, TY_UNKNOWN, 0 }, { TY_STRING, TY_UNKNOWN, 0 } }, SAFETY_SAFE },
-    { "IO.Text", "Contains",   KN_BUILTIN_IO_TEXT_CONTAINS,    { TY_BOOL, TY_UNKNOWN, 0 }, 2, { { TY_STRING, TY_UNKNOWN, 0 }, { TY_STRING, TY_UNKNOWN, 0 } }, SAFETY_SAFE },
-    { "IO.Text", "StartsWith", KN_BUILTIN_IO_TEXT_STARTS_WITH, { TY_BOOL, TY_UNKNOWN, 0 }, 2, { { TY_STRING, TY_UNKNOWN, 0 }, { TY_STRING, TY_UNKNOWN, 0 } }, SAFETY_SAFE },
-    { "IO.Text", "EndsWith",   KN_BUILTIN_IO_TEXT_ENDS_WITH,   { TY_BOOL, TY_UNKNOWN, 0 }, 2, { { TY_STRING, TY_UNKNOWN, 0 }, { TY_STRING, TY_UNKNOWN, 0 } }, SAFETY_SAFE },
-    { "IO.Text", "IndexOf",    KN_BUILTIN_IO_TEXT_INDEX_OF,    { TY_INT, TY_UNKNOWN, 0 }, 2, { { TY_STRING, TY_UNKNOWN, 0 }, { TY_STRING, TY_UNKNOWN, 0 } }, SAFETY_SAFE },
-    { "IO.Text", "LastIndexOf", KN_BUILTIN_IO_TEXT_LAST_INDEX_OF, { TY_INT, TY_UNKNOWN, 0 }, 2, { { TY_STRING, TY_UNKNOWN, 0 }, { TY_STRING, TY_UNKNOWN, 0 } }, SAFETY_SAFE },
-    { "IO.Text", "Trim",       KN_BUILTIN_IO_TEXT_TRIM,        { TY_STRING, TY_UNKNOWN, 0 }, 1, { { TY_STRING, TY_UNKNOWN, 0 } }, SAFETY_SAFE },
-    { "IO.Text", "Replace",    KN_BUILTIN_IO_TEXT_REPLACE,     { TY_STRING, TY_UNKNOWN, 0 }, 3, { { TY_STRING, TY_UNKNOWN, 0 }, { TY_STRING, TY_UNKNOWN, 0 }, { TY_STRING, TY_UNKNOWN, 0 } }, SAFETY_SAFE },
-    { "IO.Text", "ToUpper",    KN_BUILTIN_IO_TEXT_TO_UPPER,    { TY_STRING, TY_UNKNOWN, 0 }, 1, { { TY_STRING, TY_UNKNOWN, 0 } }, SAFETY_SAFE },
-    { "IO.Text", "ToLower",    KN_BUILTIN_IO_TEXT_TO_LOWER,    { TY_STRING, TY_UNKNOWN, 0 }, 1, { { TY_STRING, TY_UNKNOWN, 0 } }, SAFETY_SAFE },
-    { "IO.Text", "Slice",      KN_BUILTIN_IO_TEXT_SLICE,       { TY_STRING, TY_UNKNOWN, 0 }, 3, { { TY_STRING, TY_UNKNOWN, 0 }, { TY_INT, TY_UNKNOWN, 0 }, { TY_INT, TY_UNKNOWN, 0 } }, SAFETY_SAFE },
-    { "IO.Text", "Split",      KN_BUILTIN_IO_TEXT_SPLIT,       { TY_CLASS, TY_UNKNOWN, 0, 0, "IO.Collection.list" }, 2, { { TY_STRING, TY_UNKNOWN, 0 }, { TY_STRING, TY_UNKNOWN, 0 } }, SAFETY_SAFE },
-    { "IO.Text", "Join",       KN_BUILTIN_IO_TEXT_JOIN,        { TY_STRING, TY_UNKNOWN, 0 }, 2, { { TY_CLASS, TY_UNKNOWN, 0, 0, "IO.Collection.list" }, { TY_STRING, TY_UNKNOWN, 0 } }, SAFETY_SAFE },
-    { "IO.Text", "Lines",      KN_BUILTIN_IO_TEXT_LINES,       { TY_CLASS, TY_UNKNOWN, 0, 0, "IO.Collection.list" }, 1, { { TY_STRING, TY_UNKNOWN, 0 } }, SAFETY_SAFE },
-};
-
-static const KnStdFunc g_file_funcs[] = {
-    { "IO.File", "Exists",        KN_BUILTIN_IO_SYSTEM_FILE_EXISTS,    { TY_BOOL, TY_UNKNOWN, 0 }, 1, { { TY_STRING, TY_UNKNOWN, 0 } }, SAFETY_SAFE },
-    { "IO.File", "Create",        KN_BUILTIN_IO_FILE_CREATE,           { TY_BOOL, TY_UNKNOWN, 0 }, 1, { { TY_STRING, TY_UNKNOWN, 0 } }, SAFETY_SAFE },
-    { "IO.File", "Touch",         KN_BUILTIN_IO_FILE_TOUCH,            { TY_BOOL, TY_UNKNOWN, 0 }, 1, { { TY_STRING, TY_UNKNOWN, 0 } }, SAFETY_SAFE },
-    { "IO.File", "ReadAllText",   KN_BUILTIN_IO_FILE_READ_ALL_TEXT,    { TY_STRING, TY_UNKNOWN, 0 }, 1, { { TY_STRING, TY_UNKNOWN, 0 } }, SAFETY_SAFE },
-    { "IO.File", "ReadFirstLine", KN_BUILTIN_IO_FILE_READ_FIRST_LINE,  { TY_STRING, TY_UNKNOWN, 0 }, 1, { { TY_STRING, TY_UNKNOWN, 0 } }, SAFETY_SAFE },
-    { "IO.File", "WriteAllText",  KN_BUILTIN_IO_FILE_WRITE_ALL_TEXT,   { TY_BOOL, TY_UNKNOWN, 0 }, 2, { { TY_STRING, TY_UNKNOWN, 0 }, { TY_STRING, TY_UNKNOWN, 0 } }, SAFETY_SAFE },
-    { "IO.File", "AppendAllText", KN_BUILTIN_IO_FILE_APPEND_ALL_TEXT,  { TY_BOOL, TY_UNKNOWN, 0 }, 2, { { TY_STRING, TY_UNKNOWN, 0 }, { TY_STRING, TY_UNKNOWN, 0 } }, SAFETY_SAFE },
-    { "IO.File", "AppendLine",    KN_BUILTIN_IO_FILE_APPEND_LINE,      { TY_BOOL, TY_UNKNOWN, 0 }, 2, { { TY_STRING, TY_UNKNOWN, 0 }, { TY_STRING, TY_UNKNOWN, 0 } }, SAFETY_SAFE },
-    { "IO.File", "Delete",        KN_BUILTIN_IO_FILE_DELETE,           { TY_BOOL, TY_UNKNOWN, 0 }, 1, { { TY_STRING, TY_UNKNOWN, 0 } }, SAFETY_SAFE },
-    { "IO.File", "DeleteIfExists", KN_BUILTIN_IO_FILE_DELETE_IF_EXISTS, { TY_BOOL, TY_UNKNOWN, 0 }, 1, { { TY_STRING, TY_UNKNOWN, 0 } }, SAFETY_SAFE },
-    { "IO.File", "Size",          KN_BUILTIN_IO_FILE_SIZE,             { TY_INT, TY_UNKNOWN, 0 }, 1, { { TY_STRING, TY_UNKNOWN, 0 } }, SAFETY_SAFE },
-    { "IO.File", "IsEmpty",       KN_BUILTIN_IO_FILE_IS_EMPTY,         { TY_BOOL, TY_UNKNOWN, 0 }, 1, { { TY_STRING, TY_UNKNOWN, 0 } }, SAFETY_SAFE },
-    { "IO.File", "Copy",          KN_BUILTIN_IO_FILE_COPY,             { TY_BOOL, TY_UNKNOWN, 0 }, 2, { { TY_STRING, TY_UNKNOWN, 0 }, { TY_STRING, TY_UNKNOWN, 0 } }, SAFETY_SAFE },
-    { "IO.File", "Move",          KN_BUILTIN_IO_FILE_MOVE,             { TY_BOOL, TY_UNKNOWN, 0 }, 2, { { TY_STRING, TY_UNKNOWN, 0 }, { TY_STRING, TY_UNKNOWN, 0 } }, SAFETY_SAFE },
-    { "IO.File", "ReadOrDefault", KN_BUILTIN_IO_FILE_READ_OR_DEFAULT,  { TY_STRING, TY_UNKNOWN, 0 }, 2, { { TY_STRING, TY_UNKNOWN, 0 }, { TY_STRING, TY_UNKNOWN, 0 } }, SAFETY_SAFE },
-    { "IO.File", "ReadIfExists",  KN_BUILTIN_IO_FILE_READ_IF_EXISTS,   { TY_STRING, TY_UNKNOWN, 0 }, 1, { { TY_STRING, TY_UNKNOWN, 0 } }, SAFETY_SAFE },
-    { "IO.File", "ReadOr",        KN_BUILTIN_IO_FILE_READ_OR,          { TY_STRING, TY_UNKNOWN, 0 }, 2, { { TY_STRING, TY_UNKNOWN, 0 }, { TY_STRING, TY_UNKNOWN, 0 } }, SAFETY_SAFE },
-    { "IO.File", "ReadLines",     KN_BUILTIN_IO_FILE_READ_LINES,       { TY_CLASS, TY_UNKNOWN, 0, 0, "IO.Collection.list" }, 1, { { TY_STRING, TY_UNKNOWN, 0 } }, SAFETY_SAFE },
-    { "IO.File", "WriteLines",    KN_BUILTIN_IO_FILE_WRITE_LINES,      { TY_BOOL, TY_UNKNOWN, 0 }, 2, { { TY_STRING, TY_UNKNOWN, 0 }, { TY_CLASS, TY_UNKNOWN, 0, 0, "IO.Collection.list" } }, SAFETY_SAFE },
-    { "IO.File", "ReplaceText",   KN_BUILTIN_IO_FILE_REPLACE_TEXT,     { TY_BOOL, TY_UNKNOWN, 0 }, 3, { { TY_STRING, TY_UNKNOWN, 0 }, { TY_STRING, TY_UNKNOWN, 0 }, { TY_STRING, TY_UNKNOWN, 0 } }, SAFETY_SAFE },
-};
-
-static const KnStdFunc g_directory_funcs[] = {
-    { "IO.Directory", "Exists",         KN_BUILTIN_IO_DIRECTORY_EXISTS,          { TY_BOOL, TY_UNKNOWN, 0 }, 1, { { TY_STRING, TY_UNKNOWN, 0 } }, SAFETY_SAFE },
-    { "IO.Directory", "Create",         KN_BUILTIN_IO_DIRECTORY_CREATE,          { TY_BOOL, TY_UNKNOWN, 0 }, 1, { { TY_STRING, TY_UNKNOWN, 0 } }, SAFETY_SAFE },
-    { "IO.Directory", "Ensure",         KN_BUILTIN_IO_DIRECTORY_ENSURE,          { TY_BOOL, TY_UNKNOWN, 0 }, 1, { { TY_STRING, TY_UNKNOWN, 0 } }, SAFETY_SAFE },
-    { "IO.Directory", "Delete",         KN_BUILTIN_IO_DIRECTORY_DELETE,          { TY_BOOL, TY_UNKNOWN, 0 }, 1, { { TY_STRING, TY_UNKNOWN, 0 } }, SAFETY_SAFE },
-    { "IO.Directory", "DeleteIfExists", KN_BUILTIN_IO_DIRECTORY_DELETE_IF_EXISTS, { TY_BOOL, TY_UNKNOWN, 0 }, 1, { { TY_STRING, TY_UNKNOWN, 0 } }, SAFETY_SAFE },
-    { "IO.Directory", "Files",          KN_BUILTIN_IO_DIRECTORY_FILES,           { TY_CLASS, TY_UNKNOWN, 0, 0, "IO.Collection.list" }, 2, { { TY_STRING, TY_UNKNOWN, 0 }, { TY_BOOL, TY_UNKNOWN, 0 } }, SAFETY_SAFE },
-};
-
 static const KnStdFunc g_error_funcs[] = {
     { "IO.Error", "LastTrace",    KN_BUILTIN_IO_ERROR_LASTTRACE, { TY_STRING, TY_UNKNOWN, 0 }, 0, { { TY_UNKNOWN, TY_UNKNOWN, 0 } }, SAFETY_SAFE },
     { "IO.Error", "HasException", KN_BUILTIN_IO_ERROR_HAS,       { TY_BOOL, TY_UNKNOWN, 0 }, 0, { { TY_UNKNOWN, TY_UNKNOWN, 0 } }, SAFETY_SAFE },
@@ -228,13 +142,6 @@ static const KnStdFunc g_error_funcs[] = {
 
 static const KnStdFunc g_gc_funcs[] = {
     { "IO.GC", "Collect", KN_BUILTIN_IO_GC_COLLECT, { TY_VOID, TY_UNKNOWN, 0 }, 0, { { TY_UNKNOWN, TY_UNKNOWN, 0 } }, SAFETY_SAFE },
-};
-
-static const KnStdFunc g_memory_funcs[] = {
-    { "IO.Memory", "Copy",    KN_BUILTIN_IO_MEMORY_COPY,    { TY_VOID, TY_UNKNOWN, 0 }, 3, { { TY_PTR, TY_BYTE, 0, 1 }, { TY_PTR, TY_BYTE, 0, 1 }, { TY_USIZE, TY_UNKNOWN, 0 } }, SAFETY_TRUSTED },
-    { "IO.Memory", "Set",     KN_BUILTIN_IO_MEMORY_SET,     { TY_VOID, TY_UNKNOWN, 0 }, 3, { { TY_PTR, TY_BYTE, 0, 1 }, { TY_BYTE, TY_UNKNOWN, 0 }, { TY_USIZE, TY_UNKNOWN, 0 } }, SAFETY_TRUSTED },
-    { "IO.Memory", "Zero",    KN_BUILTIN_IO_MEMORY_ZERO,    { TY_VOID, TY_UNKNOWN, 0 }, 2, { { TY_PTR, TY_BYTE, 0, 1 }, { TY_USIZE, TY_UNKNOWN, 0 } }, SAFETY_TRUSTED },
-    { "IO.Memory", "Compare", KN_BUILTIN_IO_MEMORY_COMPARE, { TY_INT, TY_UNKNOWN, 0 }, 3, { { TY_PTR, TY_BYTE, 0, 1 }, { TY_PTR, TY_BYTE, 0, 1 }, { TY_USIZE, TY_UNKNOWN, 0 } }, SAFETY_TRUSTED },
 };
 
 static const KnStdFunc g_volatile_funcs[] = {
@@ -254,8 +161,6 @@ static const KnStdFunc g_panic_funcs[] = {
 };
 
 static const KnStdModule g_modules[] = {
-    { "IO.Console",      g_console_funcs, (int)(sizeof(g_console_funcs) / sizeof(g_console_funcs[0])) },
-    { "IO.Time",         g_time_funcs,    (int)(sizeof(g_time_funcs) / sizeof(g_time_funcs[0])) },
     { "IO.Type.string",  g_string_funcs,  (int)(sizeof(g_string_funcs) / sizeof(g_string_funcs[0])) },
     { "IO.Collection.dict", g_dict_funcs, (int)(sizeof(g_dict_funcs) / sizeof(g_dict_funcs[0])) },
     { "IO.Collection.list", g_list_funcs, (int)(sizeof(g_list_funcs) / sizeof(g_list_funcs[0])) },
@@ -265,13 +170,8 @@ static const KnStdModule g_modules[] = {
     { "IO.System",       g_system_funcs,  (int)(sizeof(g_system_funcs) / sizeof(g_system_funcs[0])) },
     { "IO.Async",        g_async_funcs,   (int)(sizeof(g_async_funcs) / sizeof(g_async_funcs[0])) },
     { "IO.Meta",         g_meta_funcs,    (int)(sizeof(g_meta_funcs) / sizeof(g_meta_funcs[0])) },
-    { "IO.Path",         g_path_funcs,    (int)(sizeof(g_path_funcs) / sizeof(g_path_funcs[0])) },
-    { "IO.Text",         g_text_funcs,    (int)(sizeof(g_text_funcs) / sizeof(g_text_funcs[0])) },
-    { "IO.File",         g_file_funcs,    (int)(sizeof(g_file_funcs) / sizeof(g_file_funcs[0])) },
-    { "IO.Directory",    g_directory_funcs, (int)(sizeof(g_directory_funcs) / sizeof(g_directory_funcs[0])) },
     { "IO.Error",        g_error_funcs,   (int)(sizeof(g_error_funcs) / sizeof(g_error_funcs[0])) },
     { "IO.GC",           g_gc_funcs,      (int)(sizeof(g_gc_funcs) / sizeof(g_gc_funcs[0])) },
-    { "IO.Memory",       g_memory_funcs,  (int)(sizeof(g_memory_funcs) / sizeof(g_memory_funcs[0])) },
     { "IO.Volatile",     g_volatile_funcs, (int)(sizeof(g_volatile_funcs) / sizeof(g_volatile_funcs[0])) },
     { "IO.Panic",        g_panic_funcs,   (int)(sizeof(g_panic_funcs) / sizeof(g_panic_funcs[0])) },
     { "IO.Target",       0, 0 },

@@ -2,7 +2,14 @@ Unit Tests.Selfhost.StdlibCore;
 
 Get IO.Char;
 Get IO.Console;
+Get IO.Directory;
+Get IO.File;
 Get IO.Math;
+Get IO.Memory;
+Get IO.Path;
+Get IO.System;
+Get IO.Text;
+Get IO.Time;
 Get IO.Type.string;
 
 Trusted Static Function int Main()
@@ -11,5 +18,72 @@ Trusted Static Function int Main()
     IO.Console.PrintLine(IO.Math.Abs(-7));
     IO.Console.PrintLine(IO.Type.string.Concat("ki", "nal"));
     IO.Console.PrintLine(IO.Math.Sqrt([f64](9)) == [f64](3));
+    IO.Console.PrintLine([f64](1.5));
+    IO.Console.PrintLine(IO.Text.Trim("  alpha\t") == "alpha");
+    IO.Console.PrintLine(IO.Text.Contains("banana", "nan") &&
+        IO.Text.StartsWith("banana", "ban") && IO.Text.EndsWith("banana", "ana") &&
+        IO.Text.IndexOf("banana", "an") == 1 &&
+        IO.Text.LastIndexOf("banana", "an") == 3 && IO.Text.Count("aaaa", "aa") == 2 &&
+        IO.Text.ToUpper("text") == "TEXT" && IO.Text.ToLower("TEXT") == "text");
+    IO.Console.PrintLine(IO.Text.Replace("aXbXc", "X", "-") == "a-b-c");
+    IO.Console.PrintLine(IO.Text.Slice("abcdef", 2, 3) == "cde");
+    IO.Console.PrintLine(IO.Text.Join(IO.Text.Split("a::b::c", "::"), "|") == "a|b|c");
+    list textLines = IO.Text.Lines("one\r\ntwo\n");
+    IO.Console.PrintLine(textLines.Count() == 3 && [string](textLines.Fetch(1)) == "two" &&
+        [string](textLines.Fetch(2)) == "");
+    string joinedPath = IO.Path.Join4("alpha", "beta", "gamma", "value.txt");
+    IO.Console.PrintLine(IO.Path.FileName(joinedPath) == "value.txt");
+    string normalizedPath = IO.Path.Normalize("alpha//beta/../gamma/./value.txt");
+    IO.Console.PrintLine(IO.Path.FileName(IO.Path.Parent(normalizedPath)) == "gamma");
+    IO.Console.PrintLine(IO.Path.BaseName("archive.tar.gz") == "archive.tar");
+    IO.Console.PrintLine(IO.Path.ChangeExtension("archive.tar.gz", "txt") ==
+        "archive.tar.txt");
+    IO.Console.PrintLine(IO.Path.IsAbsolute(IO.Path.Cwd()));
+
+    int tickBefore = IO.Time.GetTick();
+    IO.Time.Sleep(0);
+    int tickAfter = IO.Time.GetTick();
+    int nanoBefore = IO.Time.GetNanoTick();
+    int nanoAfter = IO.Time.GetNanoTick();
+    IO.Time.DateTime now = IO.Time.Now();
+    string formattedTime = IO.Time.Format(now, "yyyy-MM-dd HH:mm:ss.fff");
+    IO.Console.PrintLine(tickAfter >= tickBefore);
+    IO.Console.PrintLine(nanoAfter >= nanoBefore);
+    IO.Console.PrintLine(now.Ticks >= 0 && now.Year >= 1970 &&
+        now.Month >= 1 && now.Month <= 12 && now.Day >= 1 && now.Day <= 31);
+    IO.Console.PrintLine(IO.Text.Length(formattedTime) == 23 &&
+        IO.Text.Contains(formattedTime, "-") && IO.Text.Contains(formattedTime, ":") &&
+        IO.Text.Contains(formattedTime, "."));
+
+    byte memorySource = 0x41;
+    byte memoryTarget = 0;
+    IO.Memory.Copy(&memoryTarget, &memorySource, 1);
+    IO.Console.PrintLine(memoryTarget == 0x41 &&
+        IO.Memory.Compare(&memorySource, &memoryTarget, 1) == 0);
+    IO.Memory.Set(&memoryTarget, 0x5a, 1);
+    IO.Console.PrintLine(memoryTarget == 0x5a &&
+        IO.Memory.Compare(&memorySource, &memoryTarget, 1) != 0);
+    IO.Memory.Zero(&memoryTarget, 1);
+    IO.Console.PrintLine(memoryTarget == 0);
+
+    string directory = "out/selfhost/tests/stdlib-core-files";
+    string path = directory + "/values.txt";
+    IO.File.DeleteIfExists(path);
+    IO.Directory.DeleteIfExists(directory);
+    IO.Console.PrintLine(IO.Directory.Ensure(directory));
+
+    list values = list.Create();
+    values.Add("alpha");
+    values.Add("beta");
+    IO.Console.PrintLine(IO.File.WriteLines(path, values));
+    IO.Console.PrintLine(IO.File.Exists(path));
+    IO.Console.PrintLine(IO.System.FileExists(path));
+    IO.Console.PrintLine(!IO.Text.IsEmpty(IO.System.CommandLine()));
+    IO.Console.PrintLine(IO.File.ReadFirstLine(path));
+    IO.Console.PrintLine(IO.File.ReadIfExists(path + ".missing") == null);
+    IO.Console.PrintLine(IO.File.ReadLines(path).Count() == 2);
+    IO.Console.PrintLine(IO.Directory.Files(directory, false).Count() == 1);
+    IO.Console.PrintLine(IO.File.DeleteIfExists(path));
+    IO.Console.PrintLine(IO.Directory.DeleteIfExists(directory));
     Return 0;
 }

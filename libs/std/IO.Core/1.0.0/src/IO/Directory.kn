@@ -1,0 +1,182 @@
+Unit IO.Directory;
+
+Get IO.Path;
+Get IO.Kinal.Runtime;
+
+// Directory enumeration returns an opaque runtime collection.  The pointer
+// conversion is confined to this Trusted package boundary.
+
+[LinkName("kn_native_directory_exists")]
+Extern Unsafe Function bool __DirectoryExists(string path) By C;
+
+[LinkName("kn_native_directory_create")]
+Extern Unsafe Function bool __DirectoryCreate(string path) By C;
+
+[LinkName("kn_native_directory_delete")]
+Extern Unsafe Function bool __DirectoryDelete(string path) By C;
+
+[LinkName("kn_native_directory_scan_open")]
+Extern Unsafe Function byte* __DirectoryScanOpen(string path, bool recursive) By C;
+
+[LinkName("kn_native_directory_scan_next")]
+Extern Unsafe Function string __DirectoryScanNext(byte* scan) By C;
+
+[LinkName("kn_native_directory_scan_close")]
+Extern Unsafe Function void __DirectoryScanClose(byte* scan) By C;
+
+Trusted Function bool Exists(string path)
+{
+    Return __DirectoryExists(path);
+}
+
+Trusted Function bool Create(string path)
+{
+    Return __DirectoryCreate(path);
+}
+
+Trusted Function bool Ensure(string path)
+{
+    If (Exists(path))
+    {
+        Return true;
+    }
+
+    string parent = IO.Path.Parent(path);
+    If (parent != "" && parent != path && !Exists(parent) && !Ensure(parent))
+    {
+        Return false;
+    }
+    Return Create(path) || Exists(path);
+}
+
+Trusted Function bool Delete(string path)
+{
+    Return __DirectoryDelete(path);
+}
+
+Trusted Function bool DeleteIfExists(string path)
+{
+    Return !__DirectoryExists(path) || __DirectoryDelete(path);
+}
+
+Trusted Function list Files(string path, bool recursive)
+{
+    list files = list.Create();
+    byte* scan = __DirectoryScanOpen(path, recursive);
+    If (scan == null)
+    {
+        Return files;
+    }
+
+    string current = __DirectoryScanNext(scan);
+    While (current != null)
+    {
+        // The native scan owns `current`; copy it into managed storage before
+        // closing the opaque OS enumeration handle.
+        string owned = IO.Kinal.Runtime.StringConcat(current, "");
+        files.Add(owned);
+        current = __DirectoryScanNext(scan);
+    }
+    __DirectoryScanClose(scan);
+    __DirectorySort(files);
+    Return files;
+}
+
+Trusted Function int __DirectoryCompare(string left, string right)
+{
+    char* leftText = [char*](left);
+    char* rightText = [char*](right);
+    If (leftText == rightText)
+    {
+        Return 0;
+    }
+    If (leftText == null)
+    {
+        Return -1;
+    }
+    If (rightText == null)
+    {
+        Return 1;
+    }
+
+    int index = 0;
+    While (leftText[index] != '\0' && rightText[index] != '\0')
+    {
+        If (leftText[index] < rightText[index])
+        {
+            Return -1;
+        }
+        If (leftText[index] > rightText[index])
+        {
+            Return 1;
+        }
+        index = index + 1;
+    }
+    If (leftText[index] == rightText[index])
+    {
+        Return 0;
+    }
+    Return leftText[index] == '\0' ? -1 : 1;
+}
+
+Trusted Function void __DirectorySwap(list files, int left, int right)
+{
+    string temporary = [string](files.Fetch(left));
+    files.Set(left, files.Fetch(right));
+    files.Set(right, temporary);
+}
+
+Trusted Function void __DirectorySiftDown(list files, int root, int count)
+{
+    While (true)
+    {
+        int child = root * 2 + 1;
+        If (child >= count)
+        {
+            Return;
+        }
+
+        int largest = root;
+        If (__DirectoryCompare([string](files.Fetch(largest)),
+            [string](files.Fetch(child))) < 0)
+        {
+            largest = child;
+        }
+        If (child + 1 < count &&
+            __DirectoryCompare([string](files.Fetch(largest)),
+                [string](files.Fetch(child + 1))) < 0)
+        {
+            largest = child + 1;
+        }
+        If (largest == root)
+        {
+            Return;
+        }
+        __DirectorySwap(files, root, largest);
+        root = largest;
+    }
+}
+
+Trusted Function void __DirectorySort(list files)
+{
+    int count = files.Count();
+    If (count < 2)
+    {
+        Return;
+    }
+
+    int start = count / 2;
+    While (start > 0)
+    {
+        start = start - 1;
+        __DirectorySiftDown(files, start, count);
+    }
+
+    int end = count;
+    While (end > 1)
+    {
+        __DirectorySwap(files, 0, end - 1);
+        end = end - 1;
+        __DirectorySiftDown(files, 0, end);
+    }
+}

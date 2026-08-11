@@ -1,0 +1,26 @@
+Unit IO.Memory;
+
+Get IO.Kinal.Runtime;
+
+// Memory algorithms are Kinal runtime services.  This public unit is the
+// stable standard-library surface and contains no compiler-specific lowering.
+
+Trusted Function void Copy(byte* destination, byte* source, usize count)
+{
+    IO.Kinal.Runtime.MemoryCopy(destination, source, count);
+}
+
+Trusted Function void Set(byte* destination, byte value, usize count)
+{
+    IO.Kinal.Runtime.MemorySet(destination, value, count);
+}
+
+Trusted Function void Zero(byte* destination, usize count)
+{
+    IO.Kinal.Runtime.MemoryZero(destination, count);
+}
+
+Trusted Function int Compare(byte* left, byte* right, usize count)
+{
+    Return [int](IO.Kinal.Runtime.MemoryCompare(left, right, count));
+}

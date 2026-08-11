@@ -290,6 +290,8 @@ Class EnumMemberDecl
     Public string Name;
     Public int Ordinal;
     Public ExpressionNode Value;
+    Public i64 ConstantValue;
+    Public bool HasConstantValue;
     Public EnumMemberDecl Next;
 
     Public Safe Constructor(string name, int ordinal)
@@ -297,6 +299,8 @@ Class EnumMemberDecl
         This.Name = name;
         This.Ordinal = ordinal;
         This.Value = null;
+        This.ConstantValue = 0;
+        This.HasConstantValue = false;
         This.Next = null;
     }
 }

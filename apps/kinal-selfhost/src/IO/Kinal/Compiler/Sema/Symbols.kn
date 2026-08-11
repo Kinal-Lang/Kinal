@@ -33,6 +33,7 @@ Class FunctionSymbol
     Public FunctionDecl Declaration;
     Public ValueSymbol Receiver;
     Public bool IsGenericInstance;
+    Public bool IsVariadic;
     Public FunctionSymbol GenericDefinition;
     Public string GenericKey;
     Public TypeSubstitution FirstSubstitution;
@@ -52,6 +53,7 @@ Class FunctionSymbol
         This.Declaration = declaration;
         This.Receiver = null;
         This.IsGenericInstance = false;
+        This.IsVariadic = false;
         This.GenericDefinition = null;
         This.GenericKey = "";
         This.FirstSubstitution = null;
@@ -100,6 +102,10 @@ Class FunctionSymbol
 
     Public Safe Function bool AcceptsArgumentCount(int count)
     {
+        If (This.IsVariadic)
+        {
+            Return count >= This.ParameterCount() - 1;
+        }
         Return count >= This.RequiredParameterCount() && count <= This.ParameterCount();
     }
 

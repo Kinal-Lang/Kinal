@@ -620,6 +620,148 @@ static const char *compile_syntax_unit(const FuncList *funcs,
     return "";
 }
 
+static ModulePath *compile_find_import_module(ModuleMap *map, const char *qualified)
+{
+    if (!map || !qualified || !qualified[0])
+        return 0;
+    ModulePath *found = modulemap_find(map, qualified);
+    if (found)
+        return found;
+
+    size_t length = kn_strlen(qualified);
+    char *candidate = (char *)kn_malloc(length + 1);
+    if (!candidate)
+        kn_die("out of memory");
+    kn_memcpy(candidate, qualified, length + 1);
+    while (length > 0)
+    {
+        while (length > 0 && candidate[length - 1] != '.')
+            length--;
+        if (length == 0)
+            break;
+        candidate[length - 1] = 0;
+        found = modulemap_find(map, candidate);
+        if (found)
+            break;
+        length--;
+    }
+    kn_free(candidate);
+    return found;
+}
+
+static int compile_program_has_unit(const char *unit,
+                                    const MetaList *metas,
+                                    const FuncList *funcs,
+                                    const ClassList *classes,
+                                    const InterfaceList *interfaces,
+                                    const StructList *structs,
+                                    const EnumList *enums,
+                                    const StmtList *globals)
+{
+    if (!unit || !unit[0])
+        return 0;
+    for (int i = 0; metas && i < metas->count; i++)
+        if (metas->items[i].unit && kn_strcmp(metas->items[i].unit, unit) == 0) return 1;
+    for (int i = 0; funcs && i < funcs->count; i++)
+        if (funcs->items[i].unit && kn_strcmp(funcs->items[i].unit, unit) == 0) return 1;
+    for (int i = 0; classes && i < classes->count; i++)
+        if (classes->items[i].unit && kn_strcmp(classes->items[i].unit, unit) == 0) return 1;
+    for (int i = 0; interfaces && i < interfaces->count; i++)
+        if (interfaces->items[i].unit && kn_strcmp(interfaces->items[i].unit, unit) == 0) return 1;
+    for (int i = 0; structs && i < structs->count; i++)
+        if (structs->items[i].unit && kn_strcmp(structs->items[i].unit, unit) == 0) return 1;
+    for (int i = 0; enums && i < enums->count; i++)
+        if (enums->items[i].unit && kn_strcmp(enums->items[i].unit, unit) == 0) return 1;
+    for (int i = 0; globals && i < globals->count; i++)
+    {
+        Stmt *global = globals->items[i];
+        if (global && global->kind == ST_VAR && global->v.var.unit &&
+            kn_strcmp(global->v.var.unit, unit) == 0) return 1;
+    }
+    return 0;
+}
+
+static int compile_program_has_type_qname(const char *qname,
+                                          const ClassList *classes,
+                                          const InterfaceList *interfaces,
+                                          const StructList *structs,
+                                          const EnumList *enums)
+{
+    if (!qname || !qname[0])
+        return 0;
+    for (int i = 0; classes && i < classes->count; i++)
+        if ((classes->items[i].qname && kn_strcmp(classes->items[i].qname, qname) == 0) ||
+            (classes->items[i].name && kn_strcmp(classes->items[i].name, qname) == 0)) return 1;
+    for (int i = 0; interfaces && i < interfaces->count; i++)
+        if ((interfaces->items[i].qname && kn_strcmp(interfaces->items[i].qname, qname) == 0) ||
+            (interfaces->items[i].name && kn_strcmp(interfaces->items[i].name, qname) == 0)) return 1;
+    for (int i = 0; structs && i < structs->count; i++)
+        if ((structs->items[i].qname && kn_strcmp(structs->items[i].qname, qname) == 0) ||
+            (structs->items[i].name && kn_strcmp(structs->items[i].name, qname) == 0)) return 1;
+    for (int i = 0; enums && i < enums->count; i++)
+        if ((enums->items[i].qname && kn_strcmp(enums->items[i].qname, qname) == 0) ||
+            (enums->items[i].name && kn_strcmp(enums->items[i].name, qname) == 0)) return 1;
+    return 0;
+}
+
+static void compile_resolve_package_symbol_imports(ImportList *imports,
+                                                   const MetaList *metas,
+                                                   const FuncList *funcs,
+                                                   const ClassList *classes,
+                                                   const InterfaceList *interfaces,
+                                                   const StructList *structs,
+                                                   const EnumList *enums,
+                                                   const StmtList *globals)
+{
+    for (int i = 0; imports && i < imports->count; i++)
+    {
+        ImportMap *import = &imports->items[i];
+        if ((import->kind != IMPORT_OPEN && import->kind != IMPORT_ALIAS) ||
+            !import->module || !import->module[0])
+            continue;
+        if (compile_program_has_unit(import->module, metas, funcs, classes, interfaces,
+                                     structs, enums, globals) ||
+            compile_program_has_type_qname(import->module, classes, interfaces, structs, enums) ||
+            kn_std_module_has(import->module))
+            continue;
+
+        const char *last = 0;
+        for (const char *p = import->module; *p; p++)
+            if (*p == '.') last = p;
+        if (!last || last == import->module || !last[1])
+            continue;
+
+        size_t module_length = (size_t)(last - import->module);
+        char *module = (char *)kn_malloc(module_length + 1);
+        if (!module)
+            kn_die("out of memory");
+        kn_memcpy(module, import->module, module_length);
+        module[module_length] = 0;
+        if (!compile_program_has_unit(module, metas, funcs, classes, interfaces,
+                                      structs, enums, globals) &&
+            !kn_std_module_has(module))
+        {
+            kn_free(module);
+            continue;
+        }
+
+        const char *member = last + 1;
+        if (import->kind == IMPORT_OPEN)
+        {
+            import->local = member;
+            import->remote = member;
+            import->global = 0;
+        }
+        else
+        {
+            import->remote = member;
+            import->global = 1;
+        }
+        import->kind = IMPORT_SYMBOL;
+        import->module = module;
+    }
+}
+
 static int compile_write_syntax_summary(const char *out_path,
                                         const SourceList *sources,
                                         const FuncList *funcs,
@@ -1054,12 +1196,30 @@ static int kn_compile(int in_count, const char **in_paths, const KnCompileConfig
     ModuleMap modmap = {0};
     ModuleMap local_modmap = {0};
     ModuleMap dep_modmap = {0};
+    ModuleMap official_modmap = {0};
+    StrList known_standard_modules = {0};
     StrList module_seen = {0};
     const int project_source_mode = cfg->project_source_mode;
     const int use_project_local_map = cfg->project_local_sources && cfg->project_local_source_count > 0;
-    if (auto_link && kn_inputs.count == 1 && inputs.count > 0)
+    const int resolve_import_modules =
+        cfg->emit_mode != KN_EMIT_TOKENS && cfg->emit_mode != KN_EMIT_AST;
+    /* Explicit standard-library imports remain available when local module
+       auto-discovery is disabled. Standard modules are packages, not compiler
+       builtins, so --no-module-discovery must not erase their declarations. */
+    if (resolve_import_modules)
     {
         g_pkg_error = 0;
+        if (!scan_package_roots_into_module_map(cfg->official_package_roots,
+                                                cfg->official_package_root_count,
+                                                &official_modmap, 1))
+            return -1;
+        if (cfg->official_package_root_count == 0)
+            scan_default_stdlib_modules(&official_modmap);
+        for (int module_index = 0; module_index < official_modmap.count; module_index++)
+            strlist_add(&known_standard_modules, official_modmap.items[module_index].module);
+    }
+    if (auto_link && kn_inputs.count == 1 && inputs.count > 0)
+    {
         if (use_project_local_map)
         {
             for (int psi = 0; psi < cfg->project_local_source_count; psi++)
@@ -1067,12 +1227,8 @@ static int kn_compile(int in_count, const char **in_paths, const KnCompileConfig
                 if (!register_module_file_path(cfg->project_local_sources[psi], &local_modmap))
                     return -1;
             }
-            if (!scan_package_roots_into_module_map(cfg->official_package_roots, cfg->official_package_root_count, &dep_modmap, 1))
-                return -1;
             if (!scan_package_roots_into_module_map(cfg->package_roots, cfg->package_root_count, &dep_modmap, 0))
                 return -1;
-            if (cfg->official_package_root_count == 0 && cfg->package_root_count == 0)
-                scan_default_stdlib_modules(&dep_modmap);
 
             if (project_source_mode == KN_PROJ_SOURCE_MODE_ALL_SOURCES)
             {
@@ -1108,12 +1264,8 @@ static int kn_compile(int in_count, const char **in_paths, const KnCompileConfig
             char base_dir[KN_MAX_PATH];
             path_dirname(inputs.items[0], base_dir, sizeof(base_dir));
             scan_dir_modules(base_dir, base_dir, &modmap);
-            if (!scan_package_roots_into_module_map(cfg->official_package_roots, cfg->official_package_root_count, &modmap, 1))
-                return -1;
             if (!scan_package_roots_into_module_map(cfg->package_roots, cfg->package_root_count, &modmap, 0))
                 return -1;
-            if (cfg->official_package_root_count == 0 && cfg->package_root_count == 0)
-                scan_default_stdlib_modules(&modmap);
 
             char *input_unit = read_unit_name_from_file(inputs.items[0]);
             if (input_unit)
@@ -1182,7 +1334,10 @@ static int kn_compile(int in_count, const char **in_paths, const KnCompileConfig
         parse_program(fsrc, &metas, &funcs, &imports, &classes, &interfaces, &structs, &enums, &globals);
         sourcelist_add(&sources, fsrc);
 
-        if (auto_link && kn_inputs.count == 1)
+        /* Explicit official-package imports are resolved for both single-file
+           and multi-file compilations. Local source discovery remains gated
+           by the single-input auto_link setup above. */
+        if (auto_link || resolve_import_modules)
         {
             for (int j = 0; j < imports.count; j++)
             {
@@ -1193,10 +1348,15 @@ static int kn_compile(int in_count, const char **in_paths, const KnCompileConfig
                 if (kn_std_module_has(m->module))
                     continue;
                 ModulePath *mod = 0;
-                if (use_project_local_map && project_source_mode == KN_PROJ_SOURCE_MODE_REACHABLE_UNITS)
-                    mod = modulemap_find(&local_modmap, m->module);
-                if (!mod)
-                    mod = use_project_local_map ? modulemap_find(&dep_modmap, m->module) : modulemap_find(&modmap, m->module);
+                if (auto_link)
+                {
+                    if (use_project_local_map && project_source_mode == KN_PROJ_SOURCE_MODE_REACHABLE_UNITS)
+                        mod = compile_find_import_module(&local_modmap, m->module);
+                    if (!mod)
+                        mod = use_project_local_map ? compile_find_import_module(&dep_modmap, m->module) : compile_find_import_module(&modmap, m->module);
+                }
+                if (!mod && resolve_import_modules)
+                    mod = compile_find_import_module(&official_modmap, m->module);
                 if (!mod) continue;
                 for (int mp = 0; mp < mod->paths.count; mp++)
                 {
@@ -1207,6 +1367,9 @@ static int kn_compile(int in_count, const char **in_paths, const KnCompileConfig
             }
         }
     }
+    if (resolve_import_modules)
+        compile_resolve_package_symbol_imports(&imports, &metas, &funcs, &classes,
+                                               &interfaces, &structs, &enums, &globals);
     p_parse = now_ms() - t_parse;
     if (kn_diag_error_count() > 0)
     {
@@ -1236,6 +1399,8 @@ static int kn_compile(int in_count, const char **in_paths, const KnCompileConfig
     const KnSource *first_src = sources.count > 0 ? sources.items[0] : 0;
     KnSemaOptions sema_opts;
     compile_init_sema_options(&sema_opts, cfg, need_entry, entry_name);
+    sema_opts.known_standard_modules = known_standard_modules.items;
+    sema_opts.known_standard_module_count = known_standard_modules.count;
     if (kn_sema_check(first_src, &metas, &funcs, &imports, &classes, &interfaces, &structs, &enums, &globals, &sema_opts) != 0)
         return -1;
     if (kn_diag_error_count() > 0)

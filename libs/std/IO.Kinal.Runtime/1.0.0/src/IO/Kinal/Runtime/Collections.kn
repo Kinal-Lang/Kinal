@@ -1,0 +1,741 @@
+Unit IO.Kinal.Runtime.Collections;
+
+Get IO.Kinal.Runtime;
+
+// Collection values are opaque to generated programs. Their storage and all
+// mutation/search policy live here; the native runtime only provides GC-backed
+// raw allocation.
+
+Trusted Function byte* CollectionAllocateRaw(usize size)
+{
+    Return IO.Kinal.Runtime.AllocateRaw(size);
+}
+
+Trusted Function void CollectionMemoryCopy(byte* destination, byte* source, usize count)
+{
+    If (destination == null || source == null || count == [usize](0))
+    {
+        Return;
+    }
+    usize index = [usize](0);
+    While (index < count)
+    {
+        destination[index] = source[index];
+        index = index + [usize](1);
+    }
+}
+
+Trusted Function void CollectionMemoryZero(byte* destination, usize count)
+{
+    If (destination == null)
+    {
+        Return;
+    }
+    usize index = [usize](0);
+    While (index < count)
+    {
+        destination[index] = [byte](0);
+        index = index + [usize](1);
+    }
+}
+
+Trusted Function i32 CollectionStringEqual(string left, string right)
+{
+    If ([char*](left) == [char*](right)) Return [i32](1);
+    If ([char*](left) == null || [char*](right) == null) Return [i32](0);
+    char* leftCharacters = [char*](left);
+    char* rightCharacters = [char*](right);
+    usize index = [usize](0);
+    While (leftCharacters[index] != '\0' && rightCharacters[index] != '\0')
+    {
+        If (leftCharacters[index] != rightCharacters[index]) Return [i32](0);
+        index = index + [usize](1);
+    }
+    Return leftCharacters[index] == rightCharacters[index] ? [i32](1) : [i32](0);
+}
+
+Safe Function usize CollectionWordBytes()
+{
+    Return [usize](8);
+}
+
+Trusted Function u64* ListHeader(byte* list)
+{
+    Return [u64*](list);
+}
+
+Trusted Function u64* ListTags(u64* header)
+{
+    Return header == null || header[2] == [u64](0) ? null :
+        [u64*]([usize](header[2]));
+}
+
+Trusted Function u64* ListPayloads(u64* header)
+{
+    Return header == null || header[3] == [u64](0) ? null :
+        [u64*]([usize](header[3]));
+}
+
+Trusted Function void ListReserve(u64* header, u64 wanted)
+{
+    If (header == null || header[1] >= wanted)
+    {
+        Return;
+    }
+
+    u64 capacity = header[1] == [u64](0) ? [u64](8) : header[1];
+    While (capacity < wanted)
+    {
+        capacity = capacity * [u64](2);
+    }
+
+    usize bytes = [usize](capacity) * CollectionWordBytes();
+    u64* tags = [u64*](CollectionAllocateRaw(bytes));
+    u64* payloads = [u64*](CollectionAllocateRaw(bytes));
+    If (tags == null || payloads == null)
+    {
+        Return;
+    }
+
+    u64 count = header[0];
+    If (count > [u64](0))
+    {
+        usize usedBytes = [usize](count) * CollectionWordBytes();
+        CollectionMemoryCopy([byte*](tags), [byte*](ListTags(header)), usedBytes);
+        CollectionMemoryCopy([byte*](payloads), [byte*](ListPayloads(header)), usedBytes);
+    }
+
+    header[1] = capacity;
+    header[2] = [u64]([usize](tags));
+    header[3] = [u64]([usize](payloads));
+}
+
+Trusted Function byte* ListNew()
+{
+    byte* memory = CollectionAllocateRaw(CollectionWordBytes() * [usize](4));
+    If (memory != null)
+    {
+        CollectionMemoryZero(memory, CollectionWordBytes() * [usize](4));
+    }
+    Return memory;
+}
+
+Trusted Function void ListAdd(byte* list, u64 tag, u64 payload)
+{
+    u64* header = ListHeader(list);
+    If (header == null)
+    {
+        Return;
+    }
+    ListReserve(header, header[0] + [u64](1));
+    u64* tags = ListTags(header);
+    u64* payloads = ListPayloads(header);
+    If (tags == null || payloads == null || header[0] >= header[1])
+    {
+        Return;
+    }
+    tags[header[0]] = tag;
+    payloads[header[0]] = payload;
+    header[0] = header[0] + [u64](1);
+}
+
+Trusted Function void ListInsert(byte* list, i64 index, u64 tag, u64 payload)
+{
+    u64* header = ListHeader(list);
+    If (header == null)
+    {
+        Return;
+    }
+    If (index < [i64](0))
+    {
+        index = [i64](0);
+    }
+    u64 insertion = [u64](index);
+    If (insertion > header[0])
+    {
+        insertion = header[0];
+    }
+    ListReserve(header, header[0] + [u64](1));
+    u64* tags = ListTags(header);
+    u64* payloads = ListPayloads(header);
+    If (tags == null || payloads == null || header[0] >= header[1])
+    {
+        Return;
+    }
+
+    u64 current = header[0];
+    While (current > insertion)
+    {
+        tags[current] = tags[current - [u64](1)];
+        payloads[current] = payloads[current - [u64](1)];
+        current = current - [u64](1);
+    }
+    tags[insertion] = tag;
+    payloads[insertion] = payload;
+    header[0] = header[0] + [u64](1);
+}
+
+Trusted Function void ListGet(byte* list, u64 index, u64* outTag, u64* outPayload)
+{
+    If (outTag != null) outTag[0] = [u64](0);
+    If (outPayload != null) outPayload[0] = [u64](0);
+    u64* header = ListHeader(list);
+    If (header == null || index >= header[0])
+    {
+        Return;
+    }
+    If (outTag != null) outTag[0] = ListTags(header)[index];
+    If (outPayload != null) outPayload[0] = ListPayloads(header)[index];
+}
+
+Trusted Function void ListSet(byte* list, u64 index, u64 tag, u64 payload)
+{
+    u64* header = ListHeader(list);
+    If (header == null || index >= header[0])
+    {
+        Return;
+    }
+    ListTags(header)[index] = tag;
+    ListPayloads(header)[index] = payload;
+}
+
+Trusted Function u64 ListCount(byte* list)
+{
+    u64* header = ListHeader(list);
+    Return header == null ? [u64](0) : header[0];
+}
+
+Trusted Function void ListClear(byte* list)
+{
+    u64* header = ListHeader(list);
+    If (header != null) header[0] = [u64](0);
+}
+
+Trusted Function void ListRemoveAt(byte* list, u64 index,
+                                   u64* outTag, u64* outPayload)
+{
+    ListGet(list, index, outTag, outPayload);
+    u64* header = ListHeader(list);
+    If (header == null || index >= header[0])
+    {
+        Return;
+    }
+    u64* tags = ListTags(header);
+    u64* payloads = ListPayloads(header);
+    u64 current = index + [u64](1);
+    While (current < header[0])
+    {
+        tags[current - [u64](1)] = tags[current];
+        payloads[current - [u64](1)] = payloads[current];
+        current = current + [u64](1);
+    }
+    header[0] = header[0] - [u64](1);
+}
+
+Trusted Function void ListPop(byte* list, u64* outTag, u64* outPayload)
+{
+    If (outTag != null) outTag[0] = [u64](0);
+    If (outPayload != null) outPayload[0] = [u64](0);
+    u64* header = ListHeader(list);
+    If (header == null || header[0] == [u64](0))
+    {
+        Return;
+    }
+    u64 index = header[0] - [u64](1);
+    If (outTag != null) outTag[0] = ListTags(header)[index];
+    If (outPayload != null) outPayload[0] = ListPayloads(header)[index];
+    header[0] = index;
+}
+
+Trusted Function i32 ListIsEmpty(byte* list)
+{
+    Return ListCount(list) == [u64](0) ? [i32](1) : [i32](0);
+}
+
+Trusted Function bool CollectionValueEqual(u64 leftTag, u64 leftPayload,
+                                           u64 rightTag, u64 rightPayload)
+{
+    If (leftTag != rightTag)
+    {
+        Return false;
+    }
+    If (leftTag == [u64](5))
+    {
+        Return CollectionStringEqual(
+            [string]([char*]([usize](leftPayload))),
+            [string]([char*]([usize](rightPayload)))) != [i32](0);
+    }
+    Return leftPayload == rightPayload;
+}
+
+Trusted Function i64 ListIndexOf(byte* list, u64 tag, u64 payload)
+{
+    u64* header = ListHeader(list);
+    If (header == null)
+    {
+        Return [i64](-1);
+    }
+    u64* tags = ListTags(header);
+    u64* payloads = ListPayloads(header);
+    u64 index = [u64](0);
+    While (index < header[0])
+    {
+        If (CollectionValueEqual(tags[index], payloads[index], tag, payload))
+        {
+            Return [i64](index);
+        }
+        index = index + [u64](1);
+    }
+    Return [i64](-1);
+}
+
+Trusted Function i32 ListContains(byte* list, u64 tag, u64 payload)
+{
+    Return ListIndexOf(list, tag, payload) >= [i64](0) ? [i32](1) : [i32](0);
+}
+
+Trusted Function u64 CollectionStringHash(string key)
+{
+    u64 hash = [u64](1469598103934665603);
+    char* characters = [char*](key);
+    If (characters == null)
+    {
+        Return hash;
+    }
+    usize index = [usize](0);
+    While (characters[index] != '\0')
+    {
+        hash = (hash ^ [u64]([byte](characters[index]))) * [u64](1099511628211);
+        index = index + [usize](1);
+    }
+    Return hash;
+}
+
+Trusted Function u64* DictionaryEntry(u64* entries, u64 index)
+{
+    Return &entries[index * [u64](4)];
+}
+
+Trusted Function u64 DictionaryFindSlot(u64* entries, u64 capacity,
+                                        string key, i32* found)
+{
+    If (found != null) found[0] = [i32](0);
+    If (entries == null || capacity == [u64](0))
+    {
+        Return [u64](0);
+    }
+    u64 mask = capacity - [u64](1);
+    u64 start = CollectionStringHash(key) & mask;
+    u64 probe = [u64](0);
+    While (probe < capacity)
+    {
+        u64 index = (start + probe) & mask;
+        u64* entry = DictionaryEntry(entries, index);
+        If (entry[3] == [u64](0))
+        {
+            Return index;
+        }
+        If (CollectionStringEqual(
+            [string]([char*]([usize](entry[0]))), key) != [i32](0))
+        {
+            If (found != null) found[0] = [i32](1);
+            Return index;
+        }
+        probe = probe + [u64](1);
+    }
+    Return [u64](0);
+}
+
+Trusted Function void DictionaryRehash(u64* header, u64 requestedCapacity)
+{
+    If (header == null)
+    {
+        Return;
+    }
+    u64 capacity = requestedCapacity < [u64](8) ? [u64](8) : requestedCapacity;
+    If ((capacity & (capacity - [u64](1))) != [u64](0))
+    {
+        u64 power = [u64](8);
+        While (power < capacity) power = power * [u64](2);
+        capacity = power;
+    }
+
+    usize bytes = [usize](capacity) * CollectionWordBytes() * [usize](4);
+    u64* entries = [u64*](CollectionAllocateRaw(bytes));
+    If (entries == null)
+    {
+        Return;
+    }
+    CollectionMemoryZero([byte*](entries), bytes);
+
+    u64 oldCapacity = header[1];
+    u64* oldEntries = header[2] == [u64](0) ? null :
+        [u64*]([usize](header[2]));
+    u64 index = [u64](0);
+    While (oldEntries != null && index < oldCapacity)
+    {
+        u64* oldEntry = DictionaryEntry(oldEntries, index);
+        If (oldEntry[3] != [u64](0))
+        {
+            i32 found = [i32](0);
+            u64 target = DictionaryFindSlot(entries, capacity,
+                [string]([char*]([usize](oldEntry[0]))), &found);
+            u64* newEntry = DictionaryEntry(entries, target);
+            newEntry[0] = oldEntry[0];
+            newEntry[1] = oldEntry[1];
+            newEntry[2] = oldEntry[2];
+            newEntry[3] = [u64](1);
+        }
+        index = index + [u64](1);
+    }
+
+    header[1] = capacity;
+    header[2] = [u64]([usize](entries));
+}
+
+Trusted Function byte* DictionaryNew()
+{
+    byte* memory = CollectionAllocateRaw(CollectionWordBytes() * [usize](3));
+    If (memory != null)
+    {
+        CollectionMemoryZero(memory, CollectionWordBytes() * [usize](3));
+    }
+    Return memory;
+}
+
+Trusted Function void DictionarySet(byte* dictionary, string key,
+                                    u64 tag, u64 payload)
+{
+    u64* header = [u64*](dictionary);
+    If (header == null || [char*](key) == null)
+    {
+        Return;
+    }
+    If (header[1] == [u64](0))
+        DictionaryRehash(header, [u64](8));
+    ElseIf ((header[0] + [u64](1)) * [u64](10) >= header[1] * [u64](7))
+        DictionaryRehash(header, header[1] * [u64](2));
+    If (header[1] == [u64](0) || header[2] == [u64](0))
+    {
+        Return;
+    }
+
+    u64* entries = [u64*]([usize](header[2]));
+    i32 found = [i32](0);
+    u64 index = DictionaryFindSlot(entries, header[1], key, &found);
+    u64* entry = DictionaryEntry(entries, index);
+    If (found == [i32](0))
+    {
+        entry[0] = [u64]([usize]([char*](key)));
+        entry[3] = [u64](1);
+        header[0] = header[0] + [u64](1);
+    }
+    entry[1] = tag;
+    entry[2] = payload;
+}
+
+Trusted Function void DictionaryGet(byte* dictionary, string key,
+                                    u64* outTag, u64* outPayload)
+{
+    If (outTag != null) outTag[0] = [u64](0);
+    If (outPayload != null) outPayload[0] = [u64](0);
+    u64* header = [u64*](dictionary);
+    If (header == null || [char*](key) == null || header[1] == [u64](0) ||
+        header[2] == [u64](0))
+    {
+        Return;
+    }
+    u64* entries = [u64*]([usize](header[2]));
+    i32 found = [i32](0);
+    u64 index = DictionaryFindSlot(entries, header[1], key, &found);
+    If (found == [i32](0))
+    {
+        Return;
+    }
+    u64* entry = DictionaryEntry(entries, index);
+    If (outTag != null) outTag[0] = entry[1];
+    If (outPayload != null) outPayload[0] = entry[2];
+}
+
+Trusted Function i32 DictionaryContains(byte* dictionary, string key)
+{
+    u64* header = [u64*](dictionary);
+    If (header == null || [char*](key) == null || header[1] == [u64](0) ||
+        header[2] == [u64](0))
+    {
+        Return [i32](0);
+    }
+    i32 found = [i32](0);
+    DictionaryFindSlot([u64*]([usize](header[2])), header[1], key, &found);
+    Return found;
+}
+
+Trusted Function u64 DictionaryCount(byte* dictionary)
+{
+    u64* header = [u64*](dictionary);
+    Return header == null ? [u64](0) : header[0];
+}
+
+Trusted Function i32 DictionaryRemove(byte* dictionary, string key)
+{
+    u64* header = [u64*](dictionary);
+    If (header == null || [char*](key) == null || header[1] == [u64](0) ||
+        header[2] == [u64](0))
+    {
+        Return [i32](0);
+    }
+    u64* entries = [u64*]([usize](header[2]));
+    i32 found = [i32](0);
+    u64 index = DictionaryFindSlot(entries, header[1], key, &found);
+    If (found == [i32](0))
+    {
+        Return [i32](0);
+    }
+    u64* entry = DictionaryEntry(entries, index);
+    entry[0] = [u64](0);
+    entry[1] = [u64](0);
+    entry[2] = [u64](0);
+    entry[3] = [u64](0);
+    If (header[0] > [u64](0)) header[0] = header[0] - [u64](1);
+    DictionaryRehash(header, header[1]);
+    Return [i32](1);
+}
+
+Trusted Function i32 DictionaryIsEmpty(byte* dictionary)
+{
+    Return DictionaryCount(dictionary) == [u64](0) ? [i32](1) : [i32](0);
+}
+
+Trusted Function byte* DictionaryKeys(byte* dictionary)
+{
+    byte* list = ListNew();
+    u64* header = [u64*](dictionary);
+    If (list == null || header == null || header[2] == [u64](0))
+    {
+        Return list;
+    }
+    u64* entries = [u64*]([usize](header[2]));
+    u64 index = [u64](0);
+    While (index < header[1])
+    {
+        u64* entry = DictionaryEntry(entries, index);
+        If (entry[3] != [u64](0)) ListAdd(list, [u64](5), entry[0]);
+        index = index + [u64](1);
+    }
+    Return list;
+}
+
+Trusted Function byte* DictionaryValues(byte* dictionary)
+{
+    byte* list = ListNew();
+    u64* header = [u64*](dictionary);
+    If (list == null || header == null || header[2] == [u64](0))
+    {
+        Return list;
+    }
+    u64* entries = [u64*]([usize](header[2]));
+    u64 index = [u64](0);
+    While (index < header[1])
+    {
+        u64* entry = DictionaryEntry(entries, index);
+        If (entry[3] != [u64](0)) ListAdd(list, entry[1], entry[2]);
+        index = index + [u64](1);
+    }
+    Return list;
+}
+
+Trusted Function u64* SetEntry(u64* entries, u64 index)
+{
+    Return &entries[index * [u64](2)];
+}
+
+Trusted Function u64 SetFindSlot(u64* entries, u64 capacity,
+                                 string key, i32* found)
+{
+    If (found != null) found[0] = [i32](0);
+    If (entries == null || capacity == [u64](0))
+    {
+        Return [u64](0);
+    }
+    u64 mask = capacity - [u64](1);
+    u64 start = CollectionStringHash(key) & mask;
+    u64 probe = [u64](0);
+    While (probe < capacity)
+    {
+        u64 index = (start + probe) & mask;
+        u64* entry = SetEntry(entries, index);
+        If (entry[1] == [u64](0))
+        {
+            Return index;
+        }
+        If (CollectionStringEqual(
+            [string]([char*]([usize](entry[0]))), key) != [i32](0))
+        {
+            If (found != null) found[0] = [i32](1);
+            Return index;
+        }
+        probe = probe + [u64](1);
+    }
+    Return [u64](0);
+}
+
+Trusted Function void SetRehash(u64* header, u64 requestedCapacity)
+{
+    If (header == null)
+    {
+        Return;
+    }
+    u64 capacity = requestedCapacity < [u64](8) ? [u64](8) : requestedCapacity;
+    If ((capacity & (capacity - [u64](1))) != [u64](0))
+    {
+        u64 power = [u64](8);
+        While (power < capacity) power = power * [u64](2);
+        capacity = power;
+    }
+    usize bytes = [usize](capacity) * CollectionWordBytes() * [usize](2);
+    u64* entries = [u64*](CollectionAllocateRaw(bytes));
+    If (entries == null)
+    {
+        Return;
+    }
+    CollectionMemoryZero([byte*](entries), bytes);
+
+    u64 oldCapacity = header[1];
+    u64* oldEntries = header[2] == [u64](0) ? null :
+        [u64*]([usize](header[2]));
+    u64 index = [u64](0);
+    While (oldEntries != null && index < oldCapacity)
+    {
+        u64* oldEntry = SetEntry(oldEntries, index);
+        If (oldEntry[1] != [u64](0))
+        {
+            i32 found = [i32](0);
+            u64 target = SetFindSlot(entries, capacity,
+                [string]([char*]([usize](oldEntry[0]))), &found);
+            u64* newEntry = SetEntry(entries, target);
+            newEntry[0] = oldEntry[0];
+            newEntry[1] = [u64](1);
+        }
+        index = index + [u64](1);
+    }
+    header[1] = capacity;
+    header[2] = [u64]([usize](entries));
+}
+
+Trusted Function byte* SetNew()
+{
+    byte* memory = CollectionAllocateRaw(CollectionWordBytes() * [usize](3));
+    If (memory != null)
+    {
+        CollectionMemoryZero(memory, CollectionWordBytes() * [usize](3));
+    }
+    Return memory;
+}
+
+Trusted Function void SetAdd(byte* set, string key)
+{
+    u64* header = [u64*](set);
+    If (header == null || [char*](key) == null)
+    {
+        Return;
+    }
+    If (header[1] == [u64](0))
+        SetRehash(header, [u64](8));
+    ElseIf ((header[0] + [u64](1)) * [u64](10) >= header[1] * [u64](7))
+        SetRehash(header, header[1] * [u64](2));
+    If (header[1] == [u64](0) || header[2] == [u64](0))
+    {
+        Return;
+    }
+    u64* entries = [u64*]([usize](header[2]));
+    i32 found = [i32](0);
+    u64 index = SetFindSlot(entries, header[1], key, &found);
+    If (found == [i32](0))
+    {
+        u64* entry = SetEntry(entries, index);
+        entry[0] = [u64]([usize]([char*](key)));
+        entry[1] = [u64](1);
+        header[0] = header[0] + [u64](1);
+    }
+}
+
+Trusted Function i32 SetContains(byte* set, string key)
+{
+    u64* header = [u64*](set);
+    If (header == null || [char*](key) == null || header[1] == [u64](0) ||
+        header[2] == [u64](0))
+    {
+        Return [i32](0);
+    }
+    i32 found = [i32](0);
+    SetFindSlot([u64*]([usize](header[2])), header[1], key, &found);
+    Return found;
+}
+
+Trusted Function u64 SetCount(byte* set)
+{
+    u64* header = [u64*](set);
+    Return header == null ? [u64](0) : header[0];
+}
+
+Trusted Function i32 SetRemove(byte* set, string key)
+{
+    u64* header = [u64*](set);
+    If (header == null || [char*](key) == null || header[1] == [u64](0) ||
+        header[2] == [u64](0))
+    {
+        Return [i32](0);
+    }
+    u64* entries = [u64*]([usize](header[2]));
+    i32 found = [i32](0);
+    u64 index = SetFindSlot(entries, header[1], key, &found);
+    If (found == [i32](0))
+    {
+        Return [i32](0);
+    }
+    u64* entry = SetEntry(entries, index);
+    entry[0] = [u64](0);
+    entry[1] = [u64](0);
+    If (header[0] > [u64](0)) header[0] = header[0] - [u64](1);
+    SetRehash(header, header[1]);
+    Return [i32](1);
+}
+
+Trusted Function void SetClear(byte* set)
+{
+    u64* header = [u64*](set);
+    If (header == null)
+    {
+        Return;
+    }
+    header[0] = [u64](0);
+    If (header[1] > [u64](0) && header[2] != [u64](0))
+    {
+        CollectionMemoryZero([byte*]([usize](header[2])),
+            [usize](header[1]) * CollectionWordBytes() * [usize](2));
+    }
+}
+
+Trusted Function i32 SetIsEmpty(byte* set)
+{
+    Return SetCount(set) == [u64](0) ? [i32](1) : [i32](0);
+}
+
+Trusted Function byte* SetValues(byte* set)
+{
+    byte* list = ListNew();
+    u64* header = [u64*](set);
+    If (list == null || header == null || header[2] == [u64](0))
+    {
+        Return list;
+    }
+    u64* entries = [u64*]([usize](header[2]));
+    u64 index = [u64](0);
+    While (index < header[1])
+    {
+        u64* entry = SetEntry(entries, index);
+        If (entry[1] != [u64](0)) ListAdd(list, [u64](5), entry[0]);
+        index = index + [u64](1);
+    }
+    Return list;
+}

@@ -1,0 +1,9 @@
+{
+  "kind": "package",
+  "name": "IO.Kinal.Runtime",
+  "version": "1.0.0",
+  "summary": "Internal Kinal runtime services shared by hosted standard packages.",
+  "source_root": "src",
+  "klib": "lib/IO.Kinal.Runtime.klib",
+  "entry": "src/IO/Kinal/Runtime/Core.kn"
+}

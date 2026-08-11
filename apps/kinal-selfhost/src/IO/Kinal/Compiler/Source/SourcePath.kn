@@ -1,0 +1,15 @@
+Unit IO.Kinal.Compiler.Source.SourcePath;
+
+Get IO.Path;
+
+// Source identity is always absolute and normalized.  This prevents a project
+// path and a filesystem-discovered path from naming the same file twice.
+Safe Function string Canonical(string path)
+{
+    string normalized = IO.Path.Normalize(path);
+    If (IO.Path.IsAbsolute(normalized))
+    {
+        Return normalized;
+    }
+    Return IO.Path.Normalize(IO.Path.Combine(IO.Path.CurrentDirectory(), normalized));
+}
