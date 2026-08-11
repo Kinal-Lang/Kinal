@@ -24,7 +24,7 @@ Trusted Function u64* State()
     Return state;
 }
 
-Trusted Function void Set(byte* error)
+Trusted Function void SetCurrent(byte* error)
 {
     u64* state = State();
     state[CurrentIndex()] = [u64]([usize](error));
@@ -38,7 +38,7 @@ Trusted Function void SetWithTrace(byte* error, string trace)
     state[TraceIndex()] = [u64]([usize]([char*](trace == null ? "" : trace)));
 }
 
-Trusted Function byte* Get()
+Trusted Function byte* Current()
 {
     Return [byte*]([usize](State()[CurrentIndex()]));
 }

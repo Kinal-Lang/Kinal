@@ -5015,7 +5015,7 @@ Class NativeBackend
             This.Types0(), This.Unique("previous_exception"));
         This.CallKinalRuntime("IO.Kinal.Runtime.ErrorLinkInner", 2,
             This.Types2(error, previous), "");
-        This.CallKinalRuntime("IO.Kinal.Runtime.Exception.Set", 1,
+        This.CallKinalRuntime("IO.Kinal.Runtime.Exception.SetCurrent", 1,
             This.Types1(error), "");
         This.RouteException(context, error);
     }
@@ -5038,7 +5038,7 @@ Class NativeBackend
         This.Module.ConditionalBranch(hasException, errorBlock, okBlock);
 
         This.Module.PositionAtEnd(errorBlock);
-        byte* error = This.CallKinalRuntime("IO.Kinal.Runtime.Exception.Get", 0,
+        byte* error = This.CallKinalRuntime("IO.Kinal.Runtime.Exception.Current", 0,
             This.Types0(), This.Unique("exception_current"));
         This.RouteException(context, error);
 
@@ -5739,7 +5739,7 @@ Class NativeBackend
         This.Module.ConditionalBranch(hasException, failedBlock, completedBlock);
 
         This.Module.PositionAtEnd(failedBlock);
-        byte* error = This.CallKinalRuntime("IO.Kinal.Runtime.Exception.Get", 0,
+        byte* error = This.CallKinalRuntime("IO.Kinal.Runtime.Exception.Current", 0,
             This.Types0(), This.Unique("async_error"));
         byte* trace = This.CallKinalRuntime("IO.Kinal.Runtime.Exception.Trace", 0,
             This.Types0(), This.Unique("async_trace"));
@@ -5919,7 +5919,7 @@ Class NativeBackend
         byte* normalEnd = This.Module.CurrentBlock();
 
         This.Module.PositionAtEnd(errorBlock);
-        byte* error = This.CallKinalRuntime("IO.Kinal.Runtime.Exception.Get", 0,
+        byte* error = This.CallKinalRuntime("IO.Kinal.Runtime.Exception.Current", 0,
             This.Types0(), "entry_exception_value");
         byte* message = This.CallKinalRuntime("IO.Kinal.Runtime.ErrorMessage", 1,
             This.Types1(error), "entry_exception_message");

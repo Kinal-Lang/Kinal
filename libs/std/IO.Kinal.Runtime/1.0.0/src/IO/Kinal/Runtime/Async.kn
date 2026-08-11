@@ -2,46 +2,7 @@ Unit IO.Kinal.Runtime.Async;
 
 Get IO.Kinal.Runtime;
 Get IO.Kinal.Runtime.Exception;
-
-// Threads, atomics, sleeps, and process handles are platform mechanisms.  The
-// task layout, completion protocol, fault propagation, and waiting policy are
-// implemented below in Kinal.
-[LinkName("kn_native_task_spawn")]
-Extern Unsafe Function i32 NativeTaskSpawn(byte* entry,
-                                             byte* environment,
-                                             byte* task) By C;
-
-[LinkName("kn_native_atomic_compare_exchange_i32")]
-Extern Unsafe Function i32 NativeCompareExchange(i32* address,
-                                                   i32 expected,
-                                                   i32 desired) By C;
-
-[LinkName("kn_native_atomic_load_i32")]
-Extern Unsafe Function i32 NativeAtomicLoad(i32* address) By C;
-
-[LinkName("kn_native_atomic_store_i32")]
-Extern Unsafe Function void NativeAtomicStore(i32* address, i32 value) By C;
-
-[LinkName("kn_native_task_wait_idle")]
-Extern Unsafe Function void NativeTaskWaitIdle() By C;
-
-[LinkName("kn_native_task_yield_now")]
-Extern Unsafe Function void NativeTaskYieldNow() By C;
-
-[LinkName("kn_native_process_spawn")]
-Extern Unsafe Function byte* NativeProcessSpawn(string commandLine) By C;
-
-[LinkName("kn_native_process_is_completed")]
-Extern Unsafe Function i32 NativeProcessIsCompleted(byte* handle) By C;
-
-[LinkName("kn_native_process_wait")]
-Extern Unsafe Function i32 NativeProcessWait(byte* handle, i64 timeoutMilliseconds) By C;
-
-[LinkName("kn_native_process_exit_code")]
-Extern Unsafe Function i32 NativeProcessExitCode(byte* handle) By C;
-
-[LinkName("kn_native_process_close")]
-Extern Unsafe Function i32 NativeProcessClose(byte* handle) By C;
+Get IO.Kinal.Runtime.Native;
 
 Safe Function usize TaskBytes()
 {
@@ -72,7 +33,7 @@ Trusted Function byte* TaskSpawn(byte* entry, byte* environment)
     {
         Return null;
     }
-    If (NativeTaskSpawn(entry, environment, task) == [i32](0))
+    If (IO.Kinal.Runtime.Native.TaskSpawn(entry, environment, task) == [i32](0))
     {
         Return null;
     }
@@ -82,7 +43,8 @@ Trusted Function byte* TaskSpawn(byte* entry, byte* environment)
 Trusted Function void TaskComplete(byte* task, u64 tag, u64 payload)
 {
     If (task == null ||
-        NativeCompareExchange(TaskDone(task), [i32](0), [i32](2)) == [i32](0))
+        IO.Kinal.Runtime.Native.AtomicCompareExchangeI32(
+            TaskDone(task), [i32](0), [i32](2)) == [i32](0))
     {
         Return;
     }
@@ -92,13 +54,14 @@ Trusted Function void TaskComplete(byte* task, u64 tag, u64 payload)
     words[3] = tag;
     words[4] = payload;
     words[5] = [u64](0);
-    NativeAtomicStore(TaskDone(task), [i32](1));
+    IO.Kinal.Runtime.Native.AtomicStoreI32(TaskDone(task), [i32](1));
 }
 
 Trusted Function void TaskFail(byte* task, byte* error, string trace)
 {
     If (task == null ||
-        NativeCompareExchange(TaskDone(task), [i32](0), [i32](2)) == [i32](0))
+        IO.Kinal.Runtime.Native.AtomicCompareExchangeI32(
+            TaskDone(task), [i32](0), [i32](2)) == [i32](0))
     {
         Return;
     }
@@ -108,7 +71,7 @@ Trusted Function void TaskFail(byte* task, byte* error, string trace)
     words[3] = [u64](0);
     words[4] = [u64](0);
     words[5] = [u64]([usize]([char*](trace == null ? "" : trace)));
-    NativeAtomicStore(TaskDone(task), [i32](1));
+    IO.Kinal.Runtime.Native.AtomicStoreI32(TaskDone(task), [i32](1));
 }
 
 Trusted Function void TaskRun(byte* task, u64* outTag, u64* outPayload)
@@ -120,9 +83,9 @@ Trusted Function void TaskRun(byte* task, u64* outTag, u64* outPayload)
         Return;
     }
 
-    While (NativeAtomicLoad(TaskDone(task)) != [i32](1))
+    While (IO.Kinal.Runtime.Native.AtomicLoadI32(TaskDone(task)) != [i32](1))
     {
-        NativeTaskWaitIdle();
+        IO.Kinal.Runtime.Native.TaskWaitIdle();
     }
 
     u64* words = TaskWords(task);
@@ -142,14 +105,15 @@ Trusted Function void SleepWorker(byte* environment, byte* task)
     If (environment != null)
     {
         i32 milliseconds = ([i32*](environment))[0];
-        If (milliseconds > [i32](0)) IO.Kinal.Runtime.NativeSleep([int](milliseconds));
+        If (milliseconds > [i32](0))
+            IO.Kinal.Runtime.Native.SleepMilliseconds([int](milliseconds));
     }
     TaskComplete(task, [u64](0), [u64](0));
 }
 
 Trusted Function void YieldWorker(byte* environment, byte* task)
 {
-    NativeTaskYieldNow();
+    IO.Kinal.Runtime.Native.TaskYield();
     TaskComplete(task, [u64](0), [u64](0));
 }
 
@@ -168,25 +132,30 @@ Trusted Function byte* TaskYield()
 
 Trusted Function byte* ProcessSpawn(string commandLine)
 {
-    Return NativeProcessSpawn(commandLine == null ? "" : commandLine);
+    Return IO.Kinal.Runtime.Native.ProcessSpawn(
+        commandLine == null ? "" : commandLine);
 }
 
 Trusted Function i32 ProcessIsCompleted(byte* handle)
 {
-    Return handle == null ? [i32](1) : NativeProcessIsCompleted(handle);
+    Return handle == null ? [i32](1) :
+        IO.Kinal.Runtime.Native.ProcessIsCompleted(handle);
 }
 
 Trusted Function i32 ProcessWait(byte* handle, i64 timeoutMilliseconds)
 {
-    Return handle == null ? [i32](0) : NativeProcessWait(handle, timeoutMilliseconds);
+    Return handle == null ? [i32](0) :
+        IO.Kinal.Runtime.Native.ProcessWait(handle, timeoutMilliseconds);
 }
 
 Trusted Function i32 ProcessExitCode(byte* handle)
 {
-    Return handle == null ? [i32](-1) : NativeProcessExitCode(handle);
+    Return handle == null ? [i32](-1) :
+        IO.Kinal.Runtime.Native.ProcessExitCode(handle);
 }
 
 Trusted Function i32 ProcessClose(byte* handle)
 {
-    Return handle == null ? [i32](0) : NativeProcessClose(handle);
+    Return handle == null ? [i32](0) :
+        IO.Kinal.Runtime.Native.ProcessClose(handle);
 }

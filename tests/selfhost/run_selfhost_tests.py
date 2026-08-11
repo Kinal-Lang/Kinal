@@ -53,6 +53,16 @@ def main() -> int:
     parser.add_argument("--compiler", type=Path, required=True)
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument("--out-dir", type=Path, required=True)
+    parser.add_argument(
+        "--stage0-role",
+        choices=("reference", "bootstrap"),
+        default="reference",
+        help=(
+            "Use 'reference' for a stage0 built from this checkout. "
+            "Use 'bootstrap' for an older published compiler whose diagnostic "
+            "wording is not the current behavior baseline."
+        ),
+    )
     args = parser.parse_args()
 
     stage0 = args.stage0.resolve()
@@ -2342,7 +2352,11 @@ def main() -> int:
     require(kinalvm_disasm.returncode == 0, "self-built KinalVM disassembly failed", kinalvm_disasm)
     require(
         "LoopIntLtInc" in kinalvm_disasm.stdout
-        and "IO.Type.any.ToString" in kinalvm_disasm.stdout,
+        and (
+            "IO.Type.any.ToString" in kinalvm_disasm.stdout
+            or "IntToString" in kinalvm_disasm.stdout
+        )
+        and "IO.Console.PrintLine" in kinalvm_disasm.stdout,
         "self-built KinalVM disassembly is incomplete",
         kinalvm_disasm,
     )
@@ -2473,24 +2487,23 @@ def main() -> int:
     })
 
     manifest_diagnostics_report = out_dir / "manifest-diagnostics.json"
-    manifest_diagnostics = run(
-        [
-            sys.executable,
-            str(root / "tests" / "selfhost" / "audit_manifest_diagnostics.py"),
-            "--compiler",
-            str(compiler),
-            "--stage0",
-            str(stage0),
-            "--root",
-            str(root),
-            "--baseline",
-            str(root / "tests" / "selfhost" / "manifest_diagnostics_baseline.json"),
-            "--output",
-            str(manifest_diagnostics_report),
-            "--all-stages",
-        ],
-        cwd=root,
-    )
+    manifest_diagnostics_command = [
+        sys.executable,
+        str(root / "tests" / "selfhost" / "audit_manifest_diagnostics.py"),
+        "--compiler",
+        str(compiler),
+        "--stage0",
+        str(stage0),
+        "--root",
+        str(root),
+        "--baseline",
+        str(root / "tests" / "selfhost" / "manifest_diagnostics_baseline.json"),
+        "--output",
+        str(manifest_diagnostics_report),
+    ]
+    if args.stage0_role == "reference":
+        manifest_diagnostics_command.append("--all-stages")
+    manifest_diagnostics = run(manifest_diagnostics_command, cwd=root)
     require(manifest_diagnostics.returncode == 0,
             "stage1 manifest diagnostic audit failed", manifest_diagnostics)
     manifest_diagnostics_data = json.loads(

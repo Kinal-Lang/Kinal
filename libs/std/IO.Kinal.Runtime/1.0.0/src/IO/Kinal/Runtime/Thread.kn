@@ -1,11 +1,8 @@
 Unit IO.Kinal.Runtime.Thread;
 
-// The host owns only the physical thread-local storage.  Its layout and every
-// value stored in it are defined by the Kinal runtime.
-[LinkName("kn_native_runtime_thread_storage")]
-Extern Unsafe Function byte* NativeStorage() By C;
+Get IO.Kinal.Runtime.Native;
 
 Trusted Function u64* State()
 {
-    Return [u64*](NativeStorage());
+    Return [u64*](IO.Kinal.Runtime.Native.ThreadStorage());
 }

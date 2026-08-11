@@ -3,6 +3,7 @@ Unit IO.Kinal.Runtime;
 Get IO.Type.any;
 Get IO.Target;
 Get IO.Kinal.Runtime.GarbageCollector;
+Get IO.Kinal.Runtime.Native;
 
 // KNC selects the KinalVM implementation of these private runtime operations.
 // Native compilation continues to use the Kinal function body.
@@ -21,85 +22,38 @@ Meta KncUnsupported(string reason)
     Keep @compile;
 }
 
-// Runtime policy lives in Kinal.  Native entry points in this unit are limited
-// to allocation and numeric conversion services that require the host ABI.
-
 Trusted Function byte* AllocateRaw(usize size)
 {
     Return IO.Kinal.Runtime.GarbageCollector.Allocate(size);
 }
 
-[LinkName("kn_native_format_f64")]
-Extern Unsafe Function char* NativeFormatF64(f64 value) By C;
-
-[LinkName("kn_native_parse_f32")]
-Extern Unsafe Function f32 NativeParseF32(string text) By C;
-
-[LinkName("kn_native_parse_f64")]
-Extern Unsafe Function f64 NativeParseF64(string text) By C;
-
-[LinkName("kn_native_executable_path")]
-Extern Unsafe Function char* NativeExecutablePath() By C;
-
-[LinkName("kn_native_process_run")]
-Extern Unsafe Function int NativeProcessRun(string executable,
-                                             string[] arguments,
-                                             int argumentCount) By C;
-
-[LinkName("kn_native_console_write")]
-Extern Unsafe Function void NativeConsoleWrite(string text) By C;
-
-[LinkName("kn_native_console_read_line")]
-Extern Unsafe Function char* NativeConsoleReadLine() By C;
-
-[LinkName("kn_native_heap_free")]
-Extern Unsafe Function void NativeRelease(byte* memory) By C;
-
-[LinkName("kn_native_memory_copy")]
-Extern Unsafe Function void NativeMemoryCopy(byte* destination, byte* source,
-                                              usize count) By C;
-
-[LinkName("kn_native_memory_set")]
-Extern Unsafe Function void NativeMemorySet(byte* destination, byte value,
-                                             usize count) By C;
-
-[LinkName("kn_native_memory_compare")]
-Extern Unsafe Function i32 NativeMemoryCompare(byte* left, byte* right,
-                                                usize count) By C;
-
-[LinkName("kn_native_system_get_symbol")]
-Extern Unsafe Function byte* NativeSystemGetSymbol(byte* library,
-                                                    string name) By C;
-
-[LinkName("kn_native_task_sleep_ms")]
-Extern Unsafe Function void NativeSleep(int milliseconds) By C;
-
 Trusted Function string ExecutablePath()
 {
-    Return AdoptNativeText(NativeExecutablePath());
+    Return AdoptNativeText(IO.Kinal.Runtime.Native.ExecutablePath());
 }
 
 Trusted Function int ProcessRun(string executable, string[] arguments)
 {
-    Return NativeProcessRun(executable, arguments, arguments.Length());
+    Return IO.Kinal.Runtime.Native.ProcessRun(executable, arguments,
+                                               arguments.Length());
 }
 
 [KncIntrinsic(1)]
 Trusted Function void ConsoleWrite(string text)
 {
-    NativeConsoleWrite(text == null ? "" : text);
+    IO.Kinal.Runtime.Native.ConsoleWrite(text == null ? "" : text);
 }
 
 Trusted Function void ConsoleWriteLine(string text)
 {
-    NativeConsoleWrite(text == null ? "" : text);
-    NativeConsoleWrite("\n");
+    IO.Kinal.Runtime.Native.ConsoleWrite(text == null ? "" : text);
+    IO.Kinal.Runtime.Native.ConsoleWrite("\n");
 }
 
 [KncIntrinsic(2)]
 Trusted Function string ConsoleReadLine()
 {
-    Return AdoptNativeText(NativeConsoleReadLine());
+    Return AdoptNativeText(IO.Kinal.Runtime.Native.ConsoleReadLine());
 }
 
 Trusted Function char* AllocateText(int length)
@@ -121,7 +75,8 @@ Trusted Function string CopyNativeText(char* text)
     While (text[length] != '\0') length = length + 1;
     char* result = AllocateText(length);
     If (result == null) Return "";
-    NativeMemoryCopy([byte*](result), [byte*](text), [usize](length));
+    IO.Kinal.Runtime.Native.MemoryCopy([byte*](result), [byte*](text),
+                                       [usize](length));
     Return [string](result);
 }
 
@@ -129,7 +84,7 @@ Trusted Function string AdoptNativeText(char* text)
 {
     If (text == null) Return "";
     string result = CopyNativeText(text);
-    NativeRelease([byte*](text));
+    IO.Kinal.Runtime.Native.HeapFree([byte*](text));
     Return result;
 }
 
@@ -150,7 +105,7 @@ Trusted Function string[] ArgumentsFromArgv(i32 argc, char** argv)
 
 Trusted Function byte* SystemGetSymbol(byte* library, string name)
 {
-    Return NativeSystemGetSymbol(library, name);
+    Return IO.Kinal.Runtime.Native.ResolveSymbol(library, name);
 }
 
 Trusted Function int StringLength(string text)
@@ -337,7 +292,7 @@ Trusted Function string Int64ToString(i64 value)
 
 Trusted Function string Float64ToString(f64 value)
 {
-    Return AdoptNativeText(NativeFormatF64(value));
+    Return AdoptNativeText(IO.Kinal.Runtime.Native.FormatFloat64(value));
 }
 
 Trusted Function string CharToString(char value)
@@ -478,12 +433,12 @@ Trusted Function i64 StringToInt64(string text)
 
 Trusted Function f32 StringToFloat32(string text)
 {
-    Return NativeParseF32(text);
+    Return IO.Kinal.Runtime.Native.ParseFloat32(text);
 }
 
 Trusted Function f64 StringToFloat64(string text)
 {
-    Return NativeParseF64(text);
+    Return IO.Kinal.Runtime.Native.ParseFloat64(text);
 }
 
 Trusted Function i32 StringToBool(string text)
@@ -503,12 +458,12 @@ Trusted Function char StringToChar(string text)
 
 Trusted Function void MemoryCopy(byte* destination, byte* source, usize count)
 {
-    NativeMemoryCopy(destination, source, count);
+    IO.Kinal.Runtime.Native.MemoryCopy(destination, source, count);
 }
 
 Trusted Function void MemorySet(byte* destination, byte value, usize count)
 {
-    NativeMemorySet(destination, value, count);
+    IO.Kinal.Runtime.Native.MemoryFill(destination, value, count);
 }
 
 Trusted Function void MemoryZero(byte* destination, usize count)
@@ -518,7 +473,7 @@ Trusted Function void MemoryZero(byte* destination, usize count)
 
 Trusted Function i32 MemoryCompare(byte* left, byte* right, usize count)
 {
-    Return NativeMemoryCompare(left, right, count);
+    Return IO.Kinal.Runtime.Native.MemoryCompare(left, right, count);
 }
 
 Trusted Function string TraceFormat(string trace)

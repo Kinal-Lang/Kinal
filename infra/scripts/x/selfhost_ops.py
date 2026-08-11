@@ -17,6 +17,7 @@ from .context import (
     stage_dir,
 )
 from .llvm import detect_llvm_dir, llvm_bin_dir
+from .runtime_build import build_runtime_for_host
 from .util import run
 
 
@@ -215,9 +216,24 @@ def freeze_selfhost_stage0_bundle(bundle_dir: Path) -> Path:
     return frozen
 
 
+def refresh_selfhost_stage0_runtime(stage0: Path) -> None:
+    """Build the runtime ABI expected by the current Kinal selfhost sources.
+
+    A published stage0 compiler can predate native leaf symbols used by the
+    current Kinal runtime package.  Keep the released compiler executable, but
+    replace its adjacent host runtime objects with objects built from this
+    checkout.  Runtime policy remains in Kinal; the C object supplies only the
+    startup/platform ABI and legacy symbols required while stage0 is frozen.
+    """
+    llvm_dir = detect_llvm_dir()
+    build_runtime_for_host(stage0.parent / "runtime", llvm_bin_dir(llvm_dir))
+
+
 def prepare_selfhost_stage0(*, clean_first: bool, cmd_dist, bundle_dir: Path | None = None) -> Path:
     if bundle_dir is not None:
-        return freeze_selfhost_stage0_bundle(bundle_dir)
+        stage0 = freeze_selfhost_stage0_bundle(bundle_dir)
+        refresh_selfhost_stage0_runtime(stage0)
+        return stage0
 
     # Selfhosting is a compiler correctness boundary. Rebuild before freezing so
     # stage0 never carries stale runtime/compiler objects from an older bundle.

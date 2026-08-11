@@ -341,12 +341,17 @@ jobs:
         if: inputs.validation == 'bootstrap-and-regressions'
         working-directory: Kinal
         shell: bash
-        run: >-
-          python tests/selfhost/run_selfhost_tests.py
-          --stage0 out/selfhost/stage0-host/kinal${{ matrix.exe_suffix }}
-          --compiler out/selfhost/stage1/kinal-selfhost${{ matrix.exe_suffix }}
-          --root .
-          --out-dir out/selfhost/tests
+        run: |
+          stage0_role=reference
+          if [[ "${{ inputs.stage0_source }}" == "latest-release" ]]; then
+            stage0_role=bootstrap
+          fi
+          python tests/selfhost/run_selfhost_tests.py \
+            --stage0 out/selfhost/stage0-host/kinal${{ matrix.exe_suffix }} \
+            --compiler out/selfhost/stage1/kinal-selfhost${{ matrix.exe_suffix }} \
+            --root . \
+            --out-dir out/selfhost/tests \
+            --stage0-role "$stage0_role"
 
       - name: Write run summary
         if: always()

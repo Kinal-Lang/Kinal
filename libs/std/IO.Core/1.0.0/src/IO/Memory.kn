@@ -1,26 +1,53 @@
 Unit IO.Memory;
 
-Get IO.Kinal.Runtime;
-
-// Memory algorithms are Kinal runtime services.  This public unit is the
-// stable standard-library surface and contains no compiler-specific lowering.
+// These byte-wise operations intentionally stay self-contained: IO.Memory is
+// part of the freestanding core and must not pull in the hosted GC/runtime.
 
 Trusted Function void Copy(byte* destination, byte* source, usize count)
 {
-    IO.Kinal.Runtime.MemoryCopy(destination, source, count);
+    If (destination == null || source == null) Return;
+    usize index = [usize](0);
+    While (index < count)
+    {
+        destination[index] = source[index];
+        index = index + [usize](1);
+    }
 }
 
 Trusted Function void Set(byte* destination, byte value, usize count)
 {
-    IO.Kinal.Runtime.MemorySet(destination, value, count);
+    If (destination == null) Return;
+    usize index = [usize](0);
+    While (index < count)
+    {
+        destination[index] = value;
+        index = index + [usize](1);
+    }
 }
 
 Trusted Function void Zero(byte* destination, usize count)
 {
-    IO.Kinal.Runtime.MemoryZero(destination, count);
+    If (destination == null) Return;
+    usize index = [usize](0);
+    While (index < count)
+    {
+        destination[index] = [byte](0);
+        index = index + [usize](1);
+    }
 }
 
 Trusted Function int Compare(byte* left, byte* right, usize count)
 {
-    Return [int](IO.Kinal.Runtime.MemoryCompare(left, right, count));
+    If (left == right || count == [usize](0)) Return 0;
+    If (left == null) Return -1;
+    If (right == null) Return 1;
+
+    usize index = [usize](0);
+    While (index < count)
+    {
+        If (left[index] < right[index]) Return -1;
+        If (left[index] > right[index]) Return 1;
+        index = index + [usize](1);
+    }
+    Return 0;
 }
