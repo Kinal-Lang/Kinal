@@ -138,11 +138,14 @@ def write_selfhost_clang_wrapper(stage1_root: Path) -> None:
     wrapper.write_text(f"#!/bin/sh\nexec '{escaped}' \"$@\"\n", encoding="utf-8")
     wrapper.chmod(0o755)
 
-    linker_name = "ld64.lld" if host_tag().startswith("macos-") else "ld.lld"
-    source = llvm_bin_dir(llvm_dir) / linker_name
-    if not source.is_file():
-        raise SystemExit(f"LLVM linker was not found: {source}")
-    shutil.copy2(source, stage1_root / "linker" / linker_name)
+    # Homebrew's LLVM package does not ship ld64.lld.  On macOS the selected
+    # clang must use the platform linker supplied by Xcode.  Linux remains
+    # pinned to the adjacent LLVM lld so packaged stages are deterministic.
+    if not host_tag().startswith("macos-"):
+        source = llvm_bin_dir(llvm_dir) / "ld.lld"
+        if not source.is_file():
+            raise SystemExit(f"LLVM linker was not found: {source}")
+        shutil.copy2(source, stage1_root / "linker" / source.name)
 
 
 def package_selfhost_toolchain(stage0: Path, stage1: Path) -> None:
@@ -197,9 +200,8 @@ def freeze_selfhost_stage0_bundle(bundle_dir: Path) -> Path:
         bundle / "runtime",
         bundle / "stdpkg",
     ]
-    # Windows release bundles carry lld-link. POSIX bundles may omit the linker
-    # because package_selfhost_toolchain creates a small clang/lld wrapper from
-    # the LLVM installation selected by the workflow.
+    # Windows release bundles carry lld-link. POSIX bundles may omit the linker:
+    # packaging adds clang plus Linux lld, while macOS uses Xcode's system ld.
     if is_windows():
         required.append(bundle / "linker")
     missing = [path for path in required if not path.exists()]

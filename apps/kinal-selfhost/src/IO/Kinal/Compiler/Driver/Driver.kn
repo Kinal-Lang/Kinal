@@ -291,14 +291,14 @@ Trusted Function int LinkPosixExecutable(string outputPath, string objectPath,
 {
     string root = IO.Path.Directory(IO.Kinal.Runtime.ExecutablePath());
     string clang = IO.Path.Combine(root, "linker/clang");
-    string linkerName = HostIsMacOS() ? "ld64.lld" : "ld.lld";
-    string linker = IO.Path.Combine(root, "linker/" + linkerName);
+    string linker = IO.Path.Combine(root, "linker/ld.lld");
     string runtime = IO.Path.Combine(root, "runtime/" + HostTag());
     string llvm = IO.Path.Combine(root, "llvm/lib");
     string bridge = IO.Path.Combine(root, "bridge");
     string bridgeRuntime = IO.Path.Combine(bridge, "kn_selfhost_runtime.o");
     string bridgeLlvm = IO.Path.Combine(bridge, "kn_selfhost_llvm.o");
-    If (!IO.File.Exists(clang) || !IO.File.Exists(linker) ||
+    If (!IO.File.Exists(clang) ||
+        (HostIsLinux() && !IO.File.Exists(linker)) ||
         !IO.File.Exists(IO.Path.Combine(runtime, "kn_runtime.o")) ||
         !IO.File.Exists(bridgeLlvm))
     {
@@ -307,9 +307,12 @@ Trusted Function int LinkPosixExecutable(string outputPath, string objectPath,
     }
 
     list arguments = list.Create();
-    If (HostIsLinux()) arguments.Add("-no-pie");
-    arguments.Add("-fuse-ld=lld");
-    arguments.Add("--ld-path=" + linker);
+    If (HostIsLinux())
+    {
+        arguments.Add("-no-pie");
+        arguments.Add("-fuse-ld=lld");
+        arguments.Add("--ld-path=" + linker);
+    }
     arguments.Add("-o");
     arguments.Add(outputPath);
     arguments.Add(objectPath);
