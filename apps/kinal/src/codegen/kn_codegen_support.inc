@@ -761,6 +761,11 @@ static LLVMValueRef any_null_value(Codegen *g);
 
 static LLVMValueRef cast_value(Codegen *g, CGValue v, Type dst)
 {
+    // Void expressions carry no LLVM SSA value. Keeping that invariant here
+    // prevents dynamic calls returning void from requesting a null constant
+    // of LLVMVoidType, which is not a first-class LLVM type.
+    if (dst.kind == TY_VOID)
+        return 0;
     if (v.type.kind == TY_NULL)
     {
         if (dst.kind == TY_ANY)
@@ -1219,9 +1224,6 @@ static const char *build_trace_label(const char *name, const KnSource *src, int 
 
 static LLVMTypeRef fn_type(LLVMValueRef fn)
 {
-    LLVMTypeRef ty = LLVMTypeOf(fn);
-    if (LLVMGetTypeKind(ty) == LLVMPointerTypeKind)
-        ty = LLVMGetElementType(ty);
-    return ty;
+    return LLVMGlobalGetValueType(fn);
 }
 

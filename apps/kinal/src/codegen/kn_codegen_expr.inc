@@ -475,7 +475,7 @@ static LLVMValueRef class_vtable_const_ptr(Codegen *g, ClassSymbol *cs)
 {
     if (!g || !cs || !cs->vtable_global)
         return LLVMConstNull(LLVMPointerType(g->i8ptr, 0));
-    LLVMTypeRef vtbl_ty = LLVMGetElementType(LLVMTypeOf(cs->vtable_global));
+    LLVMTypeRef vtbl_ty = LLVMGlobalGetValueType(cs->vtable_global);
     LLVMValueRef zero = LLVMConstInt(g->i32, 0, 0);
     LLVMValueRef idxs[2] = { zero, zero };
     return LLVMConstInBoundsGEP2(vtbl_ty, cs->vtable_global, idxs, 2);
@@ -806,14 +806,7 @@ static CGValue gen_new(Codegen *g, Expr *e)
     ClassSymbol *root = class_root(g, cs);
     LLVMValueRef root_ptr = LLVMBuildBitCast(g->builder, obj, root->ptr_ty, "root");
     LLVMValueRef vptr_ptr = LLVMBuildStructGEP2(g->builder, root->struct_ty, root_ptr, 0, "vptr");
-    LLVMValueRef vtbl_ptr = LLVMConstNull(LLVMPointerType(g->i8ptr, 0));
-    if (cs->vtable_global)
-    {
-        LLVMTypeRef vtbl_ty = LLVMGetElementType(LLVMTypeOf(cs->vtable_global));
-        LLVMValueRef zero = LLVMConstInt(g->i32, 0, 0);
-        LLVMValueRef idxs[2] = { zero, zero };
-        vtbl_ptr = LLVMConstInBoundsGEP2(vtbl_ty, cs->vtable_global, idxs, 2);
-    }
+    LLVMValueRef vtbl_ptr = class_vtable_const_ptr(g, cs);
     LLVMBuildStore(g->builder, vtbl_ptr, vptr_ptr);
 
     // Array descriptors stored in class fields require owned backing storage.
@@ -943,14 +936,7 @@ static LLVMValueRef build_error_object(Codegen *g, LLVMValueRef title, LLVMValue
     ClassSymbol *root = class_root(g, cs);
     LLVMValueRef root_ptr = LLVMBuildBitCast(g->builder, obj, root->ptr_ty, "root");
     LLVMValueRef vptr_ptr = LLVMBuildStructGEP2(g->builder, root->struct_ty, root_ptr, 0, "vptr");
-    LLVMValueRef vtbl_ptr = LLVMConstNull(LLVMPointerType(g->i8ptr, 0));
-    if (cs->vtable_global)
-    {
-        LLVMTypeRef vtbl_ty = LLVMGetElementType(LLVMTypeOf(cs->vtable_global));
-        LLVMValueRef zero = LLVMConstInt(g->i32, 0, 0);
-        LLVMValueRef idxs[2] = { zero, zero };
-        vtbl_ptr = LLVMConstInBoundsGEP2(vtbl_ty, cs->vtable_global, idxs, 2);
-    }
+    LLVMValueRef vtbl_ptr = class_vtable_const_ptr(g, cs);
     LLVMBuildStore(g->builder, vtbl_ptr, vptr_ptr);
 
     Method *ctor = &cs->decl->methods.items[g->error_ctor_index];
@@ -1239,14 +1225,7 @@ static LLVMValueRef build_datetime_now(Codegen *g)
     ClassSymbol *root = class_root(g, cs);
     LLVMValueRef root_ptr = LLVMBuildBitCast(g->builder, obj, root->ptr_ty, "dt.root");
     LLVMValueRef vptr_ptr = LLVMBuildStructGEP2(g->builder, root->struct_ty, root_ptr, 0, "dt.vptr");
-    LLVMValueRef vtbl_ptr = LLVMConstNull(LLVMPointerType(g->i8ptr, 0));
-    if (cs->vtable_global)
-    {
-        LLVMTypeRef vtbl_ty = LLVMGetElementType(LLVMTypeOf(cs->vtable_global));
-        LLVMValueRef zero = LLVMConstInt(g->i32, 0, 0);
-        LLVMValueRef idxs[2] = { zero, zero };
-        vtbl_ptr = LLVMConstInBoundsGEP2(vtbl_ty, cs->vtable_global, idxs, 2);
-    }
+    LLVMValueRef vtbl_ptr = class_vtable_const_ptr(g, cs);
     LLVMBuildStore(g->builder, vtbl_ptr, vptr_ptr);
 
     LLVMValueRef y_ptr = LLVMBuildAlloca(g->builder, g->i32, "dt.y");
@@ -1410,7 +1389,7 @@ static CGValue gen_resolved_function_call(Codegen *g, Expr *site, ExprList *call
             }
             else if (fs->func->ret_type.kind == TY_VOID)
             {
-                out.value = LLVMGetUndef(LLVMVoidTypeInContext(g->ctx));
+                out.value = 0;
             }
             else
             {
@@ -1807,7 +1786,12 @@ static CGValue gen_expr(Codegen *g, Expr *e)
         }
         LLVMValueRef anyv = call_callable_wrapper(g, callee, args_ptr, LLVMConstInt(g->i64, (uint64_t)argc, 0));
         gc_pop_temp_frame(g, temp_frame);
-        if (e->type.kind != TY_ANY && e->type.kind != TY_UNKNOWN)
+        if (e->type.kind == TY_VOID)
+        {
+            out.value = 0;
+            out.type = type_make(TY_VOID);
+        }
+        else if (e->type.kind != TY_ANY && e->type.kind != TY_UNKNOWN)
         {
             CGValue tmp;
             tmp.value = anyv;
@@ -1830,7 +1814,7 @@ static CGValue gen_expr(Codegen *g, Expr *e)
         maybe_propagate_exception(g);
         if (e->type.kind == TY_VOID)
         {
-            out.value = LLVMGetUndef(g->voidt);
+            out.value = 0;
             out.type = type_make(TY_VOID);
             return out;
         }
@@ -3725,7 +3709,7 @@ static CGValue gen_builtin_system(Codegen *g, KnBuiltinKind kind, ExprList *args
         LLVMValueRef anyv = run_async_task_any(g, taskv.value, "async.run.tag");
         if (result_type.kind == TY_VOID)
         {
-            out.value = LLVMGetUndef(g->voidt);
+            out.value = 0;
             out.type = type_make(TY_VOID);
         }
         else if (result_type.kind == TY_ANY)
@@ -5183,14 +5167,7 @@ static LLVMValueRef build_callable_object(Codegen *g, const char *class_name, LL
     ClassSymbol *root = class_root(g, cs);
     LLVMValueRef root_ptr = LLVMBuildBitCast(g->builder, obj, root->ptr_ty, "fobj.root");
     LLVMValueRef vptr_ptr = LLVMBuildStructGEP2(g->builder, root->struct_ty, root_ptr, 0, "fobj.vptr");
-    LLVMValueRef vtbl_ptr = LLVMConstNull(LLVMPointerType(g->i8ptr, 0));
-    if (cs->vtable_global)
-    {
-        LLVMTypeRef vtbl_ty = LLVMGetElementType(LLVMTypeOf(cs->vtable_global));
-        LLVMValueRef zero = LLVMConstInt(g->i32, 0, 0);
-        LLVMValueRef idxs[2] = { zero, zero };
-        vtbl_ptr = LLVMConstInBoundsGEP2(vtbl_ty, cs->vtable_global, idxs, 2);
-    }
+    LLVMValueRef vtbl_ptr = class_vtable_const_ptr(g, cs);
     LLVMBuildStore(g->builder, vtbl_ptr, vptr_ptr);
     init_class_array_fields(g, cs, obj);
 
@@ -5238,14 +5215,7 @@ static LLVMValueRef build_pseudo_block_object(Codegen *g, LLVMValueRef invoke_pt
     ClassSymbol *root = class_root(g, g->block_class);
     LLVMValueRef root_ptr = LLVMBuildBitCast(g->builder, obj, root->ptr_ty, "blkobj.root");
     LLVMValueRef vptr_ptr = LLVMBuildStructGEP2(g->builder, root->struct_ty, root_ptr, 0, "blkobj.vptr");
-    LLVMValueRef vtbl_ptr = LLVMConstNull(LLVMPointerType(g->i8ptr, 0));
-    if (g->block_class->vtable_global)
-    {
-        LLVMTypeRef vtbl_ty = LLVMGetElementType(LLVMTypeOf(g->block_class->vtable_global));
-        LLVMValueRef zero = LLVMConstInt(g->i32, 0, 0);
-        LLVMValueRef idxs[2] = { zero, zero };
-        vtbl_ptr = LLVMConstInBoundsGEP2(vtbl_ty, g->block_class->vtable_global, idxs, 2);
-    }
+    LLVMValueRef vtbl_ptr = class_vtable_const_ptr(g, g->block_class);
     LLVMBuildStore(g->builder, vtbl_ptr, vptr_ptr);
 
     LLVMValueRef inv_ptr = LLVMBuildStructGEP2(g->builder, g->pseudo_block_ty, obj, 1, "blkobj.inv.ptr");
