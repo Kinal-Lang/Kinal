@@ -25,6 +25,14 @@ Extern Unsafe Function void MemoryFill(byte* destination, byte value,
 Extern Unsafe Function i32 MemoryCompare(byte* left, byte* right,
                                          usize count) By C;
 
+[LinkName("kn_native_file_read_all_bytes")]
+Extern Unsafe Function byte* FileReadAllBytes(string path,
+                                               u64* outLength) By C;
+
+[LinkName("kn_native_file_write_all_bytes")]
+Extern Unsafe Function i32 FileWriteAllBytes(string path, byte* data,
+                                              u64 length) By C;
+
 [LinkName("kn_native_spin_lock")]
 Extern Unsafe Function void SpinLock(i32* lock) By C;
 

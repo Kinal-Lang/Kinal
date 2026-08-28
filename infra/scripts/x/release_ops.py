@@ -108,11 +108,12 @@ def build_official_stdpkg_klibs(compiler: Path, llvm_bin: Path | None = None) ->
         run([compiler, "pkg", "build", "--manifest", manifest, "-o", out_klib], cwd=ROOT)
 
 
-def _create_kinalvm_stdpkg(compiler: Path, bundle_stdpkg: Path, *, include_sources: bool = True) -> None:
+def create_kinalvm_stdpkg(compiler: Path, bundle_stdpkg: Path, *, include_sources: bool = True) -> None:
     """Create the IO.Kinal.VM stdpkg in the release bundle.
 
-    This is called AFTER kinalvm has been built, so there is no conflict
-    between auto-discovered modules and the stdpkg package.  The source
+    The release staging caller invokes this after building kinalvm so package
+    discovery cannot conflict with its project-local Units. Selfhost staging
+    also uses it to repack the current sources for a frozen stage0. The source
     of truth is always apps/kinalvm/src/IO/Kinal/VM/.
     """
     import json as _json
@@ -205,7 +206,7 @@ def stage_bundle(build_type: str, dest: Path) -> Path:
     build_kinal_vm_binary(dest / compiler.name, dest)
     # Create IO.Kinal.VM stdpkg AFTER kinalvm is built so auto-discovery
     # doesn't conflict with the package.
-    _create_kinalvm_stdpkg(
+    create_kinalvm_stdpkg(
         dest / compiler.name,
         dest / "stdpkg",
         include_sources=(build_type.lower() != "release"),

@@ -40,7 +40,7 @@ def pe_stack_reserve(path: Path) -> int:
 
 
 def copy_stage_support(source: Path, target: Path) -> None:
-    for directory in ("bridge", "linker", "llvm", "runtime", "stdlib-src"):
+    for directory in ("bridge", "linker", "llvm", "runtime", "stdpkg"):
         candidate = source / directory
         if candidate.is_dir():
             shutil.copytree(candidate, target / directory, dirs_exist_ok=True)
@@ -116,6 +116,8 @@ def main() -> int:
         require(baseline.returncode == 0, f"stage1 {name} failed", baseline)
         expected = normalized_output(baseline)
         for stage, compiler in stages.items():
+            if stage == 1:
+                continue
             process = run([str(compiler), *tail], cwd=root)
             require(process.returncode == 0, f"stage{stage} {name} failed", process)
             require(normalized_output(process) == expected, f"stage{stage} {name} differs from stage1")

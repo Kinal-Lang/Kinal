@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -754,10 +755,7 @@ def main() -> int:
 
     source_root = root / "apps" / "kinal-selfhost" / "src"
     source_files = sorted(source_root.rglob("*.kn"))
-    runtime_source_root = (
-        root / "libs" / "std" / "IO.Kinal.Runtime" / "1.0.0" / "src"
-    )
-    project_source_files = source_files + sorted(runtime_source_root.rglob("*.kn"))
+    project_source_files = source_files
     token_source = source_root / "IO" / "Kinal" / "Compiler" / "Lex" / "Token.kn"
     token_text = token_source.read_text(encoding="utf-8")
     for declaration in (
@@ -916,10 +914,25 @@ def main() -> int:
     )
     results.append({"name": "stage0_build_cli", "ok": True, "emit_modes": 3})
 
+    packaged_core = compiler.parent / "stdpkg" / "IO.Core" / "1.0.0" / "lib" / "IO.Core.klib"
+    stdlib_cache = compiler.parent / "stdlib-cache"
+    require(packaged_core.is_file(), "stage1 .klib standard-library package is missing")
+    require(not (compiler.parent / "stdlib-src").exists(),
+            "stage1 still carries a loose standard-library source tree")
+    if stdlib_cache.exists():
+        shutil.rmtree(stdlib_cache)
+
     stdlib_project = root / "tests" / "selfhost" / "fixtures" / "stdlib_core" / "kinal.knproj"
     stdlib_executable = out_dir / f"stdlib-core{executable_suffix}"
     stdlib_check = run([str(compiler), "check", str(stdlib_project), "test"], cwd=root)
     require(stdlib_check.returncode == 0, "stage1 standard-library source check failed", stdlib_check)
+    require(
+        any(stdlib_cache.glob("*/IO.Core/1.0.0/src/IO/Text.kn"))
+        and any(stdlib_cache.glob(
+            "*/IO.Kinal.Runtime/1.0.0/src/IO/Kinal/Runtime/Core.kn"
+        )),
+        "stage1 did not validate and extract its packaged .klib standard library",
+    )
     stdlib_build = run(
         [str(compiler), "build", str(stdlib_project), str(stdlib_executable), "test"],
         cwd=root,
@@ -960,7 +973,7 @@ def main() -> int:
         "stage1 standard-library fixture output differs",
         stdlib_run,
     )
-    results.append({"name": "stdlib_source_package", "ok": True})
+    results.append({"name": "stdlib_klib_package", "ok": True})
 
     oop_project = root / "tests" / "selfhost" / "fixtures" / "oop_inheritance" / "kinal.knproj"
     oop_executable = out_dir / f"oop-inheritance{executable_suffix}"

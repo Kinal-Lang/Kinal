@@ -3790,8 +3790,9 @@ int __kn_file_touch(const char *path)
 #endif
 }
 
-char *kn_native_file_read_all_text(const char *path)
+static unsigned char *kn_native_file_read_all_bytes_impl(const char *path, uint64_t *out_size)
 {
+    if (out_size) *out_size = 0;
     if (!path || !path[0]) return 0;
 #if defined(_WIN32) || defined(_WIN64)
     KN_HANDLE h = CreateFileA(path, KN_GENERIC_READ, KN_FILE_SHARE_READ, 0, KN_OPEN_EXISTING, KN_FILE_ATTRIBUTE_NORMAL, 0);
@@ -3803,24 +3804,34 @@ char *kn_native_file_read_all_text(const char *path)
         return 0;
     }
     uint64_t n = (uint64_t)fsz;
-    char *buf = (char *)malloc((size_t)n + 1u);
+    if (n >= (uint64_t)SIZE_MAX)
+    {
+        CloseHandle(h);
+        return 0;
+    }
+    unsigned char *buf = (unsigned char *)malloc((size_t)n + 1u);
     if (!buf)
     {
         CloseHandle(h);
         return 0;
     }
-    KN_DWORD rd = 0;
-    if (n > 0)
+    uint64_t off = 0;
+    while (off < n)
     {
-        if (!ReadFile(h, buf, (KN_DWORD)n, &rd, 0))
+        uint64_t remaining = n - off;
+        KN_DWORD chunk = remaining > 0x7ffff000u ? 0x7ffff000u : (KN_DWORD)remaining;
+        KN_DWORD rd = 0;
+        if (!ReadFile(h, buf + off, chunk, &rd, 0) || rd == 0)
         {
             free(buf);
             CloseHandle(h);
             return 0;
         }
+        off += (uint64_t)rd;
     }
-    buf[(uint64_t)rd] = 0;
+    buf[off] = 0;
     CloseHandle(h);
+    if (out_size) *out_size = off;
     return buf;
 #else
     int fd = open(path, O_RDONLY);
@@ -3832,7 +3843,12 @@ char *kn_native_file_read_all_text(const char *path)
         return 0;
     }
     uint64_t n = (uint64_t)st.st_size;
-    char *buf = (char *)malloc((size_t)n + 1u);
+    if (n >= (uint64_t)SIZE_MAX)
+    {
+        close(fd);
+        return 0;
+    }
+    unsigned char *buf = (unsigned char *)malloc((size_t)n + 1u);
     if (!buf)
     {
         close(fd);
@@ -3852,8 +3868,19 @@ char *kn_native_file_read_all_text(const char *path)
     }
     close(fd);
     buf[off] = 0;
+    if (out_size) *out_size = off;
     return buf;
 #endif
+}
+
+void *kn_native_file_read_all_bytes(const char *path, uint64_t *out_size)
+{
+    return kn_native_file_read_all_bytes_impl(path, out_size);
+}
+
+char *kn_native_file_read_all_text(const char *path)
+{
+    return (char *)kn_native_file_read_all_bytes_impl(path, 0);
 }
 
 const char *__kn_file_read_all_text(const char *path)
@@ -3878,28 +3905,40 @@ const char *__kn_file_read_first_line(const char *path)
     }
 }
 
-int __kn_file_write_all_text(const char *path, const char *text)
+static int kn_native_file_write_all_bytes_impl(const char *path, const void *data, uint64_t size)
 {
     if (!path || !path[0]) return 0;
-    if (!text) text = "";
+    if (size > 0 && !data) return 0;
 #if defined(_WIN32) || defined(_WIN64)
     KN_HANDLE h = CreateFileA(path, KN_GENERIC_WRITE, KN_FILE_SHARE_READ, 0, KN_CREATE_ALWAYS, KN_FILE_ATTRIBUTE_NORMAL, 0);
     if (h == KN_INVALID_HANDLE_VALUE) return 0;
-    uint64_t n = rt_strlen(text);
-    KN_DWORD wr = 0;
+    const unsigned char *bytes = (const unsigned char *)data;
+    uint64_t off = 0;
     KN_BOOL ok = 1;
-    if (n > 0)
-        ok = WriteFile(h, text, (KN_DWORD)n, &wr, 0);
+    while (off < size)
+    {
+        uint64_t remaining = size - off;
+        KN_DWORD chunk = remaining > 0x7ffff000u ? 0x7ffff000u : (KN_DWORD)remaining;
+        KN_DWORD wr = 0;
+        if (!WriteFile(h, bytes + off, chunk, &wr, 0) || wr == 0)
+        {
+            ok = 0;
+            break;
+        }
+        off += (uint64_t)wr;
+    }
     CloseHandle(h);
     return ok ? 1 : 0;
 #else
     int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
     if (fd < 0) return 0;
-    uint64_t n = rt_strlen(text);
+    const unsigned char *bytes = (const unsigned char *)data;
     uint64_t off = 0;
-    while (off < n)
+    while (off < size)
     {
-        ssize_t w = write(fd, text + off, (size_t)(n - off));
+        uint64_t remaining = size - off;
+        size_t chunk = remaining > 0x7ffff000u ? 0x7ffff000u : (size_t)remaining;
+        ssize_t w = write(fd, bytes + off, chunk);
         if (w <= 0)
         {
             close(fd);
@@ -3910,6 +3949,17 @@ int __kn_file_write_all_text(const char *path, const char *text)
     close(fd);
     return 1;
 #endif
+}
+
+int kn_native_file_write_all_bytes(const char *path, const void *data, uint64_t size)
+{
+    return kn_native_file_write_all_bytes_impl(path, data, size);
+}
+
+int __kn_file_write_all_text(const char *path, const char *text)
+{
+    if (!text) text = "";
+    return kn_native_file_write_all_bytes_impl(path, text, rt_strlen(text));
 }
 
 int __kn_file_append_all_text(const char *path, const char *text)

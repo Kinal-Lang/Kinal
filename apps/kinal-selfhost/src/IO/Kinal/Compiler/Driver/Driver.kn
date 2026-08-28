@@ -18,6 +18,7 @@ Get IO.Kinal.Compiler.Syntax.Nodes;
 Get IO.Kinal.Compiler.Syntax.SyntaxTree;
 Get IO.Kinal.Compiler.Project.ProjectConfig;
 Get IO.Kinal.Compiler.Project.ProjectLoader;
+Get IO.Kinal.Compiler.Project.KlibArchive;
 Get IO.Kinal.Compiler.Sema.SemanticCompilation;
 Get IO.Kinal.Compiler.Sema.Symbols;
 Get IO.Kinal.Compiler.Backend.LlvmBridge;
@@ -489,6 +490,18 @@ Safe Function bool SessionContainsSource(CompileSession session, string path)
     Return false;
 }
 
+Safe Function bool SessionHasProjectUnit(CompileSession session, string unitName)
+{
+    CompilationUnit unit = session.FirstUnit;
+    While (unit != null)
+    {
+        If (unit.Syntax.UnitName == unitName &&
+            session.SourcePaths.Contains(unit.Source.Path)) Return true;
+        unit = unit.Next;
+    }
+    Return false;
+}
+
 Safe Function SyntaxTree ProbeSyntax(string path)
 {
     SourceFile source = New SourceFile(
@@ -521,6 +534,16 @@ Safe Function bool IsRelatedUnit(CompileSession session, SyntaxTree candidate)
 
 Safe Function string FindStandardLibraryRoot(string entryPath)
 {
+    string compilerDirectory = IO.Path.Directory(
+        IO.Kinal.Runtime.ExecutablePath());
+    string packagedRoot = IO.Path.Combine(compilerDirectory, "stdpkg");
+    string packagedCache = IO.Path.Combine(compilerDirectory, "stdlib-cache");
+    string extractedRoot = IO.Kinal.Compiler.Project.KlibArchive.PreparePackageRoot(
+        packagedRoot, packagedCache);
+    If (!IO.Text.IsEmpty(extractedRoot)) Return extractedRoot;
+
+    // Keep source-tree discovery as a developer fallback for an unpackaged
+    // compiler.  Packaged compilers always consume versioned .klib archives.
     string normalizedEntry = IO.Path.Normalize(entryPath);
     If (IO.Path.IsRelative(normalizedEntry))
         normalizedEntry = IO.Path.Normalize(
@@ -537,8 +560,6 @@ Safe Function string FindStandardLibraryRoot(string entryPath)
         depth = depth + 1;
     }
 
-    string compilerDirectory = IO.Path.Directory(
-        IO.Kinal.Runtime.ExecutablePath());
     string packagedCandidate = IO.Path.Combine(compilerDirectory, "stdlib-src");
     If (IO.Directory.Exists(packagedCandidate)) Return packagedCandidate;
 
@@ -643,7 +664,11 @@ Safe Function void DiscoverRelatedSources(CompileSession session, string entryPa
                 IsPotentialPackageSource(session, path, standardLibraryRoot))
             {
                 SyntaxTree candidate = ProbeSyntax(path);
-                If (IsRelatedUnit(session, candidate))
+                // Project-local Units take precedence over an installed package
+                // with the same Unit name, matching the C stage0 module map.
+                If (candidate != null &&
+                    !SessionHasProjectUnit(session, candidate.UnitName) &&
+                    IsRelatedUnit(session, candidate))
                 {
                     session.ParseFile(path);
                     changed = true;

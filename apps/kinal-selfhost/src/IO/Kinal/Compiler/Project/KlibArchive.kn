@@ -1,0 +1,371 @@
+Unit IO.Kinal.Compiler.Project.KlibArchive;
+
+Get IO.Directory;
+Get IO.Console;
+Get IO.File;
+Get IO.Path;
+Get IO.Text;
+Get IO.Kinal.Runtime;
+Get IO.Kinal.Runtime.Native;
+
+// KNKLIB1 is a deliberately small, versioned archive.  The compiler owns all
+// validation and extraction policy; the runtime supplies only raw file I/O.
+Class KlibArchive
+{
+    Public byte* Data;
+    Public int Length;
+    Public int Offset;
+    Public string Error;
+
+    Public Trusted Constructor(string path)
+    {
+        This.Data = null;
+        This.Length = 0;
+        This.Offset = 0;
+        This.Error = "";
+
+        u64 length = [u64](0);
+        This.Data = IO.Kinal.Runtime.Native.FileReadAllBytes(path, &length);
+        If (This.Data == null)
+        {
+            This.Fail("cannot read archive: " + path);
+            Return;
+        }
+        If (length > [u64](2147483647))
+        {
+            This.Fail("archive exceeds the current 2 GiB compiler limit: " + path);
+            This.Dispose();
+            Return;
+        }
+        This.Length = [int](length);
+    }
+
+    Public Safe Function void Fail(string message)
+    {
+        If (IO.Text.IsEmpty(This.Error)) This.Error = message;
+    }
+
+    Public Safe Function bool IsValid()
+    {
+        Return This.Data != null && IO.Text.IsEmpty(This.Error);
+    }
+
+    Public Trusted Function u64 Fingerprint()
+    {
+        u64 hash = [u64](1469598103934665603);
+        int index = 0;
+        While (index < This.Length)
+        {
+            hash = (hash ^ [u64](This.Data[index])) * [u64](1099511628211);
+            index = index + 1;
+        }
+        Return hash;
+    }
+
+    Public Safe Function bool Require(u64 count)
+    {
+        If (!This.IsValid()) Return false;
+        If (count > [u64](2147483647) || This.Offset < 0 ||
+            This.Offset > This.Length ||
+            count > [u64](This.Length - This.Offset))
+        {
+            This.Fail("archive is truncated or contains an invalid length");
+            Return false;
+        }
+        Return true;
+    }
+
+    Public Trusted Function int ReadU8()
+    {
+        If (!This.Require([u64](1))) Return 0;
+        int value = [int](This.Data[This.Offset]);
+        This.Offset = This.Offset + 1;
+        Return value;
+    }
+
+    Public Trusted Function u64 ReadU32()
+    {
+        If (!This.Require([u64](4))) Return [u64](0);
+        u64 value = [u64](This.Data[This.Offset]) |
+            ([u64](This.Data[This.Offset + 1]) << 8) |
+            ([u64](This.Data[This.Offset + 2]) << 16) |
+            ([u64](This.Data[This.Offset + 3]) << 24);
+        This.Offset = This.Offset + 4;
+        Return value;
+    }
+
+    Public Trusted Function u64 ReadU64()
+    {
+        If (!This.Require([u64](8))) Return [u64](0);
+        u64 value = [u64](This.Data[This.Offset]) |
+            ([u64](This.Data[This.Offset + 1]) << 8) |
+            ([u64](This.Data[This.Offset + 2]) << 16) |
+            ([u64](This.Data[This.Offset + 3]) << 24) |
+            ([u64](This.Data[This.Offset + 4]) << 32) |
+            ([u64](This.Data[This.Offset + 5]) << 40) |
+            ([u64](This.Data[This.Offset + 6]) << 48) |
+            ([u64](This.Data[This.Offset + 7]) << 56);
+        This.Offset = This.Offset + 8;
+        Return value;
+    }
+
+    Public Safe Function bool Skip(u64 count)
+    {
+        If (!This.Require(count)) Return false;
+        This.Offset = This.Offset + [int](count);
+        Return true;
+    }
+
+    Public Trusted Function string ReadText(int count)
+    {
+        If (count < 0 || !This.Require([u64](count))) Return "";
+        string value = IO.Kinal.Runtime.CopyNativeTextLength(
+            [char*](This.Data + This.Offset), count);
+        This.Offset = This.Offset + count;
+        Return value;
+    }
+
+    Public Trusted Function bool PathSegmentIsSafe(int start, int count)
+    {
+        If (count <= 0) Return false;
+        If (count == 1 && This.Data[start] == [byte](46)) Return false;
+        If (count == 2 && This.Data[start] == [byte](46) &&
+            This.Data[start + 1] == [byte](46)) Return false;
+        Return true;
+    }
+
+    Public Trusted Function bool PathBytesAreSafe(int start, int count)
+    {
+        If (count <= 0) Return false;
+        int segmentStart = start;
+        int index = 0;
+        While (index < count)
+        {
+            int value = [int](This.Data[start + index]);
+            If (value == 0 || value == 58 || value < 32) Return false;
+            If (value == 47 || value == 92)
+            {
+                If (!This.PathSegmentIsSafe(segmentStart, start + index - segmentStart))
+                    Return false;
+                segmentStart = start + index + 1;
+            }
+            index = index + 1;
+        }
+        Return This.PathSegmentIsSafe(segmentStart, start + count - segmentStart);
+    }
+
+    Public Trusted Function bool WriteSlice(string path, int start, u64 count)
+    {
+        If (start < 0 || start > This.Length ||
+            count > [u64](This.Length - start))
+        {
+            This.Fail("archive entry exceeds the archive boundary");
+            Return false;
+        }
+        string parent = IO.Path.Directory(path);
+        If (!IO.Text.IsEmpty(parent) && !IO.Directory.Ensure(parent))
+        {
+            This.Fail("cannot create archive output directory: " + parent);
+            Return false;
+        }
+        If (IO.Kinal.Runtime.Native.FileWriteAllBytes(
+            path, This.Data + start, count) == 0)
+        {
+            This.Fail("cannot write archive entry: " + path);
+            Return false;
+        }
+        Return true;
+    }
+
+    Public Trusted Function bool ExtractLoaded(string outputRoot)
+    {
+        If (!This.IsValid()) Return false;
+        If (!This.Require([u64](24))) Return false;
+        If (This.ReadU8() != 75 || This.ReadU8() != 78 ||
+            This.ReadU8() != 75 || This.ReadU8() != 76 ||
+            This.ReadU8() != 73 || This.ReadU8() != 66 ||
+            This.ReadU8() != 49 || This.ReadU8() != 0)
+        {
+            This.Fail("archive has an invalid KNKLIB1 signature");
+            Return false;
+        }
+
+        u64 version = This.ReadU32();
+        u64 compilerLength = This.ReadU32();
+        u64 manifestLength = This.ReadU32();
+        u64 fileCount = This.ReadU32();
+        If (!This.IsValid()) Return false;
+        If (version != [u64](1))
+        {
+            This.Fail("unsupported klib version: " + [string](version));
+            Return false;
+        }
+        If (fileCount == [u64](0) || fileCount > [u64](4096))
+        {
+            This.Fail("archive has an invalid file count");
+            Return false;
+        }
+        If (!This.Skip(compilerLength) || !This.Require(manifestLength)) Return false;
+        If (!IO.Directory.Ensure(outputRoot))
+        {
+            This.Fail("cannot create archive output root: " + outputRoot);
+            Return false;
+        }
+        string manifestPath = IO.Path.Combine(outputRoot, "package.knpkg.json");
+        If (!This.WriteSlice(manifestPath, This.Offset, manifestLength)) Return false;
+        This.Offset = This.Offset + [int](manifestLength);
+
+        int fileIndex = 0;
+        While (fileIndex < [int](fileCount))
+        {
+            u64 relativeLength = This.ReadU32();
+            u64 payloadLength = This.ReadU64();
+            If (!This.IsValid() || relativeLength == [u64](0) ||
+                relativeLength > [u64](4096) || !This.Require(relativeLength))
+            {
+                This.Fail("archive has an invalid entry path length");
+                Return false;
+            }
+            int relativeStart = This.Offset;
+            If (!This.PathBytesAreSafe(relativeStart, [int](relativeLength)))
+            {
+                This.Fail("archive contains an unsafe relative path");
+                Return false;
+            }
+            string relativePath = This.ReadText([int](relativeLength));
+            If (!This.Require(payloadLength)) Return false;
+            string outputPath = IO.Path.Normalize(
+                IO.Path.Combine(outputRoot, relativePath));
+            If (!This.WriteSlice(outputPath, This.Offset, payloadLength)) Return false;
+            This.Offset = This.Offset + [int](payloadLength);
+            fileIndex = fileIndex + 1;
+        }
+        If (This.Offset != This.Length)
+        {
+            This.Fail("archive contains trailing data");
+            Return false;
+        }
+        Return true;
+    }
+
+    Public Trusted Function bool ExtractTo(string outputRoot)
+    {
+        bool extracted = This.ExtractLoaded(outputRoot);
+        This.Dispose();
+        Return extracted;
+    }
+
+    Public Trusted Function void Dispose()
+    {
+        If (This.Data != null)
+        {
+            IO.Kinal.Runtime.Native.HeapFree(This.Data);
+            This.Data = null;
+        }
+        This.Length = 0;
+        This.Offset = 0;
+    }
+}
+
+Safe Function string CacheDirectoryFor(string cacheRoot, string archivePath)
+{
+    string libraryDirectory = IO.Path.Directory(archivePath);
+    string versionDirectory = IO.Path.Directory(libraryDirectory);
+    string packageDirectory = IO.Path.Directory(versionDirectory);
+    string packageName = IO.Path.FileName(packageDirectory);
+    string version = IO.Path.FileName(versionDirectory);
+    If (IO.Text.IsEmpty(packageName) || IO.Text.IsEmpty(version)) Return "";
+    Return IO.Path.Join3(cacheRoot, packageName, version);
+}
+
+Trusted Function bool EnsureExtracted(string archivePath, string outputRoot)
+{
+    KlibArchive archive = New KlibArchive(archivePath);
+    If (!archive.IsValid())
+    {
+        IO.Console.PrintLine("[Package] failed to read " + archivePath +
+            ": " + archive.Error);
+        archive.Dispose();
+        Return false;
+    }
+    string marker = IO.Path.Combine(outputRoot, ".klib-ready");
+    string expected = [string](archive.Length) + ":" +
+        [string](archive.Fingerprint());
+    If (IO.File.Exists(marker) && IO.File.Exists(
+        IO.Path.Combine(outputRoot, "package.knpkg.json")) &&
+        IO.File.ReadAllText(marker) == expected)
+    {
+        archive.Dispose();
+        Return true;
+    }
+
+    IO.File.DeleteIfExists(marker);
+    If (!archive.ExtractTo(outputRoot))
+    {
+        IO.Console.PrintLine("[Package] failed to extract " + archivePath +
+            ": " + archive.Error);
+        Return false;
+    }
+    If (!IO.File.WriteAllText(marker, expected))
+    {
+        IO.Console.PrintLine("[Package] failed to record extracted archive: " + archivePath);
+        Return false;
+    }
+    Return true;
+}
+
+Trusted Function u64 MixFingerprint(u64 hash, u64 value)
+{
+    int shift = 0;
+    While (shift < 64)
+    {
+        hash = (hash ^ ((value >> shift) & [u64](255))) *
+            [u64](1099511628211);
+        shift = shift + 8;
+    }
+    Return hash;
+}
+
+Trusted Function string PreparePackageRoot(string packageRoot, string cacheRoot)
+{
+    If (!IO.Directory.Exists(packageRoot)) Return "";
+    list files = IO.Directory.Files(packageRoot, true);
+    u64 generation = [u64](1469598103934665603);
+    int archiveCount = 0;
+    int index = 0;
+    While (index < files.Count())
+    {
+        string archivePath = [string](files.Fetch(index));
+        If (IO.Text.EndsWith(archivePath, ".klib"))
+        {
+            KlibArchive archive = New KlibArchive(archivePath);
+            If (!archive.IsValid())
+            {
+                archive.Dispose();
+                Return "";
+            }
+            generation = MixFingerprint(generation, [u64](archive.Length));
+            generation = MixFingerprint(generation, archive.Fingerprint());
+            archive.Dispose();
+            archiveCount = archiveCount + 1;
+        }
+        index = index + 1;
+    }
+    If (archiveCount == 0) Return "";
+
+    generation = MixFingerprint(generation, [u64](archiveCount));
+    string generationRoot = IO.Path.Combine(cacheRoot, [string](generation));
+    index = 0;
+    While (index < files.Count())
+    {
+        string archivePath = [string](files.Fetch(index));
+        If (IO.Text.EndsWith(archivePath, ".klib"))
+        {
+            string outputRoot = CacheDirectoryFor(generationRoot, archivePath);
+            If (IO.Text.IsEmpty(outputRoot) ||
+                !EnsureExtracted(archivePath, outputRoot)) Return "";
+        }
+        index = index + 1;
+    }
+    Return generationRoot;
+}

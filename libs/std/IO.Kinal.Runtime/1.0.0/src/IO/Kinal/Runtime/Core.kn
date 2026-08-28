@@ -73,6 +73,12 @@ Trusted Function string CopyNativeText(char* text)
     If (text == null) Return "";
     int length = 0;
     While (text[length] != '\0') length = length + 1;
+    Return CopyNativeTextLength(text, length);
+}
+
+Trusted Function string CopyNativeTextLength(char* text, int length)
+{
+    If (text == null || length <= 0) Return "";
     char* result = AllocateText(length);
     If (result == null) Return "";
     IO.Kinal.Runtime.Native.MemoryCopy([byte*](result), [byte*](text),

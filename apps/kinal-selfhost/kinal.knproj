@@ -14,19 +14,12 @@ Project KinalSelfhost
         RequireUnit = true;
     }
 
-    SourceSet "runtime"
-    {
-        Roots = ["../../libs/std/IO.Kinal.Runtime/1.0.0/src"];
-        Include = ["**/*.kn"];
-        RequireUnit = true;
-    }
-
     Profile "stage1"
     {
         Source
         {
             Entry = "src/Main.kn";
-            Sets = ["compiler", "runtime"];
+            Sets = ["compiler"];
             Mode = ReachableUnits;
         }
 
@@ -42,7 +35,7 @@ Project KinalSelfhost
     Lsp
     {
         Profile = "stage1";
-        ExtraSets = ["compiler", "runtime"];
+        ExtraSets = ["compiler"];
         StrictProjectScope = true;
     }
 }

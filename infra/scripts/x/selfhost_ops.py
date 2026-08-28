@@ -17,6 +17,7 @@ from .context import (
     stage_dir,
 )
 from .llvm import detect_llvm_dir, llvm_bin_dir
+from .release_ops import build_official_stdpkg_klibs, create_kinalvm_stdpkg
 from .runtime_build import build_runtime_for_host
 from .util import run
 
@@ -153,7 +154,21 @@ def package_selfhost_toolchain(stage0: Path, stage1: Path) -> None:
     stage1_root = stage1.parent
     bridge_dir = selfhost_bridge_object().parent
     shutil.copytree(bridge_dir, stage1_root / "bridge", dirs_exist_ok=True)
-    shutil.copytree(ROOT / "libs" / "std", stage1_root / "stdlib-src", dirs_exist_ok=True)
+    for stale in (
+        stage1_root / "runtime-src",
+        stage1_root / "stdlib-src",
+        stage1_root / "stdlib-cache",
+    ):
+        if stale.exists():
+            shutil.rmtree(stale)
+    stdpkg_source = stage0_root / "stdpkg"
+    stdpkg_target = stage1_root / "stdpkg"
+    if stdpkg_target.exists():
+        shutil.rmtree(stdpkg_target)
+    shutil.copytree(stdpkg_source, stdpkg_target)
+    for source_dir in stdpkg_target.glob("*/*/src"):
+        if source_dir.is_dir():
+            shutil.rmtree(source_dir)
 
     linker_source = stage0_root / "linker"
     if linker_source.is_dir():
@@ -231,10 +246,29 @@ def refresh_selfhost_stage0_runtime(stage0: Path) -> None:
     build_runtime_for_host(stage0.parent / "runtime", llvm_bin_dir(llvm_dir))
 
 
+def refresh_selfhost_stage0_stdpkg(stage0: Path) -> None:
+    """Repack current Kinal stdlib sources for a frozen stage0 compiler.
+
+    Published stage0 executables remain the bootstrap authority, while the
+    versioned .klib payload must match the current selfhost/runtime sources.
+    Release bundles intentionally contain no loose stdlib source tree.
+    """
+    build_official_stdpkg_klibs(stage0)
+    target = stage0.parent / "stdpkg"
+    if target.exists():
+        shutil.rmtree(target)
+    shutil.copytree(ROOT / "libs" / "std", target)
+    for source_dir in target.glob("*/*/src"):
+        if source_dir.is_dir():
+            shutil.rmtree(source_dir)
+    create_kinalvm_stdpkg(stage0, target, include_sources=False)
+
+
 def prepare_selfhost_stage0(*, clean_first: bool, cmd_dist, bundle_dir: Path | None = None) -> Path:
     if bundle_dir is not None:
         stage0 = freeze_selfhost_stage0_bundle(bundle_dir)
         refresh_selfhost_stage0_runtime(stage0)
+        refresh_selfhost_stage0_stdpkg(stage0)
         return stage0
 
     # Selfhosting is a compiler correctness boundary. Rebuild before freezing so
@@ -249,7 +283,10 @@ def prepare_selfhost_stage0(*, clean_first: bool, cmd_dist, bundle_dir: Path | N
     if not available:
         raise SystemExit("No release compiler bundle is available for selfhost stage0.")
     bundle = max(available, key=lambda path: (path / exe_name("kinal")).stat().st_mtime_ns)
-    return freeze_selfhost_stage0_bundle(bundle)
+    stage0 = freeze_selfhost_stage0_bundle(bundle)
+    refresh_selfhost_stage0_runtime(stage0)
+    refresh_selfhost_stage0_stdpkg(stage0)
+    return stage0
 
 
 def build_selfhost_stage1(stage0: Path) -> Path:
