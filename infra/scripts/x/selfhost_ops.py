@@ -225,6 +225,17 @@ def freeze_selfhost_stage0_bundle(bundle_dir: Path) -> Path:
         raise SystemExit(f"Selfhost stage0 bundle is incomplete:\n{details}")
 
     stage0_dir = selfhost_stage0_dir()
+    # An explicitly supplied bundle may already be the frozen stage0 directory
+    # (for example when repeating a local convergence check).  Deleting the
+    # destination before copytree would also delete the source in that case.
+    if os.path.normcase(str(bundle)) == os.path.normcase(str(stage0_dir.resolve())):
+        sync_selfhost_stdlib_native_assets(compiler)
+        return compiler
+    destination = stage0_dir.resolve()
+    if bundle.is_relative_to(destination) or destination.is_relative_to(bundle):
+        raise SystemExit(
+            f"Selfhost stage0 source and destination overlap: {bundle} -> {destination}"
+        )
     if stage0_dir.exists():
         shutil.rmtree(stage0_dir)
     shutil.copytree(bundle, stage0_dir)

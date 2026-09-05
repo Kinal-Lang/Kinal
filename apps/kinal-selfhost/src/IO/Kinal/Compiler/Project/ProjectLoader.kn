@@ -212,7 +212,7 @@ Class ProjectReader
         This.SkipUnknownField();
     }
 
-    Public Safe Function void ReadPackages(ProjectConfig project)
+    Public Safe Function void ReadPackages(list roots, list officialRoots)
     {
         If (!This.ExpectKind(TokenKind.LeftBrace, "Expected '{'",
                              "Packages body is missing")) Return;
@@ -221,9 +221,9 @@ Class ProjectReader
             string field = This.Text();
             This.Advance();
             If (field == "Roots")
-                This.CopyList(project.PackageRoots, This.ReadListAssignment());
+                This.CopyList(roots, This.ReadListAssignment());
             ElseIf (field == "OfficialRoots")
-                This.CopyList(project.OfficialPackageRoots, This.ReadListAssignment());
+                This.CopyList(officialRoots, This.ReadListAssignment());
             Else This.RejectUnknownField("Packages", field);
         }
         This.ExpectKind(TokenKind.RightBrace, "Expected '}'",
@@ -342,6 +342,7 @@ Class ProjectReader
         This.ExpectKind(TokenKind.RightBrace, "Expected '}'", "Link body is not closed");
     }
 
+
     Public Safe Function ProjectProfileConfig ReadProfile()
     {
         ProjectProfileConfig profile = New ProjectProfileConfig(This.ReadScalar());
@@ -353,6 +354,8 @@ Class ProjectReader
             If (section == "Source") This.ReadProfileSource(profile);
             ElseIf (section == "Build") This.ReadProfileBuild(profile);
             ElseIf (section == "Link") This.ReadProfileLink(profile);
+            ElseIf (section == "Packages")
+                This.ReadPackages(profile.PackageRoots, profile.OfficialPackageRoots);
             Else This.RejectUnknownField("Profile", section);
         }
         This.ExpectKind(TokenKind.RightBrace, "Expected '}'", "Profile body is not closed");
@@ -374,7 +377,8 @@ Class ProjectReader
             If (field == "DefaultProfile") project.DefaultProfile = This.ReadScalarAssignment();
             ElseIf (field == "SourceSet") project.AddSourceSet(This.ReadSourceSet());
             ElseIf (field == "Profile") project.AddProfile(This.ReadProfile());
-            ElseIf (field == "Packages") This.ReadPackages(project);
+            ElseIf (field == "Packages")
+                This.ReadPackages(project.PackageRoots, project.OfficialPackageRoots);
             ElseIf (field == "Workspace") This.ReadWorkspace(project);
             ElseIf (field == "Lsp") This.ReadLsp();
             Else This.RejectUnknownField("Project", field);

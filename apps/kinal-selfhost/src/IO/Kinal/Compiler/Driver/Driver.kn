@@ -19,6 +19,8 @@ Get IO.Kinal.Compiler.Syntax.SyntaxTree;
 Get IO.Kinal.Compiler.Project.ProjectConfig;
 Get IO.Kinal.Compiler.Project.ProjectLoader;
 Get IO.Kinal.Compiler.Project.KlibArchive;
+Get IO.Kinal.Compiler.Project.PackageResolver;
+Get IO.Kinal.Compiler.Project.DependencyResolver;
 Get IO.Kinal.Compiler.Sema.SemanticCompilation;
 Get IO.Kinal.Compiler.Sema.Symbols;
 Get IO.Kinal.Compiler.Backend.LlvmBridge;
@@ -81,6 +83,17 @@ Safe Function string HostTag()
     If (HostIsMacOS() && HostIsX64()) Return "macos-x64";
     If (HostIsMacOS() && HostIsArm64()) Return "macos-arm64";
     Return "unknown";
+}
+
+Safe Function string HostTargetTriple()
+{
+    If (HostIsWindows() && HostIsArm64()) Return "aarch64-pc-windows-msvc";
+    If (HostIsWindows()) Return "x86_64-pc-windows-msvc";
+    If (HostIsLinux() && HostIsArm64()) Return "aarch64-unknown-linux-gnu";
+    If (HostIsLinux()) Return "x86_64-pc-linux-gnu";
+    If (HostIsMacOS() && HostIsArm64()) Return "aarch64-apple-darwin";
+    If (HostIsMacOS()) Return "x86_64-apple-darwin";
+    Return "";
 }
 
 Safe Function bool LinkTargetMatchesHost(string target)
@@ -186,11 +199,13 @@ Trusted Function void AppendProjectLinkSettings(list arguments,
                                                  string defaultBridgeLlvm,
                                                  string defaultBridgeRuntime)
 {
+    list searchDirectories = list.Create();
     int index = 0;
     While (index < profile.LibDirs.Count())
     {
         string directory = project.ResolvePath(
             [string](profile.LibDirs.Fetch(index)));
+        searchDirectories.Add(IO.Path.Normalize(directory));
         arguments.Add(HostIsWindows() ? "/libpath:" + directory :
             "-L" + directory);
         index = index + 1;
@@ -220,6 +235,32 @@ Trusted Function void AppendProjectLinkSettings(list arguments,
         string argument = [string](profile.LinkArgs.Fetch(index));
         If (!HostIsWindows()) arguments.Add("-Xlinker");
         arguments.Add(argument);
+        index = index + 1;
+    }
+    index = 0;
+    While (index < profile.LinkRoots.Count())
+    {
+        string root = project.ResolvePath([string](profile.LinkRoots.Fetch(index)));
+        string libraryRoot = IO.Path.Combine(root, "lib");
+        string[] candidates = {
+            IO.Path.Combine(libraryRoot, HostTargetTriple()),
+            IO.Path.Combine(libraryRoot, HostTag()),
+            libraryRoot,
+            root
+        };
+        int candidateIndex = 0;
+        While (candidateIndex < candidates.Length())
+        {
+            string directory = IO.Path.Normalize(candidates[candidateIndex]);
+            If (IO.Directory.Exists(directory) &&
+                !searchDirectories.Contains(directory))
+            {
+                searchDirectories.Add(directory);
+                arguments.Add(HostIsWindows() ? "/libpath:" + directory :
+                    "-L" + directory);
+            }
+            candidateIndex = candidateIndex + 1;
+        }
         index = index + 1;
     }
 }
@@ -272,13 +313,16 @@ Trusted Function int LinkWindowsExecutable(string outputPath, string objectPath,
     arguments.Add("/libpath:" + llvm);
     arguments.Add("/libpath:" + runtime);
     arguments.Add("LLVM-C.lib");
-    arguments.Add("kernel32.lib");
-    arguments.Add("user32.lib");
-    arguments.Add("gdi32.lib");
-    arguments.Add("oldnames.lib");
-    arguments.Add("msvcrt.lib");
-    arguments.Add("vcruntime.lib");
-    arguments.Add("ucrt.lib");
+    If (!profile.NoDefaultLibs)
+    {
+        arguments.Add("kernel32.lib");
+        arguments.Add("user32.lib");
+        arguments.Add("gdi32.lib");
+        arguments.Add("oldnames.lib");
+        arguments.Add("msvcrt.lib");
+        arguments.Add("vcruntime.lib");
+        arguments.Add("ucrt.lib");
+    }
     AppendProjectLinkSettings(arguments, project, profile,
         bridgeLlvm, bridgeRuntime);
     AppendExternLinkSettings(arguments, semantics);
@@ -329,9 +373,12 @@ Trusted Function int LinkPosixExecutable(string outputPath, string objectPath,
     arguments.Add(HostIsMacOS() ?
         "-Wl,-rpath,@loader_path/llvm/lib" :
         "-Wl,-rpath,$ORIGIN/llvm/lib");
-    arguments.Add("-pthread");
-    If (!HostIsMacOS()) arguments.Add("-ldl");
-    arguments.Add("-lm");
+    If (!profile.NoDefaultLibs)
+    {
+        arguments.Add("-pthread");
+        If (!HostIsMacOS()) arguments.Add("-ldl");
+        arguments.Add("-lm");
+    }
     Return RunProcess(clang, arguments);
 }
 
@@ -441,10 +488,11 @@ Trusted Function int CompileProject(ProjectBuildRequest request)
     CompileSession session = New CompileSession();
     session.LoadProject(manifest, request.Profile);
     If (!session.HasErrors()) session.ParseProject();
-    string entryPath = session.Project.ResolvePath(session.Profile.Entry);
-    If (!session.HasErrors()) LoadRuntimeSources(session, entryPath);
-    If (!session.HasErrors() && session.Profile.AutoDiscovery)
-        DiscoverRelatedSources(session, entryPath, false);
+    If (!session.HasErrors())
+    {
+        string entryPath = session.Project.ResolvePath(session.Profile.Entry);
+        PrepareProjectDependencies(session, entryPath);
+    }
     SemanticCompilation semantics = null;
     If (!session.HasErrors())
     {
@@ -534,16 +582,26 @@ Safe Function bool IsRelatedUnit(CompileSession session, SyntaxTree candidate)
 
 Safe Function string FindStandardLibraryRoot(string entryPath)
 {
+    Return FindStandardLibraryPackageRoot(entryPath);
+}
+
+// Project package resolution needs the package layout itself so it can apply
+// manifest/version selection before extracting an optional .klib payload.
+Safe Function string FindStandardLibraryPackageRoot(string entryPath)
+{
     string compilerDirectory = IO.Path.Directory(
         IO.Kinal.Runtime.ExecutablePath());
     string packagedRoot = IO.Path.Combine(compilerDirectory, "stdpkg");
-    string packagedCache = IO.Path.Combine(compilerDirectory, "stdlib-cache");
-    string extractedRoot = IO.Kinal.Compiler.Project.KlibArchive.PreparePackageRoot(
-        packagedRoot, packagedCache);
-    If (!IO.Text.IsEmpty(extractedRoot)) Return extractedRoot;
+    If (IO.Directory.Exists(packagedRoot))
+    {
+        string extractedRoot =
+            IO.Kinal.Compiler.Project.KlibArchive.PreparePackageRoot(
+                packagedRoot,
+                IO.Path.Combine(compilerDirectory, "stdlib-cache"));
+        If (!IO.Text.IsEmpty(extractedRoot)) Return extractedRoot;
+        Return packagedRoot;
+    }
 
-    // Keep source-tree discovery as a developer fallback for an unpackaged
-    // compiler.  Packaged compilers always consume versioned .klib archives.
     string normalizedEntry = IO.Path.Normalize(entryPath);
     If (IO.Path.IsRelative(normalizedEntry))
         normalizedEntry = IO.Path.Normalize(
@@ -560,11 +618,10 @@ Safe Function string FindStandardLibraryRoot(string entryPath)
         depth = depth + 1;
     }
 
-    string packagedCandidate = IO.Path.Combine(compilerDirectory, "stdlib-src");
-    If (IO.Directory.Exists(packagedCandidate)) Return packagedCandidate;
-
-    string currentCandidate = IO.Path.Combine(IO.Path.CurrentDirectory(), "libs/std");
-    If (IO.Directory.Exists(currentCandidate)) Return currentCandidate;
+    string sourceFallback = IO.Path.Combine(compilerDirectory, "stdlib-src");
+    If (IO.Directory.Exists(sourceFallback)) Return sourceFallback;
+    string currentFallback = IO.Path.Combine(IO.Path.CurrentDirectory(), "libs/std");
+    If (IO.Directory.Exists(currentFallback)) Return currentFallback;
     Return "";
 }
 
@@ -607,6 +664,18 @@ Safe Function void LoadRuntimeSources(CompileSession session, string entryPath)
     }
 }
 
+Safe Function void LoadCatalogRuntimeSources(CompileSession session,
+                                               PackageSourceCatalog catalog)
+{
+    int index = 0;
+    While (index < catalog.RuntimeSources.Count())
+    {
+        string path = [string](catalog.RuntimeSources.Fetch(index));
+        If (!SessionContainsSource(session, path)) session.ParseFile(path);
+        index = index + 1;
+    }
+}
+
 Safe Function string StandardPackageName(string path, string standardLibraryRoot)
 {
     If (IO.Text.IsEmpty(standardLibraryRoot)) Return "";
@@ -645,13 +714,9 @@ Safe Function bool IsPotentialPackageSource(CompileSession session, string path,
     Return false;
 }
 
-Safe Function void DiscoverRelatedSources(CompileSession session, string entryPath, bool includeSiblingSources)
+Safe Function void DiscoverSourceCandidates(CompileSession session, list files,
+                                              string standardLibraryRoot)
 {
-    string directory = IO.Path.Directory(IO.Path.Normalize(entryPath));
-    string standardLibraryRoot = FindStandardLibraryRoot(entryPath);
-    list files = list.Create();
-    If (includeSiblingSources) AppendSourceFiles(files, directory);
-    AppendSourceFiles(files, standardLibraryRoot);
     bool changed = true;
     While (changed)
     {
@@ -676,6 +741,40 @@ Safe Function void DiscoverRelatedSources(CompileSession session, string entryPa
             }
             index = index + 1;
         }
+    }
+}
+
+Safe Function void DiscoverRelatedSources(CompileSession session, string entryPath,
+                                            bool includeSiblingSources)
+{
+    string directory = IO.Path.Directory(IO.Path.Normalize(entryPath));
+    string standardLibraryRoot = FindStandardLibraryRoot(entryPath);
+    list files = list.Create();
+    If (includeSiblingSources) AppendSourceFiles(files, directory);
+    AppendSourceFiles(files, standardLibraryRoot);
+    DiscoverSourceCandidates(session, files, standardLibraryRoot);
+}
+
+Safe Function void PrepareProjectDependencies(CompileSession session,
+                                                string entryPath)
+{
+    string compilerDirectory = IO.Path.Directory(
+        IO.Kinal.Runtime.ExecutablePath());
+    string cacheRoot = IO.Path.Combine(compilerDirectory, "package-cache");
+    PackageSourceCatalog catalog =
+        IO.Kinal.Compiler.Project.PackageResolver.ResolveProjectPackages(
+            session.Project, session.Profile,
+            FindStandardLibraryPackageRoot(entryPath), cacheRoot);
+    If (!IO.Text.IsEmpty(catalog.Error))
+    {
+        session.ReportProject("Package resolution failed", catalog.Error);
+        Return;
+    }
+    LoadCatalogRuntimeSources(session, catalog);
+    If (!session.HasErrors())
+    {
+        DependencyResolver resolver = New DependencyResolver(session, catalog);
+        resolver.Resolve();
     }
 }
 
@@ -831,9 +930,7 @@ Safe Function int Run(string[] args)
             If (command == "check" || command == "symbols")
             {
                 string entryPath = project.ResolvePath(profile.Entry);
-                LoadRuntimeSources(session, entryPath);
-                If (!session.HasErrors() && profile.AutoDiscovery)
-                    DiscoverRelatedSources(session, entryPath, false);
+                PrepareProjectDependencies(session, entryPath);
                 SemanticCompilation semantics = New SemanticCompilation(session);
                 semantics.Analyze();
                 IO.Kinal.Compiler.Core.Diagnostics.PrintAll(session.Diagnostics);

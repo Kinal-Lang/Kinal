@@ -1,0 +1,356 @@
+Unit IO.Kinal.Compiler.Project.PackageResolver;
+
+Get IO.Directory;
+Get IO.File;
+Get IO.Path;
+Get IO.Text;
+Get IO.Kinal.Compiler.Project.KlibArchive;
+Get IO.Kinal.Compiler.Project.PackageManifest;
+Get IO.Kinal.Compiler.Project.ProjectConfig;
+Get IO.Kinal.Compiler.Source.SourcePath;
+
+Safe Function bool VersionSegmentIsNumeric(string value)
+{
+    char[] characters = value.ToChars();
+    If (characters.Length() == 0) Return true;
+    int index = 0;
+    While (index < characters.Length())
+    {
+        char current = characters[index];
+        If (current < '0' || current > '9') Return false;
+        index = index + 1;
+    }
+    Return true;
+}
+
+Safe Function u64 VersionSegmentNumber(string value)
+{
+    char[] characters = value.ToChars();
+    u64 result = [u64](0);
+    int index = 0;
+    While (index < characters.Length())
+    {
+        result = result * [u64](10) + [u64]([int](characters[index]) - [int]('0'));
+        index = index + 1;
+    }
+    Return result;
+}
+
+Safe Function int CompareText(string left, string right)
+{
+    char[] leftCharacters = left.ToChars();
+    char[] rightCharacters = right.ToChars();
+    int count = leftCharacters.Length() < rightCharacters.Length() ?
+        leftCharacters.Length() : rightCharacters.Length();
+    int index = 0;
+    While (index < count)
+    {
+        int leftValue = [int](leftCharacters[index]);
+        int rightValue = [int](rightCharacters[index]);
+        If (leftValue < rightValue) Return -1;
+        If (leftValue > rightValue) Return 1;
+        index = index + 1;
+    }
+    If (leftCharacters.Length() < rightCharacters.Length()) Return -1;
+    If (leftCharacters.Length() > rightCharacters.Length()) Return 1;
+    Return 0;
+}
+
+Safe Function int ComparePackageVersion(string left, string right)
+{
+    list leftSegments = IO.Text.Split(left, ".");
+    list rightSegments = IO.Text.Split(right, ".");
+    int count = leftSegments.Count() > rightSegments.Count() ?
+        leftSegments.Count() : rightSegments.Count();
+    int index = 0;
+    While (index < count)
+    {
+        string leftSegment = index < leftSegments.Count() ?
+            [string](leftSegments.Fetch(index)) : "";
+        string rightSegment = index < rightSegments.Count() ?
+            [string](rightSegments.Fetch(index)) : "";
+        If (VersionSegmentIsNumeric(leftSegment) &&
+            VersionSegmentIsNumeric(rightSegment))
+        {
+            u64 leftNumber = VersionSegmentNumber(leftSegment);
+            u64 rightNumber = VersionSegmentNumber(rightSegment);
+            If (leftNumber < rightNumber) Return -1;
+            If (leftNumber > rightNumber) Return 1;
+        }
+        Else
+        {
+            int comparison = CompareText(leftSegment, rightSegment);
+            If (comparison != 0) Return comparison;
+        }
+        index = index + 1;
+    }
+    Return 0;
+}
+
+Class PackageSelection
+{
+    Public PackageManifestConfig Manifest;
+    Public bool Official;
+    Public PackageSelection Next;
+
+    Public Safe Constructor(PackageManifestConfig manifest, bool official)
+    {
+        This.Manifest = manifest;
+        This.Official = official;
+        This.Next = null;
+    }
+}
+
+Class PackageSourceCatalog
+{
+    Public list Sources;
+    Public list OfficialSources;
+    Public list ExplicitSources;
+    Public list RuntimeSources;
+    Public string Error;
+
+    Public Safe Constructor()
+    {
+        This.Sources = list.Create();
+        This.OfficialSources = list.Create();
+        This.ExplicitSources = list.Create();
+        This.RuntimeSources = list.Create();
+        This.Error = "";
+    }
+
+    Public Safe Function void AddSource(string path, bool official, bool runtime,
+                                          bool explicitFile)
+    {
+        string canonical = IO.Kinal.Compiler.Source.SourcePath.Canonical(path);
+        list sources = official ? This.OfficialSources : This.Sources;
+        If (!sources.Contains(canonical)) sources.Add(canonical);
+        If (explicitFile && !This.ExplicitSources.Contains(canonical))
+            This.ExplicitSources.Add(canonical);
+        If (runtime && !This.RuntimeSources.Contains(canonical))
+            This.RuntimeSources.Add(canonical);
+    }
+}
+
+Class ProjectPackageResolver
+{
+    Public ProjectConfig Project;
+    Public ProjectProfileConfig Profile;
+    Public string CacheRoot;
+    Public PackageSelection First;
+    Public PackageSelection Last;
+    Public string Error;
+
+    Public Safe Constructor(ProjectConfig project, ProjectProfileConfig profile,
+                            string cacheRoot)
+    {
+        This.Project = project;
+        This.Profile = profile;
+        This.CacheRoot = cacheRoot;
+        This.First = null;
+        This.Last = null;
+        This.Error = "";
+    }
+
+    Public Safe Function void Fail(string message)
+    {
+        If (IO.Text.IsEmpty(This.Error)) This.Error = message;
+    }
+
+    Public Safe Function PackageSelection Find(string name, bool official)
+    {
+        PackageSelection current = This.First;
+        While (current != null)
+        {
+            If (current.Official == official && current.Manifest.Name == name)
+                Return current;
+            current = current.Next;
+        }
+        Return null;
+    }
+
+    Public Safe Function void Consider(PackageManifestConfig manifest, bool official)
+    {
+        If (IO.Text.ToLower(manifest.Kind) == "project") Return;
+        If (!official && IO.Text.StartsWith(manifest.Name, "IO."))
+        {
+            This.Fail("reserved package namespace 'IO.*' is only allowed in stdpkg: " +
+                manifest.Name);
+            Return;
+        }
+        PackageSelection selected = This.Find(manifest.Name, official);
+        If (selected == null)
+        {
+            PackageSelection added = New PackageSelection(manifest, official);
+            If (This.First == null) This.First = added;
+            Else This.Last.Next = added;
+            This.Last = added;
+        }
+        ElseIf (ComparePackageVersion(manifest.Version,
+                                      selected.Manifest.Version) > 0)
+            selected.Manifest = manifest;
+    }
+
+    Public Safe Function void ScanRoot(string root, bool official)
+    {
+        If (!IO.Text.IsEmpty(This.Error) || IO.Text.IsEmpty(root) ||
+            !IO.Directory.Exists(root)) Return;
+        list files = IO.Directory.Files(root, true);
+        int index = 0;
+        While (index < files.Count())
+        {
+            string path = [string](files.Fetch(index));
+            string name = IO.Text.ToLower(IO.Path.FileName(path));
+            string relative = IO.Text.Slice(path, IO.Text.Length(root),
+                IO.Text.Length(path) - IO.Text.Length(root));
+            relative = IO.Text.Replace(relative, "\\", "/");
+            bool ignored = IO.Text.Contains(relative, "/.git/") ||
+                IO.Text.Contains(relative, "/.kinal-cache/") ||
+                IO.Text.Contains(relative, "/build/") || IO.Text.Contains(relative, "/out/");
+            If (!ignored && (name == "package.knpkg.json" || name == "package.knpkg"))
+            {
+                PackageManifestConfig manifest =
+                    IO.Kinal.Compiler.Project.PackageManifest.ReadPackageManifest(path);
+                If (!manifest.IsValid())
+                {
+                    This.Fail("invalid package manifest " + manifest.Path +
+                        ": " + manifest.Error);
+                    Return;
+                }
+                This.Consider(manifest, official);
+                If (!IO.Text.IsEmpty(This.Error)) Return;
+            }
+            index = index + 1;
+        }
+    }
+
+    Public Safe Function void ScanConfiguredRoots(list roots, bool official)
+    {
+        int index = 0;
+        While (index < roots.Count())
+        {
+            This.ScanRoot(This.Project.ResolvePath(
+                [string](roots.Fetch(index))), official);
+            index = index + 1;
+        }
+    }
+
+    Public Safe Function PackageManifestConfig Materialize(PackageSelection selection)
+    {
+        PackageManifestConfig manifest = selection.Manifest;
+        list visited = list.Create();
+        While (!IO.Text.IsEmpty(manifest.KlibPath))
+        {
+            string archivePath = manifest.ResolvePath(manifest.KlibPath);
+            If (!IO.File.Exists(archivePath)) Return manifest;
+            string outputRoot =
+                IO.Kinal.Compiler.Project.KlibArchive.PrepareArchive(archivePath, This.CacheRoot);
+            If (IO.Text.IsEmpty(outputRoot))
+            {
+                This.Fail("failed to extract package archive: " + archivePath);
+                Return manifest;
+            }
+            If (visited.Contains(outputRoot) || visited.Count() >= 64)
+            {
+                This.Fail("cyclic or excessively nested package archive: " + archivePath);
+                Return manifest;
+            }
+            visited.Add(outputRoot);
+            manifest = IO.Kinal.Compiler.Project.PackageManifest.ReadPackageManifest(
+                IO.Path.Combine(outputRoot, "package.knpkg.json"));
+            If (!manifest.IsValid())
+            {
+                This.Fail("invalid embedded package manifest " + manifest.Path + ": " + manifest.Error);
+                Return manifest;
+            }
+            If (!selection.Official && IO.Text.StartsWith(manifest.Name, "IO."))
+            {
+                This.Fail("reserved package namespace 'IO.*' is only allowed in stdpkg: " +
+                    manifest.Name);
+                Return manifest;
+            }
+        }
+        Return manifest;
+    }
+
+    Public Safe Function void AddManifestSources(PackageSourceCatalog catalog,
+                                                   PackageSelection selection)
+    {
+        PackageManifestConfig manifest = This.Materialize(selection);
+        If (!IO.Text.IsEmpty(This.Error)) Return;
+        bool runtime = manifest.Name == "IO.Kinal.Runtime";
+        If (manifest.SourceFiles.Count() > 0)
+        {
+            int index = 0;
+            While (index < manifest.SourceFiles.Count())
+            {
+                string path = manifest.ResolvePath(
+                    [string](manifest.SourceFiles.Fetch(index)));
+                If (!IO.File.Exists(path))
+                {
+                    This.Fail("package source file does not exist: " + path);
+                    Return;
+                }
+                catalog.AddSource(path, selection.Official, runtime, true);
+                index = index + 1;
+            }
+            Return;
+        }
+        If (IO.Text.IsEmpty(manifest.SourceRoot)) Return;
+        string sourceRoot = manifest.ResolvePath(manifest.SourceRoot);
+        If (!IO.Directory.Exists(sourceRoot))
+        {
+            This.Fail("package source_root does not exist: " + sourceRoot);
+            Return;
+        }
+        list files = IO.Directory.Files(sourceRoot, true);
+        int index = 0;
+        While (index < files.Count())
+        {
+            string path = [string](files.Fetch(index));
+            If (IO.Text.ToLower(IO.Path.Extension(path)) == "kn")
+                catalog.AddSource(path, selection.Official, runtime, false);
+            index = index + 1;
+        }
+    }
+
+    Public Safe Function PackageSourceCatalog Resolve(string defaultOfficialRoot)
+    {
+        PackageSourceCatalog catalog = New PackageSourceCatalog();
+        If (This.Profile.AutoDiscovery)
+        {
+            This.ScanConfiguredRoots(This.Project.PackageRoots, false);
+            This.ScanConfiguredRoots(This.Profile.PackageRoots, false);
+            This.ScanRoot(IO.Path.Combine(This.Project.RootDirectory, "kpkg"), false);
+        }
+        This.ScanConfiguredRoots(This.Project.OfficialPackageRoots, true);
+        This.ScanConfiguredRoots(This.Profile.OfficialPackageRoots, true);
+        This.ScanRoot(defaultOfficialRoot, true);
+        If (!IO.Text.IsEmpty(This.Error))
+        {
+            catalog.Error = This.Error;
+            Return catalog;
+        }
+
+        PackageSelection current = This.First;
+        While (current != null)
+        {
+            This.AddManifestSources(catalog, current);
+            If (!IO.Text.IsEmpty(This.Error))
+            {
+                catalog.Error = This.Error;
+                Return catalog;
+            }
+            current = current.Next;
+        }
+        Return catalog;
+    }
+}
+
+Safe Function PackageSourceCatalog ResolveProjectPackages(
+    ProjectConfig project, ProjectProfileConfig profile,
+    string defaultOfficialRoot, string cacheRoot)
+{
+    ProjectPackageResolver resolver = New ProjectPackageResolver(
+        project, profile, cacheRoot);
+    Return resolver.Resolve(defaultOfficialRoot);
+}

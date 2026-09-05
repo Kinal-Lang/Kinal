@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import platform
 import shutil
 import subprocess
 import sys
@@ -46,6 +47,197 @@ def compiler_diagnostic_titles(proc: subprocess.CompletedProcess[str]) -> list[s
         message = line[line.rfind("] ") + 2 :]
         titles.append(f"{stage}:{message.split(':', 1)[0]}")
     return titles
+
+
+def check_windows_no_default_libs(compiler: Path, project: Path, out_dir: Path,
+                                  root: Path, role: str) -> None:
+    output = out_dir / f"no-default-libraries-{role}.exe"
+    command = [str(compiler), "build", "--project", str(project),
+               "--profile", "no-defaults", "-o", str(output)]
+    missing = run(command, cwd=root)
+    require(
+        missing.returncode != 0
+        and "undefined symbol: mainCRTStartup" in missing.stdout + missing.stderr,
+        f"{role} NoDefaultLibs did not suppress automatic CRT libraries", missing,
+    )
+    manifest = project / "kinal.knproj"
+    original = manifest.read_text(encoding="utf-8")
+    host = "win-arm64" if platform.machine().lower() in {"aarch64", "arm64"} else "win-x64"
+    directory = (compiler.parent / "runtime" / host).as_posix()
+    libraries = ["kernel32", "user32", "gdi32", "oldnames", "msvcrt", "vcruntime", "ucrt"]
+    explicit = ("NoDefaultLibs = true; LibDirs = " + json.dumps([directory])
+                + "; Libs = " + json.dumps(libraries) + ";")
+    try:
+        manifest.write_text(original.replace("NoDefaultLibs = true;", explicit), encoding="utf-8")
+        restored = run(command, cwd=root)
+        require(restored.returncode == 0,
+                f"{role} NoDefaultLibs ignored explicitly supplied libraries", restored)
+        execution = run([str(output)], cwd=root)
+        require(execution.returncode == 0 and execution.stdout.replace("\r\n", "\n") == "link-root\n",
+                f"{role} explicit-library executable failed", execution)
+    finally:
+        manifest.write_text(original, encoding="utf-8")
+
+
+def build_link_root_probe_library(root: Path, library: Path, triple: str) -> None:
+    # Use the same selected toolchain as selfhost preparation. A real indexed
+    # archive is portable to the macOS system linker as well as lld-link/lld.
+    sys.path.insert(0, str(root))
+    from infra.scripts.x.llvm import detect_llvm_dir, llvm_bin_dir
+
+    llvm = llvm_bin_dir(detect_llvm_dir())
+    suffix = ".exe" if sys.platform == "win32" else ""
+    source = library.parent / "link_root_probe.c"
+    object_path = library.parent / "link_root_probe.o"
+    source.write_text("int selfhost_link_root_probe(void) { return 7; }\n", encoding="utf-8")
+    compile_probe = run(
+        [str(llvm / f"clang{suffix}"), f"--target={triple}",
+         "-c", str(source), "-o", str(object_path)],
+        cwd=root,
+    )
+    require(compile_probe.returncode == 0, "failed to compile LinkRoots probe", compile_probe)
+    if sys.platform == "win32":
+        command = [str(llvm / "llvm-lib.exe"), "/nologo", f"/out:{library}", str(object_path)]
+    else:
+        command = [str(llvm / "llvm-ar")]
+        if sys.platform == "darwin":
+            command.append("--format=darwin")
+        command.extend(["rcs", str(library), str(object_path)])
+    packed = run(command, cwd=root)
+    require(packed.returncode == 0, "failed to archive LinkRoots probe", packed)
+
+
+def check_project_build_diagnostics(compiler: Path, project: Path,
+                                    out_dir: Path, root: Path) -> None:
+    for mode in ("build", "build-ir", "build-object"):
+        invalid = run(
+            [str(compiler), mode, "--project", str(project), "--profile", "missing-profile",
+             "-o", str(out_dir / f"invalid-profile-{mode}.output")],
+            cwd=root,
+        )
+        require(invalid.returncode == 1 and "[Project] Unknown profile" in invalid.stdout,
+                f"{mode} lost the unknown-profile diagnostic", invalid)
+    malformed = out_dir / "malformed-build-project.knproj"
+    malformed.write_text("Project Invalid { NotAField = true; }\n", encoding="utf-8")
+    invalid = run(
+        [str(compiler), "build", "--project", str(malformed),
+         "-o", str(out_dir / "invalid-project.output")],
+        cwd=root,
+    )
+    require(invalid.returncode == 1 and "[Project] Unknown Field" in invalid.stdout,
+            "build lost project-parser diagnostics before profile selection", invalid)
+
+
+def check_project_hosted_link_options(stage0: Path, compiler: Path, root: Path,
+                                       out_dir: Path) -> dict[str, object]:
+    executable_suffix = ".exe" if sys.platform == "win32" else ""
+    link_root_project = out_dir / "project-link-root"
+    link_root_source = link_root_project / "src" / "Main.kn"
+    machine = platform.machine().lower()
+    arm64 = machine in {"arm64", "aarch64"}
+    if sys.platform == "win32":
+        host_triple = "aarch64-pc-windows-msvc" if arm64 else "x86_64-pc-windows-msvc"
+        probe_library_name = "selfhost_link_root_probe.lib"
+    elif sys.platform == "darwin":
+        host_triple = "aarch64-apple-darwin" if arm64 else "x86_64-apple-darwin"
+        probe_library_name = "libselfhost_link_root_probe.a"
+    else:
+        host_triple = "aarch64-unknown-linux-gnu" if arm64 else "x86_64-pc-linux-gnu"
+        probe_library_name = "libselfhost_link_root_probe.a"
+    probe_library = (
+        link_root_project / "link-root" / "lib" / host_triple / probe_library_name
+    )
+    link_root_source.parent.mkdir(parents=True, exist_ok=True)
+    probe_library.parent.mkdir(parents=True, exist_ok=True)
+    link_root_source.write_text(
+        "Unit Tests.Selfhost.ProjectLinkRoot;\n\n"
+        "Get IO.Console;\n\n"
+        '[LinkName("selfhost_link_root_probe")] Extern Function int Probe() By C;\n\n'
+        "Trusted Static Function int Main()\n"
+        "{\n"
+        "    If (Probe() != 7) Return 1;\n"
+        "    IO.Console.PrintLine(\"link-root\");\n"
+        "    Return 0;\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    (link_root_project / "kinal.knproj").write_text(
+        "Project SelfhostProjectLinkRoot\n"
+        "{\n"
+        "    DefaultProfile = \"test\";\n"
+        "    SourceSet \"main\"\n"
+        "    {\n"
+        "        Roots = [\"src\"];\n"
+        "        Include = [\"**/*.kn\"];\n"
+        "        RequireUnit = true;\n"
+        "    }\n"
+        "    Profile \"test\"\n"
+        "    {\n"
+        "        Source { Entry = \"src/Main.kn\"; Sets = [\"main\"]; Mode = ReachableUnits; }\n"
+        "        Build { Backend = Native; Environment = Hosted; }\n"
+        "        Link\n"
+        "        {\n"
+        "            Libs = [\"selfhost_link_root_probe\"];\n"
+        "            LinkRoots = [\"link-root\"];\n"
+        "        }\n"
+        "    }\n"
+        "    Profile \"no-defaults\"\n"
+        "    {\n"
+        "        Source { Entry = \"src/Main.kn\"; Sets = [\"main\"]; Mode = ReachableUnits; }\n"
+        "        Build { Backend = Native; Environment = Hosted; }\n"
+        '        Link { NoDefaultLibs = true; Libs = ["selfhost_link_root_probe"]; '
+        'LinkRoots = ["link-root"]; }\n'
+        "    }\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    build_link_root_probe_library(root, probe_library, host_triple)
+    link_root_stage0_executable = out_dir / f"project-link-root-stage0{executable_suffix}"
+    link_root_stage1_executable = out_dir / f"project-link-root-stage1{executable_suffix}"
+    link_root_stage0_build = run(
+        [str(stage0), "build", "--project", str(link_root_project),
+         "--profile", "test", "-o", str(link_root_stage0_executable)],
+        cwd=root,
+    )
+    require(link_root_stage0_build.returncode == 0,
+            "stage0 LinkRoots fixture failed", link_root_stage0_build)
+    link_root_stage1_build = run(
+        [str(compiler), "build", "--project", str(link_root_project),
+         "--profile", "test", "-o", str(link_root_stage1_executable)],
+        cwd=root,
+    )
+    require(link_root_stage1_build.returncode == 0,
+            "stage1 LinkRoots fixture failed", link_root_stage1_build)
+    link_root_stage0_run = run([str(link_root_stage0_executable)], cwd=root)
+    link_root_stage1_run = run([str(link_root_stage1_executable)], cwd=root)
+    require(
+        link_root_stage0_run.returncode == 0
+        and link_root_stage1_run.returncode == 0
+        and link_root_stage0_run.stdout.replace("\r\n", "\n") == "link-root\n"
+        and link_root_stage1_run.stdout.replace("\r\n", "\n") == "link-root\n",
+        "stage0/stage1 LinkRoots behavior differs",
+        link_root_stage1_run,
+    )
+    no_defaults_stage0_ir = out_dir / "project-no-defaults-stage0.ll"
+    no_defaults_stage1_ir = out_dir / "project-no-defaults-stage1.ll"
+    no_defaults_stage0 = run(
+        [str(stage0), "build", "--project", str(link_root_project),
+         "--profile", "no-defaults", "--emit", "ir", "-o", str(no_defaults_stage0_ir)],
+        cwd=root,
+    )
+    no_defaults_stage1 = run(
+        [str(compiler), "build", "--project", str(link_root_project),
+         "--profile", "no-defaults", "--emit", "ir", "-o", str(no_defaults_stage1_ir)],
+        cwd=root,
+    )
+    require(no_defaults_stage0.returncode == 0 and no_defaults_stage0_ir.is_file(),
+            "stage0 NoDefaultLibs IR fixture failed", no_defaults_stage0)
+    require(no_defaults_stage1.returncode == 0 and no_defaults_stage1_ir.is_file(),
+            "stage1 NoDefaultLibs IR fixture failed", no_defaults_stage1)
+    if sys.platform == "win32":
+        check_windows_no_default_libs(stage0, link_root_project, out_dir, root, "stage0")
+        check_windows_no_default_libs(compiler, link_root_project, out_dir, root, "stage1")
+    return {"name": "project_hosted_link_options", "ok": True, "host_triple": host_triple}
 
 
 def main() -> int:
@@ -913,6 +1105,83 @@ def main() -> int:
         compat_run,
     )
     results.append({"name": "stage0_build_cli", "ok": True, "emit_modes": 3})
+
+    package_project = (
+        root / "tests" / "selfhost" / "fixtures" / "project_packages" / "kinal.knproj"
+    )
+    package_stage0_executable = out_dir / f"project-packages-stage0{executable_suffix}"
+    package_stage1_executable = out_dir / f"project-packages-stage1{executable_suffix}"
+    package_stage0_build = run(
+        [
+            str(stage0),
+            "build",
+            "--project",
+            str(package_project.parent),
+            "--profile",
+            "test",
+            "-o",
+            str(package_stage0_executable),
+        ],
+        cwd=root,
+    )
+    require(package_stage0_build.returncode == 0,
+            "stage0 project package-roots fixture failed", package_stage0_build)
+    package_stage1_build = run(
+        [
+            str(compiler),
+            "build",
+            "--project",
+            str(package_project),
+            "--profile",
+            "test",
+            "-o",
+            str(package_stage1_executable),
+        ],
+        cwd=root,
+    )
+    require(package_stage1_build.returncode == 0,
+            "stage1 project package-roots fixture failed", package_stage1_build)
+    package_stage0_run = run([str(package_stage0_executable)], cwd=root)
+    package_stage1_run = run([str(package_stage1_executable)], cwd=root)
+    expected_package_output = "top-2\nprofile\n"
+    require(
+        package_stage0_run.returncode == 0
+        and package_stage1_run.returncode == 0
+        and package_stage0_run.stdout.replace("\r\n", "\n") == expected_package_output
+        and package_stage1_run.stdout.replace("\r\n", "\n") == expected_package_output,
+        "stage0/stage1 project package-root behavior differs",
+        package_stage1_run,
+    )
+    results.append({"name": "project_package_roots", "ok": True, "versions": 2})
+
+    check_project_build_diagnostics(compiler, package_project, out_dir, root)
+    results.append({"name": "project_build_diagnostics", "ok": True, "cases": 4})
+
+    results.append(check_project_hosted_link_options(stage0, compiler, root, out_dir))
+
+    package_contract = root / "tests" / "check_project_packages.py"
+    # A published stage0 is allowed to predate fixes in this checkout.
+    # Selfhost always has to satisfy the current contract.
+    checked_compilers = [("selfhost", compiler)]
+    if args.stage0_role == "reference":
+        checked_compilers.insert(0, ("stage0", stage0))
+    for role, selected_compiler in checked_compilers:
+        package_checks = run(
+            [sys.executable, str(package_contract), "--compiler", str(selected_compiler),
+             "--out-dir", str(out_dir / f"package-contract-{role}")],
+            cwd=root,
+        )
+        require(package_checks.returncode == 0,
+                f"{role} project package contract failed", package_checks)
+    results.append({"name": "project_package_contract", "ok": True,
+                    "cases_per_compiler": 33, "compilers": len(checked_compilers)})
+
+    bundle_checks = run(
+        [sys.executable, str(root / "tests" / "selfhost" / "test_stage0_bundle.py")],
+        cwd=root,
+    )
+    require(bundle_checks.returncode == 0, "stage0 bundle safety checks failed", bundle_checks)
+    results.append({"name": "stage0_bundle_safety", "ok": True, "cases": 4})
 
     packaged_core = compiler.parent / "stdpkg" / "IO.Core" / "1.0.0" / "lib" / "IO.Core.klib"
     stdlib_cache = compiler.parent / "stdlib-cache"

@@ -77,6 +77,8 @@ Class ProjectProfileConfig
     Public list LinkFiles;
     Public list LinkArgs;
     Public list LinkRoots;
+    Public list PackageRoots;
+    Public list OfficialPackageRoots;
     Public ProjectProfileConfig Next;
 
     Public Safe Constructor(string name)
@@ -100,6 +102,8 @@ Class ProjectProfileConfig
         This.LinkFiles = list.Create();
         This.LinkArgs = list.Create();
         This.LinkRoots = list.Create();
+        This.PackageRoots = list.Create();
+        This.OfficialPackageRoots = list.Create();
         This.Next = null;
     }
 }

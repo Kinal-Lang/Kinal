@@ -278,9 +278,11 @@ Safe Function string CacheDirectoryFor(string cacheRoot, string archivePath)
     Return IO.Path.Join3(cacheRoot, packageName, version);
 }
 
-Trusted Function bool EnsureExtracted(string archivePath, string outputRoot)
+// The same loaded bytes select a cache generation and populate it, avoiding a
+// content-change race between fingerprinting and extraction.
+Trusted Function bool EnsureLoadedExtracted(KlibArchive archive,
+                                               string archivePath, string outputRoot)
 {
-    KlibArchive archive = New KlibArchive(archivePath);
     If (!archive.IsValid())
     {
         IO.Console.PrintLine("[Package] failed to read " + archivePath +
@@ -312,6 +314,25 @@ Trusted Function bool EnsureExtracted(string archivePath, string outputRoot)
         Return false;
     }
     Return true;
+}
+
+Trusted Function bool EnsureExtracted(string archivePath, string outputRoot)
+{
+    Return EnsureLoadedExtracted(New KlibArchive(archivePath), archivePath, outputRoot);
+}
+
+Trusted Function string PrepareArchive(string archivePath, string cacheRoot)
+{
+    KlibArchive archive = New KlibArchive(archivePath);
+    If (!archive.IsValid())
+    {
+        archive.Dispose();
+        Return "";
+    }
+    string generation = [string](archive.Length) + "-" + [string](archive.Fingerprint());
+    string outputRoot = IO.Path.Combine(cacheRoot, generation);
+    If (!EnsureLoadedExtracted(archive, archivePath, outputRoot)) Return "";
+    Return outputRoot;
 }
 
 Trusted Function u64 MixFingerprint(u64 hash, u64 value)

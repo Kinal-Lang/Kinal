@@ -89,6 +89,7 @@ def main() -> int:
 
     for stage in range(2, args.max_stage + 1):
         destination = out / f"stage{stage}" / f"kinal-selfhost{suffix}"
+        print(f"[Bootstrap] build stage{stage} with stage{stage - 1}", flush=True)
         build_next_stage(stages[stage - 1], destination, project, root)
         stages[stage] = destination
 
@@ -102,6 +103,7 @@ def main() -> int:
 
     large_parser_input = root / "apps" / "kinalvm" / "src" / "IO" / "Kinal" / "VM" / "VM.kn"
     for stage in range(2, args.max_stage + 1):
+        print(f"[Bootstrap] stage{stage}: large parser input", flush=True)
         process = run([str(stages[stage]), "parse", str(large_parser_input)], cwd=root)
         require(process.returncode == 0, f"stage{stage} failed the large parser input", process)
 
@@ -112,12 +114,14 @@ def main() -> int:
         "symbols": ["symbols", str(project), "stage1"],
     }
     for name, tail in commands.items():
+        print(f"[Bootstrap] stage1: {name} baseline", flush=True)
         baseline = run([str(stages[1]), *tail], cwd=root)
         require(baseline.returncode == 0, f"stage1 {name} failed", baseline)
         expected = normalized_output(baseline)
         for stage, compiler in stages.items():
             if stage == 1:
                 continue
+            print(f"[Bootstrap] stage{stage}: compare {name}", flush=True)
             process = run([str(compiler), *tail], cwd=root)
             require(process.returncode == 0, f"stage{stage} {name} failed", process)
             require(normalized_output(process) == expected, f"stage{stage} {name} differs from stage1")
@@ -126,6 +130,7 @@ def main() -> int:
     ir_hashes: dict[str, str] = {}
     for stage, compiler in stages.items():
         ir_path = out / f"stage{stage}" / "self.ll"
+        print(f"[Bootstrap] stage{stage}: emit LLVM IR", flush=True)
         process = run([str(compiler), "build-ir", str(project), str(ir_path), "stage1"], cwd=root)
         require(process.returncode == 0, f"stage{stage} IR emission failed", process)
         ir_hashes[str(stage)] = digest(ir_path)

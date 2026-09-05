@@ -113,13 +113,6 @@ Class CompileSession
             This.ReportProject("Unsupported project option", "Link.Script");
         If (This.Profile.NoCRT)
             This.ReportProject("Unsupported project option", "Link.NoCRT=true");
-        If (This.Profile.NoDefaultLibs)
-            This.ReportProject("Unsupported project option", "Link.NoDefaultLibs=true");
-        If (This.Profile.LinkRoots.Count() > 0)
-            This.ReportProject("Unsupported project option", "Link.LinkRoots");
-        If (This.Project.PackageRoots.Count() > 0 ||
-            This.Project.OfficialPackageRoots.Count() > 0)
-            This.ReportProject("Unsupported project option", "Packages roots");
         int selectedSet = 0;
         While (selectedSet < This.Profile.Sets.Count())
         {

@@ -1,0 +1,6 @@
+Unit Tests.Packages.Profile;
+
+Safe Function string Text()
+{
+    Return "profile";
+}

@@ -1,0 +1,454 @@
+Unit IO.Kinal.Compiler.Project.PackageManifest;
+
+Get IO.File;
+Get IO.Path;
+Get IO.Text;
+Get IO.Kinal.Compiler.Source.SourcePath;
+
+// Package manifests are compiler input.  Keep their parser in Kinal so package
+// discovery does not introduce a JSON/native dependency into the compiler.
+Class PackageManifestConfig
+{
+    Public string Path;
+    Public string Directory;
+    Public string Kind;
+    Public string Name;
+    Public string Version;
+    Public string SourceRoot;
+    Public string KlibPath;
+    Public list SourceFiles;
+    Public string Error;
+
+    Public Safe Constructor(string path)
+    {
+        This.Path = IO.Kinal.Compiler.Source.SourcePath.Canonical(path);
+        This.Directory = IO.Path.Directory(This.Path);
+        This.Kind = "";
+        This.Name = "";
+        This.Version = "";
+        This.SourceRoot = "";
+        This.KlibPath = "";
+        This.SourceFiles = list.Create();
+        This.Error = "";
+    }
+
+    Public Safe Function bool IsValid()
+    {
+        Return IO.Text.IsEmpty(This.Error);
+    }
+
+    Public Safe Function string ResolvePath(string value)
+    {
+        If (IO.Path.IsAbsolute(value))
+            Return IO.Kinal.Compiler.Source.SourcePath.Canonical(value);
+        Return IO.Kinal.Compiler.Source.SourcePath.Canonical(
+            IO.Path.Combine(This.Directory, value));
+    }
+}
+
+Class PackageJsonReader
+{
+    Public char[] Characters;
+    Public int Position;
+    Public string Error;
+
+    Public Safe Constructor(string text)
+    {
+        This.Characters = text.ToChars();
+        This.Position = 0;
+        This.Error = "";
+    }
+
+    Public Safe Function void Fail(string message)
+    {
+        If (IO.Text.IsEmpty(This.Error)) This.Error = message;
+    }
+
+    Public Safe Function bool AtEnd()
+    {
+        Return This.Position >= This.Characters.Length();
+    }
+
+    Public Safe Function char Current()
+    {
+        Return This.AtEnd() ? '\0' : This.Characters[This.Position];
+    }
+
+    Public Safe Function void SkipWhitespace()
+    {
+        char value = This.Current();
+        While (value == ' ' || value == '\t' || value == '\n' || value == '\r')
+        {
+            This.Position = This.Position + 1;
+            value = This.Current();
+        }
+    }
+
+    Public Safe Function bool Consume(char value)
+    {
+        This.SkipWhitespace();
+        If (This.AtEnd() || This.Current() != value) Return false;
+        This.Position = This.Position + 1;
+        Return true;
+    }
+
+    Public Safe Function int ReadHexQuad()
+    {
+        int value = 0;
+        int index = 0;
+        While (index < 4)
+        {
+            char digit = This.Current();
+            int number = -1;
+            If (digit >= '0' && digit <= '9') number = [int](digit) - [int]('0');
+            ElseIf (digit >= 'a' && digit <= 'f') number = [int](digit) - [int]('a') + 10;
+            ElseIf (digit >= 'A' && digit <= 'F') number = [int](digit) - [int]('A') + 10;
+            If (This.AtEnd() || number < 0)
+            {
+                This.Fail("invalid JSON Unicode escape");
+                Return 0;
+            }
+            value = value * 16 + number;
+            This.Position = This.Position + 1;
+            index = index + 1;
+        }
+        Return value;
+    }
+
+    Public Safe Function string ReadUnicodeEscape()
+    {
+        int value = This.ReadHexQuad();
+        If (!IO.Text.IsEmpty(This.Error)) Return "";
+        If (value >= 55296 && value <= 56319)
+        {
+            If (This.Current() != '\\')
+            {
+                This.Fail("missing JSON low surrogate");
+                Return "";
+            }
+            This.Position = This.Position + 1;
+            If (This.Current() != 'u')
+            {
+                This.Fail("missing JSON low surrogate");
+                Return "";
+            }
+            This.Position = This.Position + 1;
+            int low = This.ReadHexQuad();
+            If (!IO.Text.IsEmpty(This.Error)) Return "";
+            If (low < 56320 || low > 57343)
+            {
+                This.Fail("invalid JSON low surrogate");
+                Return "";
+            }
+            value = 65536 + (value - 55296) * 1024 + low - 56320;
+        }
+        ElseIf (value >= 56320 && value <= 57343)
+        {
+            This.Fail("unexpected JSON low surrogate");
+            Return "";
+        }
+        // Kinal manifest paths/names are NUL-terminated UTF-8 strings.
+        If (value == 0)
+        {
+            This.Fail("NUL is not allowed in package manifest strings");
+            Return "";
+        }
+        If (value < 128) Return [string]([char](value));
+        If (value < 2048)
+            Return [string]([char](192 | (value >> 6))) +
+                [string]([char](128 | (value & 63)));
+        If (value < 65536)
+            Return [string]([char](224 | (value >> 12))) +
+                [string]([char](128 | ((value >> 6) & 63))) +
+                [string]([char](128 | (value & 63)));
+        Return [string]([char](240 | (value >> 18))) +
+            [string]([char](128 | ((value >> 12) & 63))) +
+            [string]([char](128 | ((value >> 6) & 63))) +
+            [string]([char](128 | (value & 63)));
+    }
+
+    Public Safe Function string ReadString()
+    {
+        If (!This.Consume('"'))
+        {
+            This.Fail("expected a JSON string");
+            Return "";
+        }
+        string result = "";
+        While (!This.AtEnd() && This.Current() != '"')
+        {
+            char value = This.Current();
+            This.Position = This.Position + 1;
+            If (value < ' ')
+            {
+                This.Fail("control character in JSON string");
+                Return "";
+            }
+            If (value == '\\')
+            {
+                value = This.Current();
+                If (This.AtEnd())
+                {
+                    This.Fail("unterminated JSON escape");
+                    Return "";
+                }
+                This.Position = This.Position + 1;
+                If (value == 'u')
+                {
+                    result = result + This.ReadUnicodeEscape();
+                    If (!IO.Text.IsEmpty(This.Error)) Return "";
+                    Continue;
+                }
+                If (value == 'n') value = '\n';
+                ElseIf (value == 'r') value = '\r';
+                ElseIf (value == 't') value = '\t';
+                ElseIf (value == 'b') value = '\b';
+                ElseIf (value == 'f') value = [char](12); // JSON form feed.
+                ElseIf (value != '"' && value != '/' && value != '\\')
+                {
+                    This.Fail("invalid JSON string escape");
+                    Return "";
+                }
+            }
+            result = result + [string](value);
+        }
+        If (This.AtEnd())
+        {
+            This.Fail("unterminated JSON string");
+            Return "";
+        }
+        This.Position = This.Position + 1;
+        Return result;
+    }
+
+    Public Safe Function bool IsDigit()
+    {
+        Return !This.AtEnd() && This.Current() >= '0' && This.Current() <= '9';
+    }
+
+    Public Safe Function bool ReadLiteral(string value)
+    {
+        char[] expected = value.ToChars();
+        int index = 0;
+        While (index < expected.Length())
+        {
+            If (This.AtEnd() || This.Current() != expected[index])
+            {
+                This.Fail("invalid JSON literal");
+                Return false;
+            }
+            This.Position = This.Position + 1;
+            index = index + 1;
+        }
+        Return true;
+    }
+
+    Public Safe Function bool SkipNumber()
+    {
+        If (This.Current() == '-') This.Position = This.Position + 1;
+        If (This.Current() == '0') This.Position = This.Position + 1;
+        Else
+        {
+            If (!This.IsDigit())
+            {
+                This.Fail("invalid JSON number");
+                Return false;
+            }
+            While (This.IsDigit()) This.Position = This.Position + 1;
+        }
+        If (This.Current() == '.')
+        {
+            This.Position = This.Position + 1;
+            If (!This.IsDigit())
+            {
+                This.Fail("missing JSON fractional digits");
+                Return false;
+            }
+            While (This.IsDigit()) This.Position = This.Position + 1;
+        }
+        If (This.Current() == 'e' || This.Current() == 'E')
+        {
+            This.Position = This.Position + 1;
+            If (This.Current() == '+' || This.Current() == '-')
+                This.Position = This.Position + 1;
+            If (!This.IsDigit())
+            {
+                This.Fail("missing JSON exponent digits");
+                Return false;
+            }
+            While (This.IsDigit()) This.Position = This.Position + 1;
+        }
+        Return true;
+    }
+
+    Public Safe Function bool SkipNestedValue(int depth)
+    {
+        This.SkipWhitespace();
+        If (depth > 64)
+        {
+            This.Fail("package JSON nesting exceeds 64 levels");
+            Return false;
+        }
+        char value = This.Current();
+        If (value == '"')
+        {
+            This.ReadString();
+            Return IO.Text.IsEmpty(This.Error);
+        }
+        If (value == '{')
+        {
+            This.Position = This.Position + 1;
+            If (This.Consume('}')) Return true;
+            While (!This.AtEnd())
+            {
+                This.ReadString();
+                If (!IO.Text.IsEmpty(This.Error) || !This.Consume(':') ||
+                    !This.SkipNestedValue(depth + 1))
+                {
+                    If (IO.Text.IsEmpty(This.Error)) This.Fail("invalid JSON object value");
+                    Return false;
+                }
+                If (This.Consume('}')) Return true;
+                If (!This.Consume(','))
+                {
+                    This.Fail("expected ',' or '}' in JSON object");
+                    Return false;
+                }
+            }
+            This.Fail("unterminated JSON object");
+            Return false;
+        }
+        If (value == '[')
+        {
+            This.Position = This.Position + 1;
+            If (This.Consume(']')) Return true;
+            While (!This.AtEnd())
+            {
+                If (!This.SkipNestedValue(depth + 1)) Return false;
+                If (This.Consume(']')) Return true;
+                If (!This.Consume(','))
+                {
+                    This.Fail("expected ',' or ']' in JSON array");
+                    Return false;
+                }
+            }
+            This.Fail("unterminated JSON array");
+            Return false;
+        }
+        If (value == 't') Return This.ReadLiteral("true");
+        If (value == 'f') Return This.ReadLiteral("false");
+        If (value == 'n') Return This.ReadLiteral("null");
+        If (value == '-' || This.IsDigit()) Return This.SkipNumber();
+        This.Fail("invalid JSON value");
+        Return false;
+    }
+
+    Public Safe Function bool SkipValue()
+    {
+        // The enclosing package object already occupies the first level.
+        Return This.SkipNestedValue(2);
+    }
+
+    Public Safe Function list ReadStringList()
+    {
+        list values = list.Create();
+        If (!This.Consume('['))
+        {
+            This.Fail("expected a JSON string array");
+            Return values;
+        }
+        If (This.Consume(']')) Return values;
+        While (!This.AtEnd())
+        {
+            values.Add(This.ReadString());
+            If (!IO.Text.IsEmpty(This.Error)) Return values;
+            If (This.Consume(']')) Return values;
+            If (!This.Consume(','))
+            {
+                This.Fail("expected ',' or ']' in JSON string array");
+                Return values;
+            }
+        }
+        This.Fail("unterminated JSON string array");
+        Return values;
+    }
+}
+
+Safe Function PackageManifestConfig ReadPackageManifest(string path)
+{
+    PackageManifestConfig manifest = New PackageManifestConfig(path);
+    If (!IO.File.Exists(manifest.Path))
+    {
+        manifest.Error = "package manifest does not exist";
+        Return manifest;
+    }
+    PackageJsonReader reader = New PackageJsonReader(
+        IO.File.ReadAllText(manifest.Path));
+    If (!reader.Consume('{'))
+    {
+        manifest.Error = "package manifest must contain a JSON object";
+        Return manifest;
+    }
+    bool closed = false;
+    reader.SkipWhitespace();
+    If (reader.Consume('}')) closed = true;
+    Else
+    {
+        While (!reader.AtEnd())
+        {
+            string key = IO.Text.ToLower(reader.ReadString());
+            If (!IO.Text.IsEmpty(reader.Error) || !reader.Consume(':'))
+            {
+                If (IO.Text.IsEmpty(reader.Error)) reader.Fail("expected ':' after JSON field");
+                Break;
+            }
+            If (key == "kind") manifest.Kind = reader.ReadString();
+            ElseIf (key == "name") manifest.Name = reader.ReadString();
+            ElseIf (key == "version") manifest.Version = reader.ReadString();
+            ElseIf (key == "source_root") manifest.SourceRoot = reader.ReadString();
+            ElseIf (key == "klib") manifest.KlibPath = reader.ReadString();
+            ElseIf (key == "source_files")
+            {
+                list files = reader.ReadStringList();
+                int index = 0;
+                While (index < files.Count())
+                {
+                    manifest.SourceFiles.Add(files.Fetch(index));
+                    index = index + 1;
+                }
+            }
+            ElseIf (key == "summary" || key == "url" || key == "entry" || key == "out")
+                reader.ReadString();
+            ElseIf (key == "modules" || key == "dependencies" || key == "package_roots")
+                reader.ReadStringList();
+            Else reader.SkipValue();
+            If (!IO.Text.IsEmpty(reader.Error)) Break;
+            If (reader.Consume('}'))
+            {
+                closed = true;
+                Break;
+            }
+            If (!reader.Consume(','))
+            {
+                reader.Fail("expected ',' or '}' in package manifest");
+                Break;
+            }
+        }
+    }
+    reader.SkipWhitespace();
+    If (IO.Text.IsEmpty(reader.Error) && !closed)
+        reader.Fail("unterminated package manifest object");
+    If (IO.Text.IsEmpty(reader.Error) && !reader.AtEnd())
+        reader.Fail("unexpected data after package manifest");
+    If (!IO.Text.IsEmpty(reader.Error))
+        manifest.Error = reader.Error;
+    ElseIf (IO.Text.ToLower(manifest.Kind) != "project" &&
+            IO.Text.IsEmpty(manifest.Name))
+        manifest.Error = "package name is missing";
+    ElseIf (IO.Text.ToLower(manifest.Kind) != "project" &&
+            IO.Text.IsEmpty(manifest.SourceRoot) &&
+            manifest.SourceFiles.Count() == 0 &&
+            IO.Text.IsEmpty(manifest.KlibPath))
+        manifest.Error = "package has no source_root, source_files, or klib";
+    Return manifest;
+}

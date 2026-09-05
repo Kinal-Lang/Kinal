@@ -1,0 +1,149 @@
+Unit IO.Kinal.Compiler.Project.DependencyResolver;
+
+Get IO.Text;
+Get IO.Kinal.Compiler.Core.CompileSession;
+Get IO.Kinal.Compiler.Project.PackageResolver;
+Get IO.Kinal.Compiler.Syntax.SyntaxTree;
+
+Class DependencyModule
+{
+    Public string Name;
+    Public list Paths;
+
+    Public Safe Constructor(string name)
+    {
+        This.Name = name;
+        This.Paths = list.Create();
+    }
+}
+
+// Keep project, ordinary package, and official package maps separate. A
+// package name is not a Unit name, and one package may provide many Units.
+Class DependencyModuleMap
+{
+    Public dict Modules;
+
+    Public Safe Constructor()
+    {
+        This.Modules = dict.Create();
+    }
+
+    Public Safe Function void AddSource(string name, string path)
+    {
+        DependencyModule module = This.Modules.Contains(name) ?
+            [DependencyModule](This.Modules.Fetch(name)) : null;
+        If (module == null)
+        {
+            module = New DependencyModule(name);
+            This.Modules.Set(name, module);
+        }
+        If (!module.Paths.Contains(path)) module.Paths.Add(path);
+    }
+
+    Public Safe Function DependencyModule FindImport(string target)
+    {
+        string name = target;
+        While (!IO.Text.IsEmpty(name))
+        {
+            If (This.Modules.Contains(name))
+                Return [DependencyModule](This.Modules.Fetch(name));
+            int separator = IO.Text.LastIndexOf(name, ".");
+            If (separator < 0) Break;
+            name = IO.Text.Slice(name, 0, separator);
+        }
+        Return null;
+    }
+}
+
+Class DependencyResolver
+{
+    Public CompileSession Session;
+    Public PackageSourceCatalog Catalog;
+    Public DependencyModuleMap Local;
+    Public DependencyModuleMap Ordinary;
+    Public DependencyModuleMap Official;
+
+    Public Safe Constructor(CompileSession session, PackageSourceCatalog catalog)
+    {
+        This.Session = session;
+        This.Catalog = catalog;
+        This.Local = New DependencyModuleMap();
+        This.Ordinary = New DependencyModuleMap();
+        This.Official = New DependencyModuleMap();
+    }
+
+    Public Safe Function void IndexSources(list paths, DependencyModuleMap modules)
+    {
+        int index = 0;
+        While (index < paths.Count())
+        {
+            string path = [string](paths.Fetch(index));
+            ProjectSourceProbe probe = This.Session.ProbeProjectSource(path);
+            If (probe != null && !IO.Text.IsEmpty(probe.Syntax.UnitName))
+                modules.AddSource(probe.Syntax.UnitName, probe.Path);
+            ElseIf (This.Catalog.ExplicitSources.Contains(path))
+                This.Session.ReportProject("Invalid package source",
+                    "package source_files requires a Unit declaration: " + path);
+            index = index + 1;
+        }
+    }
+
+    Public Safe Function bool ContainsSource(string path)
+    {
+        CompilationUnit unit = This.Session.FirstUnit;
+        While (unit != null)
+        {
+            If (unit.Source.Path == path) Return true;
+            unit = unit.Next;
+        }
+        Return false;
+    }
+
+    Public Safe Function void LoadModule(DependencyModule module)
+    {
+        If (module == null) Return;
+        int index = 0;
+        While (index < module.Paths.Count() && !This.Session.HasErrors())
+        {
+            string path = [string](module.Paths.Fetch(index));
+            If (!This.ContainsSource(path)) This.Session.ParseFile(path);
+            index = index + 1;
+        }
+    }
+
+    Public Safe Function void Resolve()
+    {
+        CompilationUnit localSource = This.Session.FirstUnit;
+        While (localSource != null)
+        {
+            If (This.Session.SourcePaths.Contains(localSource.Source.Path))
+                This.Local.AddSource(localSource.Syntax.UnitName, localSource.Source.Path);
+            localSource = localSource.Next;
+        }
+        If (This.Session.Profile.AutoDiscovery)
+        {
+            If (This.Session.Profile.Mode == "ReachableUnits")
+                This.IndexSources(This.Session.SourcePaths, This.Local);
+            This.IndexSources(This.Catalog.Sources, This.Ordinary);
+        }
+        // Explicit official imports remain available with AutoDiscovery=false,
+        // just as in C stage0. Local source participation is a separate choice.
+        This.IndexSources(This.Catalog.OfficialSources, This.Official);
+        CompilationUnit source = This.Session.FirstUnit;
+        While (source != null && !This.Session.HasErrors())
+        {
+            ImportDecl import = source.Syntax.FirstImport;
+            While (import != null && !This.Session.HasErrors())
+            {
+                DependencyModule module = This.Local.FindImport(import.Target);
+                If (module == null) module = This.Ordinary.FindImport(import.Target);
+                If (module == null) module = This.Official.FindImport(import.Target);
+                This.LoadModule(module);
+                import = import.Next;
+            }
+            // ParseFile appends new Units, so this is a work queue as well as
+            // an ordered walk. Each source is parsed into the session once.
+            source = source.Next;
+        }
+    }
+}

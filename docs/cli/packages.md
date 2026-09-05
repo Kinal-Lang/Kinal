@@ -1,182 +1,137 @@
-# kinal pkg — Package Management
+# Packages and .klib archives
 
-`kinal pkg` is the subcommand group for managing `.klib` package files. Kinal uses a `.knpkg.json`-based package system and the `.klib` binary library format.
+Kinal packages are described by `package.knpkg.json` (legacy name:
+`package.knpkg`). Projects use a separate `kinal.knproj` manifest.
 
----
+## Package commands
 
-## Subcommands
+The C stage0 CLI provides:
 
-| Subcommand | Purpose |
-|------------|---------|
-| `kinal pkg build` | Build a `.klib` or local package layout from a package manifest |
-| `kinal pkg info` | View `.klib` metadata |
-| `kinal pkg unpack` | Unpack a `.klib` to a directory |
-
----
-
-## kinal pkg build
-
-Build a `.klib` library file or local package layout from a package manifest (`.knpkg.json`).
-
-```bash
-kinal pkg build --manifest <file|dir> [-o <output>]
-kinal pkg build --manifest <file|dir> --layout <dir>
+```sh
+kinal pkg build --manifest ./mylib -o ./mylib.klib
+kinal pkg build --manifest ./mylib --layout ./kpkg
+kinal pkg info ./mylib.klib
+kinal pkg unpack ./mylib.klib -o ./recovered
 ```
 
-| Option | Description |
-|--------|-------------|
-| `--manifest <file\|dir>` | Package manifest path (required) |
-| `-o, --output <file>` | Output `.klib` file path |
-| `--layout <dir>` | Output a local package directory structure (mutually exclusive with `-o`) |
+`--manifest` accepts a file or package directory. `--layout` produces a
+`<name>/<version>/package.knpkg.json` wrapper and `lib/<name>.klib`;
+use it instead of `-o`. `pkg info` reports the archive file, producer
+compiler, entry count, and total entry bytes, not a list of compiled exports.
 
-```bash
-# Build a klib
-kinal pkg build --manifest ./mylib/ -o mylib.klib
+The selfhost compiler can consume these packages during project compilation.
+The `pkg build/info/unpack` CLI commands are not yet implemented by selfhost.
 
-# Output a local package layout
-kinal pkg build --manifest ./mylib/ --layout ./packages/
-```
-
----
-
-## kinal pkg info
-
-Display metadata from a `.klib` file.
-
-```bash
-kinal pkg info <file.klib>
-```
-
-Example output:
-
-```
-Name:      mylib
-Version:   1.0.0
-Modules:   Mylib.Core
-           Mylib.Utils
-Exports:   42 symbols
-Arch:      x86_64
-Platform:  linux
-```
-
----
-
-## kinal pkg unpack
-
-Unpack a `.klib` to a directory, restoring source code and metadata.
-
-```bash
-kinal pkg unpack <file.klib> [-o <dir>]
-```
-
-| Option | Description |
-|--------|-------------|
-| `-o, --output <dir>` | Output directory (default: directory named after the `.klib` file) |
-
-```bash
-kinal pkg unpack mylib.klib -o ./recovered/
-```
-
----
-
-## Package Manifest: `.knpkg.json`
-
-Each package root contains a `.knpkg.json` file:
+## Package manifest
 
 ```json
 {
-    "name": "mypackage",
-    "version": "1.0.0",
-    "description": "My Kinal package",
-    "author": "Developer Name",
-    "entry": "src/main.kn",
-    "dependencies":
+  "kind": "library",
+  "name": "Acme.Greeter",
+  "version": "1.0.0",
+  "summary": "Greeting helpers",
+  "source_root": "src",
+  "modules": ["Acme.Greeter"],
+  "dependencies": []
+}
+```
+
+| Field | Meaning |
+|-------|---------|
+| `name` | Required package identity. Names beginning with `IO.` are reserved for official roots. |
+| `version` | Version-selection text; recommended for every published package. |
+| `source_root` | Directory scanned recursively for Kinal source files. |
+| `source_files` | Explicit string array of source paths; takes precedence over `source_root`. Each file must declare a Unit. |
+| `klib` | Path to an optional archive, preferred when it exists. |
+| `summary`, `url` | Optional text metadata. |
+| `modules`, `dependencies` | Optional string arrays of metadata. They do not download packages or solve version constraints. |
+
+A library manifest requires a name and at least one of `source_root`,
+nonempty `source_files`, or `klib`. Paths resolve relative to the
+manifest directory. If the referenced archive is absent, the compiler falls
+back to the source fields. If it exists but is invalid, compilation fails.
+
+Manifests use JSON strings, arrays, objects, numbers, booleans, and null.
+Unicode escapes and surrogate pairs are decoded as UTF-8. Damaged JSON,
+trailing data, invalid escapes, and nesting beyond 64 levels are rejected.
+NUL is not allowed in manifest strings because path/name APIs are
+NUL-terminated.
+
+## Project dependencies
+
+```text
+Project Example
+{
+    DefaultProfile = "native";
+
+    Packages
     {
-        "somelib": "1.0.0"
+        Roots = ["packages"];
+        OfficialRoots = ["official-packages"];
+    }
+
+    SourceSet "main"
+    {
+        Roots = ["src"];
+        Include = ["**/*.kn"];
+    }
+
+    Profile "native"
+    {
+        Source
+        {
+            Entry = "src/Main.kn";
+            Sets = ["main"];
+            Mode = ReachableUnits;
+        }
+        Build { Backend = Native; Environment = Hosted; }
+        Packages { Roots = ["profile-packages"]; }
     }
 }
 ```
 
-### Field Reference
+Run `kinal build --project .`. Ordinary roots are searched in this order:
+project roots, selected-profile roots, and the automatic project `kpkg`
+directory. Official roots are project roots, profile roots, and installed
+standard packages. Roots contain package directories/manifests, not just
+arbitrary loose `.klib` files. Generated `.git`, `.kinal-cache`,
+`build`, and `out` subtrees are not package roots.
 
-| Field | Required | Description |
-|-------|----------|-------------|
-| `name` | Yes | Package name (lowercase letters, digits, hyphens) |
-| `version` | Yes | Semantic version number (`major.minor.patch`) |
-| `description` | No | Short description of the package |
-| `author` | No | Author information |
-| `entry` | No | Main entry file (default: `src/main.kn`) |
-| `dependencies` | No | Map of dependency package names to versions |
+The highest version of each package name is selected independently in
+ordinary and official roots. Dotted numeric segments compare numerically;
+other segments compare lexically. Missing numeric segments compare as zero
+(`1.0` equals `1.0.0`). Equal versions retain the first root's package.
+This is not a full SemVer dependency solver.
 
----
+Imports resolve by **Unit**, not package name: project Units take precedence
+over ordinary packages, which take precedence over official packages.
+Unshadowed Units in the same package remain available. `AutoDiscovery = false`
+limits local source discovery and ordinary dependencies; explicit official
+standard-library imports remain available.
 
-## `.klib` Library Files
+The C CLI also accepts `--pkg-root <dir>` for direct-source builds. Selfhost
+currently configures additional package roots through `kinal.knproj`.
 
-`.klib` is Kinal's pre-compiled library format, containing:
+## Archive contents and native libraries
 
-- Compiled object code
-- Type metadata (for compiler type checking)
-- Exported module interfaces
+The current `KNKLIB1` archive stores an embedded package manifest and
+source/native asset payloads. It is **not** precompiled Kinal object code,
+typed HIR, or a stable serialized type interface. Kinal sources are compiled
+when the consumer imports their Units; native assets retain their own
+platform/ABI requirements.
 
----
+Do not pass a `.klib` to `--link-file`. That option accepts native linker
+inputs such as object files and static libraries. Use package roots for
+`.klib` discovery and Kinal FFI metadata or project Link options for native
+payloads.
 
-## Using `.klib` in a Build
+Selfhost extracts installed packages into an executable-relative
+`stdlib-cache` generation and project archives into content-fingerprinted
+`package-cache` directories. Changed archive contents do not reuse stale
+source files, including same-size replacements.
 
-`.klib` files are added via `kinal build` link options:
+## See also
 
-```bash
-# Link a klib directly
-kinal build main.kn --link-file mylib.klib -o app
-
-# Auto-discover via package root
-kinal build main.kn --pkg-root ./packages -o app
-```
-
----
-
-## Building a Full Project
-
-```bash
-# Use --project to automatically read .knpkg.json
-kinal build --project . -o app
-
-# Manually specify entry and package root
-kinal build src/main.kn --pkg-root ./packages -o app
-```
-
----
-
-## Recommended Project Structure
-
-```
-myproject/
-├── .knpkg.json        ← Package manifest
-├── src/
-│   ├── main.kn        ← Main entry
-│   └── lib/
-│       └── utils.kn   ← Internal module
-├── tests/
-│   └── test_utils.kn
-└── packages/          ← Third-party .klib files (dependencies)
-    └── somelib.klib
-```
-
----
-
-## Versioning
-
-Package versions follow Semantic Versioning (SemVer):
-
-- `1.0.0` — Stable release
-- `1.0.1` — Bug fix
-- `1.1.0` — Backward-compatible new features
-- `2.0.0` — Breaking changes
-
----
-
-## See Also
-
-- [CLI Overview](compiler.md) — Overview of all subcommands
-- [Project Structure](../getting-started/project-structure.md) — Recommended directory layout
-- [Module System](../language/modules.md) — `Unit` and `Get` declarations
-- [CLI Specification](cli-spec.md) — CLI design specification (developer reference)
+- [CLI overview](compiler.md)
+- [Project structure](../getting-started/project-structure.md)
+- [Module system](../language/modules.md)

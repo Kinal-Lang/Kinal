@@ -1,182 +1,127 @@
-# kinal pkg — 包管理
+# 包与 .klib 归档
 
-`kinal pkg` 是管理 `.klib` 包文件的子命令组。Kinal 使用基于 `.knpkg.json` 的包系统和 `.klib` 二进制库格式。
+Kinal 包使用 `package.knpkg.json` 描述（兼容旧文件名 `package.knpkg`）。
+工程使用独立的 `kinal.knproj`，两者不能混用。
 
----
+## 包管理命令
 
-## 子命令
+C stage0 CLI 提供：
 
-| 子命令 | 用途 |
-|--------|------|
-| `kinal pkg build` | 从包清单构建 `.klib` 或本地包布局 |
-| `kinal pkg info` | 查看 `.klib` 元数据 |
-| `kinal pkg unpack` | 解包 `.klib` 到目录 |
-
----
-
-## kinal pkg build
-
-从包清单（`.knpkg.json`）构建 `.klib` 库文件或本地包布局。
-
-```bash
-kinal pkg build --manifest <文件|目录> [-o <输出>]
-kinal pkg build --manifest <文件|目录> --layout <目录>
+```sh
+kinal pkg build --manifest ./mylib -o ./mylib.klib
+kinal pkg build --manifest ./mylib --layout ./kpkg
+kinal pkg info ./mylib.klib
+kinal pkg unpack ./mylib.klib -o ./recovered
 ```
 
-| 选项 | 说明 |
-|------|------|
-| `--manifest <文件\|目录>` | 包清单路径（必需） |
-| `-o, --output <文件>` | 输出 `.klib` 文件路径 |
-| `--layout <目录>` | 输出本地包目录结构（与 `-o` 互斥） |
+`--manifest` 可以是文件或包目录。`--layout` 生成
+`<name>/<version>/package.knpkg.json` 包装清单和 `lib/<name>.klib`，
+与 `-o` 二选一。`pkg info` 显示归档文件、生成它的编译器、
+条目数及条目总字节数，不提供“已编译导出符号表”。
 
-```bash
-# 构建 klib
-kinal pkg build --manifest ./mylib/ -o mylib.klib
+自举编译器已能在工程编译时使用这些包；自举版 CLI 尚未实现
+`pkg build/info/unpack` 命令。
 
-# 输出本地包布局
-kinal pkg build --manifest ./mylib/ --layout ./packages/
-```
-
----
-
-## kinal pkg info
-
-显示 `.klib` 文件的元数据。
-
-```bash
-kinal pkg info <文件.klib>
-```
-
-输出示例：
-
-```
-包名:    mylib
-版本:    1.0.0
-模块:    Mylib.Core
-        Mylib.Utils
-导出:    42 个符号
-架构:    x86_64
-平台:    linux
-```
-
----
-
-## kinal pkg unpack
-
-将 `.klib` 解包到目录，恢复源码和元信息。
-
-```bash
-kinal pkg unpack <文件.klib> [-o <目录>]
-```
-
-| 选项 | 说明 |
-|------|------|
-| `-o, --output <目录>` | 输出目录（默认为与 `.klib` 同名的目录） |
-
-```bash
-kinal pkg unpack mylib.klib -o ./recovered/
-```
-
----
-
-## 包清单：`.knpkg.json`
-
-每个包的根目录包含一个 `.knpkg.json` 文件：
+## 包清单
 
 ```json
 {
-    "name": "mypackage",
-    "version": "1.0.0",
-    "description": "我的 Kinal 包",
-    "author": "开发者名称",
-    "entry": "src/main.kn",
-    "dependencies":
+  "kind": "library",
+  "name": "Acme.Greeter",
+  "version": "1.0.0",
+  "summary": "Greeting helpers",
+  "source_root": "src",
+  "modules": ["Acme.Greeter"],
+  "dependencies": []
+}
+```
+
+| 字段 | 含义 |
+|------|------|
+| `name` | 必填包标识；`IO.` 开头的名称保留给官方包根目录。 |
+| `version` | 版本选择用的文本；建议每个发布包都填写。 |
+| `source_root` | 递归搜索 Kinal 源码的目录。 |
+| `source_files` | 显式源码路径字符串数组，优先于 `source_root`；各文件必须声明 Unit。 |
+| `klib` | 可选归档路径，存在时优先使用归档。 |
+| `summary`、`url` | 可选文本元数据。 |
+| `modules`、`dependencies` | 可选字符串数组元数据，不会自动下载包或求解版本约束。 |
+
+库清单必须提供名称，并至少提供 `source_root`、非空 `source_files`
+或 `klib` 之一。路径相对于清单所在目录解析。指定的归档不存在时回退到源码字段；
+归档存在但损坏时必须报错，不会静默回退。
+
+清单使用 JSON 字符串、数组、对象、数字、布尔值和 null。
+Unicode 转义及代理项对解码为 UTF-8。损坏的 JSON、尾随数据、
+无效转义和超过 64 层的嵌套会被拒绝。
+路径和名称接口以 NUL 结尾，因此清单字符串不允许包含 NUL。
+
+## 工程依赖
+
+```text
+Project Example
+{
+    DefaultProfile = "native";
+
+    Packages
     {
-        "somelib": "1.0.0"
+        Roots = ["packages"];
+        OfficialRoots = ["official-packages"];
+    }
+
+    SourceSet "main"
+    {
+        Roots = ["src"];
+        Include = ["**/*.kn"];
+    }
+
+    Profile "native"
+    {
+        Source
+        {
+            Entry = "src/Main.kn";
+            Sets = ["main"];
+            Mode = ReachableUnits;
+        }
+        Build { Backend = Native; Environment = Hosted; }
+        Packages { Roots = ["profile-packages"]; }
     }
 }
 ```
 
-### 字段说明
+运行 `kinal build --project .`。普通包根目录顺序为：
+工程级 Roots、当前 Profile 的 Roots、工程内自动识别的 `kpkg`。
+官方包根目录顺序为：工程级 OfficialRoots、Profile 的 OfficialRoots、
+已安装标准库。根目录应包含包目录及清单，不能只是随意放置的 `.klib` 文件。
+扫描跳过 `.git`、`.kinal-cache`、`build` 和 `out` 子树。
 
-| 字段 | 必填 | 说明 |
-|------|------|------|
-| `name` | 是 | 包名（小写字母、数字、连字符） |
-| `version` | 是 | 语义化版本号（`major.minor.patch`） |
-| `description` | 否 | 包的简短描述 |
-| `author` | 否 | 作者信息 |
-| `entry` | 否 | 主入口文件（默认 `src/main.kn`） |
-| `dependencies` | 否 | 依赖包的名称和版本映射 |
+普通包与官方包分别按包名选择最高版本。点分的数字段按数值比较，
+其他段按文本比较；缺失的数字段视作零（`1.0` 等于 `1.0.0`）。
+相同版本保留先出现根目录中的包。这不是完整的 SemVer 依赖求解器。
 
----
+导入按 **Unit** 解析，而不是按包名覆盖：工程 Unit 优先于普通包，
+普通包优先于官方包。同一个包内未被覆盖的其他 Unit 仍然可用。
+`AutoDiscovery = false` 限制工程本地源码发现及普通依赖；
+显式导入的官方标准库仍可解析。
 
-## `.klib` 库文件
+C CLI 的单文件构建还支持 `--pkg-root <dir>`。
+自举版目前通过 `kinal.knproj` 配置额外包根目录。
 
-`.klib` 是 Kinal 的预编译库格式，包含：
+## 归档内容与原生库
 
-- 已编译的目标代码
-- 类型元数据（供编译器类型检查）
-- 导出的模块接口
+当前 `KNKLIB1` 保存嵌入式包清单及源码、原生资源载荷，
+**不是**预编译的 Kinal 目标码、typed HIR 或稳定的序列化类型接口。
+使用者导入 Unit 时，编译器仍会编译其中的 Kinal 源码；
+原生资源则保留各自的平台与 ABI 要求。
 
----
+不要用 `--link-file` 传递 `.klib`。它用于目标文件、静态库等原生链接输入。
+`.klib` 应通过包根目录发现；其原生载荷通过 Kinal FFI 元数据或工程 Link 配置链接。
 
-## 在 build 中使用 `.klib`
+自举版把已安装标准包提取到编译器目录下的 `stdlib-cache` 代目录，
+把工程归档提取到按内容指纹隔离的 `package-cache`。
+归档内容改变后不会复用旧源码文件，包括文件总长度不变的替换。
 
-`.klib` 通过 `kinal build` 的链接选项引入：
+## 相关文档
 
-```bash
-# 链接 klib
-kinal build main.kn --link-file mylib.klib -o app
-
-# 通过包根目录自动发现
-kinal build main.kn --pkg-root ./packages -o app
-```
-
----
-
-## 构建完整项目
-
-```bash
-# 使用 --project 自动读取 .knpkg.json
-kinal build --project . -o app
-
-# 手动指定入口和包根目录
-kinal build src/main.kn --pkg-root ./packages -o app
-```
-
----
-
-## 推荐项目结构
-
-```
-myproject/
-├── .knpkg.json        ← 包清单
-├── src/
-│   ├── main.kn        ← 主入口
-│   └── lib/
-│       └── utils.kn   ← 内部模块
-├── tests/
-│   └── test_utils.kn
-└── packages/          ← 第三方 .klib（依赖）
-    └── somelib.klib
-```
-
----
-
-## 版本规范
-
-包版本遵循语义化版本（SemVer）：
-
-- `1.0.0` — 正式发布
-- `1.0.1` — Bug 修复
-- `1.1.0` — 向后兼容的新功能
-- `2.0.0` — 破坏性变更
-
----
-
-## 相关
-
-- [CLI 总览](compiler.md) — 所有子命令概览
-- [项目结构](../getting-started/project-structure.md) — 推荐目录布局
-- [模块系统](../language/modules.md) — `Unit` 和 `Get` 声明
-- [CLI 规范](cli-spec.md) — CLI 设计规范（开发者参考）
+- [CLI 概览](compiler.md)
+- [项目结构](../getting-started/project-structure.md)
+- [模块系统](../language/modules.md)

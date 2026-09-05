@@ -1,0 +1,12 @@
+Unit Tests.Selfhost.ProjectPackages;
+
+Get IO.Console;
+Get Tests.Packages.Top;
+Get Tests.Packages.Profile;
+
+Safe Static Function int Main()
+{
+    IO.Console.PrintLine(Tests.Packages.Top.Text());
+    IO.Console.PrintLine(Tests.Packages.Profile.Text());
+    Return 0;
+}
