@@ -242,6 +242,25 @@ def find_windows_openssl_runtime() -> list[Path]:
     return []
 
 
+def pe_machine(path: Path) -> str:
+    """Describe the file's architecture, independently of the Python process."""
+    try:
+        with path.open("rb") as source:
+            header = source.read(64)
+            if len(header) != 64 or header[:2] != b"MZ":
+                return "not-PE"
+            source.seek(int.from_bytes(header[60:64], "little"))
+            coff = source.read(6)
+            if len(coff) != 6 or coff[:4] != b"PE\0\0":
+                return "invalid-PE"
+            machine = int.from_bytes(coff[4:6], "little")
+            return {0x014C: "x86", 0x8664: "x64", 0xAA64: "arm64"}.get(
+                machine, f"0x{machine:04x}"
+            )
+    except OSError as error:
+        return f"unreadable: {error}"
+
+
 def copy_windows_openssl_runtime(out_dir: Path) -> None:
     if not is_windows():
         return
@@ -249,7 +268,18 @@ def copy_windows_openssl_runtime(out_dir: Path) -> None:
     if not runtime_files:
         raise SystemExit("https regression tests require OpenSSL 3 runtime DLLs on PATH")
     for src in runtime_files:
-        shutil.copy2(src, out_dir / src.name)
+        destination = out_dir / src.name
+        shutil.copy2(src, destination)
+        print(f"[OpenSSL] {src} -> {destination} (machine={pe_machine(destination)})", flush=True)
+
+
+def print_runtime_output(output: subprocess.CompletedProcess) -> None:
+    # Unhandled Kinal exceptions currently go to stdout, not stderr. Never
+    # discard either stream when the exit code is the first failed assertion.
+    print("stdout:")
+    print(repr(output.stdout or ""))
+    print("stderr:")
+    print(repr(output.stderr or ""))
 
 
 def is_windows() -> bool:
@@ -2071,6 +2101,11 @@ def main() -> int:
         else:
             runtime_context = contextlib.nullcontext()
             if case.get("https_fixture") == "request_echo":
+                print(
+                    f"[HTTPS] executable={out_exe}, machine={pe_machine(out_exe) if is_windows() else host_platform()}, "
+                    f"fixture_tls={ssl.OPENSSL_VERSION}",
+                    flush=True,
+                )
                 runtime_context = request_https_fixture()
 
             with runtime_context:
@@ -2096,14 +2131,14 @@ def main() -> int:
             print(repr(expected_rc))
             print("Got:")
             print(repr(output.returncode))
-            if output.stderr:
-                print(output.stderr)
+            print_runtime_output(output)
             return 1
 
         if fixture_responses is not None and fixture_responses != [(200, "ok"), (200, "ok")]:
             print(f"[FAIL] {name}")
             print("Expected two HTTP 200 'ok' responses, got:")
             print(repr(fixture_responses))
+            print_runtime_output(output)
             return 1
 
         if not matches_expected_runtime_output(out_text, expected):
@@ -2112,6 +2147,7 @@ def main() -> int:
             print(repr(expected))
             print("Got:")
             print(repr(out_text))
+            print_runtime_output(output)
             return 1
         print(f"[OK] {name}")
 

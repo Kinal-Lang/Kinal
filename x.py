@@ -424,6 +424,8 @@ def cmd_dist(args: argparse.Namespace) -> int:
 
 def cmd_test(args: argparse.Namespace) -> int:
     ensure_build_prereqs()
+    run([sys.executable, "-m", "unittest", "discover", "-s", str(ROOT / "tests"),
+         "-p", "test_runtime_diagnostics.py"])
     run([sys.executable, str(ROOT / "tests" / "check_builtin_registry.py")])
     run([sys.executable, str(ROOT / "tests" / "check_knc_opcode_registry.py")])
     run([sys.executable, str(ROOT / "tests" / "check_stdlib_coverage.py")])
