@@ -70,6 +70,26 @@ static const char *json_skip_ws_local(const char *p)
     return p;
 }
 
+static bool json_read_hex_quad_local(const char **pp, uint32_t *value)
+{
+    const char *p = *pp;
+    uint32_t result = 0;
+    for (int i = 0; i < 4; i++)
+    {
+        unsigned char c = (unsigned char)*p;
+        uint32_t digit;
+        if (c >= '0' && c <= '9') digit = (uint32_t)(c - '0');
+        else if (c >= 'a' && c <= 'f') digit = (uint32_t)(c - 'a' + 10);
+        else if (c >= 'A' && c <= 'F') digit = (uint32_t)(c - 'A' + 10);
+        else return false;
+        result = result * 16u + digit;
+        p++;
+    }
+    *pp = p;
+    *value = result;
+    return true;
+}
+
 static bool parse_json_string_local(const char **pp, char *out, size_t cap)
 {
     const char *p = json_skip_ws_local(pp ? *pp : 0);
@@ -79,10 +99,69 @@ static bool parse_json_string_local(const char **pp, char *out, size_t cap)
     p++;
     while (*p && *p != '"')
     {
-        char c = *p++;
-        if (c == '\\' && *p)
+        unsigned char c = (unsigned char)*p++;
+        if (c < 0x20)
+            return false;
+        if (c == '\\')
         {
             char e = *p++;
+            if (!e)
+                return false;
+            if (e == 'u')
+            {
+                uint32_t value;
+                unsigned char encoded[4];
+                int count;
+                if (!json_read_hex_quad_local(&p, &value))
+                    return false;
+                if (value >= 0xD800 && value <= 0xDBFF)
+                {
+                    uint32_t low;
+                    if (p[0] != '\\' || p[1] != 'u')
+                        return false;
+                    p += 2;
+                    if (!json_read_hex_quad_local(&p, &low) || low < 0xDC00 || low > 0xDFFF)
+                        return false;
+                    value = 0x10000 + (value - 0xD800) * 0x400 + low - 0xDC00;
+                }
+                else if (value >= 0xDC00 && value <= 0xDFFF)
+                    return false;
+                /* Manifest strings cross NUL-terminated path/name APIs. */
+                if (value == 0)
+                    return false;
+                if (value < 0x80)
+                {
+                    encoded[0] = (unsigned char)value;
+                    count = 1;
+                }
+                else if (value < 0x800)
+                {
+                    encoded[0] = (unsigned char)(0xC0 | (value >> 6));
+                    encoded[1] = (unsigned char)(0x80 | (value & 0x3F));
+                    count = 2;
+                }
+                else if (value < 0x10000)
+                {
+                    encoded[0] = (unsigned char)(0xE0 | (value >> 12));
+                    encoded[1] = (unsigned char)(0x80 | ((value >> 6) & 0x3F));
+                    encoded[2] = (unsigned char)(0x80 | (value & 0x3F));
+                    count = 3;
+                }
+                else
+                {
+                    encoded[0] = (unsigned char)(0xF0 | (value >> 18));
+                    encoded[1] = (unsigned char)(0x80 | ((value >> 12) & 0x3F));
+                    encoded[2] = (unsigned char)(0x80 | ((value >> 6) & 0x3F));
+                    encoded[3] = (unsigned char)(0x80 | (value & 0x3F));
+                    count = 4;
+                }
+                for (int i = 0; i < count; i++)
+                {
+                    if (off + 1 < cap)
+                        out[off++] = (char)encoded[i];
+                }
+                continue;
+            }
             if (e == 'n') c = '\n';
             else if (e == 'r') c = '\r';
             else if (e == 't') c = '\t';
@@ -91,10 +170,10 @@ static bool parse_json_string_local(const char **pp, char *out, size_t cap)
             else if (e == '\\') c = '\\';
             else if (e == '"') c = '"';
             else if (e == '/') c = '/';
-            else c = e;
+            else return false;
         }
         if (off + 1 < cap)
-            out[off++] = c;
+            out[off++] = (char)c;
     }
     if (*p != '"')
         return false;
@@ -103,62 +182,88 @@ static bool parse_json_string_local(const char **pp, char *out, size_t cap)
     return true;
 }
 
-static bool json_skip_value_local(const char **pp)
+static bool json_skip_nested_value_local(const char **pp, unsigned depth)
 {
     const char *p = json_skip_ws_local(pp ? *pp : 0);
-    int depth = 0;
-    if (!p || !*p)
+    if (!p || !*p || depth > 64)
         return false;
-
     if (*p == '"')
     {
         char sink[2];
         return parse_json_string_local(&p, sink, sizeof(sink)) ? ((*pp = p), true) : false;
     }
-    if (*p == '{')
+    if (*p == '{' || *p == '[')
     {
-        depth = 1;
-        p++;
-        while (*p && depth > 0)
+        bool object = *p == '{';
+        char close = object ? '}' : ']';
+        p = json_skip_ws_local(p + 1);
+        if (*p == close)
         {
-            if (*p == '"')
+            *pp = p + 1;
+            return true;
+        }
+        while (*p)
+        {
+            if (object)
             {
                 char sink[2];
                 if (!parse_json_string_local(&p, sink, sizeof(sink)))
                     return false;
-                continue;
-            }
-            if (*p == '{') depth++;
-            else if (*p == '}') depth--;
-            p++;
-        }
-        if (pp) *pp = p;
-        return depth == 0;
-    }
-    if (*p == '[')
-    {
-        depth = 1;
-        p++;
-        while (*p && depth > 0)
-        {
-            if (*p == '"')
-            {
-                char sink[2];
-                if (!parse_json_string_local(&p, sink, sizeof(sink)))
+                p = json_skip_ws_local(p);
+                if (*p != ':')
                     return false;
-                continue;
+                p++;
             }
-            if (*p == '[') depth++;
-            else if (*p == ']') depth--;
-            p++;
+            if (!json_skip_nested_value_local(&p, depth + 1))
+                return false;
+            p = json_skip_ws_local(p);
+            if (*p == close)
+            {
+                *pp = p + 1;
+                return true;
+            }
+            if (*p != ',')
+                return false;
+            p = json_skip_ws_local(p + 1);
         }
-        if (pp) *pp = p;
-        return depth == 0;
+        return false;
     }
-    while (*p && *p != ',' && *p != '}' && *p != ']')
-        p++;
-    if (pp) *pp = p;
+    if (*p == 't' && kn_strncmp(p, "true", 4) == 0) p += 4;
+    else if (*p == 'f' && kn_strncmp(p, "false", 5) == 0) p += 5;
+    else if (*p == 'n' && kn_strncmp(p, "null", 4) == 0) p += 4;
+    else
+    {
+        if (*p == '-') p++;
+        if (*p == '0') p++;
+        else
+        {
+            if (*p < '1' || *p > '9')
+                return false;
+            do { p++; } while (*p >= '0' && *p <= '9');
+        }
+        if (*p == '.')
+        {
+            p++;
+            if (*p < '0' || *p > '9')
+                return false;
+            do { p++; } while (*p >= '0' && *p <= '9');
+        }
+        if (*p == 'e' || *p == 'E')
+        {
+            p++;
+            if (*p == '+' || *p == '-') p++;
+            if (*p < '0' || *p > '9')
+                return false;
+            do { p++; } while (*p >= '0' && *p <= '9');
+        }
+    }
+    *pp = p;
     return true;
+}
+
+static bool json_skip_value_local(const char **pp)
+{
+    return json_skip_nested_value_local(pp, 1);
 }
 
 static bool parse_json_string_array_local(const char **pp, char *items, int stride, size_t item_cap, int *count, int cap)
@@ -480,6 +585,15 @@ static bool parse_pkg_manifest(const char *path, KnPkgManifest *out)
     if (!text)
         return false;
 
+    /* Validate once before field extraction.  Unknown metadata must still be
+       valid bounded JSON; accepting missing commas or trailing data hides
+       damaged manifests and diverges from the selfhost reader. */
+    p = text;
+    if (!json_skip_value_local(&p) || (size_t)(json_skip_ws_local(p) - text) != size)
+    {
+        kn_free(text);
+        return false;
+    }
     p = json_skip_ws_local(text);
     if (!p || *p != '{')
     {
@@ -1346,10 +1460,16 @@ static bool manifest_resolve_path(const KnPkgManifest *manifest, const char *rel
     return path_join(out, cap, manifest->manifest_dir, rel);
 }
 
-static bool register_manifest_into_module_map(const KnPkgManifest *manifest, ModuleMap *map, int official_root)
+static bool register_manifest_into_module_map_depth(const KnPkgManifest *manifest, ModuleMap *map,
+                                                     int official_root, unsigned depth)
 {
     if (!manifest || !map)
         return false;
+    if (depth >= 64)
+    {
+        pkg_fail("cyclic or excessively nested package archive", manifest->manifest_path);
+        return false;
+    }
     if (!official_root && is_reserved_official_namespace(manifest->name))
     {
         pkg_fail("reserved package namespace 'IO.*' is only allowed in stdpkg", manifest->name);
@@ -1385,6 +1505,20 @@ static bool register_manifest_into_module_map(const KnPkgManifest *manifest, Mod
                     cache_name[off++] = '-';
                 cache_name[off] = 0;
                 kn_append(cache_name, sizeof(cache_name), &off, safe_version);
+                /* Two selected roots can use the same package name/version
+                   with different archive payloads. Never extract them over
+                   each other's registered source paths. */
+                size_t archive_size = 0;
+                char *archive_data = kn_read_file(klib, &archive_size);
+                uint64_t fingerprint = UINT64_C(1469598103934665603);
+                if (!archive_data)
+                    return false;
+                for (size_t i = 0; i < archive_size; i++)
+                    fingerprint = (fingerprint ^ (unsigned char)archive_data[i]) *
+                                  UINT64_C(1099511628211);
+                kn_free(archive_data);
+                kn_append(cache_name, sizeof(cache_name), &off, "-");
+                append_u64_decimal_local(cache_name, sizeof(cache_name), &off, fingerprint);
             }
             if (!path_join(cache_dir, sizeof(cache_dir), cache_root, cache_name))
                 return false;
@@ -1411,7 +1545,7 @@ static bool register_manifest_into_module_map(const KnPkgManifest *manifest, Mod
                     pkg_fail("failed to parse embedded package manifest", embedded_manifest);
                     return false;
                 }
-                registered = register_manifest_into_module_map(extracted, map, official_root);
+                registered = register_manifest_into_module_map_depth(extracted, map, official_root, depth + 1);
                 kn_free(extracted);
                 return registered;
             }
@@ -1452,6 +1586,11 @@ static bool register_manifest_into_module_map(const KnPkgManifest *manifest, Mod
         return true;
     }
     return true;
+}
+
+static bool register_manifest_into_module_map(const KnPkgManifest *manifest, ModuleMap *map, int official_root)
+{
+    return register_manifest_into_module_map_depth(manifest, map, official_root, 0);
 }
 
 static bool scan_package_roots_into_module_map_impl(const char **roots, int root_count, ModuleMap *map,

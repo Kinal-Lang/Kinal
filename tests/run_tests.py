@@ -451,6 +451,8 @@ def matches_expected_runtime_output(output: str, expected: str) -> bool:
 def run_driver_integration_tests(compiler: Path, out_dir: Path) -> int:
     hello_fx = ROOT / "tests" / "common" / "hello.kn"
     build_native_ffi_assets(out_dir)
+    run([sys.executable, str(ROOT / "tests" / "check_project_packages.py"),
+         "--compiler", str(compiler), "--out-dir", str(out_dir / "project-packages")], cwd=ROOT)
 
     pipe_ll = out_dir / "pipeline_hello.ll"
     pipe_s = out_dir / "pipeline_hello.s"
