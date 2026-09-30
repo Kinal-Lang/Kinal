@@ -25,6 +25,8 @@ used.
 The bridge exposes opaque handles and a small stable C ABI. LLVM objects and
 LLVM-C API details do not cross into Kinal source. Generated stages carry the
 bridge, LLVM runtime, linker, and Kinal runtime beside the compiler executable.
+Ordinary applications do not link the LLVM bridge or LLVM shared library;
+those dependencies are added only when LLVM bridge externs are present.
 
 Package manifests are parsed and validated by the Kinal `PackageManifest`
 component. `PackageResolver` selects versions and materializes source/klib
@@ -36,8 +38,21 @@ Project and profile `Packages.Roots` / `OfficialRoots` are supported, together
 with the project-local `kpkg` convention. Hosted `LinkRoots` expands existing
 directories in target-triple, platform-alias, `lib`, root order.
 `NoDefaultLibs` suppresses automatically added platform libraries; it does not
-disable the Kinal runtime or imply `NoCRT`. Explicit target overrides, freestanding
-output, custom linker scripts, and `NoCRT` remain explicitly unsupported here.
+disable the Kinal runtime or imply `NoCRT`.
+
+`Build.Target` and `build --target` select Windows/MSVC, Linux/GNU, or macOS
+output on x64 or ARM64 for `--emit ir` and `--emit obj`. CLI selection overrides
+the project profile; `host` selects the compiler's platform. Stage0 aliases
+such as `win64`, `linux-arm64`, and `mac64` are accepted alongside supported
+LLVM triples. `CompileSession.Target` supplies target constants and output
+suffixes; the LLVM machine/data layout is selected before lowering. `IO.Host`
+continues to describe the compiler, independently of the selected `IO.Target`.
+
+Foreign executable linking is deliberately rejected before emission: the
+packaged runtime, LLVM bridge, SDK libraries, and linker configuration remain
+host-specific. Cross-target IR/object support is not a claim of foreign runtime
+or complete aggregate-FFI ABI validation. 32-bit/other ABIs, freestanding output,
+custom linker scripts, and `NoCRT` are also explicitly unsupported.
 
 ## Validation
 
@@ -45,6 +60,7 @@ output, custom linker scripts, and `NoCRT` remain explicitly unsupported here.
 python x.py selfhost --test
 python x.py selfhost-bootstrap --clean
 python tests/check_project_packages.py --compiler out/selfhost/stage1/kinal-selfhost.exe --out-dir out/selfhost/package-checks
+python tests/selfhost/check_targets.py --compiler out/selfhost/stage1/kinal-selfhost.exe --stage0 out/selfhost/stage0-host/kinal.exe --out-dir out/selfhost/target-checks
 ```
 
 The bootstrap check requires stage1 to build stage2 and stage2 to build stage3

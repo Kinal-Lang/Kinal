@@ -6,11 +6,28 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
-from run_tests import pe_machine, print_runtime_output
+from run_tests import copy_windows_openssl_runtime, pe_machine, print_runtime_output
 
 
 class RuntimeDiagnosticsTests(unittest.TestCase):
+    def test_openssl_copy_diagnostics_do_not_pollute_json_stdout(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "libssl-3-x64.dll"
+            source.write_bytes(b"test DLL")
+            output = root / "output"
+            output.mkdir()
+            stdout, stderr = io.StringIO(), io.StringIO()
+            with mock.patch("run_tests.is_windows", return_value=True), \
+                 mock.patch("run_tests.find_windows_openssl_runtime", return_value=[source]), \
+                 contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                copy_windows_openssl_runtime(output)
+            self.assertEqual(stdout.getvalue(), "")
+            self.assertIn("[OpenSSL]", stderr.getvalue())
+            self.assertEqual((output / source.name).read_bytes(), b"test DLL")
+
     def test_exit_failure_preserves_stdout_exception_and_stderr(self) -> None:
         process = subprocess.CompletedProcess(
             ["test-program"], 1, "Unhandled IO.Request: missing OpenSSL\n", "native detail\n"

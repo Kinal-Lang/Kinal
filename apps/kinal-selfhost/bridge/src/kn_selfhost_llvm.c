@@ -3,6 +3,7 @@
 #include <stdatomic.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "llvm-c/Core.h"
 #include "llvm-c/Analysis.h"
@@ -14,10 +15,11 @@ typedef struct KnShLlvmModule
     LLVMContextRef context;
     LLVMModuleRef module;
     LLVMBuilderRef builder;
+    LLVMTargetMachineRef target_machine;
 } KnShLlvmModule;
 
 static _Thread_local char g_last_error[1024];
-/* 0 = uninitialized, 1 = initializing, 2 = ready, 3 = failed. */
+/* 0 = uninitialized, 1 = initializing, 2 = ready. */
 static atomic_int g_target_state = ATOMIC_VAR_INIT(0);
 
 static void clear_error(void)
@@ -58,38 +60,27 @@ static char *copy_runtime_string(const char *text)
     return copy;
 }
 
-static int initialize_native_target(void)
+static void initialize_targets(void)
 {
     int state = atomic_load_explicit(&g_target_state, memory_order_acquire);
     int expected = 0;
     if (state == 2)
-        return 1;
-    if (state == 3)
-    {
-        set_error("LLVM native target initialization failed");
-        return 0;
-    }
+        return;
     if (atomic_compare_exchange_strong_explicit(
             &g_target_state, &expected, 1,
             memory_order_acq_rel, memory_order_acquire))
     {
-        int ok = LLVMInitializeNativeTarget() == 0 &&
-                 LLVMInitializeNativeAsmPrinter() == 0 &&
-                 LLVMInitializeNativeAsmParser() == 0;
-        atomic_store_explicit(&g_target_state, ok ? 2 : 3,
-                              memory_order_release);
-        if (!ok)
-            set_error("LLVM native target initialization failed");
-        return ok;
+        LLVMInitializeAllTargetInfos();
+        LLVMInitializeAllTargets();
+        LLVMInitializeAllTargetMCs();
+        LLVMInitializeAllAsmPrinters();
+        atomic_store_explicit(&g_target_state, 2, memory_order_release);
+        return;
     }
     do
     {
         state = atomic_load_explicit(&g_target_state, memory_order_acquire);
     } while (state == 1);
-    if (state == 2)
-        return 1;
-    set_error("LLVM native target initialization failed");
-    return 0;
 }
 
 int kn_sh_llvm_version_major(void)
@@ -144,6 +135,8 @@ void kn_sh_llvm_module_dispose(void *module_handle)
         return;
     if (state->builder)
         LLVMDisposeBuilder(state->builder);
+    if (state->target_machine)
+        LLVMDisposeTargetMachine(state->target_machine);
     if (state->module)
         LLVMDisposeModule(state->module);
     if (state->context)
@@ -207,8 +200,7 @@ char *kn_sh_llvm_module_ir(void *module_handle)
     return copy;
 }
 
-int kn_sh_llvm_emit_object(void *module_handle, const char *target_triple,
-                           const char *output_path)
+int kn_sh_llvm_module_set_target(void *module_handle, const char *target_triple)
 {
     KnShLlvmModule *state = (KnShLlvmModule *)module_handle;
     char *default_triple = 0;
@@ -224,13 +216,7 @@ int kn_sh_llvm_emit_object(void *module_handle, const char *target_triple,
         set_error("invalid LLVM module handle");
         return 0;
     }
-    if (!output_path || !output_path[0])
-    {
-        set_error("object output path is empty");
-        return 0;
-    }
-    if (!initialize_native_target())
-        return 0;
+    initialize_targets();
     if (!triple || !triple[0])
     {
         default_triple = LLVMGetDefaultTargetTriple();
@@ -246,7 +232,6 @@ int kn_sh_llvm_emit_object(void *module_handle, const char *target_triple,
         set_error(message ? message : "LLVMGetTargetFromTriple failed");
         goto cleanup;
     }
-    LLVMSetTarget(state->module, triple);
     target_machine = LLVMCreateTargetMachine(
         target, triple, "generic", "", LLVMCodeGenLevelDefault,
         LLVMRelocDefault, LLVMCodeModelDefault);
@@ -261,14 +246,12 @@ int kn_sh_llvm_emit_object(void *module_handle, const char *target_triple,
         set_error("LLVMCreateTargetDataLayout failed");
         goto cleanup;
     }
+    LLVMSetTarget(state->module, triple);
     LLVMSetModuleDataLayout(state->module, target_data);
-    if (LLVMTargetMachineEmitToFile(target_machine, state->module,
-                                    (char *)output_path, LLVMObjectFile,
-                                    &message) != 0)
-    {
-        set_error(message ? message : "LLVMTargetMachineEmitToFile failed");
-        goto cleanup;
-    }
+    if (state->target_machine)
+        LLVMDisposeTargetMachine(state->target_machine);
+    state->target_machine = target_machine;
+    target_machine = 0;
     ok = 1;
 
 cleanup:
@@ -281,6 +264,37 @@ cleanup:
     if (default_triple)
         LLVMDisposeMessage(default_triple);
     return ok;
+}
+
+int kn_sh_llvm_emit_object(void *module_handle, const char *target_triple,
+                           const char *output_path)
+{
+    KnShLlvmModule *state = (KnShLlvmModule *)module_handle;
+    char *message = 0;
+    clear_error();
+    if (!state || !state->module)
+    {
+        set_error("invalid LLVM module handle");
+        return 0;
+    }
+    if (!output_path || !output_path[0])
+    {
+        set_error("object output path is empty");
+        return 0;
+    }
+    if (!state->target_machine || (target_triple && target_triple[0] &&
+        strcmp(target_triple, LLVMGetTarget(state->module)) != 0))
+    {
+        if (!kn_sh_llvm_module_set_target(module_handle, target_triple))
+            return 0;
+    }
+    int failed = LLVMTargetMachineEmitToFile(state->target_machine, state->module,
+                                             (char *)output_path, LLVMObjectFile, &message);
+    if (failed)
+        set_error(message ? message : "LLVMTargetMachineEmitToFile failed");
+    if (message)
+        LLVMDisposeMessage(message);
+    return !failed;
 }
 
 const char *kn_sh_llvm_last_error(void)

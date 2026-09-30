@@ -337,6 +337,8 @@ static const char *sema_info_host_dynamic_library_suffix(void)
 {
 #if defined(_WIN32) || defined(_WIN64)
     return ".dll";
+#elif defined(__APPLE__)
+    return ".dylib";
 #else
     return ".so";
 #endif

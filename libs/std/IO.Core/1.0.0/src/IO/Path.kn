@@ -1,6 +1,7 @@
 Unit IO.Path;
 
 Get IO.Text;
+Get IO.Target;
 Get IO.Kinal.Runtime;
 
 // Path policy is implemented in Kinal.  The native boundary only asks the
@@ -14,9 +15,9 @@ Safe Function bool __PathIsSeparator(char value)
     Return value == '/' || value == '\\';
 }
 
-Safe Function char __PathHostSeparator()
+Safe Function char __PathTargetSeparator()
 {
-    If (IO.Host.OS == IO.Host.OS.Windows)
+    If (IO.Target.OS == IO.Target.OS.Windows)
     {
         Return '\\';
     }
@@ -51,7 +52,7 @@ Trusted Function string Combine(string left, string right)
     {
         Return left + right;
     }
-    Return left + [string](__PathHostSeparator()) + right;
+    Return left + [string](__PathTargetSeparator()) + right;
 }
 
 Trusted Function string Join(string left, string right)
@@ -158,7 +159,7 @@ Trusted Function string Normalize(string path)
         Return "";
     }
 
-    char separator = __PathHostSeparator();
+    char separator = __PathTargetSeparator();
     string separatorText = [string](separator);
     char* characters = [char*](path);
     int index = 0;
@@ -167,7 +168,7 @@ Trusted Function string Normalize(string path)
     bool unc = false;
     string prefix = "";
 
-    If (IO.Host.OS == IO.Host.OS.Windows)
+    If (IO.Target.OS == IO.Target.OS.Windows)
     {
         If (length >= 2 && __PathIsAsciiLetter(characters[0]) && characters[1] == ':')
         {
@@ -353,7 +354,7 @@ Trusted Function bool IsAbsolute(string path)
     }
     char* characters = [char*](path);
     int length = IO.Text.Length(path);
-    If (IO.Host.OS == IO.Host.OS.Windows)
+    If (IO.Target.OS == IO.Target.OS.Windows)
     {
         If (length >= 2 && __PathIsSeparator(characters[0]) &&
             __PathIsSeparator(characters[1]))
@@ -403,7 +404,7 @@ Trusted Function string EnsureTrailingSeparator(string path)
 {
     If (path == null || IO.Text.IsEmpty(path))
     {
-        Return [string](__PathHostSeparator());
+        Return [string](__PathTargetSeparator());
     }
     string normalized = Normalize(path);
     int length = IO.Text.Length(normalized);
@@ -411,5 +412,5 @@ Trusted Function string EnsureTrailingSeparator(string path)
     {
         Return normalized;
     }
-    Return normalized + [string](__PathHostSeparator());
+    Return normalized + [string](__PathTargetSeparator());
 }

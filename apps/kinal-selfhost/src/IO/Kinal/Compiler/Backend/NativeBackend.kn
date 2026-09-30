@@ -5951,6 +5951,13 @@ Class NativeBackend
             This.Fail("LLVM module creation failed: " + IO.Kinal.Compiler.Backend.LlvmBridge.LastError());
             Return false;
         }
+        // Layout must exist before lowering sizeof/GEP/aggregate operations,
+        // including when the caller requests LLVM IR rather than an object.
+        If (!This.Module.SetTarget(This.Semantics.Session.Target.Triple))
+        {
+            This.Fail("LLVM target configuration failed: " + IO.Kinal.Compiler.Backend.LlvmBridge.LastError());
+            Return false;
+        }
         This.PrepareTypes();
         This.DeclareRuntime();
         This.DeclareFunctions();
@@ -5969,7 +5976,7 @@ Class NativeBackend
     Public Trusted Function bool EmitObject(string outputPath)
     {
         If (!This.GenerateModule()) Return false;
-        If (!This.Module.EmitObject("", outputPath))
+        If (!This.Module.EmitObject(This.Semantics.Session.Target.Triple, outputPath))
         {
             This.Fail("object emission failed: " + IO.Kinal.Compiler.Backend.LlvmBridge.LastError());
             Return false;

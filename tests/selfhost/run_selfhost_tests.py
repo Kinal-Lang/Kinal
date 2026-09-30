@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import platform
 import shutil
 import subprocess
 import sys
 from pathlib import Path
+
+from check_targets import check_targets
 
 
 def run(command: list[str], *, cwd: Path) -> subprocess.CompletedProcess[str]:
@@ -17,7 +20,7 @@ def require(condition: bool, message: str, proc: subprocess.CompletedProcess[str
     if condition:
         return
     if proc is not None:
-        message += "\n" + (proc.stdout or "") + (proc.stderr or "")
+        message += f"\nexit={proc.returncode}; command={proc.args}\n" + (proc.stdout or "") + (proc.stderr or "")
     raise SystemExit(message)
 
 
@@ -264,6 +267,11 @@ def main() -> int:
     out_dir = args.out_dir.resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    # Standalone invocations must use the same DLLs as the packaged compiler,
+    # not an unrelated LLVM installation inherited from the user's PATH.
+    if sys.platform == "win32":
+        os.environ["PATH"] = str(compiler.parent) + os.pathsep + os.environ.get("PATH", "")
+
     results: list[dict[str, object]] = []
     version = run([str(compiler), "version"], cwd=root)
     require(version.returncode == 0 and "stage1" in version.stdout, "stage1 version smoke failed", version)
@@ -278,6 +286,8 @@ def main() -> int:
     require("format=kinal-selfhost-llvm-v1" in probe_rows,
             "stage1 LLVM bridge summary is missing", llvm_probe)
     results.append({"name": "llvm_bridge", "ok": True, "bytes": probe_object.stat().st_size})
+    results.append(check_targets(compiler, stage0, root, out_dir / "cross-targets",
+                                 stage0_reference=args.stage0_role == "reference"))
 
     fixture = root / "tests" / "selfhost" / "fixtures" / "lex_basic.kn"
     lex = run([str(compiler), "lex", str(fixture)], cwd=root)
@@ -804,6 +814,7 @@ def main() -> int:
     )
 
     phase5_diagnostic_fixtures = [
+        ("../selfhost/fixtures/error_symbol_name_non_overload.kn", "Sema", ("Invalid Attribute",)),
         ("error_meta_missing_keep.kn", "Parser", ("Missing Meta Clause",)),
         ("error_meta_lowercase_on.kn", "Parser", ("Invalid Meta Clause",)),
         ("error_meta_lowercase_keep.kn", "Parser", ("Invalid Meta Clause",)),
@@ -1034,6 +1045,9 @@ def main() -> int:
     )
     require(backend_build.returncode == 0, "stage1 backend fixture build failed", backend_build)
     require(backend_executable.is_file(), "stage1 backend fixture executable is missing")
+    require(b"LLVM-C.dll" not in backend_executable.read_bytes()
+            and b"libLLVM" not in backend_executable.read_bytes(),
+            "ordinary selfhost output unexpectedly depends on the LLVM bridge")
     backend_run = run([str(backend_executable)], cwd=root)
     require(backend_run.returncode == 0, "stage1 backend fixture execution failed", backend_run)
     require(

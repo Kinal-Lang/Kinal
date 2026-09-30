@@ -9,6 +9,9 @@ Extern Function int NativeVersionMajor() By C;
 [LinkName("kn_sh_llvm_module_create")]
 Extern Function byte* NativeModuleCreate(string name) By C;
 
+[LinkName("kn_sh_llvm_module_set_target")]
+Extern Function int NativeModuleSetTarget(byte* module, string targetTriple) By C;
+
 [LinkName("kn_sh_llvm_module_dispose")]
 Extern Function void NativeModuleDispose(byte* module) By C;
 
@@ -291,6 +294,12 @@ Class LlvmModule
     Public Safe Function bool IsValid()
     {
         Return This.Handle != null;
+    }
+
+    Public Trusted Function bool SetTarget(string targetTriple)
+    {
+        If (This.Handle == null) Return false;
+        Return NativeModuleSetTarget(This.Handle, targetTriple) != 0;
     }
 
     Public Trusted Function bool BuildProbe(string functionName, int returnValue)

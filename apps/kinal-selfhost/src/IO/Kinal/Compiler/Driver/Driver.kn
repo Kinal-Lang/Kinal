@@ -9,6 +9,7 @@ Get IO.Text;
 Get IO.Kinal.Runtime;
 Get IO.Kinal.Compiler.Core.Diagnostics;
 Get IO.Kinal.Compiler.Core.CompileSession;
+Get IO.Kinal.Compiler.Core.TargetInfo;
 Get IO.Kinal.Compiler.Source.SourceFile;
 Get IO.Kinal.Compiler.Source.SourcePath;
 Get IO.Kinal.Compiler.Lex.Lexer;
@@ -32,6 +33,7 @@ Class ProjectBuildRequest
     Public string Manifest;
     Public string Output;
     Public string Profile;
+    Public string Target;
     Public string Error;
 
     Public Safe Constructor(string mode)
@@ -40,6 +42,7 @@ Class ProjectBuildRequest
         This.Manifest = "";
         This.Output = "";
         This.Profile = "";
+        This.Target = "";
         This.Error = "";
     }
 }
@@ -87,13 +90,7 @@ Safe Function string HostTag()
 
 Safe Function string HostTargetTriple()
 {
-    If (HostIsWindows() && HostIsArm64()) Return "aarch64-pc-windows-msvc";
-    If (HostIsWindows()) Return "x86_64-pc-windows-msvc";
-    If (HostIsLinux() && HostIsArm64()) Return "aarch64-unknown-linux-gnu";
-    If (HostIsLinux()) Return "x86_64-pc-linux-gnu";
-    If (HostIsMacOS() && HostIsArm64()) Return "aarch64-apple-darwin";
-    If (HostIsMacOS()) Return "x86_64-apple-darwin";
-    Return "";
+    Return IO.Kinal.Compiler.Core.TargetInfo.HostTriple();
 }
 
 Safe Function bool LinkTargetMatchesHost(string target)
@@ -277,6 +274,19 @@ Trusted Function int RunProcess(string executable, list arguments)
     Return IO.Kinal.Runtime.ProcessRun(executable, values);
 }
 
+Safe Function bool NeedsLlvmBridge(SemanticCompilation semantics)
+{
+    FunctionSymbol function = semantics.FirstFunction;
+    While (function != null)
+    {
+        If (function.Declaration.IsExtern && IO.Text.StartsWith(
+            semantics.AttributeString(function.Declaration, "LinkName"), "kn_sh_llvm_"))
+            Return true;
+        function = function.Next;
+    }
+    Return false;
+}
+
 Trusted Function int LinkWindowsExecutable(string outputPath, string objectPath,
                                            ProjectConfig project,
                                            ProjectProfileConfig profile,
@@ -287,9 +297,10 @@ Trusted Function int LinkWindowsExecutable(string outputPath, string objectPath,
     string runtime = IO.Path.Combine(root, "runtime/" + HostTag());
     string llvm = IO.Path.Combine(root, "llvm/lib");
     string bridge = IO.Path.Combine(root, "bridge");
+    bool needsLlvm = NeedsLlvmBridge(semantics);
     If (!IO.File.Exists(linker) ||
         !IO.File.Exists(IO.Path.Combine(runtime, "kn_runtime.obj")) ||
-        !IO.File.Exists(IO.Path.Combine(bridge, "kn_selfhost_llvm.o")))
+        (needsLlvm && !IO.File.Exists(IO.Path.Combine(bridge, "kn_selfhost_llvm.o"))))
     {
         IO.Console.PrintLine("selfhost toolchain is incomplete beside " + root);
         Return 1;
@@ -308,11 +319,14 @@ Trusted Function int LinkWindowsExecutable(string outputPath, string objectPath,
     arguments.Add(objectPath);
     arguments.Add(IO.Path.Combine(runtime, "kn_runtime.obj"));
     arguments.Add(IO.Path.Combine(runtime, "kn_math.obj"));
-    arguments.Add(bridgeLlvm);
     arguments.Add(bridgeRuntime);
-    arguments.Add("/libpath:" + llvm);
     arguments.Add("/libpath:" + runtime);
-    arguments.Add("LLVM-C.lib");
+    If (needsLlvm)
+    {
+        arguments.Add(bridgeLlvm);
+        arguments.Add("/libpath:" + llvm);
+        arguments.Add("LLVM-C.lib");
+    }
     If (!profile.NoDefaultLibs)
     {
         arguments.Add("kernel32.lib");
@@ -342,10 +356,11 @@ Trusted Function int LinkPosixExecutable(string outputPath, string objectPath,
     string bridge = IO.Path.Combine(root, "bridge");
     string bridgeRuntime = IO.Path.Combine(bridge, "kn_selfhost_runtime.o");
     string bridgeLlvm = IO.Path.Combine(bridge, "kn_selfhost_llvm.o");
+    bool needsLlvm = NeedsLlvmBridge(semantics);
     If (!IO.File.Exists(clang) ||
         (HostIsLinux() && !IO.File.Exists(linker)) ||
         !IO.File.Exists(IO.Path.Combine(runtime, "kn_runtime.o")) ||
-        !IO.File.Exists(bridgeLlvm))
+        (needsLlvm && !IO.File.Exists(bridgeLlvm)))
     {
         IO.Console.PrintLine("selfhost toolchain is incomplete beside " + root);
         Return 1;
@@ -363,16 +378,20 @@ Trusted Function int LinkPosixExecutable(string outputPath, string objectPath,
     arguments.Add(objectPath);
     arguments.Add(IO.Path.Combine(runtime, "kn_runtime.o"));
     arguments.Add(IO.Path.Combine(runtime, "kn_math.o"));
-    arguments.Add(bridgeLlvm);
     arguments.Add(bridgeRuntime);
-    arguments.Add("-L" + llvm);
-    arguments.Add("-lLLVM");
+    If (needsLlvm)
+    {
+        arguments.Add(bridgeLlvm);
+        arguments.Add("-L" + llvm);
+        arguments.Add("-lLLVM");
+    }
     AppendProjectLinkSettings(arguments, project, profile,
         bridgeLlvm, bridgeRuntime);
     AppendExternLinkSettings(arguments, semantics);
-    arguments.Add(HostIsMacOS() ?
-        "-Wl,-rpath,@loader_path/llvm/lib" :
-        "-Wl,-rpath,$ORIGIN/llvm/lib");
+    If (needsLlvm)
+        arguments.Add(HostIsMacOS() ?
+            "-Wl,-rpath,@loader_path/llvm/lib" :
+            "-Wl,-rpath,$ORIGIN/llvm/lib");
     If (!profile.NoDefaultLibs)
     {
         arguments.Add("-pthread");
@@ -424,7 +443,8 @@ Safe Function ProjectBuildRequest ParseProjectBuildRequest(string[] args, string
     {
         string argument = args[index];
         If (argument == "--project" || argument == "--profile" ||
-            argument == "-o" || argument == "--output" || argument == "--emit")
+            argument == "-o" || argument == "--output" || argument == "--emit" ||
+            argument == "--target")
         {
             If (index + 1 >= args.Length())
             {
@@ -434,6 +454,7 @@ Safe Function ProjectBuildRequest ParseProjectBuildRequest(string[] args, string
             string value = args[index + 1];
             If (argument == "--project") request.Manifest = value;
             ElseIf (argument == "--profile") request.Profile = value;
+            ElseIf (argument == "--target") request.Target = value;
             ElseIf (argument == "-o" || argument == "--output") request.Output = value;
             Else
             {
@@ -458,20 +479,21 @@ Safe Function ProjectBuildRequest ParseProjectBuildRequest(string[] args, string
 
 Trusted Function string ResolveProjectBuildOutput(ProjectBuildRequest request,
                                                    ProjectConfig project,
-                                                   ProjectProfileConfig profile)
+                                                   ProjectProfileConfig profile,
+                                                   TargetInfo target)
 {
     If (!IO.Text.IsEmpty(request.Output)) Return IO.Path.Normalize(request.Output);
     If (!IO.Text.IsEmpty(profile.Output))
     {
         string configured = project.ResolvePath(profile.Output);
         If (request.Mode == "build-object")
-            Return IO.Path.ChangeExtension(configured, HostIsWindows() ? ".obj" : ".o");
+            Return IO.Path.ChangeExtension(configured, target.ObjectSuffix());
         If (request.Mode == "build-ir") Return IO.Path.ChangeExtension(configured, ".ll");
         Return configured;
     }
     string extension = request.Mode == "build-object" ?
-        (HostIsWindows() ? ".obj" : ".o") :
-        (request.Mode == "build-ir" ? ".ll" : (HostIsWindows() ? ".exe" : ""));
+        target.ObjectSuffix() :
+        (request.Mode == "build-ir" ? ".ll" : target.ExeSuffix());
     Return IO.Path.Combine(project.RootDirectory, project.Name + extension);
 }
 
@@ -486,7 +508,13 @@ Trusted Function int CompileProject(ProjectBuildRequest request)
     }
 
     CompileSession session = New CompileSession();
+    session.RequestedTarget = request.Target;
     session.LoadProject(manifest, request.Profile);
+    // Cross-target object/IR output needs no foreign SDK. Executable links do:
+    // reject here, before emitting anything or selecting host runtime assets.
+    If (!session.HasErrors() && request.Mode == "build" && !session.Target.IsHost())
+        session.ReportProject("Cross-target linking is not supported",
+            session.Target.Triple + "; use --emit obj or --emit ir");
     If (!session.HasErrors()) session.ParseProject();
     If (!session.HasErrors())
     {
@@ -502,11 +530,11 @@ Trusted Function int CompileProject(ProjectBuildRequest request)
     IO.Kinal.Compiler.Core.Diagnostics.PrintAll(session.Diagnostics);
     If (session.HasErrors()) Return 1;
 
-    string output = ResolveProjectBuildOutput(request, session.Project, session.Profile);
+    string output = ResolveProjectBuildOutput(request, session.Project, session.Profile, session.Target);
     NativeBackend backend = New NativeBackend(semantics);
     bool emitted = false;
     string backendOutput = request.Mode == "build" ?
-        IO.Path.ChangeExtension(output, HostIsWindows() ? ".obj" : ".o") : output;
+        IO.Path.ChangeExtension(output, session.Target.ObjectSuffix()) : output;
     If (request.Mode == "build-object" || request.Mode == "build")
         emitted = backend.EmitObject(backendOutput);
     ElseIf (backend.GenerateModule()) emitted = IO.File.WriteAllText(output, backend.Module.Ir());
@@ -798,7 +826,7 @@ Safe Function void PrintHelp()
     IO.Console.PrintLine("  build-object <manifest> <output> [profile]  emit a native object");
     IO.Console.PrintLine("  build-ir <manifest> <output> [profile]      emit LLVM IR");
     IO.Console.PrintLine("  build <manifest> <output> [profile]         emit and link an executable");
-    IO.Console.PrintLine("  build --project <manifest> [--profile <name>] [-o <file>] [--emit bin|obj|ir]");
+    IO.Console.PrintLine("  build --project <manifest> [--profile <name>] [-o <file>] [--emit bin|obj|ir] [--target <target>]");
     IO.Console.PrintLine("  llvm-probe <object>               verify the LLVM bridge");
     IO.Console.PrintLine("  help       show this help");
 }

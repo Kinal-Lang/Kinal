@@ -4,6 +4,7 @@ Get IO.File;
 Get IO.Path;
 Get IO.Text;
 Get IO.Kinal.Compiler.Core.Diagnostics;
+Get IO.Kinal.Compiler.Core.TargetInfo;
 Get IO.Kinal.Compiler.Source.SourceFile;
 Get IO.Kinal.Compiler.Source.SourceManager;
 Get IO.Kinal.Compiler.Source.SourcePath;
@@ -51,6 +52,8 @@ Class CompileSession
     Public SourceManager Sources;
     Public ProjectConfig Project;
     Public ProjectProfileConfig Profile;
+    Public TargetInfo Target;
+    Public string RequestedTarget;
     Public list SourcePaths;
     Public CompilationUnit FirstUnit;
     Public string EntryUnitName;
@@ -61,6 +64,8 @@ Class CompileSession
         This.Sources = New SourceManager();
         This.Project = null;
         This.Profile = null;
+        This.Target = IO.Kinal.Compiler.Core.TargetInfo.Resolve("host");
+        This.RequestedTarget = "";
         This.SourcePaths = list.Create();
         This.FirstUnit = null;
         This.EntryUnitName = "";
@@ -106,9 +111,12 @@ Class CompileSession
         If (This.Profile.Panic != "Trap")
             This.ReportProject("Unsupported project option",
                 "Build.Panic=" + This.Profile.Panic);
-        If (!IO.Text.IsEmpty(This.Profile.Target))
-            This.ReportProject("Unsupported project option",
-                "cross-target Build.Target=" + This.Profile.Target);
+        string targetName = IO.Text.IsEmpty(This.RequestedTarget) ?
+            This.Profile.Target : This.RequestedTarget;
+        This.Target = IO.Kinal.Compiler.Core.TargetInfo.Resolve(targetName);
+        If (This.Target == null)
+            This.ReportProject("Unsupported target", targetName +
+                "; supported targets are Windows/Linux/macOS x64 and arm64");
         If (!IO.Text.IsEmpty(This.Profile.LinkScript))
             This.ReportProject("Unsupported project option", "Link.Script");
         If (This.Profile.NoCRT)

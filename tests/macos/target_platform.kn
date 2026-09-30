@@ -2,6 +2,7 @@ Unit Tests.TargetPlatform;
 
 Get Console By IO.Console;
 Get IO.Target;
+Get IO.Host;
 
 Static Function int Main()
 {
@@ -12,5 +13,6 @@ Static Function int Main()
     Console.PrintLine(IO.Target.DynamicLibrarySuffix);
     Console.PrintLine(IO.Target.StaticLibrarySuffix);
     Console.PrintLine(IO.Target.ObjectSuffix);
+    Console.PrintLine(IO.Host.DynamicLibrarySuffix == ".dylib");
     Return 0;
 }

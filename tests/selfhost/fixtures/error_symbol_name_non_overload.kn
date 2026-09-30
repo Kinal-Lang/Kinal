@@ -1,0 +1,12 @@
+Unit Tests.InvalidSymbolName;
+
+[SymbolName("ordinary_function")]
+Static Function int Ordinary() { Return 1; }
+
+Class Example
+{
+    [SymbolName("ordinary_method")]
+    Public Function int Ordinary() { Return 2; }
+}
+
+Static Function int Main() { Return 0; }

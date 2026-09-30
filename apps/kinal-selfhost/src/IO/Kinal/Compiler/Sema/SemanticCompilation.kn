@@ -2120,7 +2120,8 @@ Class SemanticCompilation
             This.Report(syntax, "Invalid Overload", "Overload requires SymbolName",
                 declaration.Line, declaration.Column);
         If (symbolName != null &&
-            (declaration.IsExtern || (declaration.IsDelegate && declaration.Abi != "C")))
+            (declaration.IsExtern || (declaration.IsDelegate && declaration.Abi != "C") ||
+             (overload == null && !(declaration.IsDelegate && declaration.Abi == "C"))))
             This.Report(syntax, "Invalid Attribute", "SymbolName is not valid on this declaration",
                 declaration.Line, declaration.Column);
         If (cast != null && function.OwnerType != null)
@@ -3564,12 +3565,12 @@ Class SemanticCompilation
     Public Safe Function int TargetIntegerConstant(string path)
     {
         If (path == "IO.Target" || path == "IO.Target.OS" ||
-            path == "IO.Target.OS.Current") Return IO.Host.OS.Current;
+            path == "IO.Target.OS.Current") Return This.Session.Target.OS;
         If (path == "IO.Target.Windows" || path == "IO.Target.OS.Windows") Return 1;
         If (path == "IO.Target.Linux" || path == "IO.Target.OS.Linux") Return 2;
         If (path == "IO.Target.MacOS" || path == "IO.Target.OS.MacOS") Return 3;
         If (path == "IO.Target.Unknown" || path == "IO.Target.OS.Unknown") Return 0;
-        If (path == "IO.Target.Arch" || path == "IO.Target.Arch.Current") Return IO.Host.Arch.Current;
+        If (path == "IO.Target.Arch" || path == "IO.Target.Arch.Current") Return This.Session.Target.Architecture;
         If (path == "IO.Target.X64" || path == "IO.Target.Arch.X64") Return 2;
         If (path == "IO.Target.X86" || path == "IO.Target.Arch.X86") Return 1;
         If (path == "IO.Target.Arm64" || path == "IO.Target.Arch.Arm64") Return 3;
@@ -3578,7 +3579,7 @@ Class SemanticCompilation
             path == "IO.Target.Hosted" || path == "IO.Target.Env.Hosted") Return 1;
         If (path == "IO.Target.Freestanding" || path == "IO.Target.Env.Freestanding") Return 2;
         If (path == "IO.Target.Env.Unknown") Return 0;
-        If (path == "IO.Target.PointerBits") Return 64;
+        If (path == "IO.Target.PointerBits") Return This.Session.Target.PointerBits;
         If (path == "IO.Host" || path == "IO.Host.OS" ||
             path == "IO.Host.OS.Current") Return IO.Host.OS.Current;
         If (path == "IO.Host.Windows" || path == "IO.Host.OS.Windows") Return 1;
@@ -3594,23 +3595,33 @@ Class SemanticCompilation
             path == "IO.Host.Hosted" || path == "IO.Host.Env.Hosted") Return 1;
         If (path == "IO.Host.Freestanding" || path == "IO.Host.Env.Freestanding") Return 2;
         If (path == "IO.Host.Env.Unknown") Return 0;
-        If (path == "IO.Host.PointerBits") Return 64;
+        If (path == "IO.Host.PointerBits") Return IO.Host.PointerBits;
         Return -1;
     }
 
     Public Safe Function string TargetStringConstant(string path)
     {
-        If (path == "IO.Target.PathSeparator" || path == "IO.Host.PathSeparator")
+        If (path == "IO.Target.PathSeparator") Return This.Session.Target.PathSeparator();
+        If (path == "IO.Target.ExeSuffix") Return This.Session.Target.ExeSuffix();
+        If (path == "IO.Target.ObjectSuffix") Return This.Session.Target.ObjectSuffix();
+        If (path == "IO.Target.DynamicLibrarySuffix") Return This.Session.Target.DynamicLibrarySuffix();
+        If (path == "IO.Target.StaticLibrarySuffix") Return This.Session.Target.StaticLibrarySuffix();
+        If (path == "IO.Target.NewLine") Return This.Session.Target.NewLine();
+        If (path == "IO.Host.PathSeparator")
             Return IO.Host.PathSeparator;
-        If (path == "IO.Target.ExeSuffix" || path == "IO.Host.ExeSuffix")
+        If (path == "IO.Host.ExeSuffix")
             Return IO.Host.ExeSuffix;
-        If (path == "IO.Target.ObjectSuffix" || path == "IO.Host.ObjectSuffix")
+        If (path == "IO.Host.ObjectSuffix")
             Return IO.Host.ObjectSuffix;
-        If (path == "IO.Target.DynamicLibrarySuffix" ||
-            path == "IO.Host.DynamicLibrarySuffix") Return IO.Host.DynamicLibrarySuffix;
-        If (path == "IO.Target.StaticLibrarySuffix" ||
-            path == "IO.Host.StaticLibrarySuffix") Return IO.Host.StaticLibrarySuffix;
-        If (path == "IO.Target.NewLine" || path == "IO.Host.NewLine") Return IO.Host.NewLine;
+        If (path == "IO.Host.DynamicLibrarySuffix")
+        {
+            // Published stage0 versions used .so on macOS. Derive this host
+            // fact from the OS constant so they can bootstrap the corrected compiler.
+            If (IO.Host.OS == IO.Host.OS.MacOS) Return ".dylib";
+            Return IO.Host.DynamicLibrarySuffix;
+        }
+        If (path == "IO.Host.StaticLibrarySuffix") Return IO.Host.StaticLibrarySuffix;
+        If (path == "IO.Host.NewLine") Return IO.Host.NewLine;
         Return null;
     }
 

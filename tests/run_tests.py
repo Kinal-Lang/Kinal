@@ -270,7 +270,9 @@ def copy_windows_openssl_runtime(out_dir: Path) -> None:
     for src in runtime_files:
         destination = out_dir / src.name
         shutil.copy2(src, destination)
-        print(f"[OpenSSL] {src} -> {destination} (machine={pe_machine(destination)})", flush=True)
+        # Shared by the selfhost auditor, whose stdout is a JSON report.
+        print(f"[OpenSSL] {src} -> {destination} (machine={pe_machine(destination)})",
+              file=sys.stderr, flush=True)
 
 
 def print_runtime_output(output: subprocess.CompletedProcess) -> None:

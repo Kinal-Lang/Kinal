@@ -13,6 +13,8 @@ extern "C" {
  */
 int kn_sh_llvm_version_major(void);
 void *kn_sh_llvm_module_create(const char *name);
+/* Select the machine and data layout before IR lowering; owned by the module. */
+int kn_sh_llvm_module_set_target(void *module_handle, const char *target_triple);
 void kn_sh_llvm_module_dispose(void *module_handle);
 int kn_sh_llvm_build_probe(void *module_handle, const char *function_name,
                            int return_value);

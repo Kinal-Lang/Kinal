@@ -564,7 +564,7 @@
   {
     "name": "macos_target_platform",
     "file": "tests/macos/target_platform.kn",
-    "expected": "true\n/\ntrue\ntrue\n.dylib\n.a\n.o\n",
+    "expected": "true\n/\ntrue\ntrue\n.dylib\n.a\n.o\ntrue\n",
     "platforms": [
       "macos"
     ]
