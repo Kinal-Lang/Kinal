@@ -4,10 +4,12 @@ Get IO.Text;
 Get IO.Host;
 Get IO.Kinal.Compiler.Core.Diagnostics;
 Get IO.Kinal.Compiler.Core.CompileSession;
+Get IO.Kinal.Compiler.Core.IntrinsicUnits;
 Get IO.Kinal.Compiler.Syntax.Nodes;
 Get IO.Kinal.Compiler.Syntax.SyntaxTree;
 Get IO.Kinal.Compiler.Types.TypeSymbol;
 Get IO.Kinal.Compiler.Sema.Symbols;
+Get IO.Kinal.Compiler.Sema.FreestandingValidator;
 Get IO.Kinal.Compiler.Hir.HirModel;
 Get IO.Kinal.Compiler.Lex.TokenKind;
 
@@ -282,29 +284,21 @@ Class SemanticCompilation
     {
         Return name == "IO.Collection" || name == "IO.Error" || name == "IO.GC" ||
                name == "IO.System" ||
-               name == "IO.Type" || name == "IO.Volatile" ||
+               name == "IO.Type" ||
                name == "IO.Meta" ||
-               name == "IO.Async" || name == "IO.Target" ||
-               name == "IO.Host" || name == "IO.Runtime" ||
-               name == "IO.Version" || name == "IO.Panic" ||
+               name == "IO.Async" || IO.Kinal.Compiler.Core.IntrinsicUnits.IsUnit(name) ||
                IO.Text.StartsWith(name, "IO.Type.");
     }
 
     Public Safe Function bool IsRuntimeImport(string name)
     {
-        If (This.IsRuntimeUnit(name)) Return true;
+        If (This.IsRuntimeUnit(name) || IO.Kinal.Compiler.Core.IntrinsicUnits.IsImport(name)) Return true;
         Return IO.Text.StartsWith(name, "IO.Collection.") ||
                IO.Text.StartsWith(name, "IO.Error.") ||
                IO.Text.StartsWith(name, "IO.GC.") ||
                IO.Text.StartsWith(name, "IO.System.") ||
-               IO.Text.StartsWith(name, "IO.Volatile.") ||
                IO.Text.StartsWith(name, "IO.Meta.") ||
-               IO.Text.StartsWith(name, "IO.Async.") ||
-               IO.Text.StartsWith(name, "IO.Target.") ||
-               IO.Text.StartsWith(name, "IO.Host.") ||
-               IO.Text.StartsWith(name, "IO.Runtime.") ||
-               IO.Text.StartsWith(name, "IO.Version.") ||
-               IO.Text.StartsWith(name, "IO.Panic.");
+               IO.Text.StartsWith(name, "IO.Async.");
     }
 
     Public Safe Function bool IsKnownImport(string name)
@@ -3575,8 +3569,9 @@ Class SemanticCompilation
         If (path == "IO.Target.X86" || path == "IO.Target.Arch.X86") Return 1;
         If (path == "IO.Target.Arm64" || path == "IO.Target.Arch.Arm64") Return 3;
         If (path == "IO.Target.Arch.Unknown") Return 0;
-        If (path == "IO.Target.Env" || path == "IO.Target.Env.Current" ||
-            path == "IO.Target.Hosted" || path == "IO.Target.Env.Hosted") Return 1;
+        If (path == "IO.Target.Env" || path == "IO.Target.Env.Current")
+            Return This.Session.IsFreestandingCore() ? 2 : 1;
+        If (path == "IO.Target.Hosted" || path == "IO.Target.Env.Hosted") Return 1;
         If (path == "IO.Target.Freestanding" || path == "IO.Target.Env.Freestanding") Return 2;
         If (path == "IO.Target.Env.Unknown") Return 0;
         If (path == "IO.Target.PointerBits") Return This.Session.Target.PointerBits;
@@ -4867,6 +4862,11 @@ Class SemanticCompilation
             unit = unit.Next;
         }
         If (!This.Session.HasErrors()) This.BindBodies();
+        If (!This.Session.HasErrors() && This.Session.IsFreestandingCore())
+        {
+            FreestandingValidator validator = New FreestandingValidator(This);
+            validator.Validate();
+        }
         Return !This.Session.HasErrors();
     }
 

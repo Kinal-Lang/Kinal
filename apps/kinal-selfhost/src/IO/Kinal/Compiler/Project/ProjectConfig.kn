@@ -69,6 +69,7 @@ Class ProjectProfileConfig
     Public string Panic;
     Public string Target;
     Public string Output;
+    Public string EntrySymbol;
     Public string LinkScript;
     Public bool NoCRT;
     Public bool NoDefaultLibs;
@@ -94,6 +95,7 @@ Class ProjectProfileConfig
         This.Panic = "Trap";
         This.Target = "";
         This.Output = "";
+        This.EntrySymbol = "";
         This.LinkScript = "";
         This.NoCRT = false;
         This.NoDefaultLibs = false;

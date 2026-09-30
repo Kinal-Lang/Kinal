@@ -51,8 +51,35 @@ continues to describe the compiler, independently of the selected `IO.Target`.
 Foreign executable linking is deliberately rejected before emission: the
 packaged runtime, LLVM bridge, SDK libraries, and linker configuration remain
 host-specific. Cross-target IR/object support is not a claim of foreign runtime
-or complete aggregate-FFI ABI validation. 32-bit/other ABIs, freestanding output,
-custom linker scripts, and `NoCRT` are also explicitly unsupported.
+or complete aggregate-FFI ABI validation. 32-bit/other ABIs, custom linker
+scripts, and hosted `NoCRT` remain explicitly unsupported.
+
+### Initial freestanding core
+
+`Environment=Freestanding; Runtime=None;` now emits runtime-free IR/objects,
+including `bare64` / `x86_64-unknown-none` and `bare-arm64` /
+`aarch64-unknown-none`. `IO.Target.Env` follows the profile; `IO.Host.Env`
+continues to describe the compiler. `NoCRT=true` is accepted in this mode.
+`EntrySymbol` selects a zero-argument or one-pointer entry (default `KMain`),
+exported through `__kn_entry`. There is no hosted `main`, GC setup, automatic
+exception checking, or injected Kinal runtime package. Link the resulting
+object using an explicit platform toolchain; selfhost freestanding executable
+linking is not implemented yet.
+
+Supported core operations include scalar/enum arithmetic, pointers and lvalues,
+Struct values, direct/extern calls, explicit generic functions, borrowed array
+descriptors, static string data, and scalar globals. Volatile accesses lower
+directly to LLVM volatile instructions; `Panic=Trap|Loop` lowers to a trap or
+infinite loop. Intrinsic imports do not discover unrelated parent `Unit IO`
+library sources. Runtime policy and public library implementations are not
+duplicated in this path.
+
+A bound-HIR validation pass rejects managed allocation, collections, closures,
+async/exceptions, runtime string operations and extended-float support-library
+requirements. Fixed local/global/field array storage and global-copy startup
+initialization are also explicitly rejected pending their runtime-free storage
+lowering. `Runtime=Alloc|GC` freestanding modes remain unsupported. This is an
+initial core, not complete parity with stage0's freestanding implementation.
 
 ## Validation
 
@@ -61,6 +88,7 @@ python x.py selfhost --test
 python x.py selfhost-bootstrap --clean
 python tests/check_project_packages.py --compiler out/selfhost/stage1/kinal-selfhost.exe --out-dir out/selfhost/package-checks
 python tests/selfhost/check_targets.py --compiler out/selfhost/stage1/kinal-selfhost.exe --stage0 out/selfhost/stage0-host/kinal.exe --out-dir out/selfhost/target-checks
+python tests/selfhost/check_freestanding.py --compiler out/selfhost/stage1/kinal-selfhost.exe --stage0 out/stage/host-release/kinal.exe --out-dir out/selfhost/freestanding-checks
 ```
 
 The bootstrap check requires stage1 to build stage2 and stage2 to build stage3

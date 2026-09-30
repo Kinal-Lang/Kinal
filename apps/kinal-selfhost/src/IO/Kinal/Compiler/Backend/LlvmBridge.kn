@@ -78,6 +78,12 @@ Extern Function byte* NativeAddGlobal(byte* module, byte* type, string name) By 
 Extern Function int NativeSetInitializer(byte* global, byte* value) By C;
 [LinkName("kn_sh_llvm_set_alignment")]
 Extern Function int NativeSetAlignment(byte* value, int alignment) By C;
+[LinkName("kn_sh_llvm_set_volatile")]
+Extern Function int NativeSetVolatile(byte* instruction, int enabled) By C;
+[LinkName("kn_sh_llvm_set_section")]
+Extern Function int NativeSetSection(byte* global, string section) By C;
+[LinkName("kn_sh_llvm_build_unreachable")]
+Extern Function byte* NativeBuildUnreachable(byte* module) By C;
 [LinkName("kn_sh_llvm_build_global_string")]
 Extern Function byte* NativeBuildGlobalString(byte* module, string text, string name) By C;
 
@@ -454,6 +460,15 @@ Class LlvmModule
     }
     Public Trusted Function byte* ReturnValue(byte* value) { Return NativeBuildReturn(This.Handle, value); }
     Public Trusted Function byte* ReturnVoid() { Return NativeBuildReturnVoid(This.Handle); }
+    Public Trusted Function byte* Unreachable() { Return NativeBuildUnreachable(This.Handle); }
+    Public Trusted Function bool SetVolatile(byte* instruction)
+    {
+        Return NativeSetVolatile(instruction, 1) != 0;
+    }
+    Public Trusted Function bool SetSection(byte* global, string section)
+    {
+        Return NativeSetSection(global, section) != 0;
+    }
     Public Trusted Function byte* Branch(byte* destination) { Return NativeBuildBranch(This.Handle, destination); }
     Public Trusted Function byte* ConditionalBranch(byte* condition, byte* whenTrue, byte* whenFalse)
     {

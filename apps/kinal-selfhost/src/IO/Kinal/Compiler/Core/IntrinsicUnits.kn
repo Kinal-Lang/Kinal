@@ -1,0 +1,20 @@
+Unit IO.Kinal.Compiler.Core.IntrinsicUnits;
+
+Get IO.Text;
+
+// These namespaces are compiler facts/control-flow/memory intrinsics, not
+// source-library modules. In particular, importing IO.Target must not discover
+// an unrelated parent Unit IO (for example the math package).
+Safe Function bool IsUnit(string name)
+{
+    Return name == "IO.Target" || name == "IO.Host" || name == "IO.Runtime" ||
+        name == "IO.Version" || name == "IO.Panic" || name == "IO.Volatile";
+}
+
+Safe Function bool IsImport(string name)
+{
+    If (IsUnit(name)) Return true;
+    Return IO.Text.StartsWith(name, "IO.Target.") || IO.Text.StartsWith(name, "IO.Host.") ||
+        IO.Text.StartsWith(name, "IO.Runtime.") || IO.Text.StartsWith(name, "IO.Version.") ||
+        IO.Text.StartsWith(name, "IO.Panic.") || IO.Text.StartsWith(name, "IO.Volatile.");
+}

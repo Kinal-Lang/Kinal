@@ -10,6 +10,7 @@ import sys
 from pathlib import Path
 
 from check_targets import check_targets
+from check_freestanding import check_freestanding
 
 
 def run(command: list[str], *, cwd: Path) -> subprocess.CompletedProcess[str]:
@@ -288,6 +289,8 @@ def main() -> int:
     results.append({"name": "llvm_bridge", "ok": True, "bytes": probe_object.stat().st_size})
     results.append(check_targets(compiler, stage0, root, out_dir / "cross-targets",
                                  stage0_reference=args.stage0_role == "reference"))
+    results.append(check_freestanding(compiler, stage0, root, out_dir / "freestanding-core",
+                                      stage0_reference=args.stage0_role == "reference"))
 
     fixture = root / "tests" / "selfhost" / "fixtures" / "lex_basic.kn"
     lex = run([str(compiler), "lex", str(fixture)], cwd=root)

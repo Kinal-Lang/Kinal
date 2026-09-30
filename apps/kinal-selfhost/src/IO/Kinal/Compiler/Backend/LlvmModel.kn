@@ -118,22 +118,6 @@ Class LlvmDelegateAdapter
     }
 }
 
-Class LlvmRuntimeFunction
-{
-    Public string Name;
-    Public byte* FunctionType;
-    Public byte* Function;
-    Public LlvmRuntimeFunction Next;
-
-    Public Safe Constructor(string name, byte* functionType, byte* function)
-    {
-        This.Name = name;
-        This.FunctionType = functionType;
-        This.Function = function;
-        This.Next = null;
-    }
-}
-
 Class LlvmVariable
 {
     Public string Name;

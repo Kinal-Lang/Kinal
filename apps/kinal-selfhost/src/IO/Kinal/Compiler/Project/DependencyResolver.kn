@@ -2,6 +2,7 @@ Unit IO.Kinal.Compiler.Project.DependencyResolver;
 
 Get IO.Text;
 Get IO.Kinal.Compiler.Core.CompileSession;
+Get IO.Kinal.Compiler.Core.IntrinsicUnits;
 Get IO.Kinal.Compiler.Project.PackageResolver;
 Get IO.Kinal.Compiler.Syntax.SyntaxTree;
 
@@ -135,6 +136,11 @@ Class DependencyResolver
             ImportDecl import = source.Syntax.FirstImport;
             While (import != null && !This.Session.HasErrors())
             {
+                If (IO.Kinal.Compiler.Core.IntrinsicUnits.IsImport(import.Target))
+                {
+                    import = import.Next;
+                    Continue;
+                }
                 DependencyModule module = This.Local.FindImport(import.Target);
                 If (module == null) module = This.Ordinary.FindImport(import.Target);
                 If (module == null) module = This.Official.FindImport(import.Target);

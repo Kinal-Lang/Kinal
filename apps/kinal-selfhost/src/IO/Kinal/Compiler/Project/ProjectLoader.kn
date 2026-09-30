@@ -315,6 +315,7 @@ Class ProjectReader
             ElseIf (field == "Panic") profile.Panic = This.ReadScalarAssignment();
             ElseIf (field == "Target") profile.Target = This.ReadScalarAssignment();
             ElseIf (field == "Output") profile.Output = This.ReadScalarAssignment();
+            ElseIf (field == "EntrySymbol") profile.EntrySymbol = This.ReadScalarAssignment();
             Else This.RejectUnknownField("Build", field);
         }
         This.ExpectKind(TokenKind.RightBrace, "Expected '}'", "Build body is not closed");

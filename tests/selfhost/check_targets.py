@@ -166,8 +166,10 @@ def check_targets(compiler: Path, stage0: Path, root: Path, out: Path,
     invoke([str(executable)], root)
     invoke(command + ["--target", "linux64", "--emit", "obj"], root)
     check_object(out / "CrossTarget.o", 2, 2)
-    for target in ("not-a-target", "i686-pc-windows-msvc", "bare64"):
+    for target in ("not-a-target", "i686-pc-windows-msvc"):
         invoke(command + ["--target", target, "--emit", "ir"], root, error="Unsupported target")
+    invoke(command + ["--target", "bare64", "--emit", "ir"], root,
+           error="bare targets require Environment=Freestanding and Runtime=None")
     invoke([str(compiler), "build", "--project", str(manifest), "--profile", "invalid"],
            root, error="Unsupported target")
     foreign = "linux64" if platform.system() == "Windows" else "win64"

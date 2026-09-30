@@ -1,0 +1,232 @@
+Unit IO.Kinal.Compiler.Sema.FreestandingValidator;
+
+Get IO.Text;
+Get IO.Kinal.Compiler.Sema.SemanticCompilation;
+Get IO.Kinal.Compiler.Sema.Symbols;
+Get IO.Kinal.Compiler.Syntax.Nodes;
+Get IO.Kinal.Compiler.Syntax.SyntaxTree;
+Get IO.Kinal.Compiler.Types.TypeSymbol;
+Get IO.Kinal.Compiler.Hir.HirModel;
+Get IO.Kinal.Compiler.Lex.TokenKind;
+
+// This gate checks the bound program, not public library names. Runtime-free
+// output must never acquire hidden heap/exception dependencies during lowering.
+// Storage-producing arrays and managed values remain explicit unsupported
+// boundaries until their freestanding lowering is implemented.
+Class FreestandingValidator
+{
+    Public SemanticCompilation Semantics;
+    Public SyntaxTree Syntax;
+    Public FunctionSymbol Function;
+
+    Public Safe Constructor(SemanticCompilation semantics)
+    {
+        This.Semantics = semantics;
+        This.Syntax = null;
+        This.Function = null;
+    }
+
+    Public Safe Function void Reject(string detail, ExpressionNode origin)
+    {
+        This.Semantics.Report(This.Syntax, "Freestanding Core", detail,
+            origin == null ? 1 : origin.Line, origin == null ? 1 : origin.Column);
+    }
+
+    Public Safe Function void CheckType(TypeSymbol type, ExpressionNode origin)
+    {
+        If (type == null) Return;
+        int kind = type.Kind;
+        If (kind == [int](TypeKind.NamedType) &&
+            !This.Semantics.IsStructType(type) && !This.Semantics.IsEnumType(type))
+            This.Reject("managed reference type requires a runtime: " + type.QualifiedName(), origin);
+        If (kind == [int](TypeKind.AnyType) || kind == [int](TypeKind.ListType) ||
+            kind == [int](TypeKind.DictType) || kind == [int](TypeKind.SetType) ||
+            kind == [int](TypeKind.PackageType))
+            This.Reject("managed value requires a runtime: " + type.QualifiedName(), origin);
+        If (kind == [int](TypeKind.ArrayType)) This.CheckType(type.ElementType, origin);
+        If (type.Name == "f16" || type.Name == "f128")
+            This.Reject("extended floats require target support libraries", origin);
+    }
+
+    Public Safe Function void CheckConversion(TypeSymbol target, HirExpression value)
+    {
+        If (target == null || value == null || value.Type == null) Return;
+        int source = value.Type.Kind;
+        int destination = target.Kind;
+        If (source == destination || source == [int](TypeKind.NullType)) Return;
+        If ((source == [int](TypeKind.StringType) && destination != [int](TypeKind.PointerType)) ||
+            (destination == [int](TypeKind.StringType) && source != [int](TypeKind.PointerType)))
+            This.Reject("string conversion requires a runtime", value.Syntax);
+    }
+
+    Public Safe Function void CheckExpressions(HirExpression expression)
+    {
+        HirExpression current = expression;
+        While (current != null)
+        {
+            This.CheckType(current.Type, current.Syntax);
+            int kind = current.Kind;
+            If (kind == [int](HirExpressionKind.NewObject) ||
+                kind == [int](HirExpressionKind.FunctionReference) ||
+                kind == [int](HirExpressionKind.ArrayLiteral) ||
+                kind == [int](HirExpressionKind.DictLiteral) ||
+                kind == [int](HirExpressionKind.PackageLiteral))
+                This.Reject("allocation or managed callable requires a runtime", current.Syntax);
+            If (current.Operator == TokenKind.KwAwait)
+                This.Reject("Await requires a runtime", current.Syntax);
+            If (kind == [int](HirExpressionKind.Cast)) This.CheckConversion(current.Type, current.Left);
+            If (kind == [int](HirExpressionKind.Binary))
+            {
+                If (current.Left != null) This.CheckConversion(current.Left.Type, current.Right);
+                If (current.Operator != TokenKind.Assign &&
+                    ((current.Left != null && current.Left.Type.Kind == [int](TypeKind.StringType)) ||
+                     (current.Right != null && current.Right.Type.Kind == [int](TypeKind.StringType))))
+                    This.Reject("string operation requires a runtime", current.Syntax);
+            }
+            If (kind == [int](HirExpressionKind.Conditional))
+            {
+                This.CheckConversion(current.Type, current.Right);
+                This.CheckConversion(current.Type, current.Third);
+            }
+            If (kind == [int](HirExpressionKind.Switch) && current.Left != null &&
+                current.Left.Type.Kind == [int](TypeKind.StringType))
+                This.Reject("string Switch requires a runtime", current.Syntax);
+            If (kind == [int](HirExpressionKind.Call))
+            {
+                If (current.CallKind == [int](HirCallKind.RuntimeBuiltin))
+                {
+                    bool arrayAccess = current.Left != null &&
+                        current.Left.Type.Kind == [int](TypeKind.ArrayType) &&
+                        (current.Target == "Length" || current.Target == "Index");
+                    bool intrinsic = current.Target == "IO.Panic.Halt" ||
+                        current.Target == "IO.Panic.Abort" ||
+                        IO.Text.StartsWith(current.Target, "IO.Volatile.Read") ||
+                        IO.Text.StartsWith(current.Target, "IO.Volatile.Write");
+                    If (!arrayAccess && !intrinsic)
+                        This.Reject("operation requires a runtime: " + current.Target, current.Syntax);
+                }
+                If (current.CallKind == [int](HirCallKind.DynamicFunction))
+                    This.Reject("dynamic call requires a runtime", current.Syntax);
+                If (current.Function != null)
+                {
+                    ParameterSymbol parameter = current.Function.FirstParameter;
+                    HirExpression argument = current.FirstArgument;
+                    While (parameter != null && argument != null)
+                    {
+                        This.CheckConversion(parameter.Type, argument);
+                        parameter = parameter.Next;
+                        argument = argument.Next;
+                    }
+                }
+            }
+            This.CheckExpressions(current.Left);
+            This.CheckExpressions(current.Right);
+            This.CheckExpressions(current.Third);
+            This.CheckExpressions(current.FirstArgument);
+            current = current.Next;
+        }
+    }
+
+    Public Safe Function void CheckStatements(HirStatement statement)
+    {
+        HirStatement current = statement;
+        While (current != null)
+        {
+            This.CheckType(current.DeclaredType, null);
+            If (current.Kind == [int](StatementKind.Try) || current.Kind == [int](StatementKind.Throw))
+                This.Reject("Try/Catch/Throw requires a runtime", null);
+            If (current.Kind == [int](StatementKind.Variable))
+            {
+                This.CheckConversion(current.DeclaredType, current.Expression);
+                If (current.DeclaredType.Kind == [int](TypeKind.ArrayType) &&
+                    current.SecondExpression != null)
+                    This.Reject("fixed local array storage is not yet supported without a runtime", null);
+            }
+            If (current.Kind == [int](StatementKind.Return))
+                This.CheckConversion(This.Function.ReturnType, current.Expression);
+            If ((current.Kind == [int](StatementKind.Switch) ||
+                 current.Kind == [int](StatementKind.Foreach)) && current.Expression != null &&
+                current.Expression.Type.Kind == [int](TypeKind.StringType))
+                This.Reject("string iteration/comparison requires a runtime", current.Expression.Syntax);
+            This.CheckExpressions(current.Expression);
+            This.CheckExpressions(current.SecondExpression);
+            This.CheckExpressions(current.ThirdExpression);
+            This.CheckStatements(current.Initializer);
+            This.CheckStatements(current.FirstChild);
+            This.CheckStatements(current.ElseBranch);
+            current = current.Next;
+        }
+    }
+
+    Public Safe Function void CheckStorageType(string typeName)
+    {
+        int open = IO.Text.IndexOf(typeName, "[");
+        int close = IO.Text.IndexOf(typeName, "]");
+        If (open >= 0 && close > open + 1)
+            This.Reject("fixed array storage is not yet supported without a runtime", null);
+    }
+
+    Public Safe Function void Validate()
+    {
+        TypeSymbol type = This.Semantics.FirstType;
+        While (type != null)
+        {
+            If (This.Semantics.IsStructType(type))
+            {
+                This.Syntax = type.Syntax;
+                FieldDecl field = type.Declaration.FirstField;
+                While (field != null)
+                {
+                    This.CheckType(This.Semantics.ResolveType(type.Syntax, field.TypeName), field.Initializer);
+                    This.CheckStorageType(field.TypeName);
+                    field = field.Next;
+                }
+            }
+            type = type.Next;
+        }
+        GlobalSymbol global = This.Semantics.FirstGlobal;
+        While (global != null)
+        {
+            This.Syntax = This.Semantics.FindUnit(global.UnitName).Syntax;
+            This.CheckType(global.Value.Type, global.Declaration.Initializer);
+            This.CheckStorageType(global.Declaration.TypeName);
+            // A name initializer needs an executable initialization phase.
+            If (global.Declaration.Initializer != null &&
+                global.Declaration.Initializer.Kind == [int](ExpressionKind.Name))
+                This.Reject("global copy initialization is not yet supported without a runtime",
+                    global.Declaration.Initializer);
+            global = global.Next;
+        }
+        FunctionSymbol function = This.Semantics.FirstFunction;
+        While (function != null)
+        {
+            This.Syntax = function.Syntax;
+            If (!function.IsGenericTemplate())
+            {
+                This.CheckType(function.ReturnType, null);
+                If (function.Declaration.IsAsync || function.FirstCapture != null || function.IsBlockLiteral)
+                    This.Reject("async or managed callable requires a runtime", null);
+                ParameterSymbol parameter = function.FirstParameter;
+                While (parameter != null)
+                {
+                    This.CheckType(parameter.Type, null);
+                    parameter = parameter.Next;
+                }
+            }
+            function = function.Next;
+        }
+        HirModule module = This.Semantics.FirstHirModule;
+        While (module != null)
+        {
+            HirFunction hir = module.FirstFunction;
+            While (hir != null)
+            {
+                This.Function = hir.Symbol;
+                This.Syntax = hir.Symbol.Syntax;
+                This.CheckStatements(hir.Body);
+                hir = hir.Next;
+            }
+            module = module.Next;
+        }
+    }
+}

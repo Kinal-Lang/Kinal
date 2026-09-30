@@ -58,6 +58,9 @@ void *kn_sh_llvm_const_undef(void *type);
 void *kn_sh_llvm_add_global(void *module_handle, void *type, const char *name);
 int kn_sh_llvm_set_initializer(void *global, void *value);
 int kn_sh_llvm_set_alignment(void *value, int alignment);
+int kn_sh_llvm_set_volatile(void *instruction, int enabled);
+int kn_sh_llvm_set_section(void *global, const char *section);
+void *kn_sh_llvm_build_unreachable(void *module_handle);
 void *kn_sh_llvm_build_global_string(void *module_handle, const char *text,
                                      const char *name);
 

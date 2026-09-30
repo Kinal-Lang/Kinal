@@ -510,6 +510,9 @@ Trusted Function int CompileProject(ProjectBuildRequest request)
     CompileSession session = New CompileSession();
     session.RequestedTarget = request.Target;
     session.LoadProject(manifest, request.Profile);
+    If (!session.HasErrors() && request.Mode == "build" && session.IsFreestandingCore())
+        session.ReportProject("Freestanding linking is not supported",
+            "use --emit obj or --emit ir and an explicit platform linker");
     // Cross-target object/IR output needs no foreign SDK. Executable links do:
     // reject here, before emitting anything or selecting host runtime assets.
     If (!session.HasErrors() && request.Mode == "build" && !session.Target.IsHost())
@@ -798,7 +801,7 @@ Safe Function void PrepareProjectDependencies(CompileSession session,
         session.ReportProject("Package resolution failed", catalog.Error);
         Return;
     }
-    LoadCatalogRuntimeSources(session, catalog);
+    If (!session.IsFreestandingCore()) LoadCatalogRuntimeSources(session, catalog);
     If (!session.HasErrors())
     {
         DependencyResolver resolver = New DependencyResolver(session, catalog);

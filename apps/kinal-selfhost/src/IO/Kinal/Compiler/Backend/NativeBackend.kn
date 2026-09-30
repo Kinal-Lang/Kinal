@@ -27,7 +27,6 @@ Class NativeBackend
     Public LlvmDelegateBinding FirstDelegate;
     Public LlvmDelegateAdapter FirstDelegateAdapter;
     Public LlvmFunctionBinding FirstFunction;
-    Public LlvmRuntimeFunction FirstRuntime;
     Public byte* AnyType;
     Public string Error;
     Private int NameSequence;
@@ -41,7 +40,6 @@ Class NativeBackend
         This.FirstDelegate = null;
         This.FirstDelegateAdapter = null;
         This.FirstFunction = null;
-        This.FirstRuntime = null;
         This.AnyType = null;
         This.Error = "";
         This.NameSequence = 0;
@@ -1006,30 +1004,6 @@ Class NativeBackend
         }
     }
 
-    Public Safe Function void AddRuntime(LlvmRuntimeFunction runtime)
-    {
-        runtime.Next = This.FirstRuntime;
-        This.FirstRuntime = runtime;
-    }
-
-    Public Safe Function LlvmRuntimeFunction Runtime(string name)
-    {
-        LlvmRuntimeFunction current = This.FirstRuntime;
-        While (current != null)
-        {
-            If (current.Name == name) Return current;
-            current = current.Next;
-        }
-        Return null;
-    }
-
-    Public Trusted Function void DeclareRuntimeFunction(string name, byte* returnType, LlvmHandles parameters)
-    {
-        byte* functionType = This.Module.FunctionType(returnType, parameters, false);
-        This.AddRuntime(New LlvmRuntimeFunction(name, functionType,
-            This.Module.AddFunction(name, functionType)));
-    }
-
     Public Trusted Function LlvmHandles Types0()
     {
         Return New LlvmHandles();
@@ -1053,36 +1027,6 @@ Class NativeBackend
     Public Trusted Function LlvmHandles Types4(byte* a, byte* b, byte* c, byte* d)
     {
         LlvmHandles values = New LlvmHandles(); values.Add(a); values.Add(b); values.Add(c); values.Add(d); Return values;
-    }
-
-    Public Trusted Function void DeclareRuntime()
-    {
-        byte* voidType = This.Module.VoidType();
-        byte* int8Type = This.Module.IntType(8);
-        byte* int32Type = This.Module.IntType(32);
-        byte* int64Type = This.Module.IntType(64);
-        byte* pointer = This.Module.PointerType(int8Type);
-
-        This.DeclareRuntimeFunction("kn_sh_rt_volatile_read8", int8Type, This.Types1(pointer));
-        This.DeclareRuntimeFunction("kn_sh_rt_volatile_read16", This.Module.IntType(16), This.Types1(pointer));
-        This.DeclareRuntimeFunction("kn_sh_rt_volatile_read32", int32Type, This.Types1(pointer));
-        This.DeclareRuntimeFunction("kn_sh_rt_volatile_read64", int64Type, This.Types1(pointer));
-        This.DeclareRuntimeFunction("kn_sh_rt_volatile_write8", voidType, This.Types2(pointer, int8Type));
-        This.DeclareRuntimeFunction("kn_sh_rt_volatile_write16", voidType,
-            This.Types2(pointer, This.Module.IntType(16)));
-        This.DeclareRuntimeFunction("kn_sh_rt_volatile_write32", voidType, This.Types2(pointer, int32Type));
-        This.DeclareRuntimeFunction("kn_sh_rt_volatile_write64", voidType, This.Types2(pointer, int64Type));
-    }
-
-    Public Trusted Function byte* CallRuntime(string name, LlvmHandles arguments, string resultName)
-    {
-        LlvmRuntimeFunction runtime = This.Runtime(name);
-        If (runtime == null)
-        {
-            This.Fail("runtime function is not declared: " + name);
-            Return null;
-        }
-        Return This.Module.Call(runtime.FunctionType, runtime.Function, arguments, resultName);
     }
 
     Public Trusted Function byte* CallKinalRuntime(string target,
@@ -1956,6 +1900,8 @@ Class NativeBackend
     Public Trusted Function byte* EmitAddress(LlvmFunctionContext context, HirExpression expression)
     {
         If (expression == null) Return null;
+        If (expression.Kind == [int](HirExpressionKind.Unary) && expression.Operator == TokenKind.Star)
+            Return This.EmitExpression(context, expression.Left).Handle;
         If (expression.Kind == [int](HirExpressionKind.Local))
         {
             LlvmVariable variable = context.FindVariable(expression.Symbol, expression.Target);
@@ -3341,8 +3287,9 @@ Class NativeBackend
             int bits = target == "IO.Volatile.Read8" ? 8 :
                 (target == "IO.Volatile.Read16" ? 16 : (target == "IO.Volatile.Read32" ? 32 : 64));
             LlvmValue address = This.EmitExpression(context, first);
-            byte* raw = This.CallRuntime("kn_sh_rt_volatile_read" + [string](bits),
-                This.Types1(address.Handle), This.Unique("volatile_read"));
+            byte* raw = This.Module.Load(This.Module.IntType(bits), address.Handle,
+                This.Unique("volatile_read"));
+            If (!This.Module.SetVolatile(raw)) This.Fail("failed to mark volatile load");
             If (bits < 64) raw = This.Module.ZeroExtend(raw, This.Module.IntType(64),
                 This.Unique("volatile_read_wide"));
             Return New LlvmValue(raw, This.Semantics.Primitive("int"));
@@ -3356,8 +3303,29 @@ Class NativeBackend
                 This.Semantics.Primitive("int"));
             byte* raw = bits < 64 ? This.Module.Truncate(value.Handle, This.Module.IntType(bits),
                 This.Unique("volatile_write_narrow")) : value.Handle;
-            This.CallRuntime("kn_sh_rt_volatile_write" + [string](bits),
-                This.Types2(address.Handle, raw), "");
+            byte* write = This.Module.Store(raw, address.Handle);
+            If (!This.Module.SetVolatile(write)) This.Fail("failed to mark volatile store");
+            Return This.DefaultValue(This.Semantics.Primitive("void"));
+        }
+        If (target == "IO.Panic.Halt" || target == "IO.Panic.Abort")
+        {
+            // Panic is a control-flow intrinsic, with no hosted exit or I/O.
+            If (This.Semantics.Session.Profile != null &&
+                This.Semantics.Session.Profile.Panic == "Loop")
+            {
+                byte* halt = This.Module.AppendBlock(context.Binding.Function, This.Unique("panic_loop"));
+                This.Module.Branch(halt);
+                This.Module.PositionAtEnd(halt);
+                This.Module.Branch(halt);
+            }
+            Else
+            {
+                byte* trapType = This.Module.FunctionType(This.Module.VoidType(), This.Types0(), false);
+                byte* trap = This.Module.GetFunction("llvm.trap");
+                If (trap == null) trap = This.Module.AddFunction("llvm.trap", trapType);
+                This.Module.Call(trapType, trap, This.Types0(), "");
+                This.Module.Unreachable();
+            }
             Return This.DefaultValue(This.Semantics.Primitive("void"));
         }
 
@@ -4398,13 +4366,50 @@ Class NativeBackend
             If (address == null) This.Fail("address-of operand has no address");
             Return New LlvmValue(address, expression.Type);
         }
+        If (operatorKind == TokenKind.PlusPlus || operatorKind == TokenKind.MinusMinus)
+        {
+            // Evaluate the lvalue once (including pointer calls/index effects).
+            byte* address = This.EmitAddress(context, expression.Left);
+            If (address == null)
+            {
+                This.Fail("increment operand has no address");
+                Return This.DefaultValue(expression.Type);
+            }
+            TypeSymbol type = expression.Left.Type;
+            byte* previous = This.Module.Load(This.TypeHandle(type), address, This.Unique("increment_old"));
+            byte* next = null;
+            bool increment = operatorKind == TokenKind.PlusPlus;
+            If (type.Kind == [int](TypeKind.PointerType))
+                next = This.Module.Gep(This.TypeHandle(type.ElementType), previous,
+                    This.Types1(This.Module.ConstInt(This.Module.IntType(64), increment ? 1 : -1)),
+                    false, This.Unique("pointer_increment"));
+            ElseIf (type.Kind == [int](TypeKind.FloatType))
+            {
+                byte* one = This.Module.ConstFloat(This.TypeHandle(type), 1.0);
+                next = increment ? This.Module.FloatAdd(previous, one, This.Unique("increment")) :
+                    This.Module.FloatSubtract(previous, one, This.Unique("decrement"));
+            }
+            Else
+            {
+                byte* one = This.Module.ConstInt(This.TypeHandle(type), 1);
+                next = increment ? This.Module.Add(previous, one, This.Unique("increment")) :
+                    This.Module.Subtract(previous, one, This.Unique("decrement"));
+            }
+            This.Module.Store(next, address);
+            Return New LlvmValue(expression.Syntax != null && expression.Syntax.IsPostfix ? previous : next,
+                expression.Type);
+        }
         LlvmValue operand = This.EmitExpression(context, expression.Left);
         If (operatorKind == TokenKind.KwAwait)
             Return This.AwaitTaskResult(context, operand.Handle, expression.Type,
                 "await");
         If (operatorKind == TokenKind.Star)
-            Return New LlvmValue(This.Module.Load(This.TypeHandle(expression.Type), operand.Handle,
+        {
+            LlvmValue value = New LlvmValue(This.Module.Load(This.TypeHandle(expression.Type), operand.Handle,
                 This.Unique("dereference")), expression.Type);
+            value.Address = operand.Handle;
+            Return value;
+        }
         If (operatorKind == TokenKind.Not)
             Return New LlvmValue(This.Module.Not(operand.Handle, This.Unique("not")), expression.Type);
         If (operatorKind == TokenKind.Minus)
@@ -4413,17 +4418,6 @@ Class NativeBackend
                 This.Module.Negate(operand.Handle, This.Unique("negate")), expression.Type);
         If (operatorKind == TokenKind.Tilde)
             Return New LlvmValue(This.Module.Not(operand.Handle, This.Unique("bit_not")), expression.Type);
-        If (operatorKind == TokenKind.PlusPlus || operatorKind == TokenKind.MinusMinus)
-        {
-            byte* address = This.EmitAddress(context, expression.Left);
-            byte* one = This.Module.ConstInt(This.TypeHandle(operand.Type), 1);
-            byte* next = operatorKind == TokenKind.PlusPlus ?
-                This.Module.Add(operand.Handle, one, This.Unique("increment")) :
-                This.Module.Subtract(operand.Handle, one, This.Unique("decrement"));
-            If (address != null) This.Module.Store(next, address);
-            If (expression.Syntax != null && expression.Syntax.IsPostfix) Return operand;
-            Return New LlvmValue(next, expression.Type);
-        }
         Return operand;
     }
 
@@ -5023,6 +5017,7 @@ Class NativeBackend
     Public Trusted Function void MaybePropagateException(
         LlvmFunctionContext context)
     {
+        If (This.Semantics.Session.IsFreestandingCore()) Return;
         // Runtime infrastructure is the implementation of exception state and
         // GC itself.  Injecting an exception-state query after its internal
         // calls would recursively call Exception.Has.
@@ -5047,6 +5042,7 @@ Class NativeBackend
 
     Public Trusted Function void EmitGcSafePoint(LlvmFunctionContext context)
     {
+        If (This.Semantics.Session.IsFreestandingCore()) Return;
         If (This.IsRuntimeInfrastructureFunction(context.Binding.Symbol)) Return;
         This.CallKinalRuntime(
             "IO.Kinal.Runtime.GarbageCollector.MaybeCollect", 0,
@@ -5509,7 +5505,7 @@ Class NativeBackend
         byte* entry = This.Module.AppendBlock(binding.Function, "entry");
         This.Module.PositionAtEnd(entry);
         LlvmFunctionContext context = New LlvmFunctionContext(binding);
-        If (!This.IsGarbageCollectorFunction(binding.Symbol))
+        If (!This.Semantics.Session.IsFreestandingCore() && !This.IsGarbageCollectorFunction(binding.Symbol))
             context.GcFrame = This.CallKinalRuntime(
                 "IO.Kinal.Runtime.GarbageCollector.PushFrame", 0,
                 This.Types0(), This.Unique("gc_frame"));
@@ -5614,7 +5610,7 @@ Class NativeBackend
         byte* entry = This.Module.AppendBlock(binding.Function, "entry");
         This.Module.PositionAtEnd(entry);
         LlvmFunctionContext context = New LlvmFunctionContext(binding);
-        If (!This.IsGarbageCollectorFunction(binding.Symbol))
+        If (!This.Semantics.Session.IsFreestandingCore() && !This.IsGarbageCollectorFunction(binding.Symbol))
             context.GcFrame = This.CallKinalRuntime(
                 "IO.Kinal.Runtime.GarbageCollector.PushFrame", 0,
                 This.Types0(), This.Unique("gc_frame"));
@@ -5944,6 +5940,56 @@ Class NativeBackend
         This.Module.ReturnValue(exitCode);
     }
 
+    Public Trusted Function void EmitFreestandingEntry()
+    {
+        string name = This.Semantics.Session.Profile.EntrySymbol;
+        If (IO.Text.IsEmpty(name)) name = "KMain";
+        LlvmFunctionBinding entry = null;
+        LlvmFunctionBinding candidate = This.FirstFunction;
+        While (candidate != null)
+        {
+            FunctionSymbol symbol = candidate.Symbol;
+            If (symbol.OwnerType == null && !symbol.Declaration.IsExtern &&
+                (symbol.QualifiedName() == name ||
+                 (symbol.UnitName == This.Semantics.Session.EntryUnitName && symbol.Name == name)))
+            {
+                If (entry != null)
+                {
+                    This.Fail("ambiguous freestanding entry: " + name);
+                    Return;
+                }
+                entry = candidate;
+            }
+            candidate = candidate.Next;
+        }
+        If (entry == null)
+        {
+            This.Fail("freestanding entry not found: " + name);
+            Return;
+        }
+        int count = entry.Symbol.ParameterCount();
+        If (count > 1 || (count == 1 &&
+            entry.Symbol.FirstParameter.Type.Kind != [int](TypeKind.PointerType)))
+        {
+            This.Fail("freestanding entry must take zero parameters or one pointer");
+            Return;
+        }
+        LlvmHandles types = This.Types0();
+        If (count == 1) types.Add(This.TypeHandle(entry.Symbol.FirstParameter.Type));
+        byte* wrapperType = This.Module.FunctionType(This.Module.VoidType(), types, false);
+        byte* wrapper = This.Module.AddFunction("__kn_entry", wrapperType);
+        // Mach-O names sections as segment,section; ELF/COFF use one name.
+        string section = This.Semantics.Session.Target.OS == 3 ?
+            "__TEXT,__kn_entry" : ".text.kn.entry";
+        If (!This.Module.SetSection(wrapper, section)) This.Fail("failed to set entry section");
+        This.Module.PositionAtEnd(This.Module.AppendBlock(wrapper, "entry"));
+        LlvmHandles arguments = This.Types0();
+        If (count == 1) arguments.Add(This.Module.Parameter(wrapper, 0));
+        This.Module.Call(entry.FunctionType, entry.Function, arguments,
+            entry.Symbol.ReturnType.Kind == [int](TypeKind.VoidType) ? "" : "entry_result");
+        This.Module.ReturnVoid();
+    }
+
     Public Trusted Function bool GenerateModule()
     {
         If (!This.Module.IsValid())
@@ -5959,11 +6005,11 @@ Class NativeBackend
             Return false;
         }
         This.PrepareTypes();
-        This.DeclareRuntime();
         This.DeclareFunctions();
         This.DeclareGlobals();
         This.EmitFunctions();
-        This.EmitEntryPoint();
+        If (This.Semantics.Session.IsFreestandingCore()) This.EmitFreestandingEntry();
+        Else This.EmitEntryPoint();
         If (This.Failed()) Return false;
         If (!This.Module.Verify())
         {

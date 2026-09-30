@@ -76,6 +76,12 @@ Class CompileSession
         Return IO.Kinal.Compiler.Core.Diagnostics.HasAny(This.Diagnostics);
     }
 
+    Public Safe Function bool IsFreestandingCore()
+    {
+        Return This.Profile != null && This.Profile.Environment == "Freestanding" &&
+            This.Profile.Runtime == "None";
+    }
+
     Public Safe Function void ReportProject(string title, string detail)
     {
         SourceFile source = This.Sources.Load(This.Project.ManifestPath);
@@ -102,13 +108,14 @@ Class CompileSession
         If (This.Profile.Backend != "Native")
             This.ReportProject("Unsupported project option",
                 "Build.Backend=" + This.Profile.Backend);
-        If (This.Profile.Environment != "Hosted")
+        If (This.Profile.Environment != "Hosted" && !This.IsFreestandingCore())
             This.ReportProject("Unsupported project option",
                 "Build.Environment=" + This.Profile.Environment);
-        If (This.Profile.Runtime != "GC")
+        If (This.Profile.Runtime != "GC" && !This.IsFreestandingCore())
             This.ReportProject("Unsupported project option",
                 "Build.Runtime=" + This.Profile.Runtime);
-        If (This.Profile.Panic != "Trap")
+        If (This.Profile.Panic != "Trap" &&
+            !(This.IsFreestandingCore() && This.Profile.Panic == "Loop"))
             This.ReportProject("Unsupported project option",
                 "Build.Panic=" + This.Profile.Panic);
         string targetName = IO.Text.IsEmpty(This.RequestedTarget) ?
@@ -116,10 +123,15 @@ Class CompileSession
         This.Target = IO.Kinal.Compiler.Core.TargetInfo.Resolve(targetName);
         If (This.Target == null)
             This.ReportProject("Unsupported target", targetName +
-                "; supported targets are Windows/Linux/macOS x64 and arm64");
+                "; supported targets are Windows/Linux/macOS/bare x64 and arm64");
+        ElseIf (This.Target.OS == 0 && !This.IsFreestandingCore())
+            This.ReportProject("Unsupported project option",
+                "bare targets require Environment=Freestanding and Runtime=None");
+        If (!This.IsFreestandingCore() && !IO.Text.IsEmpty(This.Profile.EntrySymbol))
+            This.ReportProject("Unsupported project option", "Build.EntrySymbol requires freestanding core");
         If (!IO.Text.IsEmpty(This.Profile.LinkScript))
             This.ReportProject("Unsupported project option", "Link.Script");
-        If (This.Profile.NoCRT)
+        If (This.Profile.NoCRT && !This.IsFreestandingCore())
             This.ReportProject("Unsupported project option", "Link.NoCRT=true");
         int selectedSet = 0;
         While (selectedSet < This.Profile.Sets.Count())

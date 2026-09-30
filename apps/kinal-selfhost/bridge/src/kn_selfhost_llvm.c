@@ -509,6 +509,27 @@ void *kn_sh_llvm_build_global_string(void *module_handle, const char *text, cons
     return LLVMConstInBoundsGEP2(storage_type, storage, indices, 2);
 }
 
+int kn_sh_llvm_set_volatile(void *instruction, int enabled)
+{
+    LLVMValueRef value = (LLVMValueRef)instruction;
+    if (!value || (!LLVMIsALoadInst(value) && !LLVMIsAStoreInst(value))) return 0;
+    LLVMSetVolatile(value, enabled != 0);
+    return 1;
+}
+
+int kn_sh_llvm_set_section(void *global, const char *section)
+{
+    if (!global || !LLVMIsAGlobalObject((LLVMValueRef)global) || !section) return 0;
+    LLVMSetSection((LLVMValueRef)global, section);
+    return 1;
+}
+
+void *kn_sh_llvm_build_unreachable(void *module_handle)
+{
+    KnShLlvmModule *state = module_state(module_handle);
+    return state ? LLVMBuildUnreachable(state->builder) : 0;
+}
+
 #define KN_SH_BUILD_BINARY(name, llvm_name) \
 void *name(void *module_handle, void *left, void *right, const char *value_name) \
 { \
