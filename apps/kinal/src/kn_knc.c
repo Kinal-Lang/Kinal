@@ -375,6 +375,7 @@ typedef struct
     ClassList *classes;
     InterfaceList *interfaces;
     StructList *structs;
+    EnumList *enums;
 } KncProgram;
 
 typedef struct
@@ -3825,6 +3826,51 @@ static KncValue knc_normalize_unsigned_integer_operand(KncFuncState *st, KncValu
     return out;
 }
 
+static KncValue knc_normalize_integer_cast(KncFuncState *st, KncValue value, Type target)
+{
+    Type representation = target;
+    if (target.kind == TY_ENUM && st->program->enums)
+    {
+        for (int i = 0; i < st->program->enums->count; i++)
+        {
+            EnumDecl *en = &st->program->enums->items[i];
+            const char *name = en->qname ? en->qname : en->name;
+            if (target.name && name && kn_strcmp(name, target.name) == 0)
+            {
+                representation = en->underlying;
+                break;
+            }
+        }
+    }
+    value.type = representation;
+    int bits = knc_unsigned_integer_source_bits(representation);
+    if (bits != 0)
+        value = knc_normalize_unsigned_integer_operand(st, value);
+    else
+    {
+        bits = representation.kind == TY_I8 ? 8 :
+               representation.kind == TY_I16 ? 16 :
+               representation.kind == TY_I32 ? 32 : 64;
+        if (bits < 64)
+        {
+            int shift = program_add_int(st->program, 64 - bits);
+            int truncated = alloc_reg(st);
+            int extended = alloc_reg(st);
+            emit_u8(st->code, KNC_OP_SHL_INT_IMM);
+            emit_u8(st->code, truncated);
+            emit_u8(st->code, value.reg);
+            emit_u16(st->code, shift);
+            emit_u8(st->code, KNC_OP_SHR_INT_IMM);
+            emit_u8(st->code, extended);
+            emit_u8(st->code, truncated);
+            emit_u16(st->code, shift);
+            value.reg = extended;
+        }
+    }
+    value.type = target;
+    return value;
+}
+
 static KncValue knc_coerce_binary_numeric_operand(KncFuncState *st, Expr *site,
                                                    KncValue value, Type target)
 {
@@ -3920,7 +3966,7 @@ static void emit_width_binary_op(KncFuncState *st, KncOpCode opcode,
     emit_u8(st->code, integer_bits);
 }
 
-static KncValue compile_binary_expr(KncFuncState *st, Expr *e)
+static KncValue compile_binary_expr(KncFuncState *st, Expr *e, const KncValue *loaded_lhs)
 {
     KncValue out;
     KncValue lhs;
@@ -4038,7 +4084,7 @@ static KncValue compile_binary_expr(KncFuncState *st, Expr *e)
         }
     }
 
-    lhs = compile_expr(st, e->v.binary.left);
+    lhs = loaded_lhs ? *loaded_lhs : compile_expr(st, e->v.binary.left);
     if (kn_diag_error_count() > 0)
         return out;
     if (numeric_coercion)
@@ -4643,7 +4689,7 @@ static KncValue compile_expr(KncFuncState *st, Expr *e)
             emit_u8(st->code, KNC_OP_LOAD_INT);
             emit_u8(st->code, out.reg);
             emit_u16(st->code, program_add_int(st->program, (int)e->v.member.enum_value));
-            return out;
+            return knc_normalize_integer_cast(st, out, e->type);
         }
         if (e->v.member.is_static)
         {
@@ -4672,6 +4718,39 @@ static KncValue compile_expr(KncFuncState *st, Expr *e)
         }
 
     case EXPR_ASSIGN:
+        if (e->v.assign.is_compound && e->v.assign.target &&
+            !(e->v.assign.target->kind == EXPR_MEMBER && e->v.assign.target->v.member.is_static))
+        {
+            Expr *target = e->v.assign.target;
+            KncValue pointer;
+            if (target->kind == EXPR_UNARY && target->v.unary.op == TOK_STAR)
+                pointer = compile_expr(st, target->v.unary.expr);
+            else
+            {
+                Expr address = {0};
+                address.kind = EXPR_UNARY;
+                address.line = target->line;
+                address.col = target->col;
+                address.type = type_ptr(target->type.kind);
+                address.v.unary.op = TOK_AMP;
+                address.v.unary.expr = target;
+                pointer = compile_expr(st, &address);
+            }
+            if (kn_diag_error_count() > 0) return out;
+            KncValue previous = {0};
+            previous.type = target->type;
+            previous.reg = alloc_reg(st);
+            emit_u8(st->code, KNC_OP_LOAD_PTR);
+            emit_u8(st->code, previous.reg);
+            emit_u8(st->code, pointer.reg);
+            KncValue value = compile_binary_expr(st, e->v.assign.value, &previous);
+            if (kn_diag_error_count() > 0) return out;
+            emit_u8(st->code, KNC_OP_STORE_PTR);
+            emit_u8(st->code, pointer.reg);
+            emit_u8(st->code, value.reg);
+            out.reg = value.reg;
+            return out;
+        }
         out.reg = compile_assign_to_local(st, e->v.assign.target, e->v.assign.value, e->type);
         return out;
 
@@ -4817,7 +4896,7 @@ static KncValue compile_expr(KncFuncState *st, Expr *e)
         return out;
 
     case EXPR_BINARY:
-        return compile_binary_expr(st, e);
+        return compile_binary_expr(st, e, 0);
 
     case EXPR_IF:
         return compile_if_expr(st, e);
@@ -5108,6 +5187,8 @@ static KncValue compile_expr(KncFuncState *st, Expr *e)
         KncValue value = compile_expr(st, e->v.cast.expr);
         if (kn_diag_error_count() > 0)
             return out;
+        if (value.type.kind == TY_ENUM)
+            value = knc_normalize_integer_cast(st, value, value.type);
         if (knc_type_equal(value.type, e->type))
         {
             out = value;
@@ -5254,14 +5335,13 @@ static KncValue compile_expr(KncFuncState *st, Expr *e)
             }
             if (type_is_integerish(value.type))
             {
-                /* KNC stores every non-char integer and enum in the same Int
-                   register representation.  An explicit cast still needs a
-                   distinct result register, but no numeric opcode is needed. */
+                /* Registers are i64, but an explicit cast must still apply
+                   the target width and signedness (including enum storage). */
                 emit_u8(st->code, KNC_OP_MOVE);
                 emit_u8(st->code, out.reg);
                 emit_u8(st->code, value.reg);
                 out.type = e->type;
-                return out;
+                return knc_normalize_integer_cast(st, out, e->type);
             }
         }
 
@@ -6742,7 +6822,6 @@ int kn_emit_knc(const char *out_path,
     (void)classes;
     (void)interfaces;
     (void)structs;
-    (void)enums;
 
       kn_memset(&program, 0, sizeof(program));
       program.entry_index = -1;
@@ -6750,6 +6829,7 @@ int kn_emit_knc(const char *out_path,
       program.classes = classes;
       program.interfaces = interfaces;
       program.structs = structs;
+      program.enums = enums;
 
     if (funcs && funcs->count > 0)
         program.fallback_src = funcs->items[0].src;

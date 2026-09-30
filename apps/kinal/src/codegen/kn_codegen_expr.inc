@@ -86,7 +86,7 @@ static CGValue gen_binary_short_circuit(Codegen *g, Expr *e)
     return out;
 }
 
-static CGValue gen_binary(Codegen *g, Expr *e)
+static CGValue gen_binary(Codegen *g, Expr *e, const CGValue *loaded_lhs)
 {
     const KnResolvedBinary *plan = &e->resolved_binary;
     TokenType op = (TokenType)e->v.binary.op;
@@ -108,7 +108,7 @@ static CGValue gen_binary(Codegen *g, Expr *e)
         break;
     }
 
-    CGValue lhs = gen_expr(g, e->v.binary.left);
+    CGValue lhs = loaded_lhs ? *loaded_lhs : gen_expr(g, e->v.binary.left);
     CGValue rhs = gen_expr(g, e->v.binary.right);
 
     switch (plan->kind)
@@ -1752,7 +1752,17 @@ static CGValue gen_expr(Codegen *g, Expr *e)
         }
         Type tgt_type = type_make(TY_UNKNOWN);
         LLVMValueRef ptr = gen_lvalue(g, e->v.assign.target, &tgt_type);
-        CGValue val = gen_expr(g, e->v.assign.value);
+        CGValue val;
+        if (e->v.assign.is_compound)
+        {
+            // The parser retains a binary RHS for typing, but its left side
+            // denotes this already-evaluated lvalue, not a second evaluation.
+            CGValue previous = { LLVMBuildLoad2(g->builder, llvm_type(g, tgt_type),
+                                                ptr, "compound.old"), tgt_type };
+            val = gen_binary(g, e->v.assign.value, &previous);
+        }
+        else
+            val = gen_expr(g, e->v.assign.value);
         LLVMValueRef cv = cast_value(g, val, tgt_type);
         LLVMBuildStore(g->builder, cv, ptr);
         out.type = tgt_type;
@@ -1846,7 +1856,7 @@ static CGValue gen_expr(Codegen *g, Expr *e)
             return gen_resolved_function_call(g, e, &e->v.member_call.args, "qcall");
         return gen_resolved_method_call(g, e);
     case EXPR_BINARY:
-        return gen_binary(g, e);
+        return gen_binary(g, e, 0);
     case EXPR_IF:
     {
         CGValue c = gen_expr(g, e->v.if_expr.cond);

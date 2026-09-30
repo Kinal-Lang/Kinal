@@ -1533,6 +1533,7 @@ static Expr *parse_expr(Parser *p)
         Expr *e = new_expr(EXPR_ASSIGN, lhs->line, lhs->col);
         e->v.assign.target = lhs;
         e->v.assign.value = value;
+        e->v.assign.is_compound = assign_op != TOK_ASSIGN;
         return e;
     }
 

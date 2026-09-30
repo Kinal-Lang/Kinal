@@ -2439,6 +2439,7 @@ static Expr *clone_expr_subst(const Expr *e, const TypeSubst *subst)
     case EXPR_ASSIGN:
         n->v.assign.target = clone_expr_subst(e->v.assign.target, subst);
         n->v.assign.value = clone_expr_subst(e->v.assign.value, subst);
+        n->v.assign.is_compound = e->v.assign.is_compound;
         break;
     case EXPR_IF:
         n->v.if_expr.cond = clone_expr_subst(e->v.if_expr.cond, subst);

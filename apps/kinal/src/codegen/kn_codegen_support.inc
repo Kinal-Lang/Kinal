@@ -778,6 +778,20 @@ static LLVMValueRef cast_value(Codegen *g, CGValue v, Type dst)
         return any_to_type(g, v.value, dst);
     if (type_equal(v.type, dst))
         return v.value;
+    // Enums have their declared integer representation, not an implicit i64.
+    // Normalize both directions before numeric casting so narrow destinations
+    // truncate and unsigned enum sources zero-extend correctly.
+    if (dst.kind == TY_ENUM)
+    {
+        EnumDecl *en = enum_find(g, dst.name);
+        return cast_value(g, v, en ? en->underlying : type_make(TY_I64));
+    }
+    if (v.type.kind == TY_ENUM)
+    {
+        EnumDecl *en = enum_find(g, v.type.name);
+        v.type = en ? en->underlying : type_make(TY_I64);
+        return cast_value(g, v, dst);
+    }
     if (v.type.kind == TY_ARRAY && dst.kind == TY_ARRAY && type_runtime_compatible(v.type, dst))
     {
         LLVMValueRef data = LLVMBuildExtractValue(g->builder, v.value, 0, "arr.cast.data");
@@ -817,17 +831,6 @@ static LLVMValueRef cast_value(Codegen *g, CGValue v, Type dst)
             return LLVMBuildTrunc(g->builder, v.value, dst_ty, "trunc");
         return LLVMBuildBitCast(g->builder, v.value, dst_ty, "icast");
     }
-    if (is_integer_kind(dst.kind) && v.type.kind == TY_ENUM && LLVMGetTypeKind(src_ty) == LLVMIntegerTypeKind)
-    {
-        unsigned sb = LLVMGetIntTypeWidth(src_ty);
-        int db = int_bits(dst.kind);
-        if ((int)sb < db)
-            return LLVMBuildSExt(g->builder, v.value, dst_ty, "eext");
-        if ((int)sb > db)
-            return LLVMBuildTrunc(g->builder, v.value, dst_ty, "etrunc");
-        return LLVMBuildBitCast(g->builder, v.value, dst_ty, "ecast");
-    }
-
     if (is_integer_kind(dst.kind) && v.type.kind == TY_BOOL)
         return LLVMBuildZExt(g->builder, v.value, dst_ty, "b2i");
 

@@ -451,7 +451,7 @@ struct Expr
         struct { ExprList items; } array;
         struct { ExprList items; } package;
         struct { ExprList keys; ExprList values; } dict;
-        struct { Expr *target; Expr *value; } assign;
+        struct { Expr *target; Expr *value; int is_compound; } assign;
         struct { Expr *cond; Expr *then_expr; Expr *else_expr; } if_expr;
         struct { Expr *value; ExprSwitchCaseList cases; } switch_expr;
         struct { Expr *expr; Type target; } is_expr;

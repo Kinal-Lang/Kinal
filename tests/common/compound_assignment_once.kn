@@ -1,0 +1,25 @@
+Unit Tests.CompoundAssignmentOnce;
+Get IO.Console;
+
+Class Box { Public int Value; }
+int hits = 0;
+Safe Function int Index() { hits = hits + 1; Return 0; }
+Safe Function Box Receiver(Box value) { hits = hits + 1; Return value; }
+Trusted Function int* Address(int* value) { hits = hits + 1; Return value; }
+Trusted Function T* GenericAddress<T>(T* value) { hits = hits + 1; Return value; }
+Trusted Function void Add<T>(T* target, T value) { (*GenericAddress<T>(target)) += value; }
+
+Trusted Static Function int Main()
+{
+    int value = 10;
+    (*Address(&value)) += 2;
+    int[] values = {5};
+    values[Index()] *= 3;
+    Box box = New Box();
+    box.Value = 4;
+    Receiver(box).Value -= 1;
+    Add<int>(&value, 3);
+    bool ok = hits == 4 && value == 15 && values[0] == 15 && box.Value == 3;
+    IO.Console.PrintLine(ok ? "ok" : "bad");
+    Return ok ? 0 : 1;
+}

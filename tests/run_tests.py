@@ -688,6 +688,16 @@ def run_driver_integration_tests(compiler: Path, out_dir: Path) -> int:
         return 1
     if run_knc_case("knc_vm_frontend_enum_semantics", "frontend_enum_semantics.kn", "ok\n") != 0:
         return 1
+    if run_knc_case("knc_vm_compound_assignment_once", "compound_assignment_once.kn", "ok\n") != 0:
+        return 1
+    compound_native = out_dir / ("compound_assignment_once.exe" if os.name == "nt" else "compound_assignment_once")
+    run([str(compiler), "build", "--no-module-discovery",
+         str(ROOT / "tests" / "common" / "compound_assignment_once.kn"), "-o", str(compound_native)], cwd=ROOT)
+    compound_run = run([str(compound_native)], cwd=ROOT, capture=True)
+    if compound_run.returncode != 0 or (compound_run.stdout or "").replace("\r\n", "\n") != "ok\n":
+        print("[FAIL] native_compound_assignment_once")
+        return 1
+    print("[OK] native_compound_assignment_once")
     if run_knc_case(
         "knc_vm_frontend_block_jump_state_machine",
         "frontend_block_jump_state_machine.kn",

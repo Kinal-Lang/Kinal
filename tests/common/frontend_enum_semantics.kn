@@ -10,6 +10,12 @@ Enum TokenState By int
     Done = 3
 }
 
+Enum UnsignedByte By u8 { High = 255 }
+Enum SignedByte By i8 { Positive = 1, High = 255 }
+
+Safe Function UnsignedByte NarrowUnsigned(int value) { Return [UnsignedByte](value); }
+Safe Function SignedByte NarrowSigned(int value) { Return [SignedByte](value); }
+
 Class TokenBox
 {
     Public TokenState Kind;
@@ -55,6 +61,12 @@ Static Safe Function int Main()
         box.Kind != TokenState.KwClass && decoded == TokenState.KwFunction;
     ok = ok && StateValue(box.Kind) == 10 &&
         StateValue(TokenState.KwClass) == 20 && StateValue(TokenState.Done) == 30;
+    UnsignedByte unsignedValue = NarrowUnsigned(255);
+    SignedByte signedValue = NarrowSigned(-1);
+    ok = ok && unsignedValue == UnsignedByte.High && [int](unsignedValue) == 255;
+    ok = ok && signedValue != SignedByte.Positive && [int](signedValue) == -1;
+    ok = ok && SignedByte.High == signedValue;
+    ok = ok && NarrowUnsigned(511) == UnsignedByte.High;
 
     IO.Console.PrintLine(ok ? "ok" : "bad");
     Return ok ? 0 : 1;
