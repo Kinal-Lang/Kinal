@@ -52,6 +52,42 @@ Enum StatementKind By int
     Continue
 }
 
+Enum TypeSyntaxKind By int
+{
+    Named,
+    Pointer,
+    Array,
+    Package
+}
+
+// Preserve type structure and bound expressions; display strings are not a
+// semantic representation (especially for nested arrays and generic arguments).
+Class TypeReference
+{
+    Public TypeSyntaxKind Kind;
+    Public string Name;
+    Public int Line;
+    Public int Column;
+    Public int Repeat;
+    Public TypeReference Element;
+    Public ExpressionNode Length;
+    Public TypeReference FirstItem;
+    Public TypeReference Next;
+
+    Public Safe Constructor(TypeSyntaxKind kind, string name, int line, int column)
+    {
+        This.Kind = kind;
+        This.Name = name;
+        This.Line = line;
+        This.Column = column;
+        This.Repeat = 1;
+        This.Element = null;
+        This.Length = null;
+        This.FirstItem = null;
+        This.Next = null;
+    }
+}
+
 Class ExpressionNode
 {
     Public int Kind;
@@ -61,6 +97,7 @@ Class ExpressionNode
     Public bool IsRawString;
     Public bool IsCharacterString;
     Public int LiteralId;
+    Public TypeReference TypeSyntax;
     Public int Line;
     Public int Column;
     Public ExpressionNode Left;
@@ -82,6 +119,7 @@ Class ExpressionNode
         This.IsRawString = false;
         This.IsCharacterString = false;
         This.LiteralId = -1;
+        This.TypeSyntax = null;
         This.Line = line;
         This.Column = column;
         This.Left = null;
@@ -151,6 +189,7 @@ Class ExpressionNode
 Class TypeArgumentNode
 {
     Public string TypeName;
+    Public TypeReference TypeSyntax;
     Public int Line;
     Public int Column;
     Public TypeArgumentNode Next;
@@ -158,6 +197,7 @@ Class TypeArgumentNode
     Public Safe Constructor(string typeName, int line, int column)
     {
         This.TypeName = typeName;
+        This.TypeSyntax = null;
         This.Line = line;
         This.Column = column;
         This.Next = null;
@@ -169,6 +209,7 @@ Class StatementNode
     Public int Kind;
     Public string Name;
     Public string TypeName;
+    Public TypeReference TypeSyntax;
     Public string PackageLabels;
     Public bool IsConst;
     Public bool IsUnsafe;
@@ -176,7 +217,6 @@ Class StatementNode
     Public int Column;
     Public ExpressionNode Expression;
     Public ExpressionNode SecondExpression;
-    Public ExpressionNode ArrayLength;
     Public ExpressionNode ThirdExpression;
     Public StatementNode Initializer;
     Public StatementNode FirstChild;
@@ -189,6 +229,7 @@ Class StatementNode
         This.Kind = kind;
         This.Name = "";
         This.TypeName = "";
+        This.TypeSyntax = null;
         This.PackageLabels = "";
         This.IsConst = false;
         This.IsUnsafe = false;
@@ -196,7 +237,6 @@ Class StatementNode
         This.Column = column;
         This.Expression = null;
         This.SecondExpression = null;
-        This.ArrayLength = null;
         This.ThirdExpression = null;
         This.Initializer = null;
         This.FirstChild = null;

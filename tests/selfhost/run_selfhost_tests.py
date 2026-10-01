@@ -11,6 +11,7 @@ from pathlib import Path
 
 from check_targets import check_targets
 from check_freestanding import check_freestanding
+from check_array_types import check_array_types
 
 
 def run(command: list[str], *, cwd: Path) -> subprocess.CompletedProcess[str]:
@@ -291,6 +292,8 @@ def main() -> int:
                                  stage0_reference=args.stage0_role == "reference"))
     results.append(check_freestanding(compiler, stage0, root, out_dir / "freestanding-core",
                                       stage0_reference=args.stage0_role == "reference"))
+    results.append(check_array_types(compiler, stage0, root, out_dir / "array-types",
+                                    stage0_reference=args.stage0_role == "reference"))
 
     fixture = root / "tests" / "selfhost" / "fixtures" / "lex_basic.kn"
     lex = run([str(compiler), "lex", str(fixture)], cwd=root)
@@ -2462,6 +2465,14 @@ def main() -> int:
     )
     array_run = run([str(array_executable), "alpha", "beta"], cwd=root)
     require(array_run.returncode == 0, "stage1 array fixture execution failed", array_run)
+    array_stage0_executable = out_dir / f"array-types-stage0{executable_suffix}"
+    array_stage0_build = run(
+        [str(stage0), "build", "--project", str(array_project), "--profile", "test",
+         "-o", str(array_stage0_executable)], cwd=root,
+    )
+    require(array_stage0_build.returncode == 0, "stage0 array fixture build failed", array_stage0_build)
+    array_stage0_run = run([str(array_stage0_executable), "alpha", "beta"], cwd=root)
+    require(array_stage0_run.returncode == 0, "stage0 array fixture execution failed", array_stage0_run)
     results.append({"name": "array_types_fixture", "ok": True})
 
     expression_ops_project = root / "tests" / "selfhost" / "fixtures" / "expression_ops" / "kinal.knproj"

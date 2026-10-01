@@ -173,7 +173,7 @@ Class FreestandingValidator
                 FieldDecl field = type.Declaration.FirstField;
                 While (field != null)
                 {
-                    This.CheckType(This.Semantics.ResolveType(type.Syntax, field.TypeName), field.Initializer);
+                    This.CheckType(This.Semantics.ResolveFieldType(type.Syntax, field), field.Initializer);
                     This.CheckStorageType(field.TypeName);
                     field = field.Next;
                 }

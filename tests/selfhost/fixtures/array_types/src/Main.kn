@@ -17,7 +17,8 @@ Trusted Static Function int Main(string[] args)
     If (args.Length() != 2 || chars.Length() != 2 ||
         fixed.Length() != 5 || fixed[2] != 0 || fixed[4] != 20 ||
         inferred.Length() != 3 || scalar.TypeOf() != "int" ||
-        fixed.TypeOf() != "int[]" || pointer.TypeOf() != "int*" ||
+        fixed.TypeOf() != "int[5]" || fixed.TypeName() != "int[]" ||
+        pointer.TypeOf() != "int*" ||
         globalValues.Length() != 4 || globalValues[3] != 40 ||
         typedFixed.Length() != 4 || typedFixed[2] != 30)
     {

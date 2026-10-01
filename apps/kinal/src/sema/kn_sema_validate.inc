@@ -4,6 +4,25 @@ static bool eval_const_expr_impl(Sema *s, Expr *e, int64_t *out);
 static bool eval_const_expr_scoped_impl(Sema *s, Expr *e, int64_t *out);
 static NameList clone_namelist(const NameList *src);
 
+// Declaration types are checked before runtime global initialization. Bounds
+// may still refer to Const declarations in their unit; local bindings take
+// precedence, and ordinary expressions do not gain forward-global visibility.
+static Stmt *array_bound_constant(Sema *s, const char *name)
+{
+    if (!s || !s->array_length_depth || !s->globals || !name) return 0;
+    const char *unit = s->current_unit ? s->current_unit : "";
+    for (int i = 0; i < s->globals->count; ++i)
+    {
+        Stmt *global = s->globals->items[i];
+        if (!global || global->kind != ST_VAR || !global->v.var.is_const || !global->v.var.init)
+            continue;
+        const char *decl_unit = global->v.var.unit ? global->v.var.unit : "";
+        if (kn_strcmp(unit, decl_unit) == 0 && kn_strcmp(name, global->v.var.name) == 0)
+            return global;
+    }
+    return 0;
+}
+
 static bool eval_const_expr_scoped(Sema *s, Expr *e, int64_t *out)
 {
     if (!e || !out) return false;
@@ -22,6 +41,11 @@ static bool eval_const_expr_scoped_impl(Sema *s, Expr *e, int64_t *out)
     case EXPR_VAR:
     {
         VarSym *v = scope_find(s ? s->scope : 0, e->v.var.name);
+        if (!v)
+        {
+            Stmt *global = array_bound_constant(s, e->v.var.name);
+            return global && eval_const_expr_scoped(s, global->v.var.init, out);
+        }
         if (!v || !v->is_const || !v->origin)
             return false;
         return eval_const_expr_scoped(s, v->origin, out);
@@ -72,7 +96,11 @@ static void resolve_array_len_expr(Sema *s, Type *t, int line, int col)
     if (!s || !t || t->kind != TY_ARRAY || t->array_len >= 0 || !t->array_len_expr)
         return;
 
+    s->array_length_depth++;
     Type it = sema_expr_with_expected(s, t->array_len_expr, type_make(TY_INT), "Array length requires integer type");
+    int64_t len = 0;
+    bool constant = is_integer_kind(it.kind) && eval_const_expr_scoped(s, t->array_len_expr, &len);
+    s->array_length_depth--;
     if (!is_integer_kind(it.kind))
     {
         sema_error(s, line, col, 1, "Array Length", "Array length must be an integer constant expression");
@@ -80,8 +108,7 @@ static void resolve_array_len_expr(Sema *s, Type *t, int line, int col)
         return;
     }
 
-    int64_t len = 0;
-    if (!eval_const_expr_scoped(s, t->array_len_expr, &len))
+    if (!constant)
     {
         sema_error(s, line, col, 1, "Array Length", "Array length must be a constant integer expression");
         t->array_len_expr = 0;

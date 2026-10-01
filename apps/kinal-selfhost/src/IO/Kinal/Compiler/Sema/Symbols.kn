@@ -274,16 +274,16 @@ Class CallableElementSymbol
     }
 }
 
-Class FieldStorageSymbol
+Class FieldSymbol
 {
     Public FieldDecl Declaration;
-    Public int ArrayLength;
-    Public FieldStorageSymbol Next;
+    Public TypeSymbol Type;
+    Public FieldSymbol Next;
 
-    Public Safe Constructor(FieldDecl declaration, int length)
+    Public Safe Constructor(FieldDecl declaration, TypeSymbol type)
     {
         This.Declaration = declaration;
-        This.ArrayLength = length;
+        This.Type = type;
         This.Next = null;
     }
 }

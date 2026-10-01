@@ -317,7 +317,7 @@ Class NativeBackend
         {
             If (!field.IsStatic)
             {
-                TypeSymbol fieldType = This.Semantics.ResolveType(type.Syntax, field.TypeName);
+                TypeSymbol fieldType = This.Semantics.ResolveFieldType(type.Syntax, field);
                 fields.Add(This.TypeHandle(fieldType));
             }
             field = field.Next;
@@ -1728,7 +1728,7 @@ Class NativeBackend
         {
             If (!field.IsStatic)
             {
-                TypeSymbol fieldType = This.Semantics.ResolveType(type.Syntax, field.TypeName);
+                TypeSymbol fieldType = This.Semantics.ResolveFieldType(type.Syntax, field);
                 byte* address = This.Module.StructGep(binding.StructHandle, object,
                     fieldIndex, This.Unique("field_init"));
                 int lengthValue = This.Semantics.StorageArrayLength(field);
@@ -2920,7 +2920,7 @@ Class NativeBackend
                                                     HirExpression itemExpression,
                                                     HirExpression expression)
     {
-        TypeSymbol arrayType = receiver.Type;
+        TypeSymbol arrayType = expression.Type;
         TypeSymbol elementType = arrayType.ElementType;
         byte* elementHandle = This.TypeHandle(elementType);
         byte* oldData = This.Module.ExtractValue(receiver.Handle, 0, This.Unique("array_old_data"));
@@ -2991,6 +2991,30 @@ Class NativeBackend
         Return New LlvmValue(dictionary, expression.Type);
     }
 
+    // TypeName uses the runtime value representation: unlike the compile-time
+    // TypeOf result and generic identity, its array names do not contain bounds.
+    Public Safe Function string ValueTypeName(TypeSymbol type)
+    {
+        If (type == null) Return "unknown";
+        If (type.Kind == [int](TypeKind.ArrayType))
+            Return This.ValueTypeName(type.ElementType) + "[]";
+        If (type.Kind == [int](TypeKind.PointerType))
+            Return This.ValueTypeName(type.ElementType) + "*";
+        If (type.Kind == [int](TypeKind.PackageType))
+        {
+            string name = "<";
+            int index = 0;
+            While (index < type.PackageCount)
+            {
+                If (index > 0) name = name + ",";
+                name = name + This.ValueTypeName(type.PackageElement(index));
+                index = index + 1;
+            }
+            Return name + ">";
+        }
+        Return type.Name;
+    }
+
     Public Safe Function string RuntimeTypeName(TypeSymbol type)
     {
         If (type == null) Return "unknown";
@@ -2999,7 +3023,7 @@ Class NativeBackend
         If (type.Kind == [int](TypeKind.SetType)) Return "IO.Collection.set";
         If (type.Kind == [int](TypeKind.PackageType)) Return "Package";
         If (type.Kind == [int](TypeKind.NamedType)) Return type.QualifiedName();
-        Return type.Name;
+        Return This.ValueTypeName(type);
     }
 
     Public Safe Function bool IsAnyBuiltin(string target)

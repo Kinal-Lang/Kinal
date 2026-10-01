@@ -91,12 +91,23 @@ initial core, not complete parity with stage0's freestanding implementation.
 
 ## Validation
 
+Array types preserve their complete syntax structure, including each nested
+bound expression. Bound lengths participate in type identity, generic instance
+keys, and recursive array/Package assignability. An unsized destination accepts
+a compatible fixed array; a fixed destination rejects unsized sources and
+larger fixed bounds. Copies still alias the original descriptor and backing
+storage: widening a declared bound does not resize a copied array.
+`TypeOf()` retains static bounds (for example `int[2]`), while `TypeName()`
+reports the runtime array representation (`int[]`). The contract tests cover
+both operations independently of generic specialization keys.
+
 ```powershell
 python x.py selfhost --test
 python x.py selfhost-bootstrap --clean
 python tests/check_project_packages.py --compiler out/selfhost/stage1/kinal-selfhost.exe --out-dir out/selfhost/package-checks
 python tests/selfhost/check_targets.py --compiler out/selfhost/stage1/kinal-selfhost.exe --stage0 out/selfhost/stage0-host/kinal.exe --out-dir out/selfhost/target-checks
 python tests/selfhost/check_freestanding.py --compiler out/selfhost/stage1/kinal-selfhost.exe --stage0 out/stage/host-release/kinal.exe --out-dir out/selfhost/freestanding-checks
+python tests/selfhost/check_array_types.py --compiler out/selfhost/stage1/kinal-selfhost.exe --stage0 out/stage/host-release/kinal.exe --out-dir out/selfhost/array-type-checks
 ```
 
 The bootstrap check requires stage1 to build stage2 and stage2 to build stage3

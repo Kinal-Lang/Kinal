@@ -962,10 +962,12 @@ Safe Function void ReadTypeArguments(ParseCursor cursor, ExpressionNode call)
             If (kind == TokenKind.Comma && depth == 0) Break;
             Advance(cursor);
         }
-        call.AddTypeArgument(New TypeArgumentNode(
+        TypeArgumentNode argument = New TypeArgumentNode(
             JoinTokenText(cursor, start, cursor.Position),
             IO.Kinal.Compiler.Lex.Token.Line(location),
-            IO.Kinal.Compiler.Lex.Token.Column(location)));
+            IO.Kinal.Compiler.Lex.Token.Column(location));
+        argument.TypeSyntax = ReadTypeReference(cursor, start, cursor.Position);
+        call.AddTypeArgument(argument);
         If (!Match(cursor, TokenKind.Comma)) Break;
     }
     BuilderExpect(cursor, TokenKind.Greater, "Expected '>'",
@@ -1166,25 +1168,92 @@ Safe Function void WarnLegacyArraySuffixes(ParseCursor cursor, int start, int en
     }
 }
 
-// Preserve the real expression tree and source position instead of reconstructing
-// array bounds from the display type name during semantic analysis.
-Safe Function ExpressionNode ReadArrayLength(ParseCursor cursor, int start, int end)
+Safe Function TypeReference ParseTypeSuffixReferences(ParseCursor cursor, int end, TypeReference type)
+{
+    While (cursor.Position < end)
+    {
+        Token token = CurrentToken(cursor);
+        If (Match(cursor, TokenKind.Star))
+        {
+            TypeReference pointer = New TypeReference(TypeSyntaxKind.Pointer, "",
+                IO.Kinal.Compiler.Lex.Token.Line(token), IO.Kinal.Compiler.Lex.Token.Column(token));
+            pointer.Element = type;
+            type = pointer;
+        }
+        ElseIf (Match(cursor, TokenKind.LeftBracket))
+        {
+            TypeReference array = New TypeReference(TypeSyntaxKind.Array, "",
+                IO.Kinal.Compiler.Lex.Token.Line(token), IO.Kinal.Compiler.Lex.Token.Column(token));
+            array.Element = type;
+            If (CurrentKind(cursor) != TokenKind.RightBracket) array.Length = ParseExpression(cursor, 1);
+            BuilderExpect(cursor, TokenKind.RightBracket, "Expected ']'", "Array type is not closed");
+            type = array;
+        }
+        Else Break;
+    }
+    Return type;
+}
+
+Safe Function TypeReference ParseTypeReference(ParseCursor cursor, int end, int depth)
+{
+    If (cursor.Position >= end || depth > 192) Return null;
+    Token token = CurrentToken(cursor);
+    TypeReference type = New TypeReference(TypeSyntaxKind.Named, "",
+        IO.Kinal.Compiler.Lex.Token.Line(token), IO.Kinal.Compiler.Lex.Token.Column(token));
+    If (Match(cursor, TokenKind.Less))
+    {
+        type.Kind = TypeSyntaxKind.Package;
+        TypeReference last = null;
+        While (cursor.Position < end && CurrentKind(cursor) != TokenKind.Greater)
+        {
+            int before = cursor.Position;
+            TypeReference item = ParseTypeReference(cursor, end, depth + 1);
+            If (item == null || before == cursor.Position) Break;
+            If (Match(cursor, TokenKind.LeftParen))
+            {
+                item.Repeat = [int](IO.Kinal.Compiler.Lex.Token.Text(CurrentToken(cursor)));
+                Advance(cursor);
+                BuilderExpect(cursor, TokenKind.RightParen, "Expected ')'", "Package repeat is not closed");
+            }
+            If (last == null) type.FirstItem = item;
+            Else last.Next = item;
+            last = item;
+            If (!Match(cursor, TokenKind.Comma)) Break;
+        }
+        BuilderExpect(cursor, TokenKind.Greater, "Expected '>'", "Package type is not closed");
+    }
+    Else
+    {
+        int start = cursor.Position;
+        If (!IsNameToken(CurrentKind(cursor))) Return null;
+        Advance(cursor);
+        While (cursor.Position + 1 < end && CurrentKind(cursor) == TokenKind.Dot &&
+               IsNameToken(KindAt(cursor, cursor.Position + 1)))
+        {
+            Advance(cursor);
+            Advance(cursor);
+        }
+        type.Name = JoinTokenText(cursor, start, cursor.Position);
+    }
+    Return ParseTypeSuffixReferences(cursor, end, type);
+}
+
+Safe Function TypeReference ReadTypeReference(ParseCursor cursor, int start, int end)
 {
     int saved = cursor.Position;
-    int index = start;
-    ExpressionNode length = null;
-    While (index < end)
-    {
-        If (KindAt(cursor, index) == TokenKind.LeftBracket)
-        {
-            cursor.Position = index + 1;
-            length = CurrentKind(cursor) == TokenKind.RightBracket ? null : ParseExpression(cursor, 1);
-            index = cursor.Position;
-        }
-        index = index + 1;
-    }
+    cursor.Position = start;
+    TypeReference type = ParseTypeReference(cursor, end, 0);
     cursor.Position = saved;
-    Return length;
+    Return type;
+}
+
+Safe Function TypeReference ReadLegacyTypeReference(ParseCursor cursor, TypeReference type, int start, int end)
+{
+    int saved = cursor.Position;
+    cursor.Position = start;
+    type = ParseTypeSuffixReferences(cursor, end, type);
+    cursor.Position = saved;
+    Return type;
 }
 
 Safe Function string ReadLegacyArrayTypeSuffixes(ParseCursor cursor, string typeName)
@@ -1215,6 +1284,7 @@ Safe Function ExpressionNode ParseFunctionLiteral(ParseCursor cursor)
         JoinTokenText(cursor, typeStart, cursor.Position),
         IO.Kinal.Compiler.Lex.Token.Line(token), IO.Kinal.Compiler.Lex.Token.Column(token));
     value.LiteralId = cursor.NextAnonymousFunctionId;
+    value.TypeSyntax = ReadTypeReference(cursor, typeStart, cursor.Position);
     cursor.NextAnonymousFunctionId = cursor.NextAnonymousFunctionId + 1;
     If (!BuilderExpect(cursor, TokenKind.LeftParen, "Expected '('",
                        "Anonymous function parameter list is missing")) Return value;
@@ -1232,6 +1302,7 @@ Safe Function ExpressionNode ParseFunctionLiteral(ParseCursor cursor)
                 IO.Kinal.Compiler.Lex.Token.Column(nameToken));
             parameter.Left = New ExpressionNode([int](ExpressionKind.Name),
                 JoinTokenText(cursor, parameterStart, nameIndex), parameter.Line, parameter.Column);
+            parameter.Left.TypeSyntax = ReadTypeReference(cursor, parameterStart, nameIndex);
             value.AddArgument(parameter);
         }
         cursor.Position = parameterEnd;
@@ -1523,11 +1594,13 @@ Safe Function ExpressionNode ParsePrimary(ParseCursor cursor)
             Advance(cursor);
         }
         string typeName = JoinTokenText(cursor, typeStart, cursor.Position);
+        TypeReference typeSyntax = ReadTypeReference(cursor, typeStart, cursor.Position);
         BuilderExpect(cursor, TokenKind.RightBracket, "Expected ']'",
             "Cast or string-prefix list is not closed");
         If (IsStringPrefix(typeName)) Return ParsePrefixedString(cursor, typeName, token);
         ExpressionNode cast = New ExpressionNode([int](ExpressionKind.Cast), typeName,
             IO.Kinal.Compiler.Lex.Token.Line(token), IO.Kinal.Compiler.Lex.Token.Column(token));
+        cast.TypeSyntax = typeSyntax;
         If (Match(cursor, TokenKind.LeftParen))
         {
             cast.Left = ParseExpression(cursor, 1);
@@ -1544,6 +1617,7 @@ Safe Function ExpressionNode ParsePrimary(ParseCursor cursor)
         ExpressionNode value = New ExpressionNode([int](ExpressionKind.NewObject),
             JoinTokenText(cursor, typeStart, cursor.Position),
             IO.Kinal.Compiler.Lex.Token.Line(token), IO.Kinal.Compiler.Lex.Token.Column(token));
+        value.TypeSyntax = ReadTypeReference(cursor, typeStart, cursor.Position);
         ReadArguments(cursor, value);
         Return value;
     }
@@ -1823,6 +1897,7 @@ Safe Function StatementNode ParseAstForeach(ParseCursor cursor)
            KindAt(cursor, separator) != TokenKind.RightParen) separator = separator + 1;
     int nameIndex = separator - 1;
     value.TypeName = JoinTokenText(cursor, declarationStart, nameIndex);
+    value.TypeSyntax = ReadTypeReference(cursor, declarationStart, nameIndex);
     value.Name = IO.Kinal.Compiler.Lex.Token.Text(RawAt(cursor, nameIndex));
     cursor.Position = separator;
     If (CurrentKind(cursor) == TokenKind.KwIn ||
@@ -1907,6 +1982,7 @@ Safe Function StatementNode ParseAstTry(ParseCursor cursor)
             If (nameIndex >= start)
             {
                 handler.TypeName = JoinTokenText(cursor, start, nameIndex);
+                handler.TypeSyntax = ReadTypeReference(cursor, start, nameIndex);
                 handler.Name = IO.Kinal.Compiler.Lex.Token.Text(RawAt(cursor, nameIndex));
             }
             BuilderExpect(cursor, TokenKind.RightParen, "Expected ')'",
@@ -1967,6 +2043,7 @@ Safe Function StatementNode ParseLocalFunctionStatement(ParseCursor cursor)
         IO.Kinal.Compiler.Lex.Token.Text(RawAt(cursor, nameIndex)) : "";
     ExpressionNode function = New ExpressionNode([int](ExpressionKind.FunctionLiteral),
         JoinTokenText(cursor, declarationStart, nameIndex), declaration.Line, declaration.Column);
+    function.TypeSyntax = ReadTypeReference(cursor, declarationStart, nameIndex);
     function.LiteralId = cursor.NextAnonymousFunctionId;
     cursor.NextAnonymousFunctionId = cursor.NextAnonymousFunctionId + 1;
     cursor.Position = open;
@@ -1987,6 +2064,7 @@ Safe Function StatementNode ParseLocalFunctionStatement(ParseCursor cursor)
             parameter.Left = New ExpressionNode([int](ExpressionKind.Name),
                 JoinTokenText(cursor, parameterStart, parameterNameIndex),
                 parameter.Line, parameter.Column);
+            parameter.Left.TypeSyntax = ReadTypeReference(cursor, parameterStart, parameterNameIndex);
             function.AddArgument(parameter);
         }
         cursor.Position = parameterEnd;
@@ -2029,7 +2107,7 @@ Safe Function StatementNode ParseVariableStatement(ParseCursor cursor, int line,
         int declarationName = FindDeclarationName(cursor, false);
         If (declarationName <= cursor.Position) Return null;
         declaration.TypeName = JoinTokenText(cursor, cursor.Position, declarationName);
-        declaration.ArrayLength = ReadArrayLength(cursor, cursor.Position, declarationName);
+        declaration.TypeSyntax = ReadTypeReference(cursor, cursor.Position, declarationName);
         declaration.Name = IO.Kinal.Compiler.Lex.Token.Text(RawAt(cursor, declarationName));
         cursor.Position = declarationName + 1;
     }
@@ -2054,10 +2132,14 @@ Safe Function StatementNode ParseVariableStatement(ParseCursor cursor, int line,
         ReportWarningToken(cursor.Diagnostics, cursor.Source,
             RawAt(cursor, cursor.Position - 1), "Legacy Array Syntax",
             "Use 'Type[] name' instead of 'Type name[]'");
-        declaration.ArrayLength = CurrentKind(cursor) == TokenKind.RightBracket ?
+        ExpressionNode length = CurrentKind(cursor) == TokenKind.RightBracket ?
             null : ParseExpression(cursor, 1);
         If (declaration.SecondExpression == null)
-            declaration.SecondExpression = declaration.ArrayLength;
+            declaration.SecondExpression = length;
+        TypeReference array = New TypeReference(TypeSyntaxKind.Array, "", line, column);
+        array.Element = declaration.TypeSyntax;
+        array.Length = length;
+        declaration.TypeSyntax = array;
         BuilderExpect(cursor, TokenKind.RightBracket, "Expected ']'",
             "Array declarator is not closed");
         declaration.TypeName = declaration.TypeName + "[]";
@@ -2360,6 +2442,7 @@ Safe Function FunctionDecl ReadFunctionNode(ParseCursor cursor, bool constructor
     FunctionDecl value = New FunctionDecl(
         IO.Kinal.Compiler.Lex.Token.Text(nameToken), JoinTokenText(cursor, returnStart, nameIndex),
         IO.Kinal.Compiler.Lex.Token.Line(nameToken), IO.Kinal.Compiler.Lex.Token.Column(nameToken));
+    value.ReturnTypeSyntax = ReadTypeReference(cursor, returnStart, nameIndex);
     value.IsStatic = isStatic;
     value.IsAsync = isAsync;
     value.IsExtern = isExtern;
@@ -2608,6 +2691,7 @@ Safe Function void ReadTypeMembers(ParseCursor cursor, TypeDecl type, SyntaxTree
                 Token nameToken = RawAt(cursor, propertyName);
                 string propertyNameText = IO.Kinal.Compiler.Lex.Token.Text(nameToken);
                 string propertyType = JoinTokenText(cursor, propertyStart, propertyName);
+                TypeReference propertySyntax = ReadTypeReference(cursor, propertyStart, propertyName);
                 cursor.Position = bodyStart;
                 If (Match(cursor, TokenKind.Semicolon)) Jump Dispatch;
                 If (!BuilderExpect(cursor, TokenKind.LeftBrace, "Expected '{'",
@@ -2638,8 +2722,13 @@ Safe Function void ReadTypeMembers(ParseCursor cursor, TypeDecl type, SyntaxTree
                     accessor.IsOverride = isOverride;
                     accessor.IsSealed = isSealed;
                     accessor.FirstAttribute = attributes;
-                    If (!getter)
-                        accessor.AddParameter(New ParameterDecl("value", propertyType));
+                    If (getter) accessor.ReturnTypeSyntax = propertySyntax;
+                    Else
+                    {
+                        ParameterDecl parameter = New ParameterDecl("value", propertyType);
+                        parameter.TypeSyntax = propertySyntax;
+                        accessor.AddParameter(parameter);
+                    }
                     If (!Match(cursor, TokenKind.Semicolon))
                         accessor.Body = ParseAstBlock(cursor);
                     type.AddMethod(accessor);
@@ -2665,11 +2754,11 @@ Safe Function void ReadTypeMembers(ParseCursor cursor, TypeDecl type, SyntaxTree
             field.Access = access;
             field.IsStatic = isStatic || type.IsStatic;
             field.FirstAttribute = attributes;
-            field.ArrayLength = ReadArrayLength(cursor, fieldStart, fieldName);
+            field.TypeSyntax = ReadTypeReference(cursor, fieldStart, fieldName);
             cursor.Position = fieldName + 1;
             field.TypeName = ReadLegacyArrayTypeSuffixes(cursor, field.TypeName);
             If (cursor.Position > fieldName + 1)
-                field.ArrayLength = ReadArrayLength(cursor, fieldName + 1, cursor.Position);
+                field.TypeSyntax = ReadLegacyTypeReference(cursor, field.TypeSyntax, fieldName + 1, cursor.Position);
             If (Match(cursor, TokenKind.Assign)) field.Initializer = ParseExpression(cursor, 1);
             BuilderExpect(cursor, TokenKind.Semicolon, "Expected Semicolon",
                 "Missing ';' after field");
@@ -2719,6 +2808,8 @@ Safe Function void ReadParameters(ParseCursor cursor, FunctionDecl function)
             If (nameIndex + 1 < declarationEnd)
                 typeName = typeName + " " + JoinTokenText(cursor, nameIndex + 1, declarationEnd);
             ParameterDecl parameter = New ParameterDecl(name, typeName);
+            parameter.TypeSyntax = ReadTypeReference(cursor, start, nameIndex);
+            parameter.TypeSyntax = ReadLegacyTypeReference(cursor, parameter.TypeSyntax, nameIndex + 1, declarationEnd);
             If (hasDefault)
             {
                 cursor.Position = declarationEnd + 1;
@@ -2915,11 +3006,11 @@ Safe Function FieldDecl ReadGlobalNode(ParseCursor cursor, SyntaxAttribute attri
         IO.Kinal.Compiler.Lex.Token.Line(nameToken), IO.Kinal.Compiler.Lex.Token.Column(nameToken));
     global.IsConst = isConst;
     global.FirstAttribute = attributes;
-    global.ArrayLength = ReadArrayLength(cursor, declarationStart, declarationName);
+    global.TypeSyntax = ReadTypeReference(cursor, declarationStart, declarationName);
     cursor.Position = declarationName + 1;
     global.TypeName = ReadLegacyArrayTypeSuffixes(cursor, global.TypeName);
     If (cursor.Position > declarationName + 1)
-        global.ArrayLength = ReadArrayLength(cursor, declarationName + 1, cursor.Position);
+        global.TypeSyntax = ReadLegacyTypeReference(cursor, global.TypeSyntax, declarationName + 1, cursor.Position);
     If (Match(cursor, TokenKind.Assign))
     {
         If (IsEnd(cursor))

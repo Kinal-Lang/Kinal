@@ -45,7 +45,7 @@ Class SemanticCompilation
     Public UnitSymbol FirstUnit;
     Public TypeSymbol FirstType;
     Public GlobalSymbol FirstGlobal;
-    Public FieldStorageSymbol FirstStorage;
+    Public FieldSymbol FirstField;
     Public FunctionSymbol FirstFunction;
     Public HirModule FirstHirModule;
     Public int ImportCount;
@@ -67,7 +67,7 @@ Class SemanticCompilation
         This.FirstUnit = null;
         This.FirstType = null;
         This.FirstGlobal = null;
-        This.FirstStorage = null;
+        This.FirstField = null;
         This.FirstFunction = null;
         This.FirstHirModule = null;
         This.ImportCount = 0;
@@ -198,13 +198,16 @@ Class SemanticCompilation
             "void" : expression.Text;
         FunctionDecl literal = New FunctionDecl(name, returnType,
             expression.Line, expression.Column);
+        literal.ReturnTypeSyntax = expression.TypeSyntax;
         literal.IsStatic = true;
         literal.Body = expression.Body;
         ExpressionNode parameter = expression.FirstArgument;
         While (parameter != null)
         {
-            literal.AddParameter(New ParameterDecl(parameter.Text,
-                parameter.Left == null ? "any" : parameter.Left.Text));
+            ParameterDecl declaration = New ParameterDecl(parameter.Text,
+                parameter.Left == null ? "any" : parameter.Left.Text);
+            declaration.TypeSyntax = parameter.Left == null ? null : parameter.Left.TypeSyntax;
+            literal.AddParameter(declaration);
             parameter = parameter.Next;
         }
         syntax.AddFunction(literal);
@@ -643,12 +646,47 @@ Class SemanticCompilation
         Return This.ResolveType(syntax, name);
     }
 
+    Public Safe Function TypeSymbol ResolveTypeSyntax(SyntaxTree syntax, FunctionSymbol function,
+                                                        BindingScope scope, TypeReference reference,
+                                                        string fallbackName)
+    {
+        If (reference == null) Return This.ResolveFunctionType(syntax, function, fallbackName);
+        If (reference.Kind == TypeSyntaxKind.Named)
+            Return This.ResolveFunctionType(syntax, function, reference.Name);
+        If (reference.Kind == TypeSyntaxKind.Package)
+        {
+            TypeSymbol packageType = New TypeSymbol([int](TypeKind.PackageType), "Object.Package");
+            packageType.ElementType = This.Primitive("any");
+            TypeReference item = reference.FirstItem;
+            While (item != null)
+            {
+                TypeSymbol itemType = This.ResolveTypeSyntax(syntax, function, scope, item, "");
+                If (itemType == null || itemType.Kind == [int](TypeKind.VoidType) || item.Repeat <= 0) Return null;
+                int count = 0;
+                While (count < item.Repeat)
+                {
+                    packageType.AddPackageElement(itemType);
+                    count = count + 1;
+                }
+                item = item.Next;
+            }
+            If (packageType.PackageCount == 0) Return null;
+            packageType.Name = This.TypeIdentity(packageType);
+            Return packageType;
+        }
+        TypeSymbol element = This.ResolveTypeSyntax(syntax, function, scope, reference.Element, "");
+        If (element == null) Return null;
+        If (reference.Kind == TypeSyntaxKind.Pointer) Return This.MakePointerType(element);
+        Return This.MakeBoundArrayType(element,
+            This.ResolveArrayLength(syntax, function, scope, reference.Length));
+    }
+
     Public Safe Function TypeSymbol CheckFunctionType(SyntaxTree syntax,
-                                                       FunctionSymbol function, string name,
+                                                       FunctionSymbol function, string name, TypeReference reference,
                                                        int line, int column)
     {
         This.DeclarationTypeCount = This.DeclarationTypeCount + 1;
-        TypeSymbol type = This.ResolveFunctionType(syntax, function, name);
+        TypeSymbol type = This.ResolveTypeSyntax(syntax, function, null, reference, name);
         If (type != null) Return type;
         This.UnresolvedTypeCount = This.UnresolvedTypeCount + 1;
         This.Report(syntax, "Unknown Type", This.CanonicalTypeName(name), line, column);
@@ -750,12 +788,12 @@ Class SemanticCompilation
             This.Report(unit.Syntax, "Unsupported generic method", declaration.Name,
                 declaration.Line, declaration.Column);
         function.ReturnType = This.CheckFunctionType(unit.Syntax, function,
-            declaration.ReturnType, declaration.Line, declaration.Column);
+            declaration.ReturnType, declaration.ReturnTypeSyntax, declaration.Line, declaration.Column);
         ParameterDecl parameter = declaration.FirstParameter;
         While (parameter != null)
         {
             ParameterSymbol parameterSymbol = New ParameterSymbol(parameter.Name,
-                This.CheckFunctionType(unit.Syntax, function, parameter.TypeName,
+                This.CheckFunctionType(unit.Syntax, function, parameter.TypeName, parameter.TypeSyntax,
                     declaration.Line, declaration.Column));
             parameterSymbol.Declaration = parameter;
             function.AddParameter(parameterSymbol);
@@ -1009,6 +1047,7 @@ Class SemanticCompilation
                             declaration.Initializer.Text : "void";
                         FunctionDecl literal = New FunctionDecl(literalName, returnType,
                             declaration.Line, declaration.Column);
+                        literal.ReturnTypeSyntax = declaration.Initializer.TypeSyntax;
                         literal.IsStatic = true;
                         literal.Body = declaration.Initializer.Body;
                         unit.Syntax.AddFunction(literal);
@@ -1099,27 +1138,49 @@ Class SemanticCompilation
         Return length.Value;
     }
 
-    Public Safe Function void ResolveFieldStorage(SyntaxTree syntax, FieldDecl field)
+    Public Safe Function TypeSymbol ResolveFieldType(SyntaxTree syntax, FieldDecl field)
     {
-        If (field.ArrayLength == null) Return;
-        FieldStorageSymbol storage = New FieldStorageSymbol(field,
-            This.ResolveArrayLength(syntax, null, null, field.ArrayLength));
-        storage.Next = This.FirstStorage;
-        This.FirstStorage = storage;
-        If (storage.ArrayLength >= 0 && field.Initializer != null &&
+        FieldSymbol current = This.FirstField;
+        While (current != null)
+        {
+            If (current.Declaration == field) Return current.Type;
+            current = current.Next;
+        }
+        TypeSymbol type = This.ResolveTypeSyntax(syntax, null, null, field.TypeSyntax, field.TypeName);
+        If (type == null) Return null;
+        FieldSymbol binding = New FieldSymbol(field, type);
+        binding.Next = This.FirstField;
+        This.FirstField = binding;
+        If (type.Kind == [int](TypeKind.ArrayType) && type.ArrayLength >= 0 && field.Initializer != null &&
             field.Initializer.Kind == [int](ExpressionKind.ArrayLiteral) &&
-            field.Initializer.ArgumentCount() > storage.ArrayLength)
+            field.Initializer.ArgumentCount() > type.ArrayLength)
             This.Report(syntax, "Array Length", "Initializer has too many elements",
                 field.Line, field.Column);
+        Return type;
+    }
+
+    Public Safe Function void ResolveGlobalTypes()
+    {
+        // Index names before evaluating bounds so forward Const references see
+        // the complete declaration set. Afterwards every consumer uses the same
+        // field/global type binding rather than a fresh display-string parse.
+        GlobalSymbol global = This.FirstGlobal;
+        While (global != null)
+        {
+            TypeSymbol type = This.ResolveFieldType(global.Syntax, global.Declaration);
+            If (type != null) global.Value.Type = type;
+            global = global.Next;
+        }
     }
 
     Public Safe Function int StorageArrayLength(FieldDecl field)
     {
-        FieldStorageSymbol storage = This.FirstStorage;
-        While (storage != null)
+        FieldSymbol fieldSymbol = This.FirstField;
+        While (fieldSymbol != null)
         {
-            If (storage.Declaration == field) Return storage.ArrayLength;
-            storage = storage.Next;
+            If (fieldSymbol.Declaration == field && fieldSymbol.Type.Kind == [int](TypeKind.ArrayType))
+                Return fieldSymbol.Type.ArrayLength;
+            fieldSymbol = fieldSymbol.Next;
         }
         Return -1;
     }
@@ -1152,7 +1213,7 @@ Class SemanticCompilation
         While (global != null)
         {
             This.CheckExpression(syntax, global.Initializer);
-            This.ResolveFieldStorage(syntax, global);
+            This.ResolveFieldType(syntax, global);
             global = global.Next;
         }
         TypeDecl type = syntax.FirstType;
@@ -1163,7 +1224,7 @@ Class SemanticCompilation
             {
                 If (!field.IsStatic) This.CheckType(syntax, field.TypeName, field.Line, field.Column);
                 This.CheckExpression(syntax, field.Initializer);
-                This.ResolveFieldStorage(syntax, field);
+                This.ResolveFieldType(syntax, field);
                 field = field.Next;
             }
             function = type.FirstMethod;
@@ -1183,8 +1244,15 @@ Class SemanticCompilation
 
     Public Safe Function TypeSymbol MakeArrayType(TypeSymbol element)
     {
-        TypeSymbol arrayType = New TypeSymbol([int](TypeKind.ArrayType), element.Name + "[]");
+        Return This.MakeBoundArrayType(element, -1);
+    }
+
+    Public Safe Function TypeSymbol MakeBoundArrayType(TypeSymbol element, int length)
+    {
+        TypeSymbol arrayType = New TypeSymbol([int](TypeKind.ArrayType), element.Name +
+            "[" + (length < 0 ? "" : [string](length)) + "]");
         arrayType.ElementType = element;
+        arrayType.ArrayLength = length;
         Return arrayType;
     }
 
@@ -1966,7 +2034,8 @@ Class SemanticCompilation
     Public Safe Function string TypeIdentity(TypeSymbol type)
     {
         If (type == null) Return "?";
-        If (type.Kind == [int](TypeKind.ArrayType)) Return This.TypeIdentity(type.ElementType) + "[]";
+        If (type.Kind == [int](TypeKind.ArrayType)) Return This.TypeIdentity(type.ElementType) +
+            "[" + (type.ArrayLength < 0 ? "" : [string](type.ArrayLength)) + "]";
         If (type.Kind == [int](TypeKind.PackageType))
         {
             If (type.PackageCount == 0) Return type.Name;
@@ -1990,8 +2059,9 @@ Class SemanticCompilation
     {
         If (left == right) Return true;
         If (left == null || right == null || left.Kind != right.Kind) Return false;
-        If (left.Kind == [int](TypeKind.ArrayType) ||
-            left.Kind == [int](TypeKind.PointerType))
+        If (left.Kind == [int](TypeKind.ArrayType))
+            Return left.ArrayLength == right.ArrayLength && This.SameType(left.ElementType, right.ElementType);
+        If (left.Kind == [int](TypeKind.PointerType))
             Return This.SameType(left.ElementType, right.ElementType);
         If (left.Kind == [int](TypeKind.PackageType))
         {
@@ -2013,6 +2083,28 @@ Class SemanticCompilation
     {
         If (target == null || source == null) Return false;
         If (This.SameType(target, source) || target.Kind == [int](TypeKind.AnyType)) Return true;
+        If (target.Kind == [int](TypeKind.ArrayType) && source.Kind == [int](TypeKind.ArrayType))
+        {
+            bool elementsMatch = target.ElementType.Kind == [int](TypeKind.ArrayType) ||
+                source.ElementType.Kind == [int](TypeKind.ArrayType) ?
+                This.IsAssignable(target.ElementType, source.ElementType) :
+                This.SameType(target.ElementType, source.ElementType);
+            Return elementsMatch && (target.ArrayLength < 0 ||
+                (source.ArrayLength >= 0 && source.ArrayLength <= target.ArrayLength));
+        }
+        If (target.Kind == [int](TypeKind.PackageType) && source.Kind == [int](TypeKind.PackageType))
+        {
+            If (target.PackageCount != source.PackageCount) Return false;
+            PackageElementType left = target.FirstPackageElement;
+            PackageElementType right = source.FirstPackageElement;
+            While (left != null && right != null)
+            {
+                If (!This.IsAssignable(left.Type, right.Type)) Return false;
+                left = left.Next;
+                right = right.Next;
+            }
+            Return left == null && right == null;
+        }
         If (source.Kind == [int](TypeKind.AnyType)) Return true;
         If (target.Kind == [int](TypeKind.StringType) && source.Name == "char") Return true;
         If (target.Kind == [int](TypeKind.PointerType) && target.ElementType != null &&
@@ -2083,18 +2175,11 @@ Class SemanticCompilation
             If (assignable) source.Type = target;
             Return assignable;
         }
-        If (This.IsAssignable(target, source.Type)) Return true;
-        If ((target.Name == "IO.Type.Object.Function" || target.Name == "Object.Function") &&
-            source.Kind == [int](HirExpressionKind.Namespace) &&
-            This.RuntimeCallType(source.Target, null) != null)
-        {
-            source.Kind = [int](HirExpressionKind.FunctionReference);
-            source.Type = This.MakePointerType(This.Primitive("byte"));
-            Return true;
-        }
         If (target.Kind == [int](TypeKind.ArrayType) &&
             source.Kind == [int](HirExpressionKind.ArrayLiteral))
         {
+            If (target.ArrayLength >= 0 && source.Syntax != null &&
+                source.Syntax.ArgumentCount() > target.ArrayLength) Return false;
             HirExpression item = source.FirstArgument;
             While (item != null)
             {
@@ -2102,6 +2187,15 @@ Class SemanticCompilation
                 item = item.Next;
             }
             source.Type = target;
+            Return true;
+        }
+        If (This.IsAssignable(target, source.Type)) Return true;
+        If ((target.Name == "IO.Type.Object.Function" || target.Name == "Object.Function") &&
+            source.Kind == [int](HirExpressionKind.Namespace) &&
+            This.RuntimeCallType(source.Target, null) != null)
+        {
+            source.Kind = [int](HirExpressionKind.FunctionReference);
+            source.Type = This.MakePointerType(This.Primitive("byte"));
             Return true;
         }
         If (source.Kind != [int](HirExpressionKind.FunctionReference) ||
@@ -2286,6 +2380,7 @@ Class SemanticCompilation
 
     Public Safe Function FunctionSymbol InstantiateGenericFunction(SyntaxTree callerSyntax,
                                                                      FunctionSymbol caller,
+                                                                     BindingScope scope,
                                                                      FunctionSymbol definition,
                                                                      ExpressionNode call)
     {
@@ -2297,7 +2392,8 @@ Class SemanticCompilation
         int count = 0;
         While (parameter != null && argument != null)
         {
-            TypeSymbol argumentType = This.ResolveFunctionType(callerSyntax, caller, argument.TypeName);
+            TypeSymbol argumentType = This.ResolveTypeSyntax(callerSyntax, caller, scope,
+                argument.TypeSyntax, argument.TypeName);
             If (argumentType == null)
             {
                 This.Report(callerSyntax, "Unknown generic argument",
@@ -2334,13 +2430,14 @@ Class SemanticCompilation
         instance.FirstSubstitution = first;
         UnitSymbol definingUnit = This.FindUnit(definition.UnitName);
         SyntaxTree definingSyntax = definingUnit == null ? callerSyntax : definingUnit.Syntax;
-        instance.ReturnType = This.ResolveFunctionType(definingSyntax, instance,
-            definition.Declaration.ReturnType);
+        instance.ReturnType = This.ResolveTypeSyntax(definingSyntax, instance, null,
+            definition.Declaration.ReturnTypeSyntax, definition.Declaration.ReturnType);
         ParameterDecl declaredParameter = definition.Declaration.FirstParameter;
         While (declaredParameter != null)
         {
             ParameterSymbol parameterSymbol = New ParameterSymbol(declaredParameter.Name,
-                This.ResolveFunctionType(definingSyntax, instance, declaredParameter.TypeName));
+                This.ResolveTypeSyntax(definingSyntax, instance, null,
+                    declaredParameter.TypeSyntax, declaredParameter.TypeName));
             parameterSymbol.Declaration = declaredParameter;
             instance.AddParameter(parameterSymbol);
             declaredParameter = declaredParameter.Next;
@@ -2370,6 +2467,7 @@ Class SemanticCompilation
 
     Public Safe Function FunctionSymbol ResolveGenericCallTarget(SyntaxTree syntax,
                                                                   FunctionSymbol caller,
+                                                                  BindingScope scope,
                                                                   FunctionSymbol target,
                                                                   ExpressionNode call)
     {
@@ -2382,7 +2480,7 @@ Class SemanticCompilation
                     call.Line, call.Column);
                 Return null;
             }
-            Return This.InstantiateGenericFunction(syntax, caller, target, call);
+            Return This.InstantiateGenericFunction(syntax, caller, scope, target, call);
         }
         If (call.TypeArgumentCount() != 0)
         {
@@ -2656,7 +2754,8 @@ Class SemanticCompilation
         {
             If (target == "Length") Return This.Primitive("int");
             If (target == "Index") Return receiver.ElementType;
-            If (target == "Add") Return receiver;
+            If (target == "Add") Return This.MakeBoundArrayType(receiver.ElementType,
+                receiver.ArrayLength < 0 ? -1 : receiver.ArrayLength + 1);
         }
         If (receiver != null && (target == "TypeOf" || target == "ToString" ||
             target == "TypeName")) Return This.Primitive("string");
@@ -2681,7 +2780,7 @@ Class SemanticCompilation
             FieldDecl field = current.Declaration.FirstField;
             While (field != null)
             {
-                If (field.Name == name) Return This.ResolveType(definingSyntax, field.TypeName);
+                If (field.Name == name) Return This.ResolveFieldType(definingSyntax, field);
                 field = field.Next;
             }
             current = current.BaseType;
@@ -2700,7 +2799,7 @@ Class SemanticCompilation
             While (field != null)
             {
                 If (!field.IsStatic && field.Name == name)
-                    Return This.ResolveType(definingSyntax, field.TypeName);
+                    Return This.ResolveFieldType(definingSyntax, field);
                 field = field.Next;
             }
             current = current.BaseType;
@@ -3188,7 +3287,7 @@ Class SemanticCompilation
         If (targetFunction != null)
         {
             targetFunction = This.SelectOverload(syntax, function, scope, expression, targetFunction);
-            targetFunction = This.ResolveGenericCallTarget(syntax, function, targetFunction, expression);
+            targetFunction = This.ResolveGenericCallTarget(syntax, function, scope, targetFunction, expression);
             If (targetFunction == null) Return This.FailedExpression(expression);
             returnType = targetFunction.ReturnType;
             callKind = targetFunction.Declaration.IsDelegate ?
@@ -3241,7 +3340,7 @@ Class SemanticCompilation
                     {
                         targetFunction = This.SelectOverload(syntax, function, scope,
                             expression, targetFunction);
-                        targetFunction = This.ResolveGenericCallTarget(syntax, function, targetFunction, expression);
+                        targetFunction = This.ResolveGenericCallTarget(syntax, function, scope, targetFunction, expression);
                         If (targetFunction == null) Return This.FailedExpression(expression);
                         returnType = targetFunction.ReturnType;
                         callKind = [int](HirCallKind.InstanceMethod);
@@ -3290,7 +3389,7 @@ Class SemanticCompilation
                         expression.Line, expression.Column);
                     Return This.FailedExpression(expression);
                 }
-                targetFunction = This.ResolveGenericCallTarget(syntax, function, targetFunction, expression);
+                targetFunction = This.ResolveGenericCallTarget(syntax, function, scope, targetFunction, expression);
                 If (targetFunction == null) Return This.FailedExpression(expression);
                 returnType = targetFunction.ReturnType;
                 callKind = targetFunction.Declaration.IsDelegate ?
@@ -4041,7 +4140,7 @@ Class SemanticCompilation
             Return This.BindCall(syntax, function, scope, expression);
         If (expression.Kind == [int](ExpressionKind.NewObject))
         {
-            TypeSymbol type = This.ResolveFunctionType(syntax, function, expression.Text);
+            TypeSymbol type = This.ResolveTypeSyntax(syntax, function, scope, expression.TypeSyntax, expression.Text);
             If (type == null) Return This.InvalidExpression(syntax, expression, "Unknown constructed type", expression.Text);
             If (!This.IsClassType(type))
                 Return This.InvalidExpression(syntax, expression, "Unknown Type", "Class not found");
@@ -4075,7 +4174,7 @@ Class SemanticCompilation
         }
         If (expression.Kind == [int](ExpressionKind.Cast))
         {
-            TypeSymbol type = This.ResolveFunctionType(syntax, function, expression.Text);
+            TypeSymbol type = This.ResolveTypeSyntax(syntax, function, scope, expression.TypeSyntax, expression.Text);
             If (type == null) Return This.InvalidExpression(syntax, expression, "Unknown cast type", expression.Text);
             HirExpression result = New HirExpression([int](HirExpressionKind.Cast), expression, type);
             result.Left = This.BindExpression(syntax, function, scope, expression.Left);
@@ -4162,7 +4261,9 @@ Class SemanticCompilation
                 result.AddArgument(boundItem);
                 item = item.Next;
             }
-            result.Type = This.MakeArrayType(elementType);
+            // Jagged literal rows retain independent descriptor lengths.
+            If (elementType.Kind == [int](TypeKind.ArrayType)) elementType = This.MakeArrayType(elementType.ElementType);
+            result.Type = This.MakeBoundArrayType(elementType, expression.ArgumentCount());
             Return result;
         }
         If (expression.Kind == [int](ExpressionKind.PackageLiteral))
@@ -4527,7 +4628,7 @@ Class SemanticCompilation
         }
         If (statement.Kind == [int](StatementKind.Try) && statement.TypeName != "")
         {
-            TypeSymbol catchType = This.ResolveFunctionType(syntax, function, statement.TypeName);
+            TypeSymbol catchType = This.ResolveTypeSyntax(syntax, function, scope, statement.TypeSyntax, statement.TypeName);
             If (catchType == null)
             {
                 This.UnresolvedTypeCount = This.UnresolvedTypeCount + 1;
@@ -4563,7 +4664,7 @@ Class SemanticCompilation
         {
             BindingScope loopScope = New BindingScope(scope);
             result.Expression = This.BindExpression(syntax, function, scope, statement.Expression);
-            result.DeclaredType = This.ResolveFunctionType(syntax, function, statement.TypeName);
+            result.DeclaredType = This.ResolveTypeSyntax(syntax, function, scope, statement.TypeSyntax, statement.TypeName);
             If (result.DeclaredType == null)
             {
                 This.UnresolvedTypeCount = This.UnresolvedTypeCount + 1;
@@ -4585,20 +4686,14 @@ Class SemanticCompilation
         }
         If (statement.Kind == [int](StatementKind.Variable))
         {
-            result.FixedArrayLength = This.ResolveArrayLength(syntax, function, scope, statement.ArrayLength);
             result.Expression = This.BindExpression(syntax, function, scope, statement.Expression);
-            If (result.FixedArrayLength >= 0 && statement.Expression != null &&
-                statement.Expression.Kind == [int](ExpressionKind.ArrayLiteral) &&
-                statement.Expression.ArgumentCount() > result.FixedArrayLength)
-                This.Report(syntax, "Array Length", "Initializer has too many elements",
-                    statement.Line, statement.Column);
             If (statement.IsConst && statement.Expression == null)
                 This.Report(syntax, "Const Requires Init",
                     "Const variable must have initializer", statement.Line, statement.Column);
             If (statement.TypeName == "Var")
                 result.DeclaredType = result.Expression == null ?
                     This.Primitive("any") : result.Expression.Type;
-            Else result.DeclaredType = This.ResolveFunctionType(syntax, function, statement.TypeName);
+            Else result.DeclaredType = This.ResolveTypeSyntax(syntax, function, scope, statement.TypeSyntax, statement.TypeName);
             If (result.DeclaredType == null)
             {
                 This.UnresolvedTypeCount = This.UnresolvedTypeCount + 1;
@@ -4606,6 +4701,13 @@ Class SemanticCompilation
                     statement.Line, statement.Column);
                 result.DeclaredType = This.Primitive("any");
             }
+            If (result.DeclaredType.Kind == [int](TypeKind.ArrayType))
+                result.FixedArrayLength = result.DeclaredType.ArrayLength;
+            If (result.FixedArrayLength >= 0 && statement.Expression != null &&
+                statement.Expression.Kind == [int](ExpressionKind.ArrayLiteral) &&
+                statement.Expression.ArgumentCount() > result.FixedArrayLength)
+                This.Report(syntax, "Array Length", "Initializer has too many elements",
+                    statement.Line, statement.Column);
             If (result.DeclaredType.Kind == [int](TypeKind.NamedType) &&
                 result.DeclaredType.Declaration != null &&
                 result.DeclaredType.Declaration.IsStatic)
@@ -4927,6 +5029,7 @@ Class SemanticCompilation
         This.ValidateMetaDeclarations();
         This.ValidateTypeAndFieldAttributes();
         This.IndexGlobals();
+        This.ResolveGlobalTypes();
         This.IndexFunctions();
         This.ValidateClassRelationships();
         This.LinkGlobalLiteralFunctions();

@@ -1946,6 +1946,12 @@ static Type sema_expr_impl(Sema *s, Expr *e)
             e->async_result_type = v->async_result_type;
             return e->type;
         }
+        Stmt *bound_constant = array_bound_constant(s, e->v.var.name);
+        if (bound_constant)
+        {
+            e->type = bound_constant->v.var.type;
+            return e->type;
+        }
         {
             Type implicit_field = type_make(TY_UNKNOWN);
             if (sema_try_current_class_field_expr(s, e, &implicit_field))

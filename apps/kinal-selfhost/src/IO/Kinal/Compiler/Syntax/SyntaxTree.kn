@@ -93,6 +93,7 @@ Class ParameterDecl
 {
     Public string Name;
     Public string TypeName;
+    Public TypeReference TypeSyntax;
     Public ExpressionNode DefaultValue;
     Public ParameterDecl Next;
 
@@ -100,6 +101,7 @@ Class ParameterDecl
     {
         This.Name = name;
         This.TypeName = typeName;
+        This.TypeSyntax = null;
         This.DefaultValue = null;
         This.Next = null;
     }
@@ -139,13 +141,13 @@ Class FieldDecl
 {
     Public string Name;
     Public string TypeName;
+    Public TypeReference TypeSyntax;
     Public int Access;
     Public bool IsStatic;
     Public bool IsConst;
     Public int Line;
     Public int Column;
     Public ExpressionNode Initializer;
-    Public ExpressionNode ArrayLength;
     Public SyntaxAttribute FirstAttribute;
     Public FieldDecl Next;
 
@@ -153,13 +155,13 @@ Class FieldDecl
     {
         This.Name = name;
         This.TypeName = typeName;
+        This.TypeSyntax = null;
         This.Access = 0;
         This.IsStatic = false;
         This.IsConst = false;
         This.Line = line;
         This.Column = column;
         This.Initializer = null;
-        This.ArrayLength = null;
         This.FirstAttribute = null;
         This.Next = null;
     }
@@ -169,6 +171,7 @@ Class FunctionDecl
 {
     Public string Name;
     Public string ReturnType;
+    Public TypeReference ReturnTypeSyntax;
     Public int Access;
     Public int Safety;
     Public bool IsStatic;
@@ -195,6 +198,7 @@ Class FunctionDecl
     {
         This.Name = name;
         This.ReturnType = returnType;
+        This.ReturnTypeSyntax = null;
         This.Access = 0;
         This.Safety = 0;
         This.IsStatic = false;

@@ -53,6 +53,8 @@ Class TypeSymbol
     Public string Name;
     Public string UnitName;
     Public TypeSymbol ElementType;
+    // -1 denotes an unsized descriptor; nonnegative bounds are type identity.
+    Public int ArrayLength;
     Public TypeSymbol UnderlyingType;
     Public TypeSymbol BaseType;
     Public InterfaceTypeLink FirstInterface;
@@ -71,6 +73,7 @@ Class TypeSymbol
         This.Name = name;
         This.UnitName = "";
         This.ElementType = null;
+        This.ArrayLength = -1;
         This.UnderlyingType = null;
         This.BaseType = null;
         This.FirstInterface = null;

@@ -668,6 +668,7 @@ int kn_sema_check(const KnSource *src, MetaList *metas, FuncList *funcs, ImportL
     s.structs = structs;
     s.enums = enums;
     s.func_list = funcs;
+    s.globals = globals;
     if (opts)
     {
         s.target_os = opts->target_os;

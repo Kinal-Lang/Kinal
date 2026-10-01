@@ -1,5 +1,10 @@
 [
   {
+    "name": "array_type_contract",
+    "file": "tests/common/array_type_contract.kn",
+    "expected": ""
+  },
+  {
     "name": "global_array_storage",
     "file": "tests/common/global_array_storage.kn",
     "expected": "true\n"

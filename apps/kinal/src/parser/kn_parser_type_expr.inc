@@ -278,31 +278,11 @@ static bool looks_like_type_arg_list(Parser *p, int off, int require_call_lparen
     int count = 0;
     for (;;)
     {
-        TokenType tt = peek(p, off)->type;
-        if (!type_name_segment_tok(tt))
+        // Use the ordinary type lookahead, including constant-expression array
+        // bounds and Package types. A number-only second grammar misclassified
+        // Identity<int[Capacity]>(value) as relational/index expressions.
+        if (!scan_type_at(p, &off))
             return false;
-        off++;
-
-        while (peek(p, off)->type == TOK_DOT)
-        {
-            off++;
-            if (!type_name_segment_tok(peek(p, off)->type))
-                return false;
-            off++;
-        }
-
-        while (peek(p, off)->type == TOK_STAR)
-            off++;
-
-        while (peek(p, off)->type == TOK_LBRACKET)
-        {
-            off++;
-            if (peek(p, off)->type == TOK_NUMBER)
-                off++;
-            if (peek(p, off)->type != TOK_RBRACKET)
-                return false;
-            off++;
-        }
 
         count++;
         if (peek(p, off)->type == TOK_COMMA)

@@ -1,0 +1,57 @@
+Unit Tests.ArrayTypes;
+
+Const int Capacity = 2 + 1;
+int[Capacity] Global = {3, 5};
+Class Holder { Public int[Capacity] Values; }
+
+Static Function T Identity<T>(T value) { Return value; }
+Static Function int Read(int[Capacity] value) { Return value.Length(); }
+Static Function int[3] FixedReturn() { int[2] value = {7, 11}; Return value; }
+Static Function int[3] LiteralReturn() { Return {13, 17}; }
+
+Static Function int Main()
+{
+    Const int LocalCapacity = 1 + 1;
+    int[LocalCapacity] small = {7, 11};
+    int[3] wider = small;
+    int[] dynamic = wider;
+    Holder holder = New Holder();
+    holder.Values = small;
+    int[2] genericSmall = Identity<int[LocalCapacity]>(small);
+    int[3] genericWide = Identity<int[3]>(Global);
+    int[3] returned = FixedReturn();
+    Var inferred = {19, 23};
+    int[2] inferredCopy = inferred;
+    Var appended = small.Add(31);
+    int[3] appendedFixed = appended;
+    Var appendedTwice = small.Add(37).Add(41);
+    Var appendedDynamic = dynamic.Add(43);
+    int[2][2] rows;
+    Var appendedRows = rows.Add(small);
+    int[2][] borrowedRows = rows;
+    int[][] jagged = {{3, 4}, {5}};
+    int[3] assigned;
+    assigned = {1, 2};
+    <int[2]> package = <small>;
+    <int[]> dynamicPackage = package;
+    <int[3]> widerPackage = Identity< <int[2]> >(package);
+    small[0] = 29;
+    bool valid = wider.Length() == 2 && dynamic.Length() == 2 && wider[0] == 29 &&
+        holder.Values.Length() == 2 && holder.Values[0] == 29 &&
+        genericSmall.Length() == 2 && genericWide.Length() == 3 &&
+        returned.Length() == 2 && Read(small) == 2 && LiteralReturn().Length() == 2 &&
+        Read({1, 2}) == 2 && assigned.Length() == 2 &&
+        dynamicPackage[0].Length() == 2 && widerPackage[0].Length() == 2 &&
+        Global.Length() == 3 && Global[2] == 0 && inferredCopy[1] == 23 &&
+        appended.TypeOf() == "int[3]" && appendedFixed.Length() == 3 &&
+        appendedFixed[0] == 7 && appendedFixed[2] == 31 &&
+        appendedTwice.TypeOf() == "int[4]" && appendedTwice.Length() == 4 &&
+        appendedTwice[3] == 41 && appendedDynamic.TypeOf() == "int[]" &&
+        appendedDynamic.Length() == 3 && appendedDynamic[2] == 43 &&
+        appendedRows.TypeOf() == "int[2][3]" && appendedRows.Length() == 3 &&
+        appendedRows[2][0] == 29 &&
+        borrowedRows.Length() == 2 && jagged[1].Length() == 1 &&
+        small.TypeOf() == "int[2]" && rows.TypeOf() == "int[2][2]" &&
+        package.TypeOf() == "<int[2]>" && small.TypeName() == "int[]";
+    Return valid ? 0 : 1;
+}

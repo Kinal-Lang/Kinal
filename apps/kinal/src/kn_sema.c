@@ -68,6 +68,8 @@ typedef struct
     StructList *structs;
     EnumList *enums;
     FuncList *func_list;
+    StmtList *globals;
+    int array_length_depth;
     FuncTable funcs;
     GenericInstTable generic_insts;
     Scope *scope;
