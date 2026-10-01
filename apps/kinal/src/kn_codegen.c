@@ -322,12 +322,12 @@ static void closuretable_add(ClosureTable *t, ClosureInfo c)
     t->items[t->count++] = c;
 }
 
-static ClosureInfo *closuretable_find(ClosureTable *t, int id, int is_block)
+static ClosureInfo *closuretable_find(ClosureTable *t, const Expr *expr, int is_block)
 {
     if (!t) return 0;
     for (int i = 0; i < t->count; i++)
     {
-        if (t->items[i].id == id && t->items[i].is_block == is_block)
+        if (t->items[i].expr == expr && t->items[i].is_block == is_block)
             return &t->items[i];
     }
     return 0;
@@ -731,6 +731,7 @@ typedef struct
     LLVMTypeRef pseudo_block_ptr_ty;
     LLVMTypeRef callable_wrapper_ty;
     ClosureTable closures;
+    int next_closure_id;
     const char *current_func_name;
     int target_is_windows;
     int target_is_x86;

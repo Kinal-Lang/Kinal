@@ -5502,7 +5502,7 @@ static void emit_runtime_block_dispatch(Codegen *g, LLVMValueRef ip)
 
 static LLVMValueRef emit_lambda_body_function(Codegen *g, ClosureInfo *ci, Expr *e)
 {
-    const char *name = mangle_helper_name("__kn_lambda_body", "L", e->v.anon_func.id);
+    const char *name = mangle_helper_name("__kn_lambda_body", "L", ci->id);
     int argc = 1 + e->v.anon_func.param_count;
     LLVMTypeRef *args = (LLVMTypeRef *)kn_malloc(sizeof(LLVMTypeRef) * (size_t)argc);
     args[0] = g->i8ptr;
@@ -5587,7 +5587,7 @@ static LLVMValueRef emit_lambda_body_function(Codegen *g, ClosureInfo *ci, Expr 
 
 static LLVMValueRef emit_block_body_function(Codegen *g, ClosureInfo *ci, Expr *e)
 {
-    const char *name = mangle_helper_name("__kn_block_body", "B", e->v.block_lit.id);
+    const char *name = mangle_helper_name("__kn_block_body", "B", ci->id);
     LLVMTypeRef args[4] = { g->i8ptr, g->i64, g->i64, g->i64 };
     LLVMTypeRef fn_ty = LLVMFunctionType(g->voidt, args, 4, 0);
     LLVMValueRef fn = LLVMAddFunction(g->mod, name, fn_ty);
@@ -5741,9 +5741,14 @@ static LLVMValueRef emit_block_body_function(Codegen *g, ClosureInfo *ci, Expr *
 
 static ClosureInfo *ensure_closure_info(Codegen *g, Expr *e, int is_block)
 {
-    int id = is_block ? e->v.block_lit.id : e->v.anon_func.id;
-    ClosureInfo *old = closuretable_find(&g->closures, id, is_block);
+    // Parser IDs are file-local and survive generic cloning. Only the bound
+    // expression identifies a closure's body and capture layout in this module.
+    ClosureInfo *old = closuretable_find(&g->closures, e, is_block);
     if (old) return old;
+
+    // Reserve a physical identity before emitting nested literal bodies; the
+    // closure table itself is populated only after that recursive emission.
+    int id = g->next_closure_id++;
 
     LLVMBasicBlockRef saved_bb = LLVMGetInsertBlock(g->builder);
 
@@ -5767,7 +5772,7 @@ static ClosureInfo *ensure_closure_info(Codegen *g, Expr *e, int is_block)
         if (saved_bb)
             LLVMPositionBuilderAtEnd(g->builder, saved_bb);
 
-        return closuretable_find(&g->closures, id, is_block);
+        return closuretable_find(&g->closures, e, is_block);
     }
 
     const char *wname = is_block
@@ -5851,7 +5856,7 @@ static ClosureInfo *ensure_closure_info(Codegen *g, Expr *e, int is_block)
     if (saved_bb)
         LLVMPositionBuilderAtEnd(g->builder, saved_bb);
 
-    return closuretable_find(&g->closures, id, is_block);
+    return closuretable_find(&g->closures, e, is_block);
 }
 
 static LLVMValueRef gen_bool(Codegen *g, CGValue v)

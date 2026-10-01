@@ -621,6 +621,27 @@ def run_driver_integration_tests(compiler: Path, out_dir: Path) -> int:
         print(f"[OK] {label}")
         return 0
 
+    # File-local parser IDs and IDs retained by generic AST cloning must not
+    # alias another callable body/capture layout in either backend.
+    callable_project = ROOT / "tests" / "pkg" / "callable_identity"
+    callable_native = exe_path(out_dir / "callable_identity_native")
+    callable_knc = out_dir / "callable_identity.knc"
+    run([str(compiler), "build", "--project", str(callable_project),
+         "--profile", "native", "-o", str(callable_native)], cwd=ROOT)
+    run([str(compiler), "vm", "build", "--project", str(callable_project),
+         "--profile", "vm", "-o", str(callable_knc)], cwd=ROOT)
+    callable_expected = "11\n22\nfirst\nsecond\n7\n9\n33\n"
+    for label, command in (
+        ("callable_identity_native", [str(callable_native)]),
+        ("callable_identity_knc", [str(vm_exe), str(callable_knc)]),
+    ):
+        proc = run(command, cwd=ROOT, capture=True)
+        assert isinstance(proc, subprocess.CompletedProcess)
+        if proc.returncode != 0 or (proc.stdout or "").replace("\r\n", "\n") != callable_expected:
+            print(f"[FAIL] {label}: exit={proc.returncode}, stdout={proc.stdout!r}, stderr={proc.stderr!r}")
+            return 1
+        print(f"[OK] {label}")
+
     knc_arith_fx = ROOT / "tests" / "common" / "knc_arith.kn"
     knc_arith = out_dir / "knc_arith.knc"
     run([str(compiler), "vm", "build", "--no-module-discovery", str(knc_arith_fx), "-o", str(knc_arith)], cwd=ROOT)

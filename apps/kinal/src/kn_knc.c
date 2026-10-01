@@ -349,7 +349,7 @@ typedef struct
     Stmt *synthetic_body;
     Type synthetic_ret_type;
     const KnSource *synthetic_src;
-    int synthetic_id;
+    const Expr *synthetic_expr;
     int synthetic_is_block;
     BlockRecordList *synthetic_block_records;
     CaptureBuf captures;
@@ -2462,7 +2462,7 @@ static int ensure_block_function_record(KncFuncState *st, Expr *e)
     for (int i = 0; i < st->program->count; i++)
     {
         KncFuncRecord *it = &st->program->items[i];
-        if (it->synthetic_body && it->synthetic_is_block && it->synthetic_id == e->v.block_lit.id)
+        if (it->synthetic_body && it->synthetic_is_block && it->synthetic_expr == e)
             return it->index;
     }
 
@@ -2489,7 +2489,7 @@ static int ensure_block_function_record(KncFuncState *st, Expr *e)
     rec.synthetic_body = e->v.block_lit.body;
     rec.synthetic_ret_type = type_make(TY_VOID);
     rec.synthetic_src = st->src;
-    rec.synthetic_id = e->v.block_lit.id;
+    rec.synthetic_expr = e;
     rec.synthetic_is_block = 1;
     rec.synthetic_block_records = &e->v.block_lit.records;
     rec.captures = captures;
@@ -2626,7 +2626,7 @@ static int ensure_anon_function_record(KncFuncState *st, Expr *e)
     for (int i = 0; i < st->program->count; i++)
     {
         KncFuncRecord *it = &st->program->items[i];
-        if (it->synthetic_body && !it->synthetic_is_block && it->synthetic_id == e->v.anon_func.id)
+        if (it->synthetic_body && !it->synthetic_is_block && it->synthetic_expr == e)
             return it->index;
     }
 
@@ -2642,7 +2642,7 @@ static int ensure_anon_function_record(KncFuncState *st, Expr *e)
     rec.synthetic_body = e->v.anon_func.body;
     rec.synthetic_ret_type = e->v.anon_func.ret_type;
     rec.synthetic_src = st->src;
-    rec.synthetic_id = e->v.anon_func.id;
+    rec.synthetic_expr = e;
     rec.synthetic_is_block = 0;
     rec.captures = captures;
     rec.reachable = 1;

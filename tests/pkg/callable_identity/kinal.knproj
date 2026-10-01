@@ -1,0 +1,19 @@
+Project CallableIdentity
+{
+    DefaultProfile = "native";
+    SourceSet "main"
+    {
+        Files = ["../../common/callable_identity_main.kn", "../../common/callable_identity_support.kn"];
+        RequireUnit = true;
+    }
+    Profile "native"
+    {
+        Source { Entry = "../../common/callable_identity_main.kn"; Sets = ["main"]; Mode = AllSources; }
+        Build { Backend = Native; Environment = Hosted; }
+    }
+    Profile "vm"
+    {
+        Source { Entry = "../../common/callable_identity_main.kn"; Sets = ["main"]; Mode = AllSources; }
+        Build { Backend = VM; }
+    }
+}

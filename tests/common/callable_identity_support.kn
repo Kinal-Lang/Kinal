@@ -1,0 +1,13 @@
+Unit Tests.CallableIdentitySupport;
+
+Get IO.Console;
+
+Function Object.Function SecondFunction()
+{
+    Return Function int() { Return 22; };
+}
+
+Function Object.Block SecondBlock()
+{
+    Return Block< / IO.Console.PrintLine("second"); / >;
+}

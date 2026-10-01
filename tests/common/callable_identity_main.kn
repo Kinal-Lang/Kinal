@@ -1,0 +1,45 @@
+Unit Tests.CallableIdentity;
+
+Get IO.Console;
+Get Tests.CallableIdentitySupport;
+
+Function Object.Function FirstFunction()
+{
+    Return Function int() { Return 11; };
+}
+
+Function Object.Block FirstBlock()
+{
+    Return Block< / IO.Console.PrintLine("first"); / >;
+}
+
+Function int Invoke<T>(T value)
+{
+    Object.Function callback = Function int() { Return [int](value); };
+    Return [int](callback());
+}
+
+Static Function int Main()
+{
+    Object.Function first = FirstFunction();
+    Object.Function second = Tests.CallableIdentitySupport.SecondFunction();
+    IO.Console.PrintLine(first());
+    IO.Console.PrintLine(second());
+    Object.Block firstBlock = FirstBlock();
+    Object.Block secondBlock = Tests.CallableIdentitySupport.SecondBlock();
+    firstBlock.Run();
+    secondBlock.Run();
+
+    // Generic copies share parser IDs but have different capture layouts.
+    IO.Console.PrintLine(Invoke<int>(7));
+    IO.Console.PrintLine(Invoke<float>(9.5));
+
+    // The nested body is emitted before its parent is cached.
+    Object.Function outer = Function Object.Function()
+    {
+        Return Function int() { Return 33; };
+    };
+    Object.Function inner = outer();
+    IO.Console.PrintLine(inner());
+    Return 0;
+}
