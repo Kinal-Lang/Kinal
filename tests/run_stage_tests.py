@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import re
 import subprocess
 from pathlib import Path
 
@@ -115,6 +116,45 @@ def require_failure(
     if output.exists():
         raise AssertionError(f"{name}: failed check left a stale artifact")
     print(f"[OK] stage_{name}")
+
+
+def check_capture_storage(compiler: Path, out_dir: Path) -> None:
+    source = ROOT / "tests" / "common" / "escaping_capture_storage.kn"
+    for target in ("win64", "win86", "win-arm64", "linux64", "linux-arm64", "mac64", "macos-arm64"):
+        output = out_dir / f"capture-storage-{target}.ll"
+        result = subprocess.run(
+            [str(compiler), "build", "--no-module-discovery", "--emit", "ir",
+             "--target", target, str(source), "-o", str(output)],
+            cwd=ROOT, text=True, capture_output=True, check=False,
+        )
+        if result.returncode != 0:
+            raise AssertionError(f"{target}: capture IR failed:\n{result.stdout}{result.stderr}")
+        ir = output.read_text(encoding="utf-8")
+
+        def body(name: str) -> str:
+            match = re.search(
+                rf"^define [^\n]*@Tests\.EscapingCaptureStorage\.{name}\([^\n]*\) \{{\n(.*?)^\}}",
+                ir, re.MULTILINE | re.DOTALL,
+            )
+            if match is None:
+                raise AssertionError(f"{target}: missing {name}")
+            return match[1]
+
+        repeated = body("RepeatedManagedCapture")
+        stack_slots = set(re.findall(r"(%[\w.]+) = alloca ", repeated))
+        regions = re.findall(r"@__kn_gc_add_root\(ptr [^,]+, ptr (%[\w.]+),", repeated)
+        if not regions or any(region not in stack_slots for region in regions):
+            raise AssertionError(f"{target}: captured heap cell registered as a stack root region")
+        if not re.search(r"^while\.body:[^\n]*\n\s+%capture\.cell\.memory", repeated, re.MULTILINE):
+            raise AssertionError(f"{target}: loop capture allocation lost declaration placement")
+        aggregate = body("AggregateCapture")
+        first_allocation = aggregate.index("call ptr @__kn_gc_alloc")
+        argument_root = re.search(r"@__kn_gc_add_root\([^\n]*%capture\.argument\.root", aggregate)
+        if argument_root is None or argument_root.start() > first_allocation:
+            raise AssertionError(f"{target}: incoming managed parameter was not rooted before allocation")
+        if not re.search(r"and i\d+ %capture\.cell\.rounded\d*, -32", aggregate):
+            raise AssertionError(f"{target}: aligned struct capture lost its alignment")
+        print(f"[OK] stage_capture_storage_{target}")
 
 
 def main() -> int:
@@ -306,6 +346,7 @@ def main() -> int:
     if unsupported_output.exists():
         raise AssertionError("unsupported KNC builtin left a stale artifact")
     print("[OK] stage_knc_unregistered_builtin")
+    check_capture_storage(compiler, out_dir)
     return 0
 
 

@@ -934,6 +934,8 @@ int kn_codegen(const char *out_path, MetaList *metas, FuncList *funcs, ImportLis
     emit_meta_module_export(&g);
     emit_freestanding_entry_wrapper(&g);
 
+    promote_captured_storage(&g);
+
     prune_unused_runtime_symbols(g.mod);
 
     char *verify_err = 0;

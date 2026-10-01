@@ -2062,6 +2062,8 @@ static CGValue gen_expr(Codegen *g, Expr *e)
 
 static LLVMValueRef build_entry_alloca(Codegen *g, LLVMValueRef fn, LLVMTypeRef ty, const char *name)
 {
+    LLVMBasicBlockRef declaration_block = LLVMGetInsertBlock(g->builder);
+    LLVMValueRef declaration_previous = declaration_block ? LLVMGetLastInstruction(declaration_block) : 0;
     LLVMBuilderRef b = LLVMCreateBuilderInContext(g->ctx);
     LLVMBasicBlockRef entry = LLVMGetEntryBasicBlock(fn);
     LLVMValueRef first = LLVMGetFirstInstruction(entry);
@@ -2071,6 +2073,8 @@ static LLVMValueRef build_entry_alloca(Codegen *g, LLVMValueRef fn, LLVMTypeRef 
         LLVMPositionBuilderAtEnd(b, entry);
     LLVMValueRef alloca = LLVMBuildAlloca(b, ty, name);
     LLVMDisposeBuilder(b);
+    if (declaration_block && LLVMGetBasicBlockParent(declaration_block) == fn)
+        capture_record_storage(g, alloca, declaration_block, declaration_previous);
     return alloca;
 }
 
@@ -5417,6 +5421,7 @@ static LLVMValueRef build_closure_env(Codegen *g, ClosureInfo *ci)
     for (int i = 0; i < ci->capture_count; i++)
     {
         VarSymbol *v = scope_find(g->scope, ci->capture_names[i]);
+        if (v) capture_mark_storage(g, v->value);
         LLVMValueRef slot = LLVMBuildInBoundsGEP2(g->builder, g->i8ptr, arr,
                                                   (LLVMValueRef[]){ LLVMConstInt(g->i64, (uint64_t)(i + base), 0) }, 1, "env.slot");
         LLVMValueRef ptr = v ? LLVMBuildBitCast(g->builder, v->value, g->i8ptr, "env.cap.ptr") : LLVMConstNull(g->i8ptr);

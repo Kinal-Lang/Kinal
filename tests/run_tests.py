@@ -642,6 +642,10 @@ def run_driver_integration_tests(compiler: Path, out_dir: Path) -> int:
             return 1
         print(f"[OK] {label}")
 
+    if run_knc_case("knc_escaping_capture_contract", "escaping_capture_contract.kn",
+                    "7\n9\n11\n21\n13\n") != 0:
+        return 1
+
     knc_arith_fx = ROOT / "tests" / "common" / "knc_arith.kn"
     knc_arith = out_dir / "knc_arith.knc"
     run([str(compiler), "vm", "build", "--no-module-discovery", str(knc_arith_fx), "-o", str(knc_arith)], cwd=ROOT)

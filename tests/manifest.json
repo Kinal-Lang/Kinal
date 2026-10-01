@@ -1,5 +1,15 @@
 [
   {
+    "name": "escaping_capture_contract",
+    "file": "tests/common/escaping_capture_contract.kn",
+    "expected": "7\n9\n11\n21\n13\n"
+  },
+  {
+    "name": "escaping_capture_storage",
+    "file": "tests/common/escaping_capture_storage.kn",
+    "expected": ""
+  },
+  {
     "name": "array_type_contract",
     "file": "tests/common/array_type_contract.kn",
     "expected": ""

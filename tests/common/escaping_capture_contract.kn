@@ -1,0 +1,34 @@
+Unit Tests.EscapingCapture;
+
+Get IO.Console;
+Get IO.GC;
+
+Function Object.Function Capture<T>(T value)
+{
+    Return Function int() { Return [int](value); };
+}
+
+Function Object.Function Counter(int start)
+{
+    int value = start;
+    Return Function int(int delta)
+    {
+        value = value + delta;
+        Return value;
+    };
+}
+
+Static Function int Main()
+{
+    Object.Function integer = Capture<int>(7);
+    Object.Function floating = Capture<float>(9.5);
+    Object.Function first = Counter(10);
+    Object.Function second = Counter(20);
+    IO.GC.Collect();
+    IO.Console.PrintLine(integer());
+    IO.Console.PrintLine(floating());
+    IO.Console.PrintLine(first(1));
+    IO.Console.PrintLine(second(1));
+    IO.Console.PrintLine(first(2));
+    Return 0;
+}

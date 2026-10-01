@@ -145,6 +145,17 @@ typedef struct
     int cap;
 } ClosureTable;
 
+typedef struct CaptureStorage CaptureStorage;
+struct CaptureStorage
+{
+    LLVMValueRef address;
+    LLVMBasicBlockRef declaration_block;
+    LLVMValueRef declaration_previous;
+    LLVMValueRef gc_frame;
+    int captured;
+    CaptureStorage *next;
+};
+
 static void functable_add(FuncTable *t, FuncSymbol s)
 {
     if (t->count + 1 > t->cap)
@@ -732,6 +743,8 @@ typedef struct
     LLVMTypeRef callable_wrapper_ty;
     ClosureTable closures;
     int next_closure_id;
+    CaptureStorage *capture_storage;
+    int finalizing_capture_storage;
     const char *current_func_name;
     int target_is_windows;
     int target_is_x86;
@@ -743,7 +756,13 @@ typedef struct
     const char *entry_name;
 } Codegen;
 
+static void capture_record_storage(Codegen *g, LLVMValueRef address,
+                                   LLVMBasicBlockRef block, LLVMValueRef previous);
+static void capture_mark_storage(Codegen *g, LLVMValueRef address);
+static void promote_captured_storage(Codegen *g);
+
 #include "codegen/kn_codegen_support.inc"
 #include "codegen/kn_codegen_expr.inc"
+#include "codegen/kn_codegen_capture.inc"
 #include "codegen/kn_codegen_runtime_stmt.inc"
 #include "codegen/kn_codegen_decl.inc"

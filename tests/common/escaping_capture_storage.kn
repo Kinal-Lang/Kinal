@@ -1,0 +1,178 @@
+Unit Tests.EscapingCaptureStorage;
+
+Get IO.GC;
+
+Object.Function Saved = null;
+int BlockResult = 0;
+
+Function Object.Block BlockCapture(int start)
+{
+    int value = start;
+    Return Block< / value += 1; BlockResult = value; / >;
+}
+
+Function int Save(Object.Function function)
+{
+    Saved = function;
+    Return 42;
+}
+
+Function Object.Function AssignmentCapture()
+{
+    int value = 1;
+    // The assignment address is computed before its RHS constructs the closure.
+    value = Save(Function int() { Return value; });
+    Return Saved;
+}
+
+Function Object.Function ConditionalCapture(bool positive)
+{
+    int value = 5;
+    Object.Function result = null;
+    If (positive) result = Function int() { Return value; };
+    Else result = Function int() { Return -value; };
+    value = 8;
+    Return result;
+}
+
+Function Object.Function[] SharedCapture()
+{
+    int value = 10;
+    Object.Function increment = Function int() { value += 1; Return value; };
+    Object.Function read = Function int() { Return value; };
+    Object.Function[] result = { increment, read };
+    Return result;
+}
+
+Function Object.Function[] LoopCapture()
+{
+    Object.Function[3] result;
+    int index = 0;
+    While (index < 3)
+    {
+        int local = index + 10;
+        result[index] = Function int() { Return local; };
+        index += 1;
+    }
+    Return result;
+}
+
+Function Object.Function SharedLoopCapture()
+{
+    int index = 0;
+    Object.Function result = null;
+    While (index < 3)
+    {
+        result = Function int() { Return index; };
+        index += 1;
+    }
+    Return result;
+}
+
+Function Object.Function NestedCapture(int value)
+{
+    Return Function Object.Function(int delta)
+    {
+        int local = delta;
+        Return Function int() { value += local; Return value; };
+    };
+}
+
+Struct AlignedPair By Align(32)
+{
+    int Left;
+    int Right;
+}
+
+Function Object.Function AggregateCapture(string text)
+{
+    AlignedPair pair;
+    pair.Left = 20;
+    pair.Right = 22;
+    int[3] numbers = { 7, 8 };
+    <int, string> package = <9, text>;
+    Return Function bool()
+    {
+        IO.GC.Collect();
+        Return pair.Left + pair.Right == 42 && numbers[1] == 8 &&
+            numbers[2] == 0 && package[0] == 9 && package[1] == text;
+    };
+}
+
+Class Owner
+{
+    Public int Value;
+
+    Public Constructor(int value) { This.Value = value; }
+
+    Public Function Object.Function Capture(int offset)
+    {
+        Return Function int() { Return This.Value + offset; };
+    }
+}
+
+Function Object.Function MethodCapture()
+{
+    Owner owner = New Owner(30);
+    Return owner.Capture(12);
+}
+
+Function Object.Function CatchCapture()
+{
+    Try { Throw "caught-" + [string](42); }
+    Catch (string error)
+    {
+        Return Function string() { Return error; };
+    }
+    Return null;
+}
+
+Function bool RepeatedManagedCapture()
+{
+    Object.Function previous = null;
+    int index = 0;
+    While (index < 100)
+    {
+        string text = "iteration-" + [string](index);
+        previous = Function string() { Return text; };
+        // Old loop-local cells must not remain registered as stack root regions.
+        IO.GC.Collect();
+        If ([string](previous()) != text) Return false;
+        index += 1;
+    }
+    Return [string](previous()) == "iteration-99";
+}
+
+Static Function int Main()
+{
+    Object.Function assigned = AssignmentCapture();
+    Object.Function positive = ConditionalCapture(true);
+    Object.Function negative = ConditionalCapture(false);
+    Object.Function[] shared = SharedCapture();
+    Object.Function[] loops = LoopCapture();
+    Object.Function induction = SharedLoopCapture();
+    Object.Function outer = NestedCapture(20);
+    Object.Function inner = [Object.Function](outer(2));
+    Object.Function aggregate = AggregateCapture("managed-" + [string](42));
+    Object.Function method = MethodCapture();
+    Object.Function caught = CatchCapture();
+    Object.Block block = BlockCapture(30);
+    IO.GC.Collect();
+    If ([int](assigned()) != 42) Return 1;
+    If ([int](positive()) != 8 || [int](negative()) != -8) Return 2;
+    If ([int](shared[0]()) != 11 || [int](shared[1]()) != 11) Return 3;
+    If ([int](shared[0]()) != 12 || [int](shared[1]()) != 12) Return 4;
+    If ([int](loops[0]()) != 10 || [int](loops[1]()) != 11 || [int](loops[2]()) != 12) Return 5;
+    If ([int](induction()) != 3) Return 6;
+    If ([int](inner()) != 22 || [int](inner()) != 24) Return 7;
+    If (![bool](aggregate())) Return 8;
+    If ([int](method()) != 42) Return 9;
+    If ([string](caught()) != "caught-42") Return 10;
+    If (!RepeatedManagedCapture()) Return 11;
+    block.Run();
+    If (BlockResult != 31) Return 12;
+    IO.GC.Collect();
+    block.Run();
+    If (BlockResult != 32) Return 13;
+    Return 0;
+}
