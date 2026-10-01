@@ -1,0 +1,10 @@
+Project CallableSameUnit
+{
+    DefaultProfile = "native";
+    SourceSet "source" { Files = ["Main.kn", "First.kn", "Second.kn"]; RequireUnit = true; }
+    Profile "native"
+    {
+        Source { Entry = "Main.kn"; Sets = ["source"]; Mode = AllSources; }
+        Build { Backend = Native; Environment = Hosted; }
+    }
+}

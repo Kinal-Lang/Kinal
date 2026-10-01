@@ -1,0 +1,10 @@
+Project CaptureControlFlow
+{
+    DefaultProfile = "native";
+    SourceSet "source" { Files = ["../../../common/capture_control_flow.kn"]; RequireUnit = true; }
+    Profile "native"
+    {
+        Source { Entry = "../../../common/capture_control_flow.kn"; Sets = ["source"]; Mode = FileOnly; }
+        Build { Backend = Native; Environment = Hosted; }
+    }
+}

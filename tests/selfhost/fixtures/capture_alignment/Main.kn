@@ -1,0 +1,36 @@
+Unit Tests.CaptureAlignment;
+
+Get IO.GC;
+
+Struct AlignedValue By Align(32)
+{
+    int Value;
+}
+
+Trusted Function bool IsAligned(AlignedValue* value)
+{
+    Return ([usize](value) & [usize](31)) == [usize](0);
+}
+
+Function Object.Function MakeCapture(int value)
+{
+    AlignedValue record;
+    record.Value = value;
+    Return Function bool()
+    {
+        Return IsAligned(&record) && record.Value == value;
+    };
+}
+
+Static Function int Main()
+{
+    int index = 0;
+    While (index < 128)
+    {
+        Object.Function check = MakeCapture(index);
+        IO.GC.Collect();
+        If (![bool](check())) Return 1;
+        index += 1;
+    }
+    Return 0;
+}

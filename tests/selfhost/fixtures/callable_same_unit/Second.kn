@@ -1,0 +1,14 @@
+Unit Tests.CallableSameUnit;
+Get IO.Console;
+
+Function Object.Function Second()
+{
+    int value = 22;
+    Return Function int() { Return value; };
+}
+
+Function Object.Block SecondBlock()
+{
+    string text = "second";
+    Return Block< / IO.Console.PrintLine(text); / >;
+}

@@ -679,6 +679,19 @@ void *kn_sh_llvm_build_size_of(void *type)
     return type ? LLVMSizeOf((LLVMTypeRef)type) : 0;
 }
 
+int kn_sh_llvm_abi_alignment(void *module_handle, void *type)
+{
+    KnShLlvmModule *state = module_state(module_handle);
+    if (!state || !state->target_machine || !type ||
+        !LLVMTypeIsSized((LLVMTypeRef)type))
+    {
+        set_error("ABI alignment requires a sized type and configured target");
+        return 0;
+    }
+    return (int)LLVMABIAlignmentOfType(LLVMGetModuleDataLayout(state->module),
+                                      (LLVMTypeRef)type);
+}
+
 KN_SH_BUILD_BINARY(kn_sh_llvm_build_add, LLVMBuildAdd)
 KN_SH_BUILD_BINARY(kn_sh_llvm_build_sub, LLVMBuildSub)
 KN_SH_BUILD_BINARY(kn_sh_llvm_build_mul, LLVMBuildMul)

@@ -4985,12 +4985,26 @@ Class NativeBackend
         }
     }
 
+    Public Trusted Function void PrepareCaptureRoot(
+        LlvmFunctionContext context, ValueSymbol symbol)
+    {
+        If (symbol == null || !symbol.IsCaptured ||
+            context.FindCaptureRoot(symbol) != null) Return;
+        byte* bytePointer = This.Module.PointerType(This.Module.IntType(8));
+        byte* slot = This.Module.Alloca(bytePointer, This.Unique("captured_root"));
+        This.Module.Store(This.Module.ConstNull(bytePointer), slot);
+        context.AddCaptureRoot(New LlvmCaptureRoot(symbol, slot));
+        This.AddGcRoot(context,
+            This.Semantics.MakePointerType(This.Semantics.Primitive("byte")), slot);
+    }
+
     Public Trusted Function void PrepareStatementRoots(
         LlvmFunctionContext context, HirStatement statement)
     {
         HirStatement current = statement;
         While (current != null)
         {
+            This.PrepareCaptureRoot(context, current.DeclaredSymbol);
             If (current.Kind == [int](StatementKind.Switch))
                 This.PrepareExpressionRoot(context, current.Expression);
             This.PrepareExpressionRoots(context, current.Expression);
@@ -5001,6 +5015,29 @@ Class NativeBackend
             This.PrepareStatementRoots(context, current.ElseBranch);
             current = current.Next;
         }
+    }
+
+    Public Trusted Function void PrepareFunctionRoots(
+        LlvmFunctionContext context, HirStatement body)
+    {
+        This.PrepareCaptureRoot(context, context.Binding.Symbol.Receiver);
+        ParameterSymbol parameter = context.Binding.Symbol.FirstParameter;
+        While (parameter != null)
+        {
+            This.PrepareCaptureRoot(context, parameter.Value);
+            parameter = parameter.Next;
+        }
+        This.PrepareStatementRoots(context, body);
+    }
+
+    Public Trusted Function void AddVariableGcRoot(LlvmFunctionContext context,
+        ValueSymbol symbol, TypeSymbol type, byte* address)
+    {
+        // Captured storage is traced through its entry-owned pointer slot.
+        // Registering the heap cell itself would leave stale scan regions
+        // when a repeated declaration replaces it and the old cell is freed.
+        If (symbol == null || !symbol.IsCaptured)
+            This.AddGcRoot(context, type, address);
     }
 
     Public Trusted Function byte* ExpressionRootAddress(
@@ -5035,18 +5072,44 @@ Class NativeBackend
             Return address;
         }
 
+        LlvmCaptureRoot root = context.FindCaptureRoot(symbol);
+        If (root == null)
+        {
+            This.Fail("captured declaration has no entry root: " + name);
+            Return null;
+        }
+        byte* valueType = This.TypeHandle(type);
+        int alignment = This.Module.AbiAlignment(valueType);
+        If (This.Semantics.IsStructType(type) && type.Declaration.Align > alignment)
+            alignment = type.Declaration.Align;
+        If (alignment <= 0)
+        {
+            This.Fail("cannot determine captured storage alignment: " + type.QualifiedName());
+            Return null;
+        }
         byte* bytePointer = This.Module.PointerType(This.Module.IntType(8));
+        byte* pointerInteger = This.Module.IntType(This.Semantics.Session.Target.PointerBits);
+        byte* padding = This.Module.ConstInt(pointerInteger, alignment - 1);
+        byte* allocationSize = This.Module.Add(This.Module.SizeOf(valueType), padding,
+            This.Unique("captured_size"));
         byte* storage = This.CallKinalRuntime(
             "IO.Kinal.Runtime.GarbageCollector.Allocate", 1,
-            This.Types1(This.Module.SizeOf(This.TypeHandle(type))),
+            This.Types1(allocationSize),
             This.Unique("captured_storage"));
+        byte* raw = This.Module.PointerToInt(storage, pointerInteger,
+            This.Unique("captured_raw"));
+        byte* aligned = This.Module.And(
+            This.Module.Add(raw, padding, This.Unique("captured_padded")),
+            This.Module.Not(padding, This.Unique("captured_mask")),
+            This.Unique("captured_aligned"));
+        storage = This.Module.IntToPointer(aligned, bytePointer,
+            This.Unique("captured_cell"));
         byte* address = This.Module.BitCast(storage,
-            This.Module.PointerType(This.TypeHandle(type)), This.Unique("captured_address"));
+            This.Module.PointerType(valueType), This.Unique("captured_address"));
 
-        // Keep the cell itself alive until the callable environment owns it.
-        byte* rootSlot = This.Module.Alloca(bytePointer, This.Unique("captured_root"));
-        This.Module.Store(storage, rootSlot);
-        This.AddGcRoot(context, This.Semantics.MakePointerType(type), rootSlot);
+        // The collector recognizes interior pointers, including this aligned
+        // address. The slot registration is emitted once, at function entry.
+        This.Module.Store(storage, root.Address);
         Return address;
     }
 
@@ -5216,7 +5279,7 @@ Class NativeBackend
             This.Module.Store(boundPattern.Handle, address);
             context.AddVariable(New LlvmVariable(statement.DeclaredSymbol.Name,
                 statement.DeclaredSymbol, statement.DeclaredType, address));
-            This.AddGcRoot(context, statement.DeclaredType, address);
+            This.AddVariableGcRoot(context, statement.DeclaredSymbol, statement.DeclaredType, address);
         }
         This.EmitStatementList(context, statement.FirstChild);
         If (!This.Module.IsTerminated(This.Module.CurrentBlock())) This.Module.Branch(mergeBlock);
@@ -5319,10 +5382,6 @@ Class NativeBackend
         byte* indexAddress = This.Module.Alloca(int64Type,
             This.Unique("foreach_index"));
         This.Module.Store(This.Module.ConstInt(int64Type, 0), indexAddress);
-        byte* itemAddress = This.AllocateVariableAddress(context,
-            statement.DeclaredSymbol, statement.DeclaredType,
-            This.Unique("foreach_" + statement.Name));
-        This.AddGcRoot(context, statement.DeclaredType, itemAddress);
 
         byte* function = context.Binding.Function;
         byte* conditionBlock = This.Module.AppendBlock(function,
@@ -5356,6 +5415,12 @@ Class NativeBackend
         context.BreakTarget = endBlock;
         context.ContinueTarget = stepBlock;
         This.Module.PositionAtEnd(bodyBlock);
+        // A foreach binding is a fresh lexical instance on every iteration.
+        byte* itemAddress = This.AllocateVariableAddress(context,
+            statement.DeclaredSymbol, statement.DeclaredType,
+            This.Unique("foreach_" + statement.Name));
+        This.AddVariableGcRoot(context, statement.DeclaredSymbol,
+            statement.DeclaredType, itemAddress);
         TypeSymbol sourceItemType = stringSource ?
             This.Semantics.Primitive("char") : source.Type.ElementType;
         byte* data = stringSource ? currentSource.Handle :
@@ -5477,7 +5542,7 @@ Class NativeBackend
             This.Module.Store(caught, address);
             context.AddVariable(New LlvmVariable(handler.DeclaredSymbol.Name,
                 handler.DeclaredSymbol, handler.DeclaredType, address));
-            This.AddGcRoot(context, handler.DeclaredType, address);
+            This.AddVariableGcRoot(context, handler.DeclaredSymbol, handler.DeclaredType, address);
         }
         This.EmitStatementList(context, handler.FirstChild);
         context.FirstVariable = savedVariables;
@@ -5532,7 +5597,7 @@ Class NativeBackend
             LlvmVariable variable = New LlvmVariable(statement.Name, statement.DeclaredSymbol,
                 statement.DeclaredType, address);
             context.AddVariable(variable);
-            This.AddGcRoot(context, statement.DeclaredType, address);
+            This.AddVariableGcRoot(context, statement.DeclaredSymbol, statement.DeclaredType, address);
             LlvmValue value = null;
             If (statement.DeclaredType.Kind == [int](TypeKind.ArrayType) &&
                 statement.FixedArrayLength >= 0 &&
@@ -5620,7 +5685,7 @@ Class NativeBackend
                 "IO.Kinal.Runtime.GarbageCollector.PushFrame", 0,
                 This.Types0(), This.Unique("gc_frame"));
         If (context.GcFrame != null)
-            This.PrepareStatementRoots(context, hirFunction.Body);
+            This.PrepareFunctionRoots(context, hirFunction.Body);
 
         If (binding.Symbol.FirstCapture != null)
         {
@@ -5725,7 +5790,7 @@ Class NativeBackend
                 "IO.Kinal.Runtime.GarbageCollector.PushFrame", 0,
                 This.Types0(), This.Unique("gc_frame"));
         If (context.GcFrame != null)
-            This.PrepareStatementRoots(context, hirFunction.Body);
+            This.PrepareFunctionRoots(context, hirFunction.Body);
 
         int parameterIndex = 0;
         If (binding.Symbol.FirstCapture != null)
@@ -5761,7 +5826,7 @@ Class NativeBackend
             This.Module.Store(This.Module.Parameter(binding.Function, parameterIndex), address);
             context.AddVariable(New LlvmVariable("This", binding.Symbol.Receiver,
                 binding.Symbol.OwnerType, address));
-            This.AddGcRoot(context, binding.Symbol.OwnerType, address);
+            This.AddVariableGcRoot(context, binding.Symbol.Receiver, binding.Symbol.OwnerType, address);
             parameterIndex = parameterIndex + 1;
         }
         ParameterSymbol parameter = binding.Symbol.FirstParameter;
@@ -5771,7 +5836,7 @@ Class NativeBackend
                 parameter.Type, This.Sanitize(parameter.Name));
             This.Module.Store(This.Module.Parameter(binding.Function, parameterIndex), address);
             context.AddVariable(New LlvmVariable(parameter.Name, parameter.Value, parameter.Type, address));
-            This.AddGcRoot(context, parameter.Type, address);
+            This.AddVariableGcRoot(context, parameter.Value, parameter.Type, address);
             parameterIndex = parameterIndex + 1;
             parameter = parameter.Next;
         }

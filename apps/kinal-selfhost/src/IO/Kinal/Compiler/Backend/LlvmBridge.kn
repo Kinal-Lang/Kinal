@@ -113,6 +113,8 @@ Extern Function byte* NativeBuildExtractValue(byte* module, byte* aggregate, int
 Extern Function byte* NativeBuildInsertValue(byte* module, byte* aggregate, byte* value, int index, string name) By C;
 [LinkName("kn_sh_llvm_build_size_of")]
 Extern Function byte* NativeBuildSizeOf(byte* type) By C;
+[LinkName("kn_sh_llvm_abi_alignment")]
+Extern Function int NativeAbiAlignment(byte* module, byte* type) By C;
 
 [LinkName("kn_sh_llvm_build_add")]
 Extern Function byte* NativeBuildAdd(byte* module, byte* left, byte* right, string name) By C;
@@ -438,6 +440,7 @@ Class LlvmModule
         Return NativeBuildInsertValue(This.Handle, aggregate, value, index, name);
     }
     Public Trusted Function byte* SizeOf(byte* type) { Return NativeBuildSizeOf(type); }
+    Public Trusted Function int AbiAlignment(byte* type) { Return NativeAbiAlignment(This.Handle, type); }
 
     Public Trusted Function byte* Add(byte* left, byte* right, string name) { Return NativeBuildAdd(This.Handle, left, right, name); }
     Public Trusted Function byte* Subtract(byte* left, byte* right, string name) { Return NativeBuildSub(This.Handle, left, right, name); }

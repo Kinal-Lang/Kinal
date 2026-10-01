@@ -18,7 +18,7 @@ from audit_manifest_native import (
 )
 
 
-EXPECTED_WINDOWS_RUNTIME_CASES = 165
+EXPECTED_WINDOWS_RUNTIME_CASES = 167
 ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;]*m")
 
 

@@ -1,0 +1,16 @@
+Unit Tests.CallableSameUnit;
+
+Get IO.Console;
+
+Static Function int Main()
+{
+    Object.Function first = First();
+    Object.Function second = Second();
+    Object.Block firstBlock = FirstBlock();
+    Object.Block secondBlock = SecondBlock();
+    IO.Console.PrintLine(first());
+    IO.Console.PrintLine(second());
+    firstBlock.Run();
+    secondBlock.Run();
+    Return 0;
+}

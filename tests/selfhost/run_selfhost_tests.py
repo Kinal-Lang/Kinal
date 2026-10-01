@@ -12,6 +12,7 @@ from pathlib import Path
 from check_targets import check_targets
 from check_freestanding import check_freestanding
 from check_array_types import check_array_types
+from check_callables import check_callables
 
 
 def run(command: list[str], *, cwd: Path) -> subprocess.CompletedProcess[str]:
@@ -294,6 +295,8 @@ def main() -> int:
                                       stage0_reference=args.stage0_role == "reference"))
     results.append(check_array_types(compiler, stage0, root, out_dir / "array-types",
                                     stage0_reference=args.stage0_role == "reference"))
+    results.append(check_callables(compiler, stage0, root, out_dir / "callables",
+                                  stage0_reference=args.stage0_role == "reference"))
 
     fixture = root / "tests" / "selfhost" / "fixtures" / "lex_basic.kn"
     lex = run([str(compiler), "lex", str(fixture)], cwd=root)
@@ -1063,6 +1066,21 @@ def main() -> int:
     )
     results.append({"name": "native_backend_fixture", "ok": True})
 
+    numeric_project = root / "tests/selfhost/fixtures/float_string_roundtrip/kinal.knproj"
+    numeric_tools = [("selfhost", compiler)]
+    if args.stage0_role == "reference":
+        numeric_tools.insert(0, ("stage0", stage0))
+    for label, tool in numeric_tools:
+        output = out_dir / f"float-string-{label}{executable_suffix}"
+        built = run([str(tool), "build", "--project", str(numeric_project),
+                     "--profile", "native", "-o", str(output)], cwd=root)
+        require(built.returncode == 0, f"{label} float formatting build failed", built)
+        executed = run([str(output)], cwd=root)
+        require(executed.returncode == 0 and not executed.stderr
+                and executed.stdout.replace("\r\n", "\n") == "1.25\n-2.5\n0.125\ntrue\ntrue\ntrue\n",
+                f"{label} float formatting lost fractional/range information", executed)
+    results.append({"name": "float_string_roundtrip", "ok": True})
+
     compat_executable = out_dir / f"stage0-build-cli{executable_suffix}"
     compat_object = out_dir / "stage0-build-cli.obj"
     compat_ir = out_dir / "stage0-build-cli.ll"
@@ -1194,7 +1212,7 @@ def main() -> int:
         require(package_checks.returncode == 0,
                 f"{role} project package contract failed", package_checks)
     results.append({"name": "project_package_contract", "ok": True,
-                    "cases_per_compiler": 33, "compilers": len(checked_compilers)})
+                    "cases_per_compiler": 36, "compilers": len(checked_compilers)})
 
     bundle_checks = run(
         [sys.executable, str(root / "tests" / "selfhost" / "test_stage0_bundle.py")],

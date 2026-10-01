@@ -1,0 +1,10 @@
+Project FloatStringRoundtrip
+{
+    DefaultProfile = "native";
+    SourceSet "source" { Files = ["../../../common/float_string_roundtrip.kn"]; RequireUnit = true; }
+    Profile "native"
+    {
+        Source { Entry = "../../../common/float_string_roundtrip.kn"; Sets = ["source"]; Mode = FileOnly; }
+        Build { Backend = Native; Environment = Hosted; }
+    }
+}

@@ -1,0 +1,14 @@
+Unit Tests.CallableSameUnit;
+Get IO.Console;
+
+Function Object.Function First()
+{
+    int value = 11;
+    Return Function int() { Return value; };
+}
+
+Function Object.Block FirstBlock()
+{
+    string text = "first";
+    Return Block< / IO.Console.PrintLine(text); / >;
+}

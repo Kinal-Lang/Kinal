@@ -136,6 +136,22 @@ Class LlvmVariable
     }
 }
 
+// A captured declaration owns one entry-registered pointer slot. Its heap
+// cell is replaced each time the lexical declaration executes.
+Class LlvmCaptureRoot
+{
+    Public ValueSymbol Symbol;
+    Public byte* Address;
+    Public LlvmCaptureRoot Next;
+
+    Public Safe Constructor(ValueSymbol symbol, byte* address)
+    {
+        This.Symbol = symbol;
+        This.Address = address;
+        This.Next = null;
+    }
+}
+
 Class LlvmExpressionRoot
 {
     Public HirExpression Expression;
@@ -222,6 +238,7 @@ Class LlvmFunctionContext
     Public LlvmFunctionBinding Binding;
     Public LlvmVariable FirstVariable;
     Public LlvmExpressionRoot FirstExpressionRoot;
+    Public LlvmCaptureRoot FirstCaptureRoot;
     Public LlvmBlockBinding FirstBlock;
     Public LlvmBlockBinding ActiveBlock;
     Public byte* BreakTarget;
@@ -237,6 +254,7 @@ Class LlvmFunctionContext
         This.Binding = binding;
         This.FirstVariable = null;
         This.FirstExpressionRoot = null;
+        This.FirstCaptureRoot = null;
         This.FirstBlock = null;
         This.ActiveBlock = null;
         This.BreakTarget = null;
@@ -270,6 +288,23 @@ Class LlvmFunctionContext
     {
         root.Next = This.FirstExpressionRoot;
         This.FirstExpressionRoot = root;
+    }
+
+    Public Safe Function void AddCaptureRoot(LlvmCaptureRoot root)
+    {
+        root.Next = This.FirstCaptureRoot;
+        This.FirstCaptureRoot = root;
+    }
+
+    Public Safe Function LlvmCaptureRoot FindCaptureRoot(ValueSymbol symbol)
+    {
+        LlvmCaptureRoot current = This.FirstCaptureRoot;
+        While (current != null)
+        {
+            If (current.Symbol == symbol) Return current;
+            current = current.Next;
+        }
+        Return null;
     }
 
     Public Safe Function LlvmExpressionRoot FindExpressionRoot(HirExpression expression)

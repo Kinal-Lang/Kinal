@@ -1,0 +1,27 @@
+Unit Tests.CaptureForeach;
+
+Get IO.Console;
+Get IO.GC;
+
+Function Object.Function[] MakeCaptures()
+{
+    int[] values = {10, 20, 30};
+    Object.Function[3] functions;
+    int index = 0;
+    Foreach (int value Is values)
+    {
+        functions[index] = Function int() { Return value; };
+        index += 1;
+    }
+    Return functions;
+}
+
+Static Function int Main()
+{
+    Object.Function[] functions = MakeCaptures();
+    IO.GC.Collect();
+    IO.Console.PrintLine(functions[0]());
+    IO.Console.PrintLine(functions[1]());
+    IO.Console.PrintLine(functions[2]());
+    Return 0;
+}

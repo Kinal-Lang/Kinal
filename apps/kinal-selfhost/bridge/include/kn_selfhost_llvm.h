@@ -85,6 +85,7 @@ void *kn_sh_llvm_build_extract_value(void *module_handle, void *aggregate,
 void *kn_sh_llvm_build_insert_value(void *module_handle, void *aggregate,
                                     void *value, int index, const char *name);
 void *kn_sh_llvm_build_size_of(void *type);
+int kn_sh_llvm_abi_alignment(void *module_handle, void *type);
 
 /* Scalar instructions and casts. */
 void *kn_sh_llvm_build_add(void *module_handle, void *left, void *right,

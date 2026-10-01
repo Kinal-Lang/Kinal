@@ -191,9 +191,9 @@ Class SemanticCompilation
         This.LocalLiteralCount = This.LocalLiteralCount + 1;
         string literalKind = expression.Kind == [int](ExpressionKind.BlockLiteral) ?
             "__local_block_" : "__local_function_";
-        int literalId = expression.LiteralId >= 0 ?
-            expression.LiteralId : This.LocalLiteralCount;
-        string name = literalKind + [string](literalId);
+        // Parser IDs restart per file and generic instances reuse syntax.
+        // Every bound literal needs a distinct semantic/emission identity.
+        string name = literalKind + [string](This.LocalLiteralCount);
         string returnType = expression.Kind == [int](ExpressionKind.BlockLiteral) ?
             "void" : expression.Text;
         FunctionDecl literal = New FunctionDecl(name, returnType,
@@ -213,9 +213,7 @@ Class SemanticCompilation
         syntax.AddFunction(literal);
         UnitSymbol unit = This.FindSyntaxUnit(syntax);
         If (unit == null) Return null;
-        This.IndexFunction(unit, null, literal);
-        FunctionSymbol function = This.FindQualifiedFunction(syntax.UnitName + "." + name,
-            literal.ParameterCount());
+        FunctionSymbol function = This.IndexFunction(unit, null, literal);
         function.IsBlockLiteral = expression.Kind == [int](ExpressionKind.BlockLiteral);
         function.BlockRecords = This.BlockRecordNames(expression.Body == null ?
             null : expression.Body.FirstChild);
@@ -762,7 +760,7 @@ Class SemanticCompilation
         current.Next = function;
     }
 
-    Public Safe Function void IndexFunction(UnitSymbol unit, TypeSymbol owner, FunctionDecl declaration)
+    Public Safe Function FunctionSymbol IndexFunction(UnitSymbol unit, TypeSymbol owner, FunctionDecl declaration)
     {
         FunctionSymbol function = New FunctionSymbol(unit.Name, owner, declaration);
         function.Syntax = unit.Syntax;
@@ -802,6 +800,7 @@ Class SemanticCompilation
         function.IsVariadic = This.FindAttribute(declaration, "Variadic") != null;
         This.ValidateFunctionDeclaration(function);
         This.AddFunctionSymbol(function);
+        Return function;
     }
 
     Public Safe Function void IndexFunctions()
