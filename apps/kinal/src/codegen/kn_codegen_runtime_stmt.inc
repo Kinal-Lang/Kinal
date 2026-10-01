@@ -3152,6 +3152,34 @@ static LLVMValueRef gen_global_initializer(Codegen *g, Type type, Expr *init)
     return cast_value(g, gen_expr(g, init), type);
 }
 
+static void register_global_storage_roots(Codegen *g, LLVMValueRef global, Type type)
+{
+    if (!g->fn_gc_add_global_root || !is_gc_root_type(type))
+        return;
+    LLVMValueRef size = LLVMSizeOf(llvm_type(g, type));
+    if (LLVMGetIntTypeWidth(LLVMTypeOf(size)) != 64)
+        size = LLVMBuildZExtOrBitCast(g->builder, size, g->i64, "g.root.size");
+    LLVMValueRef address = LLVMBuildBitCast(g->builder, global, g->i8ptr, "g.root.address");
+    LLVMBuildCall2(g->builder, g->fn_gc_add_global_root_ty, g->fn_gc_add_global_root,
+                  (LLVMValueRef[]){ address, size }, 2, "");
+
+    // A fixed array's loader-owned backing is not a managed allocation. The
+    // descriptor alone cannot keep managed elements in that storage alive.
+    if (type.kind == TY_ARRAY && type.array_len > 0 &&
+        is_gc_root_type(type_immediate_elem(type)))
+    {
+        LLVMValueRef initial = LLVMGetInitializer(global);
+        LLVMValueRef storage = LLVMGetOperand(initial, 0);
+        LLVMTypeRef storage_type = LLVMArrayType(llvm_type(g, type_immediate_elem(type)),
+                                                (unsigned)type.array_len);
+        LLVMValueRef storage_size = LLVMSizeOf(storage_type);
+        if (LLVMGetIntTypeWidth(LLVMTypeOf(storage_size)) != 64)
+            storage_size = LLVMBuildZExtOrBitCast(g->builder, storage_size, g->i64, "g.root.storage.size");
+        LLVMBuildCall2(g->builder, g->fn_gc_add_global_root_ty, g->fn_gc_add_global_root,
+                      (LLVMValueRef[]){ storage, storage_size }, 2, "");
+    }
+}
+
 static void codegen_global_init(Codegen *g, StmtList *globals)
 {
     if (!global_init_needed(g, globals))
@@ -3205,22 +3233,34 @@ static void codegen_global_init(Codegen *g, StmtList *globals)
     g->loop_depth = 0;
     g->try_depth = 0;
 
+    // An initializer may call a function which writes a later global/static
+    // slot and then collects. Register the complete storage graph first.
+    for (int i = 0; i < globals->count; i++)
+    {
+        Stmt *st = globals->items[i];
+        if (!st || st->kind != ST_VAR) continue;
+        VarSymbol *gv = scope_find(g->global_scope, st->v.var.name);
+        if (gv) register_global_storage_roots(g, gv->value, gv->type);
+    }
+    for (int ci = 0; ci < g->classes.count; ci++)
+    {
+        ClassSymbol *cs = &g->classes.items[ci];
+        if (!cs || !cs->decl) continue;
+        for (int fi = 0; fi < cs->decl->fields.count; fi++)
+        {
+            Field *field = &cs->decl->fields.items[fi];
+            if (!field->is_static) continue;
+            LLVMValueRef global = ensure_static_field_global(g, cg_class_qname(cs->decl), field);
+            register_global_storage_roots(g, global, field->type);
+        }
+    }
+
     for (int i = 0; i < globals->count; i++)
     {
         Stmt *st = globals->items[i];
         if (!st || st->kind != ST_VAR) continue;
         VarSymbol *gv = scope_find(g->global_scope, st->v.var.name);
         if (!gv) continue;
-
-        if (g->fn_gc_add_global_root && is_gc_root_type(gv->type))
-        {
-            LLVMValueRef sizev = LLVMSizeOf(llvm_type(g, gv->type));
-            if (LLVMGetTypeKind(LLVMTypeOf(sizev)) != LLVMIntegerTypeKind || LLVMGetIntTypeWidth(LLVMTypeOf(sizev)) != 64)
-                sizev = LLVMBuildZExtOrBitCast(g->builder, sizev, g->i64, "g.root.sz");
-            LLVMValueRef addr = LLVMBuildBitCast(g->builder, gv->value, g->i8ptr, "g.root.addr");
-            LLVMBuildCall2(g->builder, g->fn_gc_add_global_root_ty, g->fn_gc_add_global_root,
-                           (LLVMValueRef[]){ addr, sizev }, 2, "");
-        }
 
         if (st->v.var.init)
         {
@@ -3245,16 +3285,6 @@ static void codegen_global_init(Codegen *g, StmtList *globals)
             if (!f->is_static) continue;
 
             LLVMValueRef gv = ensure_static_field_global(g, cg_class_qname(cs->decl), f);
-
-            if (g->fn_gc_add_global_root && is_gc_root_type(f->type))
-            {
-                LLVMValueRef sizev = LLVMSizeOf(llvm_type(g, f->type));
-                if (LLVMGetTypeKind(LLVMTypeOf(sizev)) != LLVMIntegerTypeKind || LLVMGetIntTypeWidth(LLVMTypeOf(sizev)) != 64)
-                    sizev = LLVMBuildZExtOrBitCast(g->builder, sizev, g->i64, "sf.root.sz");
-                LLVMValueRef addr = LLVMBuildBitCast(g->builder, gv, g->i8ptr, "sf.root.addr");
-                LLVMBuildCall2(g->builder, g->fn_gc_add_global_root_ty, g->fn_gc_add_global_root,
-                               (LLVMValueRef[]){ addr, sizev }, 2, "");
-            }
 
             if (f->init)
             {

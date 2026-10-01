@@ -1,5 +1,10 @@
 [
   {
+    "name": "global_fixed_gc",
+    "file": "tests/common/global_fixed_gc.kn",
+    "expected": "true\ntrue\ntrue\n"
+  },
+  {
     "name": "escaping_capture_contract",
     "file": "tests/common/escaping_capture_contract.kn",
     "expected": "7\n9\n11\n21\n13\n"
