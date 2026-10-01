@@ -5,6 +5,7 @@ import argparse
 import json
 import platform
 import re
+import sys
 from pathlib import Path
 
 from check_targets import TARGETS, check_object, function_body, invoke
@@ -19,6 +20,11 @@ Enum State By u8 { Ready = 7 }
 Struct Pair { int Left; int Right; }
 int GlobalValue = 5;
 int AddressCalls = 0;
+Const int Capacity = 3 + 2;
+int[Capacity] GlobalBuffer;
+int[4] GlobalItems = {Capacity - 2, Capacity + 2};
+int[] InferredItems = {11, 13};
+Static Class Holder { Public int[4] Values = {17, 19}; }
 Trusted Function int* Address(int* pointer) { AddressCalls++; Return pointer; }
 Static Function int probe_env() { Return IO.Target.Env; }
 Static Function int probe_host_env() { Return IO.Host.Env; }
@@ -32,6 +38,33 @@ Safe Function string Literal() { Return "static text"; }
 Trusted Static Function void KMain(int* result)
 {
     Pair pair = MakePair(19);
+    Const int LocalCapacity = Capacity + 1;
+    int[LocalCapacity * 2] localValues = {11, 13};
+    byte[2048] zeroed;
+    int[2] literal = {17, 19};
+    int[] inferredLocal = {37, 41};
+    int[2] copied = literal;
+    copied[0] = 31;
+    int[0] empty;
+    int reset = 0;
+    While (reset < 3)
+    {
+        int[4] scratch;
+        If (scratch[0] != 0) { *result = -10; Return; }
+        scratch[0] = 99;
+        reset++;
+    }
+    bool storageOk = GlobalBuffer.Length() == 5 && GlobalBuffer[4] == 0 &&
+        InferredItems.Length() == 2 && InferredItems[1] == 13 &&
+        Holder.Values.Length() == 4 && Holder.Values[1] == 19 && Holder.Values[3] == 0 &&
+        GlobalItems.Length() == 4 && GlobalItems[0] == 3 && GlobalItems[1] == 7 && GlobalItems[3] == 0 &&
+        localValues.Length() == 12 && localValues[0] == 11 && localValues[1] == 13 && localValues[11] == 0 &&
+        zeroed[0] == 0 && zeroed[2047] == 0 && literal[0] == 31 &&
+        copied.Length() == 2 && copied[1] == 19 && empty.Length() == 0 &&
+        inferredLocal.Length() == 2 && inferredLocal[1] == 41;
+    GlobalBuffer[4] = 23;
+    localValues[11] = 29;
+    storageOk = storageOk && GlobalBuffer[4] == 23 && localValues[11] == 29;
     Pair* pairAddress = &pair;
     (*pairAddress).Left = 20;
     int value = Sum(pair) + Add<int>(6);
@@ -49,7 +82,7 @@ Trusted Static Function void KMain(int* result)
         bool advanced = pointer == result + 1 && oldPointer == result;
         pointer--;
         If (AddressCalls == 2 && old == 45 && *result == 46 &&
-            oldNumber == 1.0 && number == 2.0 && advanced && pointer == result) *result = 42;
+            oldNumber == 1.0 && number == 2.0 && advanced && pointer == result && storageOk) *result = 42;
         Else *result = -2;
     }
     Else *result = -1;
@@ -102,6 +135,11 @@ def check_runtime_free(ir: str, *, wrapper: bool, panic: str) -> None:
 
 def check_freestanding(compiler: Path, stage0: Path, root: Path, out: Path,
                       *, stage0_reference: bool = True) -> dict[str, object]:
+    # Bootstrap already needs the configured LLVM toolchain. Inspect final
+    # objects as well as IR: target lowering can introduce libc dependencies.
+    sys.path.insert(0, str(root))
+    from infra.scripts.x.llvm import detect_llvm_dir, llvm_bin_dir
+    nm = llvm_bin_dir(detect_llvm_dir()) / ("llvm-nm.exe" if sys.platform == "win32" else "llvm-nm")
     out.mkdir(parents=True, exist_ok=True)
     (out / "Main.kn").write_text(SOURCE, encoding="utf-8")
     # Published stage0 compilers may predate the narrow-enum cast fix. Platform
@@ -132,6 +170,12 @@ Trusted Static Function void KMain() {}
         obj = out / f"{alias}.o"
         invoke(command + ["--emit", "obj", "-o", str(obj)], root)
         check_object(obj, os_id or 2, arch)
+        symbols = invoke([str(nm), "--undefined-only", "--format=posix", str(obj)], root)
+        undefined = {line.split()[0] for line in symbols.splitlines() if line.strip()}
+        # Floating-point code on Windows advertises this ABI marker; it is not
+        # an allocation, memory, exception, or selfhost bridge dependency.
+        allowed = {"_fltused", "__fltused"} if os_id == 1 else set()
+        assert undefined <= allowed, (alias, sorted(undefined))
         reference = out / f"stage0-{alias}.ll"
         reference_project = out / "reference.knproj"
         manifest(reference_project, target=alias, source="Reference.kn")
@@ -165,6 +209,9 @@ Trusted Static Function int Main() {
         manifest(project)
         reference_obj = out / "stage0-host.o"
         invoke([str(stage0), "build", "--project", str(project), "--emit", "obj", "-o", str(reference_obj)], root)
+        symbols = invoke([str(nm), "--undefined-only", "--format=posix", str(reference_obj)], root)
+        undefined = {line.split()[0] for line in symbols.splitlines() if line.strip()}
+        assert undefined <= ({"_fltused", "__fltused"} if host_os == 1 else set()), sorted(undefined)
         reference_exe = out / ("reference-consumer.exe" if host_os == 1 else "reference-consumer")
         invoke([str(stage0), "build", "--no-module-discovery", str(harness), "--link-file", str(reference_obj),
                 "-o", str(reference_exe)], root)
@@ -197,23 +244,36 @@ Trusted Static Function int Main() {
         "async": "Async Static Function int KMain() { Return 0; }",
         "exception": 'Static Function void KMain() { Throw "error"; }',
         "any": "Static Function void KMain() { any value = 1; }",
-        "fixed-local": "Static Function void KMain() { int[4] values; }",
-        "fixed-global": "int[4] values; Static Function void KMain() {}",
         "fixed-field": "Struct Item { int[4] Values; } Static Function void KMain() {}",
-        "array-literal": "Static Function void KMain() { int[] values = {1, 2}; }",
         "string-op": 'Static Function string KMain(string value) { Return value + "x"; }',
         "string-convert": "Static Function string KMain() { Return [string](42); }",
         "implicit-string": "Static Function string KMain() { Return 42; }",
         "closure": "Static Function void KMain() { Var f = Function int() { Return 1; }; }",
         "collection": "Static Function void KMain() { list values = list.Create(); }",
+        "length-runtime": "Static Function void KMain() { int n = 3; int[n] values; }",
+        "length-negative": "Static Function void KMain() { int[-1] values; }",
+        "length-overflow": "Static Function void KMain() { int[2] values = {1, 2, 3}; }",
+        "length-bool": "Static Function void KMain() { int[true] values; }",
+        "length-global-runtime": "int n = 3; int[n] values; Static Function void KMain() {}",
+        "unsafe-global-pointer": "byte* address = [byte*](4096); Static Function void KMain() {}",
+        "unsafe-global-call": "Unsafe Function int Read() { Return 1; } int value = Read(); Static Function void KMain() {}",
+        "dynamic-global-element": "int n = 7; int[] values = {n}; Static Function void KMain() {}",
     }
     for name, source in negatives.items():
         (out / "Negative.kn").write_text("Unit Tests.Negative;\n" + source, encoding="utf-8")
         manifest(project, source="Negative.kn", entry="")
         output = out / f"rejected-{name}.ll"
         invoke([str(compiler), "build", "--project", str(project), "--emit", "ir", "-o", str(output)],
-               root, error="Return Type" if name == "implicit-string" else "Freestanding Core")
+               root, error="Return Type" if name == "implicit-string" else
+               "Unsafe Pointer" if name == "unsafe-global-pointer" else
+               "Unsafe Call" if name == "unsafe-global-call" else
+               "global array requires constant elements" if name == "dynamic-global-element" else
+               "Array Length" if name.startswith("length-") else "Freestanding Core")
         assert not output.exists(), output
+        if stage0_reference and name.startswith("unsafe-global-"):
+            invoke([str(stage0), "build", "--project", str(project), "--emit", "ir",
+                    "-o", str(out / f"stage0-rejected-{name}.ll")], root,
+                   error="Unsafe Pointer" if name.endswith("pointer") else "Unsafe Call")
 
     for entry, error in (("Missing", "freestanding entry not found"),
                          ("Sum", "freestanding entry must take")):
@@ -228,7 +288,8 @@ Trusted Static Function int Main() {
     print("[OK] freestanding host consumer, entry/Panic contracts and rejection gates", flush=True)
     return {"name": "freestanding_core", "ok": True, "targets": len(targets),
             "negative_programs": len(negatives), "host_consumer": True,
-            "stage0_runtime_reference": stage0_reference, "hosted_lvalues": True}
+            "stage0_runtime_reference": stage0_reference, "hosted_lvalues": True,
+            "object_dependencies_checked": True}
 
 
 if __name__ == "__main__":

@@ -446,8 +446,58 @@ int kn_sh_llvm_block_is_terminated(void *block)
 
 void *kn_sh_llvm_const_int(void *integer_type, int64_t value, int sign_extend)
 {
-    return integer_type ? LLVMConstInt((LLVMTypeRef)integer_type,
-        (unsigned long long)(uint64_t)value, sign_extend) : 0;
+    if (!integer_type || LLVMGetTypeKind((LLVMTypeRef)integer_type) != LLVMIntegerTypeKind)
+        return 0;
+    return LLVMConstInt((LLVMTypeRef)integer_type, (unsigned long long)(uint64_t)value, sign_extend);
+}
+
+void *kn_sh_llvm_const_struct(void *type, void *values, int count)
+{
+    if (!type || count < 0 || (count && !values) ||
+        LLVMGetTypeKind((LLVMTypeRef)type) != LLVMStructTypeKind) return 0;
+    if (LLVMIsOpaqueStruct((LLVMTypeRef)type) || LLVMCountStructElementTypes((LLVMTypeRef)type) != (unsigned)count)
+        return 0;
+    for (int i = 0; i < count; ++i)
+    {
+        LLVMValueRef value = ((LLVMValueRef *)values)[i];
+        if (!value || !LLVMIsConstant(value) ||
+            LLVMTypeOf(value) != LLVMStructGetTypeAtIndex((LLVMTypeRef)type, (unsigned)i)) return 0;
+    }
+    return LLVMConstNamedStruct((LLVMTypeRef)type, (LLVMValueRef *)values, (unsigned)count);
+}
+
+void *kn_sh_llvm_const_array(void *element_type, void *values, int count)
+{
+    if (!element_type || count < 0 || (count && !values)) return 0;
+    for (int i = 0; i < count; ++i)
+    {
+        LLVMValueRef value = ((LLVMValueRef *)values)[i];
+        if (!value || !LLVMIsConstant(value) || LLVMTypeOf(value) != (LLVMTypeRef)element_type) return 0;
+    }
+    return LLVMConstArray2((LLVMTypeRef)element_type, (LLVMValueRef *)values, (uint64_t)count);
+}
+
+void *kn_sh_llvm_const_gep(void *element_type, void *pointer, void *indices, int count)
+{
+    if (!element_type || !pointer || count < 0 || (count && !indices)) return 0;
+    if (!LLVMIsConstant((LLVMValueRef)pointer) ||
+        LLVMGetTypeKind(LLVMTypeOf((LLVMValueRef)pointer)) != LLVMPointerTypeKind) return 0;
+    for (int i = 0; i < count; ++i)
+    {
+        LLVMValueRef index = ((LLVMValueRef *)indices)[i];
+        if (!index || !LLVMIsConstant(index) || LLVMGetTypeKind(LLVMTypeOf(index)) != LLVMIntegerTypeKind)
+            return 0;
+    }
+    return LLVMConstInBoundsGEP2((LLVMTypeRef)element_type, (LLVMValueRef)pointer,
+        (LLVMValueRef *)indices, (unsigned)count);
+}
+
+void *kn_sh_llvm_const_int_to_ptr(void *value, void *type)
+{
+    if (!value || !type || !LLVMIsConstant((LLVMValueRef)value) ||
+        LLVMGetTypeKind((LLVMTypeRef)type) != LLVMPointerTypeKind ||
+        LLVMGetTypeKind(LLVMTypeOf((LLVMValueRef)value)) != LLVMIntegerTypeKind) return 0;
+    return LLVMConstIntToPtr((LLVMValueRef)value, (LLVMTypeRef)type);
 }
 
 void *kn_sh_llvm_const_float(void *float_type, double value)
@@ -470,6 +520,13 @@ void *kn_sh_llvm_add_global(void *module_handle, void *type, const char *name)
     KnShLlvmModule *state = module_state(module_handle);
     return state && type ? LLVMAddGlobal(state->module, (LLVMTypeRef)type,
         safe_name(name)) : 0;
+}
+
+int kn_sh_llvm_set_private_linkage(void *global)
+{
+    if (!global || !LLVMIsAGlobalValue((LLVMValueRef)global)) return 0;
+    LLVMSetLinkage((LLVMValueRef)global, LLVMPrivateLinkage);
+    return 1;
 }
 
 int kn_sh_llvm_set_initializer(void *global, void *value)

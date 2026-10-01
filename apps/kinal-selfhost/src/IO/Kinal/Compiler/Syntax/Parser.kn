@@ -1166,6 +1166,27 @@ Safe Function void WarnLegacyArraySuffixes(ParseCursor cursor, int start, int en
     }
 }
 
+// Preserve the real expression tree and source position instead of reconstructing
+// array bounds from the display type name during semantic analysis.
+Safe Function ExpressionNode ReadArrayLength(ParseCursor cursor, int start, int end)
+{
+    int saved = cursor.Position;
+    int index = start;
+    ExpressionNode length = null;
+    While (index < end)
+    {
+        If (KindAt(cursor, index) == TokenKind.LeftBracket)
+        {
+            cursor.Position = index + 1;
+            length = CurrentKind(cursor) == TokenKind.RightBracket ? null : ParseExpression(cursor, 1);
+            index = cursor.Position;
+        }
+        index = index + 1;
+    }
+    cursor.Position = saved;
+    Return length;
+}
+
 Safe Function string ReadLegacyArrayTypeSuffixes(ParseCursor cursor, string typeName)
 {
     While (Match(cursor, TokenKind.LeftBracket))
@@ -2008,6 +2029,7 @@ Safe Function StatementNode ParseVariableStatement(ParseCursor cursor, int line,
         int declarationName = FindDeclarationName(cursor, false);
         If (declarationName <= cursor.Position) Return null;
         declaration.TypeName = JoinTokenText(cursor, cursor.Position, declarationName);
+        declaration.ArrayLength = ReadArrayLength(cursor, cursor.Position, declarationName);
         declaration.Name = IO.Kinal.Compiler.Lex.Token.Text(RawAt(cursor, declarationName));
         cursor.Position = declarationName + 1;
     }
@@ -2032,11 +2054,10 @@ Safe Function StatementNode ParseVariableStatement(ParseCursor cursor, int line,
         ReportWarningToken(cursor.Diagnostics, cursor.Source,
             RawAt(cursor, cursor.Position - 1), "Legacy Array Syntax",
             "Use 'Type[] name' instead of 'Type name[]'");
-        If (CurrentKind(cursor) != TokenKind.RightBracket &&
-            declaration.SecondExpression == null)
-            declaration.SecondExpression = ParseExpression(cursor, 1);
-        ElseIf (CurrentKind(cursor) != TokenKind.RightBracket)
-            ParseExpression(cursor, 1);
+        declaration.ArrayLength = CurrentKind(cursor) == TokenKind.RightBracket ?
+            null : ParseExpression(cursor, 1);
+        If (declaration.SecondExpression == null)
+            declaration.SecondExpression = declaration.ArrayLength;
         BuilderExpect(cursor, TokenKind.RightBracket, "Expected ']'",
             "Array declarator is not closed");
         declaration.TypeName = declaration.TypeName + "[]";
@@ -2644,8 +2665,11 @@ Safe Function void ReadTypeMembers(ParseCursor cursor, TypeDecl type, SyntaxTree
             field.Access = access;
             field.IsStatic = isStatic || type.IsStatic;
             field.FirstAttribute = attributes;
+            field.ArrayLength = ReadArrayLength(cursor, fieldStart, fieldName);
             cursor.Position = fieldName + 1;
             field.TypeName = ReadLegacyArrayTypeSuffixes(cursor, field.TypeName);
+            If (cursor.Position > fieldName + 1)
+                field.ArrayLength = ReadArrayLength(cursor, fieldName + 1, cursor.Position);
             If (Match(cursor, TokenKind.Assign)) field.Initializer = ParseExpression(cursor, 1);
             BuilderExpect(cursor, TokenKind.Semicolon, "Expected Semicolon",
                 "Missing ';' after field");
@@ -2891,8 +2915,11 @@ Safe Function FieldDecl ReadGlobalNode(ParseCursor cursor, SyntaxAttribute attri
         IO.Kinal.Compiler.Lex.Token.Line(nameToken), IO.Kinal.Compiler.Lex.Token.Column(nameToken));
     global.IsConst = isConst;
     global.FirstAttribute = attributes;
+    global.ArrayLength = ReadArrayLength(cursor, declarationStart, declarationName);
     cursor.Position = declarationName + 1;
     global.TypeName = ReadLegacyArrayTypeSuffixes(cursor, global.TypeName);
+    If (cursor.Position > declarationName + 1)
+        global.ArrayLength = ReadArrayLength(cursor, declarationName + 1, cursor.Position);
     If (Match(cursor, TokenKind.Assign))
     {
         If (IsEnd(cursor))

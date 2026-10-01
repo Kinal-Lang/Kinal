@@ -3137,6 +3137,15 @@ static bool global_init_needed(Codegen *g, StmtList *globals)
     return false;
 }
 
+static LLVMValueRef gen_global_initializer(Codegen *g, Type type, Expr *init)
+{
+    // Preserve the destination's fixed bound, including zero padding, rather
+    // than replacing it with the shorter array literal's inferred length.
+    if (type.kind == TY_ARRAY && init->kind == EXPR_ARRAY)
+        return build_array_value(g, type, init);
+    return cast_value(g, gen_expr(g, init), type);
+}
+
 static void codegen_global_init(Codegen *g, StmtList *globals)
 {
     if (!global_init_needed(g, globals))
@@ -3161,7 +3170,9 @@ static void codegen_global_init(Codegen *g, StmtList *globals)
     // Mark as initialized before executing initializers to break recursive re-entry.
     LLVMBuildStore(g->builder, LLVMConstInt(g->i1, 1, 0), g->gv_global_init_done);
 
-    LLVMValueRef frame = LLVMConstNull(g->i8ptr);
+    // A null LLVM *handle* means no GC frame. An LLVM null-pointer constant is
+    // still a live handle and would enable rooting without runtime functions.
+    LLVMValueRef frame = 0;
     if (g->fn_gc_push)
     {
         frame = LLVMBuildCall2(g->builder, g->fn_gc_push_ty, g->fn_gc_push, 0, 0, "g.gc.push");
@@ -3207,8 +3218,7 @@ static void codegen_global_init(Codegen *g, StmtList *globals)
 
         if (st->v.var.init)
         {
-            CGValue iv = gen_expr(g, st->v.var.init);
-            LLVMValueRef cv = cast_value(g, iv, gv->type);
+            LLVMValueRef cv = gen_global_initializer(g, gv->type, st->v.var.init);
             LLVMBuildStore(g->builder, cv, gv->value);
         }
     }
@@ -3242,8 +3252,7 @@ static void codegen_global_init(Codegen *g, StmtList *globals)
 
             if (f->init)
             {
-                CGValue iv = gen_expr(g, f->init);
-                LLVMValueRef cv = cast_value(g, iv, f->type);
+                LLVMValueRef cv = gen_global_initializer(g, f->type, f->init);
                 LLVMBuildStore(g->builder, cv, gv);
             }
         }

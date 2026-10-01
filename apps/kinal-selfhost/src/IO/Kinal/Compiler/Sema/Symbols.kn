@@ -274,9 +274,24 @@ Class CallableElementSymbol
     }
 }
 
+Class FieldStorageSymbol
+{
+    Public FieldDecl Declaration;
+    Public int ArrayLength;
+    Public FieldStorageSymbol Next;
+
+    Public Safe Constructor(FieldDecl declaration, int length)
+    {
+        This.Declaration = declaration;
+        This.ArrayLength = length;
+        This.Next = null;
+    }
+}
+
 Class GlobalSymbol
 {
     Public string UnitName;
+    Public SyntaxTree Syntax;
     Public FieldDecl Declaration;
     Public ValueSymbol Value;
     Public GlobalSymbol Next;
@@ -284,6 +299,7 @@ Class GlobalSymbol
     Public Safe Constructor(string unitName, FieldDecl declaration, TypeSymbol type)
     {
         This.UnitName = unitName;
+        This.Syntax = null;
         This.Declaration = declaration;
         This.Value = New ValueSymbol(declaration.Name, type, false);
         This.Value.IsConst = declaration.IsConst;

@@ -72,10 +72,20 @@ Extern Function byte* NativeConstFloat(byte* floatType, float value) By C;
 Extern Function byte* NativeConstNull(byte* type) By C;
 [LinkName("kn_sh_llvm_const_undef")]
 Extern Function byte* NativeConstUndef(byte* type) By C;
+[LinkName("kn_sh_llvm_const_struct")]
+Extern Function byte* NativeConstStruct(byte* type, byte* values, int count) By C;
+[LinkName("kn_sh_llvm_const_array")]
+Extern Function byte* NativeConstArray(byte* elementType, byte* values, int count) By C;
+[LinkName("kn_sh_llvm_const_gep")]
+Extern Function byte* NativeConstGep(byte* elementType, byte* pointer, byte* indices, int count) By C;
+[LinkName("kn_sh_llvm_const_int_to_ptr")]
+Extern Function byte* NativeConstIntToPtr(byte* value, byte* type) By C;
 [LinkName("kn_sh_llvm_add_global")]
 Extern Function byte* NativeAddGlobal(byte* module, byte* type, string name) By C;
 [LinkName("kn_sh_llvm_set_initializer")]
 Extern Function int NativeSetInitializer(byte* global, byte* value) By C;
+[LinkName("kn_sh_llvm_set_private_linkage")]
+Extern Function int NativeSetPrivateLinkage(byte* global) By C;
 [LinkName("kn_sh_llvm_set_alignment")]
 Extern Function int NativeSetAlignment(byte* value, int alignment) By C;
 [LinkName("kn_sh_llvm_set_volatile")]
@@ -371,6 +381,22 @@ Class LlvmModule
     Public Trusted Function byte* ConstFloat(byte* type, float value) { Return NativeConstFloat(type, value); }
     Public Trusted Function byte* ConstNull(byte* type) { Return NativeConstNull(type); }
     Public Trusted Function byte* ConstUndef(byte* type) { Return NativeConstUndef(type); }
+    Public Trusted Function byte* ConstStruct(byte* type, LlvmHandles values)
+    {
+        Return NativeConstStruct(type, values.ItemsRaw(), values.Count());
+    }
+    Public Trusted Function byte* ConstArray(byte* elementType, LlvmHandles values)
+    {
+        Return NativeConstArray(elementType, values.ItemsRaw(), values.Count());
+    }
+    Public Trusted Function byte* ConstGep(byte* elementType, byte* pointer, LlvmHandles indices)
+    {
+        Return NativeConstGep(elementType, pointer, indices.ItemsRaw(), indices.Count());
+    }
+    Public Trusted Function byte* ConstIntToPtr(byte* value, byte* type)
+    {
+        Return NativeConstIntToPtr(value, type);
+    }
     Public Trusted Function byte* AddGlobal(byte* type, string name)
     {
         Return NativeAddGlobal(This.Handle, type, name);
@@ -378,6 +404,10 @@ Class LlvmModule
     Public Trusted Function bool SetInitializer(byte* global, byte* value)
     {
         Return NativeSetInitializer(global, value) != 0;
+    }
+    Public Trusted Function bool SetPrivateLinkage(byte* global)
+    {
+        Return NativeSetPrivateLinkage(global) != 0;
     }
     Public Trusted Function bool SetAlignment(byte* value, int alignment)
     {

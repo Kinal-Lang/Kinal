@@ -1,0 +1,23 @@
+Unit Tests.GlobalArrayStorage;
+Get IO.Console;
+
+Const int Capacity = 3 + 2;
+int[Capacity] Empty;
+int[4] Values = {3, 7};
+int[] Inferred = {11, 13};
+Static Class Holder
+{
+    Public int[4] Values = {17, 19};
+}
+
+Static Function int Main()
+{
+    bool valid = Empty.Length() == 5 && Empty[4] == 0 &&
+        Values.Length() == 4 && Values[0] == 3 && Values[1] == 7 && Values[3] == 0 &&
+        Inferred.Length() == 2 && Inferred[1] == 13 &&
+        Holder.Values.Length() == 4 && Holder.Values[0] == 17 && Holder.Values[3] == 0;
+    Values[3] = 23;
+    Holder.Values[3] = 29;
+    IO.Console.PrintLine(valid && Values[3] == 23 && Holder.Values[3] == 29);
+    Return 0;
+}

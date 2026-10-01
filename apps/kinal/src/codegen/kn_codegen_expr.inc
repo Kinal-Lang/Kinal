@@ -2076,7 +2076,7 @@ static LLVMValueRef build_entry_alloca(Codegen *g, LLVMValueRef fn, LLVMTypeRef 
 
 static void gc_add_root(Codegen *g, LLVMValueRef slot, Type t)
 {
-    if (!g || !g->gc_frame) return;
+    if (!g || !g->gc_frame || !g->fn_gc_add_root) return;
     if (!is_gc_root_type(t)) return;
     LLVMValueRef sizev = LLVMSizeOf(llvm_type(g, t));
     if (LLVMGetTypeKind(LLVMTypeOf(sizev)) != LLVMIntegerTypeKind || LLVMGetIntTypeWidth(LLVMTypeOf(sizev)) != 64)
@@ -2088,7 +2088,7 @@ static void gc_add_root(Codegen *g, LLVMValueRef slot, Type t)
 
 static void gc_add_root_to_frame(Codegen *g, LLVMValueRef frame, LLVMValueRef slot, Type t)
 {
-    if (!g || !frame) return;
+    if (!g || !frame || !g->fn_gc_add_root) return;
     if (!is_gc_root_type(t)) return;
     LLVMValueRef sizev = LLVMSizeOf(llvm_type(g, t));
     if (LLVMGetTypeKind(LLVMTypeOf(sizev)) != LLVMIntegerTypeKind || LLVMGetIntTypeWidth(LLVMTypeOf(sizev)) != 64)
@@ -2140,6 +2140,33 @@ static LLVMValueRef gen_rooted_call_arg(Codegen *g, LLVMValueRef frame, Expr *ar
     return cv.value;
 }
 
+static void zero_freestanding_storage(Codegen *g, LLVMValueRef memory, uint64_t bytes)
+{
+    // LLVM memset can lower to a libc call even for Runtime=None. Emit the
+    // initialization directly; the alloca remains in the function entry while
+    // this loop executes at the declaration, including on repeated iterations.
+    LLVMBasicBlockRef before = LLVMGetInsertBlock(g->builder);
+    LLVMValueRef fn = LLVMGetBasicBlockParent(before);
+    LLVMBasicBlockRef condition = LLVMAppendBasicBlockInContext(g->ctx, fn, "zero.cond");
+    LLVMBasicBlockRef body = LLVMAppendBasicBlockInContext(g->ctx, fn, "zero.body");
+    LLVMBasicBlockRef done = LLVMAppendBasicBlockInContext(g->ctx, fn, "zero.done");
+    LLVMBuildBr(g->builder, condition);
+    LLVMPositionBuilderAtEnd(g->builder, condition);
+    LLVMValueRef index = LLVMBuildPhi(g->builder, g->i64, "zero.index");
+    LLVMValueRef zero = LLVMConstInt(g->i64, 0, 0);
+    LLVMAddIncoming(index, &zero, &before, 1);
+    LLVMValueRef more = LLVMBuildICmp(g->builder, LLVMIntULT, index,
+        LLVMConstInt(g->i64, bytes, 0), "zero.more");
+    LLVMBuildCondBr(g->builder, more, body, done);
+    LLVMPositionBuilderAtEnd(g->builder, body);
+    LLVMValueRef address = LLVMBuildInBoundsGEP2(g->builder, g->i8, memory, &index, 1, "zero.byte");
+    LLVMBuildStore(g->builder, LLVMConstInt(g->i8, 0, 0), address);
+    LLVMValueRef next = LLVMBuildAdd(g->builder, index, LLVMConstInt(g->i64, 1, 0), "zero.next");
+    LLVMAddIncoming(index, &next, &body, 1);
+    LLVMBuildBr(g->builder, condition);
+    LLVMPositionBuilderAtEnd(g->builder, done);
+}
+
 static LLVMValueRef build_array_value(Codegen *g, Type arr_type, Expr *init)
 {
     int64_t init_count = 0;
@@ -2178,11 +2205,29 @@ static LLVMValueRef build_array_value(Codegen *g, Type arr_type, Expr *init)
         else
         {
             LLVMValueRef fn = LLVMGetBasicBlockParent(LLVMGetInsertBlock(g->builder));
-            LLVMValueRef alloca = build_entry_alloca(g, fn, arr_ty, "arrtmp");
+            // Global initializer literals must outlive __kn_global_init even
+            // without a heap. Ordinary local literals retain stack lifetime.
+            LLVMValueRef alloca;
+            if (fn == g->fn_global_init)
+            {
+                alloca = LLVMAddGlobal(g->mod, arr_ty, "");
+                LLVMSetLinkage(alloca, LLVMPrivateLinkage);
+                LLVMSetInitializer(alloca, LLVMConstNull(arr_ty));
+            }
+            else
+            {
+                alloca = build_entry_alloca(g, fn, arr_ty, "arrtmp");
+            }
             LLVMValueRef zero = LLVMConstInt(g->i32, 0, 0);
             unsigned zero_align = g->target_data ? LLVMABIAlignmentOfType(g->target_data, arr_ty) : 1;
 
-            LLVMBuildMemSet(g->builder, alloca, LLVMConstInt(g->i8, 0, 0), LLVMConstInt(g->i64, arr_bytes, 0), zero_align);
+            if (fn != g->fn_global_init)
+            {
+                if (g->env_kind == KN_ENV_FREESTANDING)
+                    zero_freestanding_storage(g, alloca, arr_bytes);
+                else
+                    LLVMBuildMemSet(g->builder, alloca, LLVMConstInt(g->i8, 0, 0), LLVMConstInt(g->i64, arr_bytes, 0), zero_align);
+            }
 
             LLVMValueRef idxs0[2] = { zero, zero };
             data_ptr = LLVMBuildInBoundsGEP2(g->builder, arr_ty, alloca, idxs0, 2, "arr.data");

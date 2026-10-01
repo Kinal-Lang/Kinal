@@ -1,0 +1,18 @@
+Unit Tests.FreestandingGlobalArrays;
+
+int[4] Values = {3, 7};
+int[] Inferred = {11, 13};
+Static Class Holder
+{
+    Public int[4] Values = {17, 19};
+}
+
+// The global literals must use static backing, not a dead initializer stack.
+Trusted Static Function void KMain(int* result)
+{
+    bool valid = Values.Length() == 4 && Values[0] == 3 && Values[3] == 0 &&
+        Inferred.Length() == 2 && Inferred[1] == 13 &&
+        Holder.Values.Length() == 4 && Holder.Values[1] == 19 && Holder.Values[3] == 0;
+    Values[3] = 23;
+    *result = valid && Values[3] == 23 ? 42 : 0;
+}

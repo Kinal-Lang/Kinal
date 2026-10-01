@@ -11,7 +11,7 @@ Get IO.Kinal.Compiler.Lex.TokenKind;
 
 // This gate checks the bound program, not public library names. Runtime-free
 // output must never acquire hidden heap/exception dependencies during lowering.
-// Storage-producing arrays and managed values remain explicit unsupported
+// Fixed-array struct fields and managed values remain explicit unsupported
 // boundaries until their freestanding lowering is implemented.
 Class FreestandingValidator
 {
@@ -68,7 +68,6 @@ Class FreestandingValidator
             int kind = current.Kind;
             If (kind == [int](HirExpressionKind.NewObject) ||
                 kind == [int](HirExpressionKind.FunctionReference) ||
-                kind == [int](HirExpressionKind.ArrayLiteral) ||
                 kind == [int](HirExpressionKind.DictLiteral) ||
                 kind == [int](HirExpressionKind.PackageLiteral))
                 This.Reject("allocation or managed callable requires a runtime", current.Syntax);
@@ -138,9 +137,6 @@ Class FreestandingValidator
             If (current.Kind == [int](StatementKind.Variable))
             {
                 This.CheckConversion(current.DeclaredType, current.Expression);
-                If (current.DeclaredType.Kind == [int](TypeKind.ArrayType) &&
-                    current.SecondExpression != null)
-                    This.Reject("fixed local array storage is not yet supported without a runtime", null);
             }
             If (current.Kind == [int](StatementKind.Return))
                 This.CheckConversion(This.Function.ReturnType, current.Expression);
@@ -187,9 +183,8 @@ Class FreestandingValidator
         GlobalSymbol global = This.Semantics.FirstGlobal;
         While (global != null)
         {
-            This.Syntax = This.Semantics.FindUnit(global.UnitName).Syntax;
+            This.Syntax = global.Syntax;
             This.CheckType(global.Value.Type, global.Declaration.Initializer);
-            This.CheckStorageType(global.Declaration.TypeName);
             // A name initializer needs an executable initialization phase.
             If (global.Declaration.Initializer != null &&
                 global.Declaration.Initializer.Kind == [int](ExpressionKind.Name))

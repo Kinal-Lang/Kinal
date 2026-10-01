@@ -176,6 +176,7 @@ Class StatementNode
     Public int Column;
     Public ExpressionNode Expression;
     Public ExpressionNode SecondExpression;
+    Public ExpressionNode ArrayLength;
     Public ExpressionNode ThirdExpression;
     Public StatementNode Initializer;
     Public StatementNode FirstChild;
@@ -195,6 +196,7 @@ Class StatementNode
         This.Column = column;
         This.Expression = null;
         This.SecondExpression = null;
+        This.ArrayLength = null;
         This.ThirdExpression = null;
         This.Initializer = null;
         This.FirstChild = null;

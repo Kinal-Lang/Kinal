@@ -1,5 +1,12 @@
 [
   {
+    "name": "freestanding_global_arrays",
+    "file": "tests/common/freestanding_global_arrays.kn",
+    "compile_only": true,
+    "output_ext": ".obj",
+    "compiler_args": ["--freestanding", "--emit", "obj"]
+  },
+  {
     "name": "freestanding_core_min",
     "file": "tests/common/freestanding_core_min.kn",
     "compile_only": true,

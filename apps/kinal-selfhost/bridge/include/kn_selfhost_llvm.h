@@ -55,8 +55,13 @@ void *kn_sh_llvm_const_int(void *integer_type, int64_t value,
 void *kn_sh_llvm_const_float(void *float_type, double value);
 void *kn_sh_llvm_const_null(void *type);
 void *kn_sh_llvm_const_undef(void *type);
+void *kn_sh_llvm_const_struct(void *type, void *values, int count);
+void *kn_sh_llvm_const_array(void *element_type, void *values, int count);
+void *kn_sh_llvm_const_gep(void *element_type, void *pointer, void *indices, int count);
+void *kn_sh_llvm_const_int_to_ptr(void *value, void *type);
 void *kn_sh_llvm_add_global(void *module_handle, void *type, const char *name);
 int kn_sh_llvm_set_initializer(void *global, void *value);
+int kn_sh_llvm_set_private_linkage(void *global);
 int kn_sh_llvm_set_alignment(void *value, int alignment);
 int kn_sh_llvm_set_volatile(void *instruction, int enabled);
 int kn_sh_llvm_set_section(void *global, const char *section);

@@ -45,6 +45,7 @@ Class SemanticCompilation
     Public UnitSymbol FirstUnit;
     Public TypeSymbol FirstType;
     Public GlobalSymbol FirstGlobal;
+    Public FieldStorageSymbol FirstStorage;
     Public FunctionSymbol FirstFunction;
     Public HirModule FirstHirModule;
     Public int ImportCount;
@@ -66,6 +67,7 @@ Class SemanticCompilation
         This.FirstUnit = null;
         This.FirstType = null;
         This.FirstGlobal = null;
+        This.FirstStorage = null;
         This.FirstFunction = null;
         This.FirstHirModule = null;
         This.ImportCount = 0;
@@ -993,7 +995,9 @@ Class SemanticCompilation
                             declaration.Line, declaration.Column);
                         type = This.Primitive("any");
                     }
-                    This.AddGlobalSymbol(New GlobalSymbol(unit.Name, declaration, type));
+                    GlobalSymbol global = New GlobalSymbol(unit.Name, declaration, type);
+                    global.Syntax = unit.Syntax;
+                    This.AddGlobalSymbol(global);
                     This.GlobalCount = This.GlobalCount + 1;
                     If (declaration.Initializer != null &&
                         (declaration.Initializer.Kind == [int](ExpressionKind.FunctionLiteral) ||
@@ -1039,7 +1043,9 @@ Class SemanticCompilation
                                     field.Line, field.Column);
                                 fieldType = This.Primitive("any");
                             }
-                            This.AddGlobalSymbol(New GlobalSymbol(ownerName, field, fieldType));
+                            GlobalSymbol global = New GlobalSymbol(ownerName, field, fieldType);
+                            global.Syntax = unit.Syntax;
+                            This.AddGlobalSymbol(global);
                             This.GlobalCount = This.GlobalCount + 1;
                         }
                     }
@@ -1063,6 +1069,59 @@ Class SemanticCompilation
                     ".__global_literal_" + global.Declaration.Name, 0);
             global = global.Next;
         }
+    }
+
+    Public Safe Function int ResolveArrayLength(SyntaxTree syntax, FunctionSymbol function,
+                                                BindingScope scope, ExpressionNode expression)
+    {
+        If (expression == null) Return -1;
+        ConstantIntegerValue length = This.ConstantInteger(syntax, scope, expression);
+        If (!length.IsValid)
+        {
+            This.Report(syntax, "Array Length", "Array length must be a constant integer expression",
+                expression.Line, expression.Column);
+            Return -1;
+        }
+        If (scope == null) scope = New BindingScope(null);
+        HirExpression bound = This.BindExpression(syntax, function, scope, expression);
+        If (bound == null || bound.Type.Kind != [int](TypeKind.IntegerType))
+        {
+            This.Report(syntax, "Array Length", "Array length must be an integer constant expression",
+                expression.Line, expression.Column);
+            Return -1;
+        }
+        If (length.Value < 0 || length.Value > 2147483647)
+        {
+            This.Report(syntax, "Array Length", "Array length is outside the supported storage range",
+                expression.Line, expression.Column);
+            Return -1;
+        }
+        Return length.Value;
+    }
+
+    Public Safe Function void ResolveFieldStorage(SyntaxTree syntax, FieldDecl field)
+    {
+        If (field.ArrayLength == null) Return;
+        FieldStorageSymbol storage = New FieldStorageSymbol(field,
+            This.ResolveArrayLength(syntax, null, null, field.ArrayLength));
+        storage.Next = This.FirstStorage;
+        This.FirstStorage = storage;
+        If (storage.ArrayLength >= 0 && field.Initializer != null &&
+            field.Initializer.Kind == [int](ExpressionKind.ArrayLiteral) &&
+            field.Initializer.ArgumentCount() > storage.ArrayLength)
+            This.Report(syntax, "Array Length", "Initializer has too many elements",
+                field.Line, field.Column);
+    }
+
+    Public Safe Function int StorageArrayLength(FieldDecl field)
+    {
+        FieldStorageSymbol storage = This.FirstStorage;
+        While (storage != null)
+        {
+            If (storage.Declaration == field) Return storage.ArrayLength;
+            storage = storage.Next;
+        }
+        Return -1;
     }
 
     Public Safe Function void CheckUnit(UnitSymbol unit)
@@ -1093,6 +1152,7 @@ Class SemanticCompilation
         While (global != null)
         {
             This.CheckExpression(syntax, global.Initializer);
+            This.ResolveFieldStorage(syntax, global);
             global = global.Next;
         }
         TypeDecl type = syntax.FirstType;
@@ -1103,6 +1163,7 @@ Class SemanticCompilation
             {
                 If (!field.IsStatic) This.CheckType(syntax, field.TypeName, field.Line, field.Column);
                 This.CheckExpression(syntax, field.Initializer);
+                This.ResolveFieldStorage(syntax, field);
                 field = field.Next;
             }
             function = type.FirstMethod;
@@ -4524,32 +4585,13 @@ Class SemanticCompilation
         }
         If (statement.Kind == [int](StatementKind.Variable))
         {
-            If (statement.SecondExpression == null)
-            {
-                int fixedOpen = IO.Text.IndexOf(statement.TypeName, "[");
-                int fixedClose = IO.Text.IndexOf(statement.TypeName, "]");
-                If (fixedOpen > 0 && fixedClose > fixedOpen + 1)
-                {
-                    string lengthText = This.CanonicalTypeName(IO.Text.Slice(
-                        statement.TypeName, fixedOpen + 1, fixedClose - fixedOpen - 1));
-                    If (!IO.Text.IsEmpty(lengthText))
-                    {
-                        char[] lengthChars = lengthText.ToChars();
-                        bool numberLength = true;
-                        int lengthIndex = 0;
-                        While (lengthIndex < lengthChars.Length())
-                        {
-                            int value = [int](lengthChars[lengthIndex]);
-                            If (value < 48 || value > 57) numberLength = false;
-                            lengthIndex = lengthIndex + 1;
-                        }
-                        statement.SecondExpression = New ExpressionNode(
-                            numberLength ? [int](ExpressionKind.Number) : [int](ExpressionKind.Name),
-                            lengthText, statement.Line, statement.Column);
-                    }
-                }
-            }
+            result.FixedArrayLength = This.ResolveArrayLength(syntax, function, scope, statement.ArrayLength);
             result.Expression = This.BindExpression(syntax, function, scope, statement.Expression);
+            If (result.FixedArrayLength >= 0 && statement.Expression != null &&
+                statement.Expression.Kind == [int](ExpressionKind.ArrayLiteral) &&
+                statement.Expression.ArgumentCount() > result.FixedArrayLength)
+                This.Report(syntax, "Array Length", "Initializer has too many elements",
+                    statement.Line, statement.Column);
             If (statement.IsConst && statement.Expression == null)
                 This.Report(syntax, "Const Requires Init",
                     "Const variable must have initializer", statement.Line, statement.Column);
@@ -4798,6 +4840,39 @@ Class SemanticCompilation
             If (This.FindHirModule(unit.Name) == null)
                 This.AddHirModule(New HirModule(unit.Name));
             unit = unit.Next;
+        }
+
+        // Global initialization has a Safe context, just like C stage0. Binding
+        // it into HIR also prevents backend constant lowering from bypassing
+        // ordinary name, type and safety validation.
+        GlobalSymbol global = This.FirstGlobal;
+        While (global != null)
+        {
+            ExpressionNode expression = global.Declaration.Initializer;
+            If (expression != null &&
+                expression.Kind != [int](ExpressionKind.FunctionLiteral) &&
+                expression.Kind != [int](ExpressionKind.BlockLiteral))
+            {
+                FunctionDecl declaration = New FunctionDecl("__global_init", "void",
+                    global.Declaration.Line, global.Declaration.Column);
+                declaration.Safety = 1;
+                declaration.IsStatic = true;
+                FunctionSymbol context = New FunctionSymbol(global.Syntax.UnitName,
+                    This.FindExactType(global.UnitName), declaration);
+                context.Syntax = global.Syntax;
+                context.ReturnType = This.Primitive("void");
+                HirExpression initializer = This.BindExpression(global.Syntax, context,
+                    New BindingScope(null), expression);
+                bool emptyArray = global.Value.Type.Kind == [int](TypeKind.ArrayType) &&
+                    initializer != null && initializer.Kind == [int](HirExpressionKind.ArrayLiteral) &&
+                    initializer.FirstArgument == null;
+                If (initializer != null && !emptyArray && !initializer.HasPrimaryError &&
+                    !This.IsHirAssignable(global.Value.Type, initializer))
+                    This.Report(global.Syntax, "Type Mismatch", "Global initializer type mismatch",
+                        expression.Line, expression.Column);
+                This.FindHirModule(global.Syntax.UnitName).AddGlobal(New HirGlobal(global, initializer));
+            }
+            global = global.Next;
         }
 
         FunctionSymbol function = This.FirstFunction;

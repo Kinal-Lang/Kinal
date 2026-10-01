@@ -1,5 +1,10 @@
 [
   {
+    "name": "global_array_storage",
+    "file": "tests/common/global_array_storage.kn",
+    "expected": "true\n"
+  },
+  {
     "name": "hello",
     "file": "tests/common/hello.kn",
     "expected": "hello\n"

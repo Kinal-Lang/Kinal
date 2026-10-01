@@ -429,21 +429,27 @@ Class NativeBackend
         Return null;
     }
 
-    Public Trusted Function byte* ConstantGlobalInitializer(GlobalSymbol symbol)
+    Public Trusted Function byte* ConstantInitializer(SyntaxTree syntax,
+                                                       TypeSymbol valueType, ExpressionNode expression)
     {
-        ExpressionNode expression = symbol.Declaration.Initializer;
-        byte* type = This.TypeHandle(symbol.Value.Type);
+        byte* type = This.TypeHandle(valueType);
         If (expression == null || expression.Kind == [int](ExpressionKind.Null))
             Return This.Module.ConstNull(type);
-        If (This.IsEnum(symbol.Value.Type) &&
+        If (valueType.Kind == [int](TypeKind.IntegerType) ||
+            valueType.Kind == [int](TypeKind.BoolType))
+        {
+            ConstantIntegerValue constant = This.Semantics.ConstantInteger(syntax, null, expression);
+            If (constant.IsValid) Return This.Module.ConstInt(type, constant.Value);
+        }
+        If (This.IsEnum(valueType) &&
             (expression.Kind == [int](ExpressionKind.Name) ||
              expression.Kind == [int](ExpressionKind.Member)))
             Return This.Module.ConstInt(type,
-                This.EnumValue(symbol.Value.Type,
+                This.EnumValue(valueType,
                     This.Semantics.ExpressionPath(expression)));
         If (expression.Kind == [int](ExpressionKind.Number))
         {
-            If (symbol.Value.Type.Kind == [int](TypeKind.FloatType))
+            If (valueType.Kind == [int](TypeKind.FloatType))
                 Return This.Module.ConstFloat(type, [float](expression.Text));
             Return This.Module.ConstI64(type, This.IntegerLiteralValue(expression.Text), false);
         }
@@ -452,7 +458,7 @@ Class NativeBackend
                 expression.Text == "true" || expression.Text == "True" ? 1 : 0);
         If (expression.Kind == [int](ExpressionKind.Character))
             Return This.Module.ConstInt(type, This.DecodeCharacter(expression.Text));
-        If (symbol.Value.Type.Kind == [int](TypeKind.StringType))
+        If (valueType.Kind == [int](TypeKind.StringType))
         {
             string constantText = This.ConstantStringValue(expression);
             If (constantText != null)
@@ -462,22 +468,88 @@ Class NativeBackend
             expression.Operator == TokenKind.Minus && expression.Left != null &&
             expression.Left.Kind == [int](ExpressionKind.Number))
         {
-            If (symbol.Value.Type.Kind == [int](TypeKind.FloatType))
+            If (valueType.Kind == [int](TypeKind.FloatType))
                 Return This.Module.ConstFloat(type, -[float](expression.Left.Text));
             Return This.Module.ConstI64(type, -This.IntegerLiteralValue(expression.Left.Text), true);
         }
         If (expression.Kind == [int](ExpressionKind.Cast) && expression.Left != null &&
             expression.Left.Kind == [int](ExpressionKind.Number))
         {
-            If (symbol.Value.Type.Kind == [int](TypeKind.FloatType))
+            If (valueType.Kind == [int](TypeKind.FloatType))
                 Return This.Module.ConstFloat(type, [float](expression.Left.Text));
-            Return This.Module.ConstI64(type, This.IntegerLiteralValue(expression.Left.Text), false);
+            byte* integer = This.Module.ConstI64(
+                valueType.Kind == [int](TypeKind.PointerType) ? This.Module.IntType(64) : type,
+                This.IntegerLiteralValue(expression.Left.Text), false);
+            Return valueType.Kind == [int](TypeKind.PointerType) ?
+                This.Module.ConstIntToPtr(integer, type) : integer;
         }
         If (expression.Kind == [int](ExpressionKind.FunctionLiteral) ||
             expression.Kind == [int](ExpressionKind.BlockLiteral))
             Return This.Module.ConstNull(type);
-        If (expression.Kind == [int](ExpressionKind.Name)) Return This.Module.ConstNull(type);
         Return null;
+    }
+
+    Public Safe Function int GlobalArrayLength(GlobalSymbol symbol)
+    {
+        int length = This.Semantics.StorageArrayLength(symbol.Declaration);
+        ExpressionNode initializer = symbol.Declaration.Initializer;
+        If (length < 0 && initializer != null && initializer.Kind == [int](ExpressionKind.ArrayLiteral))
+            length = initializer.ArgumentCount();
+        Return length;
+    }
+
+    Public Trusted Function byte* ConstantArrayContent(GlobalSymbol symbol, int length)
+    {
+        TypeSymbol element = symbol.Value.Type.ElementType;
+        byte* elementType = This.TypeHandle(element);
+        ExpressionNode initializer = symbol.Declaration.Initializer;
+        If (initializer == null) Return This.Module.ConstNull(This.Module.ArrayType(elementType, length));
+        If (initializer.Kind != [int](ExpressionKind.ArrayLiteral)) Return null;
+        LlvmHandles values = This.Types0();
+        ExpressionNode item = initializer.FirstArgument;
+        int index = 0;
+        While (index < length)
+        {
+            byte* value = This.ConstantInitializer(symbol.Syntax, element, item);
+            If (value == null) { This.Fail("global array requires constant elements"); Return null; }
+            values.Add(value);
+            If (item != null) item = item.Next;
+            index = index + 1;
+        }
+        If (item != null) { This.Fail("global array initializer has too many elements"); Return null; }
+        Return This.Module.ConstArray(elementType, values);
+    }
+
+    Public Trusted Function byte* ConstantGlobalInitializer(GlobalSymbol symbol)
+    {
+        TypeSymbol type = symbol.Value.Type;
+        ExpressionNode initializer = symbol.Declaration.Initializer;
+        // Existing hosted startup resolves global copies in declaration order.
+        // Array elements must never use this placeholder: an unsupported value
+        // there is an error, not an implicit zero.
+        If (initializer != null && initializer.Kind == [int](ExpressionKind.Name))
+            Return This.Module.ConstNull(This.TypeHandle(type));
+        If (type.Kind != [int](TypeKind.ArrayType))
+            Return This.ConstantInitializer(symbol.Syntax, type, initializer);
+        int length = This.GlobalArrayLength(symbol);
+        If (initializer != null && initializer.Kind != [int](ExpressionKind.ArrayLiteral))
+        {
+            This.Fail("global array initializer must be a constant array literal");
+            Return null;
+        }
+        If (length <= 0) Return This.Module.ConstNull(This.TypeHandle(type));
+        If (!This.Semantics.Session.IsFreestandingCore())
+            Return This.Module.ConstNull(This.TypeHandle(type));
+        byte* elementType = This.TypeHandle(type.ElementType);
+        byte* storageType = This.Module.ArrayType(elementType, length);
+        byte* storage = This.Module.AddGlobal(storageType, This.Unique("__kn_sh_array_storage"));
+        If (!This.Module.SetPrivateLinkage(storage)) Return null;
+        byte* content = This.ConstantArrayContent(symbol, length);
+        If (!This.Module.SetInitializer(storage, content)) Return null;
+        byte* zero = This.Module.ConstInt(This.Module.IntType(64), 0);
+        byte* data = This.Module.ConstGep(storageType, storage, This.Types2(zero, zero));
+        Return This.Module.ConstStruct(This.TypeHandle(type),
+            This.Types2(data, This.Module.ConstInt(This.Module.IntType(64), length)));
     }
 
     Public Trusted Function void DeclareGlobals()
@@ -498,43 +570,14 @@ Class NativeBackend
         }
     }
 
-    Public Safe Function int FixedArrayLength(string unitName, string typeName)
-    {
-        int open = IO.Text.IndexOf(typeName, "[");
-        int close = IO.Text.IndexOf(typeName, "]");
-        If (open < 0 || close <= open + 1) Return -1;
-        string lengthText = IO.Text.Replace(
-            IO.Text.Slice(typeName, open + 1, close - open - 1), " ", "");
-        char[] chars = lengthText.ToChars();
-        bool numeric = chars.Length() > 0;
-        int index = 0;
-        While (index < chars.Length())
-        {
-            int value = [int](chars[index]);
-            If (value < 48 || value > 57) numeric = false;
-            index = index + 1;
-        }
-        If (numeric) Return [int](lengthText);
-        GlobalSymbol constant = This.Semantics.FindGlobal(unitName, lengthText);
-        If (constant != null && constant.Declaration.IsConst &&
-            constant.Declaration.Initializer != null &&
-            constant.Declaration.Initializer.Kind == [int](ExpressionKind.Number))
-            Return [int](constant.Declaration.Initializer.Text);
-        Return -1;
-    }
 
-    Public Safe Function int FixedGlobalArrayLength(GlobalSymbol symbol)
-    {
-        Return This.FixedArrayLength(symbol.UnitName, symbol.Declaration.TypeName);
-    }
-
-    Public Trusted Function void InitializeFixedGlobalArrays()
+    Public Trusted Function void InitializeGlobalArrayStorage()
     {
         LlvmGlobalBinding binding = This.FirstGlobal;
         While (binding != null)
         {
             TypeSymbol arrayType = binding.Symbol.Value.Type;
-            int lengthValue = This.FixedGlobalArrayLength(binding.Symbol);
+            int lengthValue = This.GlobalArrayLength(binding.Symbol);
             If (arrayType.Kind == [int](TypeKind.ArrayType) && lengthValue >= 0)
             {
                 TypeSymbol elementType = arrayType.ElementType;
@@ -547,6 +590,12 @@ Class NativeBackend
                     This.Types1(bytes), This.Unique("global_array_memory"));
                 This.CallKinalRuntime("IO.Kinal.Runtime.MemoryZero", 2,
                     This.Types2(memory, bytes), "");
+                ExpressionNode initializer = binding.Symbol.Declaration.Initializer;
+                If (initializer != null && initializer.Kind == [int](ExpressionKind.ArrayLiteral))
+                {
+                    byte* content = This.ConstantArrayContent(binding.Symbol, lengthValue);
+                    If (content != null) This.Module.Store(content, memory);
+                }
                 byte* data = This.Module.BitCast(memory, This.Module.PointerType(elementHandle),
                     This.Unique("global_array_data"));
                 byte* value = This.Module.ConstUndef(This.TypeHandle(arrayType));
@@ -1682,7 +1731,7 @@ Class NativeBackend
                 TypeSymbol fieldType = This.Semantics.ResolveType(type.Syntax, field.TypeName);
                 byte* address = This.Module.StructGep(binding.StructHandle, object,
                     fieldIndex, This.Unique("field_init"));
-                int lengthValue = This.FixedArrayLength(type.UnitName, field.TypeName);
+                int lengthValue = This.Semantics.StorageArrayLength(field);
                 If (fieldType.Kind == [int](TypeKind.ArrayType) && lengthValue >= 0)
                 {
                     byte* elementHandle = This.TypeHandle(fieldType.ElementType);
@@ -2736,24 +2785,61 @@ Class NativeBackend
         If (count == 0) Return This.DefaultValue(expression.Type);
         Return This.EmitArrayValue(context, expression.Type, expression.FirstArgument,
             This.Module.ConstInt(This.Module.IntType(64), count),
-            This.ExpressionRootAddress(context, expression));
+            This.ExpressionRootAddress(context, expression), count);
+    }
+
+    // Runtime=None storage is initialized in generated code, without a hidden
+    // libc memset dependency. Alloca still belongs to the function entry block;
+    // initialization stays at the declaration so loop iterations reset storage.
+    Public Trusted Function void ZeroStorage(LlvmFunctionContext context, byte* memory, byte* bytes)
+    {
+        byte* before = This.Module.CurrentBlock();
+        byte* condition = This.Module.AppendBlock(context.Binding.Function, This.Unique("zero_condition"));
+        byte* body = This.Module.AppendBlock(context.Binding.Function, This.Unique("zero_body"));
+        byte* done = This.Module.AppendBlock(context.Binding.Function, This.Unique("zero_done"));
+        This.Module.Branch(condition);
+        This.Module.PositionAtEnd(condition);
+        byte* index = This.Module.Phi(This.Module.IntType(64), This.Unique("zero_index"));
+        This.Module.AddIncoming(index, This.Module.ConstInt(This.Module.IntType(64), 0), before);
+        byte* more = This.Module.Compare([int](LlvmIntPredicate.UnsignedLess), index, bytes, This.Unique("zero_more"));
+        This.Module.ConditionalBranch(more, body, done);
+        This.Module.PositionAtEnd(body);
+        byte* address = This.Module.Gep(This.Module.IntType(8), memory, This.Types1(index), true, This.Unique("zero_byte"));
+        This.Module.Store(This.Module.ConstInt(This.Module.IntType(8), 0), address);
+        byte* next = This.Module.Add(index, This.Module.ConstInt(This.Module.IntType(64), 1), This.Unique("zero_next"));
+        This.Module.AddIncoming(index, next, body);
+        This.Module.Branch(condition);
+        This.Module.PositionAtEnd(done);
     }
 
     Public Trusted Function LlvmValue EmitArrayValue(LlvmFunctionContext context,
                                                        TypeSymbol arrayType,
                                                        HirExpression firstItem,
                                                        byte* length,
-                                                       byte* rootAddress)
+                                                       byte* rootAddress,
+                                                       int fixedLength)
     {
         TypeSymbol elementType = arrayType.ElementType;
         byte* elementHandle = This.TypeHandle(elementType);
         byte* bytes = This.Module.Multiply(length, This.Module.SizeOf(elementHandle),
             This.Unique("array_bytes"));
-        byte* memory = This.CallKinalRuntime(
-            "IO.Kinal.Runtime.GarbageCollector.Allocate", 1,
-            This.Types1(bytes), This.Unique("array_memory"));
-        This.CallKinalRuntime("IO.Kinal.Runtime.MemoryZero", 2,
-            This.Types2(memory, bytes), "");
+        byte* memory = null;
+        If (This.Semantics.Session.IsFreestandingCore())
+        {
+            If (fixedLength == 0) memory = This.Module.ConstNull(This.Module.PointerType(elementHandle));
+            Else
+            {
+                byte* storageType = This.Module.ArrayType(elementHandle, fixedLength);
+                memory = This.Module.Alloca(storageType, This.Unique("array_storage"));
+                This.ZeroStorage(context, memory, bytes);
+            }
+        }
+        Else
+        {
+            memory = This.CallKinalRuntime("IO.Kinal.Runtime.GarbageCollector.Allocate", 1,
+                This.Types1(bytes), This.Unique("array_memory"));
+            This.CallKinalRuntime("IO.Kinal.Runtime.MemoryZero", 2, This.Types2(memory, bytes), "");
+        }
         byte* data = This.Module.BitCast(memory, This.Module.PointerType(elementHandle),
             This.Unique("array_data"));
         byte* value = This.Module.ConstUndef(This.TypeHandle(arrayType));
@@ -4686,7 +4772,7 @@ Class NativeBackend
         If (expression.Kind == [int](HirExpressionKind.PackageLiteral))
             Return This.EmitArrayValue(context, expression.Type, expression.FirstArgument,
                 This.Module.ConstInt(This.Module.IntType(64), This.HirArgumentCount(expression)),
-                This.ExpressionRootAddress(context, expression));
+                This.ExpressionRootAddress(context, expression), This.HirArgumentCount(expression));
         If (expression.Kind == [int](HirExpressionKind.DictLiteral))
             Return This.EmitDictLiteral(context, expression);
         If (expression.Kind == [int](HirExpressionKind.Switch))
@@ -4700,7 +4786,7 @@ Class NativeBackend
                 Return This.EmitArrayValue(context, expression.Type, expression.Left.FirstArgument,
                     This.Module.ConstInt(This.Module.IntType(64),
                         This.HirArgumentCount(expression.Left)),
-                    This.ExpressionRootAddress(context, expression));
+                    This.ExpressionRootAddress(context, expression), This.HirArgumentCount(expression.Left));
             If (expression.Left != null &&
                 expression.Left.Type.Kind == [int](TypeKind.PackageType) &&
                 expression.Type.Kind == [int](TypeKind.ArrayType))
@@ -5425,16 +5511,16 @@ Class NativeBackend
             This.AddGcRoot(context, statement.DeclaredType, address);
             LlvmValue value = null;
             If (statement.DeclaredType.Kind == [int](TypeKind.ArrayType) &&
-                statement.SecondExpression != null)
+                statement.FixedArrayLength >= 0 &&
+                (statement.Expression == null ||
+                 statement.Expression.Kind == [int](HirExpressionKind.ArrayLiteral)))
             {
-                LlvmValue requestedLength = This.CastValue(
-                    This.EmitExpression(context, statement.SecondExpression),
-                    This.Semantics.Primitive("int"));
+                byte* requestedLength = This.Module.ConstInt(This.Module.IntType(64), statement.FixedArrayLength);
                 HirExpression firstItem = statement.Expression != null &&
                     statement.Expression.Kind == [int](HirExpressionKind.ArrayLiteral) ?
                     statement.Expression.FirstArgument : null;
                 value = This.EmitArrayValue(context, statement.DeclaredType, firstItem,
-                    requestedLength.Handle, address);
+                    requestedLength, address, statement.FixedArrayLength);
             }
             Else value = statement.Expression == null ? This.DefaultValue(statement.DeclaredType) :
                 This.CastValue(This.EmitExpression(context, statement.Expression), statement.DeclaredType);
@@ -5853,7 +5939,7 @@ Class NativeBackend
         This.CallKinalRuntime("IO.Kinal.Runtime.GarbageCollector.Initialize", 0,
             This.Types0(), "");
         This.InitializeGlobalRoots();
-        This.InitializeFixedGlobalArrays();
+        This.InitializeGlobalArrayStorage();
         This.InitializeGlobalCallables();
         This.InitializeGlobalCopies();
 

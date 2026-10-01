@@ -101,6 +101,7 @@ Class HirStatement
     Public ValueSymbol DeclaredSymbol;
     Public HirExpression Expression;
     Public HirExpression SecondExpression;
+    Public int FixedArrayLength;
     Public HirExpression ThirdExpression;
     Public HirStatement Initializer;
     Public HirStatement FirstChild;
@@ -115,6 +116,7 @@ Class HirStatement
         This.DeclaredSymbol = null;
         This.Expression = null;
         This.SecondExpression = null;
+        This.FixedArrayLength = -1;
         This.ThirdExpression = null;
         This.Initializer = null;
         This.FirstChild = null;
@@ -149,17 +151,41 @@ Class HirFunction
     }
 }
 
+Class HirGlobal
+{
+    Public GlobalSymbol Symbol;
+    Public HirExpression Initializer;
+    Public HirGlobal Next;
+
+    Public Safe Constructor(GlobalSymbol symbol, HirExpression initializer)
+    {
+        This.Symbol = symbol;
+        This.Initializer = initializer;
+        This.Next = null;
+    }
+}
+
 Class HirModule
 {
     Public string UnitName;
+    Public HirGlobal FirstGlobal;
     Public HirFunction FirstFunction;
     Public HirModule Next;
 
     Public Safe Constructor(string unitName)
     {
         This.UnitName = unitName;
+        This.FirstGlobal = null;
         This.FirstFunction = null;
         This.Next = null;
+    }
+
+    Public Safe Function void AddGlobal(HirGlobal global)
+    {
+        If (This.FirstGlobal == null) { This.FirstGlobal = global; Return; }
+        HirGlobal current = This.FirstGlobal;
+        While (current.Next != null) current = current.Next;
+        current.Next = global;
     }
 
     Public Safe Function void AddFunction(HirFunction function)

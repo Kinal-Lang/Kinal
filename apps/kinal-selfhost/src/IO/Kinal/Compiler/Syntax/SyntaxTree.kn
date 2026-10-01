@@ -145,6 +145,7 @@ Class FieldDecl
     Public int Line;
     Public int Column;
     Public ExpressionNode Initializer;
+    Public ExpressionNode ArrayLength;
     Public SyntaxAttribute FirstAttribute;
     Public FieldDecl Next;
 
@@ -158,6 +159,7 @@ Class FieldDecl
         This.Line = line;
         This.Column = column;
         This.Initializer = null;
+        This.ArrayLength = null;
         This.FirstAttribute = null;
         This.Next = null;
     }

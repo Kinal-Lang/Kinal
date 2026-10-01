@@ -68,7 +68,13 @@ linking is not implemented yet.
 
 Supported core operations include scalar/enum arithmetic, pointers and lvalues,
 Struct values, direct/extern calls, explicit generic functions, borrowed array
-descriptors, static string data, and scalar globals. Volatile accesses lower
+descriptors, fixed local/global arrays, local array literals, constant global
+array literals, static string data, and scalar globals. Array bounds retain their
+syntax trees and resolve as integer constant expressions in Sema. Local backing
+storage is stack-owned and reset at each declaration; global backing storage is
+static. Partial literals are zero-padded, and array descriptor copies retain
+their ordinary aliasing semantics. Escaping stack-local array storage is not a
+supported lifetime extension. Volatile accesses lower
 directly to LLVM volatile instructions; `Panic=Trap|Loop` lowers to a trap or
 infinite loop. Intrinsic imports do not discover unrelated parent `Unit IO`
 library sources. Runtime policy and public library implementations are not
@@ -76,9 +82,11 @@ duplicated in this path.
 
 A bound-HIR validation pass rejects managed allocation, collections, closures,
 async/exceptions, runtime string operations and extended-float support-library
-requirements. Fixed local/global/field array storage and global-copy startup
-initialization are also explicitly rejected pending their runtime-free storage
-lowering. `Runtime=Alloc|GC` freestanding modes remain unsupported. This is an
+requirements. Fixed-array struct fields and global-copy startup initialization
+remain explicitly rejected; global array elements currently require constant
+values. Global initializers are now bound in a Safe context, so constant lowering
+cannot bypass pointer/call safety checks. `Runtime=Alloc|GC` freestanding modes
+remain unsupported. This is an
 initial core, not complete parity with stage0's freestanding implementation.
 
 ## Validation
