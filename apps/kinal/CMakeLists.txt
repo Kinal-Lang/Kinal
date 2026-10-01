@@ -70,6 +70,7 @@ set(KINAL_COMPILER_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/kn_format.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/kn_codegen.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/kn_knc.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/kn_knc_capture.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/kn_link.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/kn_driver.c"
 )

@@ -150,6 +150,26 @@ class ProjectPackageChecks:
         write(project / "src" / "Local.kn", source("Probe.Local", "transitive-local"))
         self.check(project, "package_import_reaches_local_unit", "transitive-local\n")
 
+    def unit_path_identity(self) -> None:
+        project = self.project("unit-path-identity", [],
+                               top='Packages { OfficialRoots = ["official"]; }')
+        directory = package(project / "official", "one", "IO.PathIdentity", "1", {})
+        # A package's source path must not become a synthetic standard module
+        # that shadows a legitimate import alias in an unrelated Unit.
+        write(directory / "src" / "Binary.kn", source("Probe.Data", "aliased"))
+        main = project / "src" / "Main.kn"
+        write(main, "Unit Tests.PackageEntry;\nGet IO.Console;\n"
+                    "Get Binary By Probe.Data;\n"
+                    "Static Function int Main() { IO.Console.PrintLine(Binary.Value()); Return 0; }\n")
+        self.check(project, "package_path_does_not_shadow_import_alias", "aliased\n")
+        write(main, "Unit Tests.PackageEntry;\nGet IO.Console;\n"
+                    "Get Binary By Probe.Data;\n"
+                    "Static Function int Main() { IO.Console.PrintLine(Probe.Data.Value()); Return 0; }\n")
+        self.check(project, "package_alias_still_hides_original_namespace", None)
+        write(main, "Unit Tests.PackageEntry;\nGet IO.Console;\n"
+                    "Static Function int Main() { IO.Console.PrintLine(Probe.Data.Value()); Return 0; }\n")
+        self.check(project, "package_unit_still_requires_import", None)
+
     def archives(self) -> None:
         project = self.project("archives", ["Probe.Archive"],
                                top='Packages { Roots = ["packages"]; }')
@@ -229,6 +249,7 @@ class ProjectPackageChecks:
 
     def execute(self) -> None:
         self.resolution()
+        self.unit_path_identity()
         self.archives()
         self.manifests()
         print(f"[OK] project package contract: {self.count} cases", flush=True)

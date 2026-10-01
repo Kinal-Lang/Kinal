@@ -1,0 +1,129 @@
+Unit Tests.CaptureControlFlow;
+
+Get IO.Console;
+Get IO.GC;
+
+int BlockResult = 0;
+
+Function Object.Function Conditional(bool positive)
+{
+    int value = 5;
+    Object.Function result = null;
+    If (positive) result = Function int() { Return value; };
+    Else result = Function int() { Return -value; };
+    value = 8;
+    Return result;
+}
+
+Function Object.Function PostfixCounter(int value)
+{
+    Return Function int() { Return value++; };
+}
+
+Function Object.Function UpdatedLocal()
+{
+    int value = 1;
+    Object.Function result = Function int() { Return value; };
+    value++;
+    ++value;
+    value -= 1;
+    Return result;
+}
+
+Function Object.Function[] ForCaptures()
+{
+    Object.Function[3] result;
+    For (int index = 0; index < 3; index++)
+    {
+        int item = index + 10;
+        result[index] = Function int() { Return item; };
+    }
+    Return result;
+}
+
+Function Object.Function[] ForeachCaptures()
+{
+    int[] values = {20, 21, 22};
+    Object.Function[3] result;
+    int index = 0;
+    Foreach (int item Is values)
+    {
+        result[index] = Function int() { Return item; };
+        index++;
+    }
+    Return result;
+}
+
+Function Object.Function[] ShadowCaptures()
+{
+    int value = 1;
+    Object.Function outer = Function int() { Return value; };
+    Object.Function inner = null;
+    {
+        int value = 2;
+        inner = Function int() { Return value; };
+    }
+    value = 3;
+    Object.Function[] result = {outer, inner};
+    Return result;
+}
+
+Class Owner
+{
+    Public int Value;
+    Public Constructor(int value) { This.Value = value; }
+    Public Function Object.Function Capture()
+    {
+        Object.Function result = Function int() { Return This.Value; };
+        This.Value += 1;
+        Return result;
+    }
+}
+
+Function Object.Function CatchCapture()
+{
+    Try { Throw "caught"; }
+    Catch (string error) { Return Function string() { Return error; }; }
+    Return null;
+}
+
+Function Object.Block BlockCapture(int start)
+{
+    Return Block< / ++start; BlockResult = start; / >;
+}
+
+Static Function int Main()
+{
+    Object.Function positive = Conditional(true);
+    Object.Function negative = Conditional(false);
+    Object.Function counter = PostfixCounter(5);
+    Object.Function updated = UpdatedLocal();
+    Object.Function[] counted = ForCaptures();
+    Object.Function[] each = ForeachCaptures();
+    Object.Function[] shadow = ShadowCaptures();
+    Owner owner = New Owner(30);
+    Object.Function method = owner.Capture();
+    Object.Function caught = CatchCapture();
+    Object.Block block = BlockCapture(40);
+    IO.GC.Collect();
+    IO.Console.PrintLine(positive());
+    IO.Console.PrintLine(negative());
+    IO.Console.PrintLine(counter());
+    IO.Console.PrintLine(counter());
+    IO.Console.PrintLine(updated());
+    IO.Console.PrintLine(counted[0]());
+    IO.Console.PrintLine(counted[1]());
+    IO.Console.PrintLine(counted[2]());
+    IO.Console.PrintLine(each[0]());
+    IO.Console.PrintLine(each[1]());
+    IO.Console.PrintLine(each[2]());
+    IO.Console.PrintLine(shadow[0]());
+    IO.Console.PrintLine(shadow[1]());
+    IO.Console.PrintLine(method());
+    IO.Console.PrintLine(caught());
+    block.Run();
+    IO.Console.PrintLine(BlockResult);
+    block.Run();
+    IO.Console.PrintLine(BlockResult);
+    Return 0;
+}

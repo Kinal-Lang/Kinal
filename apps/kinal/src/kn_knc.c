@@ -1,4 +1,5 @@
 #include "kn/knc.h"
+#include "kn/knc_capture.h"
 #include "kn/diag.h"
 #include "kn/lexer.h"
 #include "kn/std.h"
@@ -395,6 +396,7 @@ struct KncFuncState
     int func_index;
     ByteBuf *code;
     LocalBuf locals;
+    KncCapturePlan *capture_plan;
     LoopBuf loops;
     Type self_type;
     int has_this;
@@ -1199,15 +1201,25 @@ static int alloc_reg(KncFuncState *st)
     return reg;
 }
 
-static void add_local(KncFuncState *st, const char *name, Type type, int reg)
+static void add_local(KncFuncState *st, const char *name, Type type, int reg,
+                      const void *declaration)
 {
     KncLocal local;
     local.name = name;
     local.type = type;
     local.reg = reg;
-    local.storage = KNC_LOCAL_VALUE;
+    local.storage = knc_capture_plan_contains(st->capture_plan, declaration) ?
+        KNC_LOCAL_CELL : KNC_LOCAL_VALUE;
     local.capture_slot = -1;
     localbuf_push(&st->locals, local);
+    // The register representation is fixed before any branch is emitted.
+    // Declarations inside loops execute this instruction once per instance.
+    if (local.storage == KNC_LOCAL_CELL)
+    {
+        emit_u8(st->code, KNC_OP_NEW_CELL);
+        emit_u8(st->code, reg);
+        emit_u8(st->code, reg);
+    }
     if (st->program && st->func_index >= 0 && st->func_index < st->program->count && reg >= 0)
     {
         StrBuf *names = &st->program->items[st->func_index].register_names;
@@ -1234,6 +1246,39 @@ static void add_capture_local(KncFuncState *st, const char *name, Type type, int
     local.storage = KNC_LOCAL_CAPTURE;
     local.capture_slot = capture_slot;
     localbuf_push(&st->locals, local);
+}
+
+static int load_local_value(KncFuncState *st, const KncLocal *local)
+{
+    if (local->storage == KNC_LOCAL_VALUE) return local->reg;
+    int value = alloc_reg(st);
+    emit_u8(st->code, local->storage == KNC_LOCAL_CAPTURE ? KNC_OP_LOAD_CAPTURE : KNC_OP_LOAD_CELL);
+    emit_u8(st->code, value);
+    if (local->storage == KNC_LOCAL_CAPTURE) emit_u16(st->code, local->capture_slot);
+    else emit_u8(st->code, local->reg);
+    return value;
+}
+
+static void store_local_value(KncFuncState *st, const KncLocal *local, int value)
+{
+    if (local->storage == KNC_LOCAL_CAPTURE)
+    {
+        emit_u8(st->code, KNC_OP_STORE_CAPTURE);
+        emit_u8(st->code, value);
+        emit_u16(st->code, local->capture_slot);
+    }
+    else if (local->storage == KNC_LOCAL_CELL)
+    {
+        emit_u8(st->code, KNC_OP_STORE_CELL);
+        emit_u8(st->code, local->reg);
+        emit_u8(st->code, value);
+    }
+    else if (value != local->reg)
+    {
+        emit_u8(st->code, KNC_OP_MOVE);
+        emit_u8(st->code, local->reg);
+        emit_u8(st->code, value);
+    }
 }
 
 static const KnSource *record_src(const KncFuncRecord *record)
@@ -1605,16 +1650,6 @@ static KncValue move_to_fresh_reg(KncFuncState *st, KncValue value)
     emit_u8(st->code, value.reg);
     out.reg = dst;
     return out;
-}
-
-static void ensure_local_cell(KncFuncState *st, KncLocal *local)
-{
-    if (!st || !local || local->storage != KNC_LOCAL_VALUE)
-        return;
-    emit_u8(st->code, KNC_OP_NEW_CELL);
-    emit_u8(st->code, local->reg);
-    emit_u8(st->code, local->reg);
-    local->storage = KNC_LOCAL_CELL;
 }
 
 static int knc_stmt_is_empty_block(const Stmt *s)
@@ -2437,7 +2472,11 @@ static int build_capture_env(KncFuncState *st, CaptureBuf *captures, int minimum
         }
         else
         {
-            ensure_local_cell(st, local);
+            if (local->storage != KNC_LOCAL_CELL)
+            {
+                knc_diag(st->src, 1, 1, "Internal KNC emitter error: capture has no declaration cell");
+                return -1;
+            }
             cell_reg = local->reg;
         }
 
@@ -3407,30 +3446,9 @@ static int compile_assign_to_local(KncFuncState *st, Expr *target, Expr *value_e
             knc_diag_expr(st, target, "Unknown local variable in KNC emitter");
             return -1;
         }
-        if (local->storage == KNC_LOCAL_CAPTURE)
-        {
-            emit_u8(st->code, KNC_OP_STORE_CAPTURE);
-            emit_u8(st->code, value.reg);
-            emit_u16(st->code, local->capture_slot);
-            (void)result_type;
-            return value.reg;
-        }
-        if (local->storage == KNC_LOCAL_CELL)
-        {
-            emit_u8(st->code, KNC_OP_STORE_CELL);
-            emit_u8(st->code, local->reg);
-            emit_u8(st->code, value.reg);
-            (void)result_type;
-            return value.reg;
-        }
-        if (value.reg != local->reg)
-        {
-            emit_u8(st->code, KNC_OP_MOVE);
-            emit_u8(st->code, local->reg);
-            emit_u8(st->code, value.reg);
-        }
+        store_local_value(st, local, value.reg);
         (void)result_type;
-        return local->reg;
+        return local->storage == KNC_LOCAL_VALUE ? local->reg : value.reg;
     }
 
     if (target && target->kind == EXPR_MEMBER)
@@ -3540,9 +3558,8 @@ static KncValue compile_incdec(KncFuncState *st, Expr *e)
 {
     KncLocal *local;
     KncValue out;
-    int one_reg;
-    int new_reg;
-    int dst_reg;
+    int value_reg;
+    int updated_reg;
 
     out.reg = -1;
     out.type = e->type;
@@ -3560,53 +3577,66 @@ static KncValue compile_incdec(KncFuncState *st, Expr *e)
         return out;
     }
 
-    if (type_is_integerish(local->type))
-    {
-        if (e->v.unary.is_postfix)
-        {
-            dst_reg = alloc_reg(st);
-            emit_u8(st->code, KNC_OP_MOVE);
-            emit_u8(st->code, dst_reg);
-            emit_u8(st->code, local->reg);
-            out.reg = dst_reg;
-        }
-        else
-        {
-            out.reg = local->reg;
-        }
-
-        emit_u8(st->code, e->v.unary.op == TOK_PLUSPLUS ? KNC_OP_INC_INT : KNC_OP_DEC_INT);
-        emit_u8(st->code, local->reg);
-        return out;
-    }
-
-    one_reg = alloc_reg(st);
-    emit_u8(st->code, KNC_OP_LOAD_INT);
-    emit_u8(st->code, one_reg);
-    emit_u16(st->code, program_add_int(st->program, 1));
-
-    new_reg = alloc_reg(st);
-    emit_u8(st->code, e->v.unary.op == TOK_PLUSPLUS ? KNC_OP_ADD_INT : KNC_OP_SUB_INT);
-    emit_u8(st->code, new_reg);
-    emit_u8(st->code, local->reg);
-    emit_u8(st->code, one_reg);
-
+    value_reg = load_local_value(st, local);
+    out.reg = value_reg;
     if (e->v.unary.is_postfix)
     {
-        dst_reg = alloc_reg(st);
+        out.reg = alloc_reg(st);
         emit_u8(st->code, KNC_OP_MOVE);
-        emit_u8(st->code, dst_reg);
-        emit_u8(st->code, local->reg);
-        out.reg = dst_reg;
+        emit_u8(st->code, out.reg);
+        emit_u8(st->code, value_reg);
+    }
+
+    updated_reg = value_reg;
+    if (type_is_integerish(local->type))
+    {
+        if (local->type.kind == TY_CHAR)
+        {
+            updated_reg = alloc_reg(st);
+            emit_u8(st->code, KNC_OP_CHAR_TO_INT);
+            emit_u8(st->code, updated_reg);
+            emit_u8(st->code, value_reg);
+        }
+        emit_u8(st->code, e->v.unary.op == TOK_PLUSPLUS ? KNC_OP_INC_INT : KNC_OP_DEC_INT);
+        emit_u8(st->code, updated_reg);
+        if (local->type.kind == TY_CHAR)
+        {
+            int character = alloc_reg(st);
+            emit_u8(st->code, KNC_OP_INT_TO_CHAR);
+            emit_u8(st->code, character);
+            emit_u8(st->code, updated_reg);
+            updated_reg = character;
+        }
+    }
+    else if (type_is_floatish(local->type))
+    {
+        int one = alloc_reg(st);
+        emit_u8(st->code, KNC_OP_LOAD_FLOAT);
+        emit_u8(st->code, one);
+        emit_u16(st->code, program_add_float(st->program, 1.0));
+        updated_reg = alloc_reg(st);
+        emit_u8(st->code, e->v.unary.op == TOK_PLUSPLUS ? KNC_OP_ADD_FLOAT : KNC_OP_SUB_FLOAT);
+        emit_u8(st->code, updated_reg);
+        emit_u8(st->code, value_reg);
+        emit_u8(st->code, one);
+    }
+    else if (local->type.kind == TY_PTR)
+    {
+        int step = emit_int_const_reg(st, e->v.unary.op == TOK_PLUSPLUS ? 1 : -1);
+        updated_reg = alloc_reg(st);
+        emit_u8(st->code, KNC_OP_ADD_PTR);
+        emit_u8(st->code, updated_reg);
+        emit_u8(st->code, value_reg);
+        emit_u8(st->code, step);
     }
     else
     {
-        out.reg = new_reg;
+        knc_diag_expr(st, e, "Unsupported local ++/-- value type in KNC emitter");
+        return out;
     }
 
-    emit_u8(st->code, KNC_OP_MOVE);
-    emit_u8(st->code, local->reg);
-    emit_u8(st->code, new_reg);
+    store_local_value(st, local, updated_reg);
+    if (!e->v.unary.is_postfix) out.reg = updated_reg;
     return out;
 }
 
@@ -4500,7 +4530,6 @@ static KncValue compile_expr(KncFuncState *st, Expr *e)
 
     case EXPR_THIS:
     case EXPR_BASE:
-        if (!st->has_this)
         {
             KncLocal *this_local = find_local(st, "This");
             if (!this_local)
@@ -4509,28 +4538,9 @@ static KncValue compile_expr(KncFuncState *st, Expr *e)
                 return out;
             }
             out.type = e->type;
-            if (this_local->storage == KNC_LOCAL_CAPTURE)
-            {
-                out.reg = alloc_reg(st);
-                emit_u8(st->code, KNC_OP_LOAD_CAPTURE);
-                emit_u8(st->code, out.reg);
-                emit_u16(st->code, this_local->capture_slot);
-                return out;
-            }
-            if (this_local->storage == KNC_LOCAL_CELL)
-            {
-                out.reg = alloc_reg(st);
-                emit_u8(st->code, KNC_OP_LOAD_CELL);
-                emit_u8(st->code, out.reg);
-                emit_u8(st->code, this_local->reg);
-                return out;
-            }
-            out.reg = this_local->reg;
+            out.reg = load_local_value(st, this_local);
             return out;
         }
-        out.reg = 0;
-        out.type = e->type;
-        return out;
 
     case EXPR_ARRAY:
     {
@@ -4635,11 +4645,12 @@ static KncValue compile_expr(KncFuncState *st, Expr *e)
                     field_index = struct_find_field_index(program_find_struct(st->program, st->self_type.name), e->v.var.name, &field_type);
                 if (field_index >= 0)
                 {
+                    int receiver = load_local_value(st, find_local(st, "This"));
                     out.reg = alloc_reg(st);
                     out.type = field_type;
                     emit_u8(st->code, KNC_OP_LOAD_FIELD);
                     emit_u8(st->code, out.reg);
-                    emit_u8(st->code, 0);
+                    emit_u8(st->code, receiver);
                     emit_u16(st->code, field_index);
                     return out;
                 }
@@ -4659,25 +4670,7 @@ static KncValue compile_expr(KncFuncState *st, Expr *e)
             knc_diag_expr(st, e, "This variable reference is not supported by the bootstrap KNC emitter yet");
             return out;
         }
-        if (local->storage == KNC_LOCAL_CAPTURE)
-        {
-            out.reg = alloc_reg(st);
-            emit_u8(st->code, KNC_OP_LOAD_CAPTURE);
-            emit_u8(st->code, out.reg);
-            emit_u16(st->code, local->capture_slot);
-            out.type = local->type;
-            return out;
-        }
-        if (local->storage == KNC_LOCAL_CELL)
-        {
-            out.reg = alloc_reg(st);
-            emit_u8(st->code, KNC_OP_LOAD_CELL);
-            emit_u8(st->code, out.reg);
-            emit_u8(st->code, local->reg);
-            out.type = local->type;
-            return out;
-        }
-        out.reg = local->reg;
+        out.reg = load_local_value(st, local);
         out.type = local->type;
         return out;
     }
@@ -5198,6 +5191,8 @@ static KncValue compile_expr(KncFuncState *st, Expr *e)
         if (e->type.kind == TY_CLASS &&
             (value.type.kind == TY_CLASS || value.type.kind == TY_NULL || value.type.kind == TY_ANY))
             return emit_checked_object_cast(st, e, value, e->type);
+        if (e->type.kind == TY_STRING && value.type.kind == TY_ANY)
+            return emit_stringify_value(st, value);
         if (e->type.kind == TY_ARRAY && value.type.kind == TY_PACKAGE)
         {
             Type elem_type = type_immediate_elem(e->type);
@@ -5486,19 +5481,19 @@ static int compile_stmt(KncFuncState *st, Stmt *s)
             if (kn_diag_error_count() > 0)
                 return -1;
             reg = alloc_reg(st);
-            add_local(st, s->v.var.name, local_type, reg);
             if (value.reg != reg)
             {
                 emit_u8(st->code, KNC_OP_MOVE);
                 emit_u8(st->code, reg);
                 emit_u8(st->code, value.reg);
             }
+            add_local(st, s->v.var.name, local_type, reg, s);
         }
         else
         {
             int reg = alloc_reg(st);
-            add_local(st, s->v.var.name, local_type, reg);
             emit_default_value(st, reg, local_type);
+            add_local(st, s->v.var.name, local_type, reg, s);
         }
         return 0;
     }
@@ -5522,8 +5517,9 @@ static int compile_stmt(KncFuncState *st, Stmt *s)
                     value = compile_expr(st, s->v.assign.value);
                     if (kn_diag_error_count() > 0)
                         return -1;
+                    int receiver = load_local_value(st, find_local(st, "This"));
                     emit_u8(st->code, KNC_OP_STORE_FIELD);
-                    emit_u8(st->code, 0);
+                    emit_u8(st->code, receiver);
                     emit_u8(st->code, value.reg);
                     emit_u16(st->code, field_index);
                     return 0;
@@ -5548,12 +5544,7 @@ static int compile_stmt(KncFuncState *st, Stmt *s)
         value = compile_expr(st, s->v.assign.value);
         if (kn_diag_error_count() > 0)
             return -1;
-        if (value.reg != local->reg)
-        {
-            emit_u8(st->code, KNC_OP_MOVE);
-            emit_u8(st->code, local->reg);
-            emit_u8(st->code, value.reg);
-        }
+        store_local_value(st, local, value.reg);
         return 0;
     }
 
@@ -5610,7 +5601,7 @@ static int compile_stmt(KncFuncState *st, Stmt *s)
         patch_u16(st->code, catch_patch, current_ip(st->code));
 
         if (s->v.trys.has_param)
-            add_local(st, s->v.trys.catch_name, s->v.trys.catch_type, catch_reg);
+            add_local(st, s->v.trys.catch_name, s->v.trys.catch_type, catch_reg, s);
         if (compile_stmt(st, s->v.trys.catch_block) != 0)
             return -1;
         st->locals.count = saved_try_locals;
@@ -5658,7 +5649,7 @@ static int compile_stmt(KncFuncState *st, Stmt *s)
             emit_u8(st->code, KNC_OP_MOVE);
             emit_u8(st->code, pat_reg);
             emit_u8(st->code, pattern_value.reg);
-            add_local(st, s->v.ifs.pattern_name, s->v.ifs.cond->v.is_expr.target, pat_reg);
+            add_local(st, s->v.ifs.pattern_name, s->v.ifs.cond->v.is_expr.target, pat_reg, s);
         }
         if (compile_stmt(st, s->v.ifs.then_s) != 0)
             return -1;
@@ -6057,12 +6048,14 @@ static int compile_function_body(KncProgram *program, KncFuncRecord *record)
     params = record_params(&meta);
     body = record_body(&meta);
     ret_type = record_return_type(&meta);
+    st.capture_plan = knc_capture_plan_create(body, params,
+        meta.callable_kind == KNC_CALLABLE_METHOD && meta.is_instance);
 
     if (meta.callable_kind == KNC_CALLABLE_METHOD && meta.is_instance)
     {
         st.has_this = 1;
         st.self_type = record_receiver_type(&meta);
-        add_local(&st, "This", st.self_type, st.next_reg);
+        add_local(&st, "This", st.self_type, st.next_reg, 0);
         st.next_reg++;
         st.max_reg = st.next_reg;
     }
@@ -6077,9 +6070,10 @@ static int compile_function_body(KncProgram *program, KncFuncRecord *record)
         {
             knc_diag(st.src, param->line, param->col,
                      "This parameter type is not supported by the bootstrap KNC emitter yet");
+            knc_capture_plan_dispose(st.capture_plan);
             return -1;
         }
-        add_local(&st, param->name, param->type, st.next_reg);
+        add_local(&st, param->name, param->type, st.next_reg, param);
         st.next_reg++;
         st.max_reg = st.next_reg;
     }
@@ -6093,12 +6087,13 @@ static int compile_function_body(KncProgram *program, KncFuncRecord *record)
         if (!start_local || !until_local)
         {
             knc_diag(st.src, 1, 1, "Internal KNC emitter error: missing synthetic block parameters");
+            knc_capture_plan_dispose(st.capture_plan);
             return -1;
         }
 
         st.in_runtime_block = 1;
-        st.block_start_reg = start_local->reg;
-        st.block_until_reg = until_local->reg;
+        st.block_start_reg = load_local_value(&st, start_local);
+        st.block_until_reg = load_local_value(&st, until_local);
         st.block_records = meta.synthetic_block_records;
         st.block_body_start_ip = -1;
 
@@ -6120,7 +6115,10 @@ static int compile_function_body(KncProgram *program, KncFuncRecord *record)
     if (body)
     {
         if (compile_stmt(&st, body) != 0)
+        {
+            knc_capture_plan_dispose(st.capture_plan);
             return -1;
+        }
     }
 
     if (meta.synthetic_is_block)
@@ -6157,6 +6155,7 @@ static int compile_function_body(KncProgram *program, KncFuncRecord *record)
     record->reg_count = st.max_reg;
     record->return_kind = value_kind_from_type(ret_type);
     record->built = 1;
+    knc_capture_plan_dispose(st.capture_plan);
     return 0;
 }
 

@@ -1,0 +1,36 @@
+Unit Tests.CaptureIncrementTypes;
+
+Get IO.Console;
+
+Function Object.Function FloatCounter(float value)
+{
+    Return Function float() { Return value++; };
+}
+
+Function Object.Function CharCounter(char value)
+{
+    Return Function char() { Return value++; };
+}
+
+Trusted Function int PointerUpdate()
+{
+    int[] values = {10, 20, 30};
+    int* pointer = &values[0];
+    Object.Function retain = Function int() { Return values[0]; };
+    pointer++;
+    ++pointer;
+    pointer--;
+    Return *pointer;
+}
+
+Static Trusted Function int Main()
+{
+    Object.Function floating = FloatCounter(1.5);
+    Object.Function character = CharCounter('a');
+    IO.Console.PrintLine(floating());
+    IO.Console.PrintLine(floating());
+    IO.Console.PrintLine(character());
+    IO.Console.PrintLine(character());
+    IO.Console.PrintLine(PointerUpdate());
+    Return 0;
+}

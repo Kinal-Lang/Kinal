@@ -1087,15 +1087,21 @@ static void build_runtime_hosted_numeric_stringify(Codegen *g)
         LLVMBuildRet(g->builder, retp);
     }
 
-    // __kn_f64_to_string (truncate to int)
+    // Use the same numeric ABI leaf as the Kinal runtime. Copy its malloc-owned
+    // text into the stage0 managed heap before releasing the native buffer.
     g->fn_f64_to_string_ty = LLVMFunctionType(t_i8ptr, &g->f64, 1, 0);
     g->fn_f64_to_string = ensure_function(g->mod, "__kn_f64_to_string", g->fn_f64_to_string_ty);
     {
         LLVMBasicBlockRef entry = LLVMAppendBasicBlockInContext(g->ctx, g->fn_f64_to_string, "entry");
         LLVMPositionBuilderAtEnd(g->builder, entry);
         LLVMValueRef fv = LLVMGetParam(g->fn_f64_to_string, 0);
-        LLVMValueRef iv = LLVMBuildFPToSI(g->builder, fv, t_i64, "f2i");
-        LLVMValueRef retp = LLVMBuildCall2(g->builder, g->fn_i64_to_string_ty, g->fn_i64_to_string, &iv, 1, "f2s");
+        LLVMValueRef format_fn = ensure_function(g->mod, "kn_native_format_f64", g->fn_f64_to_string_ty);
+        LLVMValueRef native = LLVMBuildCall2(g->builder, g->fn_f64_to_string_ty, format_fn, &fv, 1, "native_text");
+        LLVMValueRef copy_args[2] = { native, build_string_const(g, "", 0) };
+        LLVMValueRef retp = LLVMBuildCall2(g->builder, g->fn_str_concat_ty, g->fn_str_concat, copy_args, 2, "f2s");
+        LLVMTypeRef free_ty = LLVMFunctionType(LLVMVoidTypeInContext(g->ctx), &t_i8ptr, 1, 0);
+        LLVMValueRef free_fn = ensure_function(g->mod, "free", free_ty);
+        LLVMBuildCall2(g->builder, free_ty, free_fn, &native, 1, "");
         LLVMBuildRet(g->builder, retp);
     }
 }

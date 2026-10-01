@@ -646,6 +646,30 @@ def run_driver_integration_tests(compiler: Path, out_dir: Path) -> int:
                     "7\n9\n11\n21\n13\n") != 0:
         return 1
 
+    # A closure must not change the register representation of an already
+    # emitted branch/loop. Check declaration identity, cell updates and This
+    # against Native, including the non-superloop bytecode path.
+    storage_cases = (
+        ("capture_control_flow", ROOT / "tests/common/capture_control_flow.kn",
+         "8\n-8\n5\n6\n2\n10\n11\n12\n20\n21\n22\n3\n2\n31\ncaught\n41\n42\n"),
+        ("capture_increment_types", ROOT / "tests/selfhost/fixtures/capture_increment_types/Main.kn",
+         "1.5\n2.5\na\nb\n20\n"),
+        ("float_string_roundtrip", ROOT / "tests/common/float_string_roundtrip.kn",
+         "1.25\n-2.5\n0.125\ntrue\ntrue\ntrue\n"),
+    )
+    for name, source, expected in storage_cases:
+        for label, flags in (("native", None), ("knc", []), ("knc_nofuse", ["--no-superloop"])):
+            output = (exe_path(out_dir / f"{name}_native") if flags is None
+                      else out_dir / f"{name}_{label}.knc")
+            command = [str(compiler), "build"] if flags is None else [str(compiler), "vm", "build", *flags]
+            run(command + ["--no-module-discovery", str(source), "-o", str(output)], cwd=ROOT)
+            proc = run([str(output)] if flags is None else [str(vm_exe), str(output)], cwd=ROOT, capture=True)
+            assert isinstance(proc, subprocess.CompletedProcess)
+            if proc.returncode != 0 or (proc.stdout or "").replace("\r\n", "\n") != expected or proc.stderr:
+                print(f"[FAIL] {name}_{label}: exit={proc.returncode}, stdout={proc.stdout!r}, stderr={proc.stderr!r}")
+                return 1
+            print(f"[OK] {name}_{label}")
+
     knc_arith_fx = ROOT / "tests" / "common" / "knc_arith.kn"
     knc_arith = out_dir / "knc_arith.knc"
     run([str(compiler), "vm", "build", "--no-module-discovery", str(knc_arith_fx), "-o", str(knc_arith)], cwd=ROOT)

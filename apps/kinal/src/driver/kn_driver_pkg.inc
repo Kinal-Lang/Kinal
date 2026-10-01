@@ -1581,7 +1581,7 @@ static bool register_manifest_into_module_map_depth(const KnPkgManifest *manifes
             const char *scan_root = root;
             if (path_full(abs_root, sizeof(abs_root), root))
                 scan_root = abs_root;
-            scan_dir_modules(scan_root, scan_root, map);
+            scan_dir_modules(scan_root, scan_root, map, false);
         }
         return true;
     }

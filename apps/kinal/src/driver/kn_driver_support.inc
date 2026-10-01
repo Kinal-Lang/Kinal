@@ -2032,7 +2032,8 @@ static char *read_unit_name_from_file(const char *path)
     return unit;
 }
 
-static void scan_dir_modules(const char *root_dir, const char *dir, ModuleMap *map)
+static void scan_dir_modules(const char *root_dir, const char *dir, ModuleMap *map,
+                             bool include_path_aliases)
 {
     char pattern[KN_MAX_PATH];
     if (!path_join(pattern, sizeof(pattern), dir, "*")) return;
@@ -2049,7 +2050,7 @@ static void scan_dir_modules(const char *root_dir, const char *dir, ModuleMap *m
             if (is_ignored_dir(name)) continue;
             char subdir[KN_MAX_PATH];
             if (!path_join(subdir, sizeof(subdir), dir, name)) continue;
-            scan_dir_modules(root_dir, subdir, map);
+            scan_dir_modules(root_dir, subdir, map, include_path_aliases);
             continue;
         }
 
@@ -2069,7 +2070,6 @@ static void scan_dir_modules(const char *root_dir, const char *dir, ModuleMap *m
             if (entry)
             {
                 strlist_add(&entry->paths, path);
-                kn_free(unit);
             }
             else
             {
@@ -2077,7 +2077,8 @@ static void scan_dir_modules(const char *root_dir, const char *dir, ModuleMap *m
             }
 
             char rel_module[KN_MAX_PATH];
-            if (path_relative_module(root_dir, store_path, rel_module, sizeof(rel_module)))
+            if (include_path_aliases &&
+                path_relative_module(root_dir, store_path, rel_module, sizeof(rel_module)))
             {
                 if (kn_strcmp(rel_module, unit) != 0)
                 {
@@ -2092,6 +2093,8 @@ static void scan_dir_modules(const char *root_dir, const char *dir, ModuleMap *m
                     }
                 }
             }
+            if (entry)
+                kn_free(unit);
         }
     } while (FindNextFileA(h, &data));
 
@@ -2149,7 +2152,8 @@ static bool scan_stdpkg_sources_from_root(const char *stdpkg_root, ModuleMap *ma
             const char *scan_root = src_dir;
             if (path_full(root, sizeof(root), src_dir))
                 scan_root = root;
-            scan_dir_modules(scan_root, scan_root, map);
+            // Package APIs are identified by declared Units, never source paths.
+            scan_dir_modules(scan_root, scan_root, map, false);
             any = true;
         } while (FindNextFileA(ver_h, &ver_data));
 
@@ -2210,7 +2214,7 @@ static void scan_default_stdlib_modules(ModuleMap *map)
         const char *scan_root = "stdlib\\src";
         if (path_full(root, sizeof(root), scan_root))
             scan_root = root;
-        scan_dir_modules(scan_root, scan_root, map);
+        scan_dir_modules(scan_root, scan_root, map, false);
         return;
     }
 
@@ -2222,7 +2226,7 @@ static void scan_default_stdlib_modules(ModuleMap *map)
             const char *scan_root = candidate;
             if (path_full(root, sizeof(root), candidate))
                 scan_root = root;
-            scan_dir_modules(scan_root, scan_root, map);
+            scan_dir_modules(scan_root, scan_root, map, false);
             return;
         }
     }
@@ -2247,7 +2251,7 @@ static void scan_default_stdlib_modules(ModuleMap *map)
                 const char *scan_root = candidate;
                 if (path_full(root, sizeof(root), candidate))
                     scan_root = root;
-                scan_dir_modules(scan_root, scan_root, map);
+                scan_dir_modules(scan_root, scan_root, map, false);
                 return;
             }
         }

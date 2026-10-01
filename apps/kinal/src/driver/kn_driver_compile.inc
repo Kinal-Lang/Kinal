@@ -1265,7 +1265,7 @@ static int kn_compile(int in_count, const char **in_paths, const KnCompileConfig
         {
             char base_dir[KN_MAX_PATH];
             path_dirname(inputs.items[0], base_dir, sizeof(base_dir));
-            scan_dir_modules(base_dir, base_dir, &modmap);
+            scan_dir_modules(base_dir, base_dir, &modmap, true);
             if (!scan_package_roots_into_module_map(cfg->package_roots, cfg->package_root_count, &modmap, 0))
                 return -1;
 
