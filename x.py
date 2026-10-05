@@ -468,6 +468,16 @@ def cmd_test(args: argparse.Namespace) -> int:
          "--compiler", str(compiler)])
     run([sys.executable, str(ROOT / "tests" / "check_package_cache.py"),
          "--compiler", str(compiler)])
+    run([sys.executable, str(ROOT / "tests" / "check_target_spellings.py"),
+         "--compiler", str(compiler), "--out-dir", str(TEST_ROOT / "target-spellings")])
+    parity_command = [sys.executable, str(ROOT / "tests" / "check_version_parity.py"),
+                      "--compiler", str(compiler), "--out-dir", str(TEST_ROOT / "version-parity")]
+    vm = compiler.parent / exe_name("kinalvm")
+    if vm.is_file():
+        parity_command.extend(["--vm", str(vm)])
+        run([sys.executable, str(ROOT / "tests" / "check_vm_version.py"),
+             "--vm", str(vm), "--require-packaged-version"])
+    run(parity_command)
 
     stage_out = TEST_ROOT / "stages"
     stage_out.mkdir(parents=True, exist_ok=True)

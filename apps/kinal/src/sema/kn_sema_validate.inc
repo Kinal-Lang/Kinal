@@ -2437,6 +2437,7 @@ static Expr *clone_expr_subst(const Expr *e, const TypeSubst *subst)
         n->v.member_call.method_owner = e->v.member_call.method_owner;
         n->v.member_call.is_qual_call = e->v.member_call.is_qual_call;
         n->v.member_call.qual_name = e->v.member_call.qual_name;
+        n->v.member_call.is_property_compound = e->v.member_call.is_property_compound;
         break;
     case EXPR_INVOKE:
         n->v.invoke.callee = clone_expr_subst(e->v.invoke.callee, subst);
@@ -4604,6 +4605,7 @@ static void rewrite_expr_to_property_call(Expr *e, Expr *recv, const char *metho
     e->v.member_call.method_owner = 0;
     e->v.member_call.is_qual_call = 0;
     e->v.member_call.qual_name = 0;
+    e->v.member_call.is_property_compound = 0;
 }
 
 static int sema_try_current_class_field_expr(Sema *s, Expr *e, Type *out_type);
@@ -4786,7 +4788,11 @@ static int sema_try_rewrite_property_assign_expr(Sema *s, Expr *e, Type *out_typ
     if (!find_property_setter_hierarchy(s, c, target->v.member.name, 0, 0, 0))
         return 0;
 
+    int is_compound = e->v.assign.is_compound;
     rewrite_expr_to_property_call(e, recv, property_setter_name(target->v.member.name), value);
+    /* A compound setter's sole argument is getter(receiver) op rhs. Backends
+       must bind receiver once and reuse it for that getter and the setter. */
+    e->v.member_call.is_property_compound = is_compound;
     if (out_type) *out_type = sema_expr(s, e);
     return 1;
 }
@@ -4993,6 +4999,7 @@ static int sema_try_current_class_method_call(Sema *s, Expr *e, Type *out_type)
     e->v.member_call.method_owner = owner ? class_qname(owner) : class_qname(s->current_class);
     e->v.member_call.is_qual_call = 0;
     e->v.member_call.qual_name = 0;
+    e->v.member_call.is_property_compound = 0;
     e->type = m->ret_type;
     if (out_type) *out_type = e->type;
     return 1;

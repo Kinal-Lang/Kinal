@@ -1,0 +1,24 @@
+Unit Tests.AnyMixedKindEquals;
+
+Trusted Static Function int Main()
+{
+    any text = "value";
+    any equalText = "value";
+    any number = 42;
+    any zero = 0;
+    any flag = true;
+    any letter = 'v';
+    any fraction = 2.5;
+    any missing = null;
+    any pointer = [byte*](4096);
+    If (text.Equals(number) || number.Equals(text) ||
+        text.Equals(flag) || flag.Equals(text) ||
+        text.Equals(letter) || letter.Equals(text) ||
+        text.Equals(fraction) || fraction.Equals(text) ||
+        text.Equals(missing) || missing.Equals(text) ||
+        text.Equals(pointer) || pointer.Equals(text) ||
+        text.Equals(zero) || zero.Equals(text)) Return 1;
+    If (!text.Equals(equalText) || !number.Equals(42) ||
+        !missing.Equals(null) || !pointer.Equals([byte*](4096))) Return 2;
+    Return 0;
+}

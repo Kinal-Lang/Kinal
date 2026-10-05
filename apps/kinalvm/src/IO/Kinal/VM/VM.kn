@@ -1188,6 +1188,55 @@ Public Class VirtualMachine
                 Jump LoopStart;
             }
 
+            Record OpFloatToF32
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                int[] kinds = frame.Kinds;
+                float[] floatRegisters = frame.FloatRegisters;
+                int dst = [int](code[frame.Pc + 1]);
+                int src = [int](code[frame.Pc + 2]);
+                If (kinds[src] != [int](Bytecode.ValueKind.Float))
+                {
+                    Throw "Expected float register";
+                }
+                kinds[dst] = [int](Bytecode.ValueKind.Float);
+                floatRegisters[dst] = [float]([f32](floatRegisters[src]));
+                frame.Pc = frame.Pc + 3;
+                Jump LoopStart;
+            }
+
+            Record OpIntToF32
+            {
+                Context.FunctionFrame frame = ctx.CurrentFrame();
+                byte[] code = frame.FnInfo.Code;
+                int[] kinds = frame.Kinds;
+                int[] intRegisters = frame.IntRegisters;
+                float[] floatRegisters = frame.FloatRegisters;
+                int dst = [int](code[frame.Pc + 1]);
+                int src = [int](code[frame.Pc + 2]);
+                int unsignedFlag = [int](code[frame.Pc + 3]);
+                If (kinds[src] != [int](Bytecode.ValueKind.Int))
+                {
+                    Throw "Expected int register";
+                }
+                If (unsignedFlag != 0 && unsignedFlag != 1)
+                {
+                    Throw "Unsupported IntToF32 signedness: " + [string](unsignedFlag);
+                }
+                kinds[dst] = [int](Bytecode.ValueKind.Float);
+                If (unsignedFlag == 0)
+                {
+                    floatRegisters[dst] = [float]([f32](intRegisters[src]));
+                }
+                Else
+                {
+                    floatRegisters[dst] = [float]([f32]([u64](intRegisters[src])));
+                }
+                frame.Pc = frame.Pc + 4;
+                Jump LoopStart;
+            }
+
             Record OpFloatToInt
             {
                 Context.FunctionFrame frame = ctx.CurrentFrame();
@@ -2965,7 +3014,9 @@ Public Class VirtualMachine
             Dispatch.OpULeInt,
             Dispatch.OpUGtInt,
             Dispatch.OpUGeInt,
-            Dispatch.OpLShrInt
+            Dispatch.OpLShrInt,
+            Dispatch.OpFloatToF32,
+            Dispatch.OpIntToF32
         };
 
         Dispatch.Run();

@@ -8,7 +8,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-EXPECTED_LAST_OPCODE = 136
+EXPECTED_LAST_OPCODE = 138
 UNSIGNED_TAIL = [
     ("KNC_OP_UDIV_INT", 130, "UDivInt", 5, "OpUDivInt"),
     ("KNC_OP_UREM_INT", 131, "URemInt", 5, "OpURemInt"),
@@ -137,7 +137,7 @@ def main() -> int:
     c_opcodes = parse_c_opcodes(knc_source)
     expected_values = list(range(EXPECTED_LAST_OPCODE + 1))
     if [value for _, value in c_opcodes] != expected_values:
-        raise AssertionError("KncOpCode must explicitly and contiguously cover values 0..136")
+        raise AssertionError(f"KncOpCode must explicitly and contiguously cover values 0..{EXPECTED_LAST_OPCODE}")
 
     bytecode_opcodes = parse_bytecode_opcodes(bytecode_source)
     expected_bytecode = [(c_name_to_bytecode(name), value) for name, value in c_opcodes]
@@ -167,12 +167,21 @@ def main() -> int:
 
     actual_tail = [
         (c_opcodes[index][0], c_opcodes[index][1], bytecode_opcodes[index][0], sizes[index][1], dispatch_targets[index])
-        for index in range(130, EXPECTED_LAST_OPCODE + 1)
+        for index in range(130, 137)
     ]
     if actual_tail != UNSIGNED_TAIL:
         raise AssertionError(f"unsigned opcode ABI tail changed: {actual_tail!r}")
 
-    print(f"[OK] knc_opcode_registry opcodes={len(c_opcodes)} unsigned_tail=130..136")
+    f32_opcode = (c_opcodes[137], bytecode_opcodes[137], sizes[137], dispatch_targets[137])
+    if f32_opcode != (("KNC_OP_FLOAT_TO_F32", 137), ("FloatToF32", 137),
+                      ("FloatToF32", 3), "OpFloatToF32"):
+        raise AssertionError(f"float32 conversion opcode ABI changed: {f32_opcode!r}")
+    int_f32_opcode = (c_opcodes[138], bytecode_opcodes[138], sizes[138], dispatch_targets[138])
+    if int_f32_opcode != (("KNC_OP_INT_TO_F32", 138), ("IntToF32", 138),
+                          ("IntToF32", 4), "OpIntToF32"):
+        raise AssertionError(f"integer-to-float32 opcode ABI changed: {int_f32_opcode!r}")
+
+    print(f"[OK] knc_opcode_registry opcodes={len(c_opcodes)} unsigned_tail=130..136 f32_tail=137..138")
     return 0
 
 

@@ -35,7 +35,7 @@
 
 | 符号 | 类型 | 说明 |
 |------|------|------|
-| `IO.Runtime.Name` | `string` | 后端名称，`"native"` 或 `"vm"` |
+| `IO.Runtime.Name` | `string` | 后端名称，`"Kinal.Native"` 或 `"Kinal.VM"` |
 
 ### 布尔别名
 
@@ -93,8 +93,8 @@ If (IO.Runtime == IO.Runtime.VM)
 
 | 命令 | `IO.Runtime.Name` |
 |------|------------------|
-| `kinal build` / `kinal run` | `"native"` |
-| `kinal vm build` / `kinal vm run` / `--emit knc` | `"vm"` |
+| `kinal build` / `kinal run` | `"Kinal.Native"` |
+| `kinal vm build` / `kinal vm run` / `--emit knc` | `"Kinal.VM"` |
 
 常量在编译期写入产物，之后不可更改。用 `kinal vm build` 生成的 `.knc` 中，不管后续以何种方式执行，`IO.Runtime` 始终是 `VM`。
 

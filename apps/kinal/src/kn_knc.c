@@ -7,6 +7,7 @@
 
 #include <stdio.h>
 #include <stdint.h>
+#include <inttypes.h>
 #include <string.h>
 
 typedef enum
@@ -160,7 +161,9 @@ typedef enum
     KNC_OP_ULE_INT = 133,
     KNC_OP_UGT_INT = 134,
     KNC_OP_UGE_INT = 135,
-    KNC_OP_LSHR_INT = 136
+    KNC_OP_LSHR_INT = 136,
+    KNC_OP_FLOAT_TO_F32 = 137,
+    KNC_OP_INT_TO_F32 = 138
 } KncOpCode;
 
 typedef enum
@@ -189,7 +192,7 @@ typedef enum
 
 typedef struct
 {
-    int *items;
+    int64_t *items;
     int count;
     int cap;
 } IntBuf;
@@ -387,6 +390,7 @@ typedef struct
 
 typedef struct KncFuncState KncFuncState;
 static KncValue compile_expr(KncFuncState *st, Expr *e);
+static KncValue compile_expr_raw(KncFuncState *st, Expr *e);
 
 struct KncFuncState
 {
@@ -412,12 +416,12 @@ struct KncFuncState
     int *block_record_addrs;
 };
 
-static void intbuf_push(IntBuf *buf, int value)
+static void intbuf_push(IntBuf *buf, int64_t value)
 {
     if (buf->count + 1 > buf->cap)
     {
         int new_cap = buf->cap ? buf->cap * 2 : 8;
-        int *next = (int *)kn_realloc(buf->items, sizeof(int) * (size_t)new_cap);
+        int64_t *next = (int64_t *)kn_realloc(buf->items, sizeof(int64_t) * (size_t)new_cap);
         if (!next)
             kn_die("out of memory");
         buf->items = next;
@@ -598,7 +602,7 @@ static void int_array_ensure(int **items, int *cap, int needed)
     }
 }
 
-static int program_add_int(KncProgram *program, int value);
+static int program_add_int(KncProgram *program, int64_t value);
 
 static int type_is_integerish(Type t)
 {
@@ -646,10 +650,10 @@ static int expr_int_immediate_index(KncFuncState *st, Expr *e, int *index)
     switch (e->kind)
     {
     case EXPR_INT:
-        *index = program_add_int(st->program, (int)e->v.int_val);
+        *index = program_add_int(st->program, e->v.int_val);
         return 1;
     case EXPR_CHAR:
-        *index = program_add_int(st->program, (int)e->v.int_val);
+        *index = program_add_int(st->program, e->v.int_val);
         return 1;
     default:
         return 0;
@@ -850,7 +854,7 @@ static void knc_diag_stmt(KncFuncState *st, Stmt *s, const char *detail)
     knc_diag(st && st->src ? st->src : 0, s ? s->line : 1, s ? s->col : 1, detail);
 }
 
-static int program_add_int(KncProgram *program, int value)
+static int program_add_int(KncProgram *program, int64_t value)
 {
     for (int i = 0; i < program->ints.count; i++)
         if (program->ints.items[i] == value)
@@ -1564,6 +1568,33 @@ static void emit_default_value(KncFuncState *st, int reg, Type type)
         emit_u8(st->code, reg);
         emit_u8(st->code, len_reg);
         emit_u8(st->code, value_kind_from_type(elem_type));
+        if (elem_type.kind == TY_STRUCT && type.array_len > 0)
+        {
+            int saved_reg = st->next_reg;
+            int index_reg = alloc_reg(st);
+            int test_reg = alloc_reg(st);
+            int item_reg = alloc_reg(st);
+            emit_u8(st->code, KNC_OP_LOAD_INT);
+            emit_u8(st->code, index_reg);
+            emit_u16(st->code, program_add_int(st->program, 0));
+            int loop_ip = current_ip(st->code);
+            emit_u8(st->code, KNC_OP_LT_INT);
+            emit_u8(st->code, test_reg);
+            emit_u8(st->code, index_reg);
+            emit_u8(st->code, len_reg);
+            int end_patch = emit_branch_placeholder(st->code, KNC_OP_JUMP_IF_FALSE, test_reg);
+            emit_default_value(st, item_reg, elem_type);
+            emit_u8(st->code, KNC_OP_STORE_INDEX);
+            emit_u8(st->code, reg);
+            emit_u8(st->code, index_reg);
+            emit_u8(st->code, item_reg);
+            emit_u8(st->code, KNC_OP_INC_INT);
+            emit_u8(st->code, index_reg);
+            emit_u8(st->code, KNC_OP_JUMP);
+            emit_u16(st->code, loop_ip);
+            patch_u16(st->code, end_patch, current_ip(st->code));
+            st->next_reg = saved_reg;
+        }
         return;
     }
     if (type.kind == TY_PACKAGE)
@@ -1604,11 +1635,58 @@ static void emit_default_value(KncFuncState *st, int reg, Type type)
         emit_u8(st->code, KNC_OP_NEW_OBJECT);
         emit_u8(st->code, reg);
         emit_u16(st->code, type_index);
+        StructDecl *decl = program_find_struct(st->program, type.name);
+        for (int i = 0; decl && i < decl->fields.count; i++)
+        {
+            Type field_type = decl->fields.items[i].type;
+            /* Reference fields stay null. Embedded value fields need their
+               own correctly typed zero values, including nested structs. */
+            if (field_type.kind == TY_CLASS || field_type.kind == TY_ARRAY ||
+                field_type.kind == TY_STRING || field_type.kind == TY_PTR || field_type.kind == TY_ANY)
+                continue;
+            int saved_reg = st->next_reg;
+            int field_reg = alloc_reg(st);
+            emit_default_value(st, field_reg, field_type);
+            emit_u8(st->code, KNC_OP_STORE_FIELD);
+            emit_u8(st->code, reg);
+            emit_u8(st->code, field_reg);
+            emit_u16(st->code, i);
+            st->next_reg = saved_reg;
+        }
         return;
     }
     emit_u8(st->code, KNC_OP_MOVE);
     emit_u8(st->code, reg);
     emit_u8(st->code, reg);
+}
+
+/* Class objects retain reference semantics, but their embedded structs are
+   zero-initialized values and must never be null object handles. */
+static void emit_class_struct_defaults(KncFuncState *st, int reg, const ClassDecl *decl)
+{
+    if (!decl)
+        return;
+    int base_fields = 0;
+    if (decl->base)
+    {
+        ClassDecl *base = program_find_class(st->program, decl->base);
+        emit_class_struct_defaults(st, reg, base);
+        base_fields = class_total_field_count(st->program, base);
+    }
+    for (int i = 0; i < decl->fields.count; i++)
+    {
+        const Field *field = &decl->fields.items[i];
+        if (field->is_static || field->type.kind != TY_STRUCT)
+            continue;
+        int saved_reg = st->next_reg;
+        int field_reg = alloc_reg(st);
+        emit_default_value(st, field_reg, field->type);
+        emit_u8(st->code, KNC_OP_STORE_FIELD);
+        emit_u8(st->code, reg);
+        emit_u8(st->code, field_reg);
+        emit_u16(st->code, base_fields + i);
+        st->next_reg = saved_reg;
+    }
 }
 
 static KncValue compile_expr(KncFuncState *st, Expr *e);
@@ -1632,7 +1710,7 @@ static int emit_try_placeholder(KncFuncState *st, int catch_reg, int catch_kind,
     return st->code->count - 2;
 }
 
-static int emit_int_const_reg(KncFuncState *st, int value)
+static int emit_int_const_reg(KncFuncState *st, int64_t value)
 {
     int reg = alloc_reg(st);
     emit_u8(st->code, KNC_OP_LOAD_INT);
@@ -1650,6 +1728,66 @@ static KncValue move_to_fresh_reg(KncFuncState *st, KncValue value)
     emit_u8(st->code, value.reg);
     out.reg = dst;
     return out;
+}
+
+/* Structs use object handles in the VM, but a language-level value transfer
+   must copy their fields. Recurse only through value-typed struct fields;
+   class, array, and pointer fields deliberately retain reference semantics.
+   Ordinary loads and method receivers must remain aliases so member writes
+   still update the original lvalue. */
+static KncValue copy_struct_value(KncFuncState *st, KncValue value)
+{
+    if (value.type.kind != TY_STRUCT || value.reg < 0)
+        return value;
+
+    StructDecl *decl = program_find_struct(st->program, value.type.name);
+    int type_index = program_find_type(st->program, value.type.name);
+    if (!decl || type_index < 0)
+    {
+        knc_diag(st->src, st->func && st->func->line ? st->func->line : 1,
+                 st->func && st->func->col ? st->func->col : 1,
+                 "Struct value copy requires known type metadata in the KNC emitter");
+        return value;
+    }
+
+    KncValue out = value;
+    out.reg = alloc_reg(st);
+    emit_u8(st->code, KNC_OP_NEW_OBJECT);
+    emit_u8(st->code, out.reg);
+    emit_u16(st->code, type_index);
+    for (int i = 0; i < decl->fields.count; i++)
+    {
+        int saved_reg = st->next_reg;
+        KncValue field;
+        field.type = decl->fields.items[i].type;
+        field.reg = alloc_reg(st);
+        emit_u8(st->code, KNC_OP_LOAD_FIELD);
+        emit_u8(st->code, field.reg);
+        emit_u8(st->code, value.reg);
+        emit_u16(st->code, i);
+        field = copy_struct_value(st, field);
+        emit_u8(st->code, KNC_OP_STORE_FIELD);
+        emit_u8(st->code, out.reg);
+        emit_u8(st->code, field.reg);
+        emit_u16(st->code, i);
+        st->next_reg = saved_reg;
+    }
+    return out;
+}
+
+static KncValue knc_normalize_integer_cast(KncFuncState *st, KncValue value, Type target);
+static KncValue knc_narrow_float_value(KncFuncState *st, KncValue value, Type target);
+static KncValue knc_coerce_binary_numeric_operand(KncFuncState *st, Expr *site,
+                                                   KncValue value, Type target);
+
+static KncValue compile_value_expr(KncFuncState *st, Expr *expr)
+{
+    KncValue value = compile_expr(st, expr);
+    if (kn_diag_error_count() > 0)
+        return value;
+    if (type_is_integerish(value.type))
+        value = knc_normalize_integer_cast(st, value, value.type);
+    return copy_struct_value(st, value);
 }
 
 static int knc_stmt_is_empty_block(const Stmt *s)
@@ -3113,7 +3251,7 @@ static KncValue compile_builtin_invoke(KncFuncState *st,
             joined.type = type_make(TY_STRING);
             for (int i = 0; i < args->count; i++)
             {
-                KncValue part = compile_expr(st, args->items[i]);
+                KncValue part = compile_value_expr(st, args->items[i]);
                 if (kn_diag_error_count() > 0)
                     return out;
                 part = emit_stringify_value(st, part);
@@ -3173,7 +3311,7 @@ static KncValue compile_builtin_invoke(KncFuncState *st,
                 knc_diag_expr(st, args->items[i], "KNC bootstrap VM currently supports at most four builtin call arguments");
                 return out;
             }
-            KncValue av = compile_expr(st, args->items[i]);
+            KncValue av = compile_value_expr(st, args->items[i]);
             if (kn_diag_error_count() > 0)
                 return out;
             arg_regs[arg_count++] = av.reg;
@@ -3216,7 +3354,13 @@ static KncValue compile_direct_call(KncFuncState *st, Expr *site, const char *na
                 knc_diag_expr(st, args->items[i], "KNC bootstrap VM currently supports at most four function call arguments");
                 return out;
             }
-            av = compile_expr(st, args->items[i]);
+            av = compile_value_expr(st, args->items[i]);
+            if (func_index >= 0)
+            {
+                ParamList *params = record_params(&st->program->items[func_index]);
+                if (params && i < params->count)
+                    av = knc_narrow_float_value(st, av, params->items[i].type);
+            }
             if (kn_diag_error_count() > 0)
                 return out;
             arg_regs[arg_count++] = av.reg;
@@ -3240,7 +3384,13 @@ static KncValue compile_direct_call(KncFuncState *st, Expr *site, const char *na
             return out;
         }
         {
-            KncValue av = compile_expr(st, args->items[i]);
+            KncValue av = compile_value_expr(st, args->items[i]);
+            if (func_index >= 0)
+            {
+                ParamList *params = record_params(&st->program->items[func_index]);
+                if (params && i < params->count)
+                    av = knc_narrow_float_value(st, av, params->items[i].type);
+            }
             if (kn_diag_error_count() > 0)
                 return out;
             arg_regs[arg_count++] = av.reg;
@@ -3295,7 +3445,10 @@ static KncValue compile_call_func_index(KncFuncState *st, Expr *site, int func_i
             knc_diag_expr(st, args->items[i], "KNC bootstrap VM currently supports at most four function call arguments");
             return out;
         }
-        av = compile_expr(st, args->items[i]);
+        av = compile_value_expr(st, args->items[i]);
+        ParamList *params = record_params(&st->program->items[func_index]);
+        if (params && i < params->count)
+            av = knc_narrow_float_value(st, av, params->items[i].type);
         if (kn_diag_error_count() > 0)
             return out;
         arg_regs[arg_count++] = av.reg;
@@ -3313,6 +3466,30 @@ static KncValue compile_call_func_index(KncFuncState *st, Expr *site, int func_i
     emit_u8(st->code, arg_regs[2]);
     emit_u8(st->code, arg_regs[3]);
     return out;
+}
+
+static KncValue compile_resolved_member_call(KncFuncState *st, Expr *expr, const KncValue *loaded_recv);
+static KncValue compile_binary_expr(KncFuncState *st, Expr *e, const KncValue *loaded_lhs);
+
+static KncValue compile_method_call_arg(KncFuncState *st, Expr *site, Expr *arg, KncValue recv)
+{
+    if (site->kind != EXPR_MEMBER_CALL || !site->v.member_call.is_property_compound)
+        return compile_value_expr(st, arg);
+
+    if (arg->kind != EXPR_BINARY || arg->v.binary.left->kind != EXPR_MEMBER_CALL)
+    {
+        knc_diag_expr(st, site, "Invalid compound property lowering plan");
+        return recv;
+    }
+    KncValue previous = compile_resolved_member_call(st, arg->v.binary.left, &recv);
+    if (kn_diag_error_count() > 0)
+        return previous;
+    KncValue value = compile_binary_expr(st, arg, &previous);
+    if (kn_diag_error_count() > 0)
+        return value;
+    if (type_is_integerish(value.type))
+        value = knc_normalize_integer_cast(st, value, value.type);
+    return copy_struct_value(st, value);
 }
 
 static KncValue compile_direct_method_call(KncFuncState *st,
@@ -3356,7 +3533,10 @@ static KncValue compile_direct_method_call(KncFuncState *st,
             knc_diag_expr(st, args->items[i], "KNC bootstrap VM currently supports at most four method call arguments including This");
             return out;
         }
-        av = compile_expr(st, args->items[i]);
+        av = compile_method_call_arg(st, site, args->items[i], recv);
+        ParamList *params = record_params(&st->program->items[func_index]);
+        if (params && i < params->count)
+            av = knc_narrow_float_value(st, av, params->items[i].type);
         if (kn_diag_error_count() > 0)
             return out;
         arg_regs[arg_count++] = av.reg;
@@ -3400,7 +3580,12 @@ static KncValue compile_virtual_method_call(KncFuncState *st,
             knc_diag_expr(st, args->items[i], "KNC bootstrap VM currently supports at most three explicit virtual call arguments");
             return out;
         }
-        av = compile_expr(st, args->items[i]);
+        av = compile_method_call_arg(st, site, args->items[i], recv);
+        int target_index = site && site->resolved_call.owner
+            ? program_find_method_function(st->program, site->resolved_call.owner, site->resolved_call.method_index) : -1;
+        ParamList *params = target_index >= 0 ? record_params(&st->program->items[target_index]) : 0;
+        if (params && i < params->count)
+            av = knc_narrow_float_value(st, av, params->items[i].type);
         if (kn_diag_error_count() > 0)
             return out;
         arg_regs[arg_count++] = av.reg;
@@ -3425,7 +3610,8 @@ static int compile_assign_to_local(KncFuncState *st, Expr *target, Expr *value_e
     KncValue value;
     KncLocal *local;
 
-    value = compile_expr(st, value_expr);
+    value = compile_value_expr(st, value_expr);
+    if (target) value = knc_narrow_float_value(st, value, target->type);
     if (kn_diag_error_count() > 0)
         return -1;
 
@@ -3530,6 +3716,9 @@ static KncValue compile_if_expr(KncFuncState *st, Expr *e)
 
     else_patch = emit_branch_placeholder(st->code, KNC_OP_JUMP_IF_FALSE, cond.reg);
     then_value = compile_expr(st, e->v.if_expr.then_expr);
+    if ((type_is_integerish(then_value.type) || type_is_floatish(then_value.type)) &&
+        (type_is_integerish(e->type) || type_is_floatish(e->type)))
+        then_value = knc_coerce_binary_numeric_operand(st, e->v.if_expr.then_expr, then_value, e->type);
     if (kn_diag_error_count() > 0)
         return out;
     if (then_value.reg != out.reg)
@@ -3542,6 +3731,9 @@ static KncValue compile_if_expr(KncFuncState *st, Expr *e)
     patch_u16(st->code, else_patch, current_ip(st->code));
 
     else_value = compile_expr(st, e->v.if_expr.else_expr);
+    if ((type_is_integerish(else_value.type) || type_is_floatish(else_value.type)) &&
+        (type_is_integerish(e->type) || type_is_floatish(e->type)))
+        else_value = knc_coerce_binary_numeric_operand(st, e->v.if_expr.else_expr, else_value, e->type);
     if (kn_diag_error_count() > 0)
         return out;
     if (else_value.reg != out.reg)
@@ -3635,6 +3827,22 @@ static KncValue compile_incdec(KncFuncState *st, Expr *e)
         return out;
     }
 
+    if (type_is_integerish(local->type) && local->type.kind != TY_CHAR)
+    {
+        KncValue updated = {0};
+        updated.reg = updated_reg;
+        updated.type = local->type;
+        updated = knc_normalize_integer_cast(st, updated, local->type);
+        updated_reg = updated.reg;
+    }
+
+    if (local->type.kind == TY_F32)
+    {
+        KncValue updated = {0};
+        updated.reg = updated_reg;
+        updated.type = local->type;
+        updated_reg = knc_narrow_float_value(st, updated, local->type).reg;
+    }
     store_local_value(st, local, updated_reg);
     if (!e->v.unary.is_postfix) out.reg = updated_reg;
     return out;
@@ -3735,7 +3943,7 @@ static KncValue compile_resolved_call(KncFuncState *st, Expr *expr)
     return out;
 }
 
-static KncValue compile_resolved_member_call(KncFuncState *st, Expr *expr)
+static KncValue compile_resolved_member_call(KncFuncState *st, Expr *expr, const KncValue *loaded_recv)
 {
     KncValue out;
     out.reg = 0;
@@ -3770,7 +3978,8 @@ static KncValue compile_resolved_member_call(KncFuncState *st, Expr *expr)
             knc_diag_expr(st, expr, "Bootstrap KNC emitter requires exactly one array Add argument");
             return out;
         }
-        value = compile_expr(st, expr->v.member_call.args.items[0]);
+        value = compile_value_expr(st, expr->v.member_call.args.items[0]);
+        value = knc_narrow_float_value(st, value, type_immediate_elem(recv.type));
         if (kn_diag_error_count() > 0)
             return out;
         out.reg = alloc_reg(st);
@@ -3778,6 +3987,46 @@ static KncValue compile_resolved_member_call(KncFuncState *st, Expr *expr)
         emit_u8(st->code, out.reg);
         emit_u8(st->code, recv.reg);
         emit_u8(st->code, value.reg);
+        Type elem_type = type_immediate_elem(recv.type);
+        if (elem_type.kind == TY_STRUCT)
+        {
+            /* ArrayAdd creates a fresh outer array. Existing struct elements
+               also need typed value copies; reference fields remain shared.
+               The appended argument was already copied by compile_value_expr. */
+            int saved_reg = st->next_reg;
+            int length_reg = alloc_reg(st);
+            int index_reg = emit_int_const_reg(st, 0);
+            int test_reg = alloc_reg(st);
+            KncValue item;
+            item.type = elem_type;
+            item.reg = alloc_reg(st);
+            emit_u8(st->code, KNC_OP_ARRAY_LENGTH);
+            emit_u8(st->code, length_reg);
+            emit_u8(st->code, out.reg);
+            emit_u8(st->code, KNC_OP_DEC_INT);
+            emit_u8(st->code, length_reg);
+            int loop_ip = current_ip(st->code);
+            emit_u8(st->code, KNC_OP_LT_INT);
+            emit_u8(st->code, test_reg);
+            emit_u8(st->code, index_reg);
+            emit_u8(st->code, length_reg);
+            int end_patch = emit_branch_placeholder(st->code, KNC_OP_JUMP_IF_FALSE, test_reg);
+            emit_u8(st->code, KNC_OP_LOAD_INDEX);
+            emit_u8(st->code, item.reg);
+            emit_u8(st->code, out.reg);
+            emit_u8(st->code, index_reg);
+            item = copy_struct_value(st, item);
+            emit_u8(st->code, KNC_OP_STORE_INDEX);
+            emit_u8(st->code, out.reg);
+            emit_u8(st->code, index_reg);
+            emit_u8(st->code, item.reg);
+            emit_u8(st->code, KNC_OP_INC_INT);
+            emit_u8(st->code, index_reg);
+            emit_u8(st->code, KNC_OP_JUMP);
+            emit_u16(st->code, loop_ip);
+            patch_u16(st->code, end_patch, current_ip(st->code));
+            st->next_reg = saved_reg;
+        }
         return out;
     }
     if (target->kind == KN_CALL_TARGET_BUILTIN)
@@ -3803,9 +4052,13 @@ static KncValue compile_resolved_member_call(KncFuncState *st, Expr *expr)
         target->kind == KN_CALL_TARGET_VIRTUAL_METHOD ||
         target->kind == KN_CALL_TARGET_INTERFACE_METHOD)
     {
-        KncValue recv = compile_expr(st, expr->v.member_call.recv);
+        KncValue recv = loaded_recv ? *loaded_recv : compile_expr(st, expr->v.member_call.recv);
         if (kn_diag_error_count() > 0)
             return out;
+        /* Local receiver registers can be reassigned by the getter or RHS.
+           Retain the original object for both property accessors. */
+        if (expr->v.member_call.is_property_compound)
+            recv = move_to_fresh_reg(st, recv);
         if (target->kind == KN_CALL_TARGET_DIRECT_METHOD)
         {
             int function_index = program_find_method_function(st->program, target->owner,
@@ -3901,12 +4154,52 @@ static KncValue knc_normalize_integer_cast(KncFuncState *st, KncValue value, Typ
     return value;
 }
 
+/* Float registers hold binary64. Materialize a binary32 rounding boundary
+   whenever a value acquires f32 type, including implicit storage/call coercions.
+   Integer inputs use a direct conversion to avoid i64 -> f64 -> f32 double rounding. */
+static KncValue knc_narrow_float_value(KncFuncState *st, KncValue value, Type target)
+{
+    if (target.kind != TY_F32 || value.reg < 0)
+        return value;
+    KncValue out = value;
+    if (type_is_integerish(value.type))
+    {
+        value = knc_normalize_integer_cast(st, value, value.type);
+        if (value.type.kind == TY_CHAR)
+        {
+            int source = value.reg;
+            value.reg = alloc_reg(st);
+            emit_u8(st->code, KNC_OP_CHAR_TO_INT);
+            emit_u8(st->code, value.reg);
+            emit_u8(st->code, source);
+        }
+        out.reg = alloc_reg(st);
+        emit_u8(st->code, KNC_OP_INT_TO_F32);
+        emit_u8(st->code, out.reg);
+        emit_u8(st->code, value.reg);
+        emit_u8(st->code, knc_unsigned_integer_source_bits(value.type) != 0);
+    }
+    else
+    {
+        out.reg = alloc_reg(st);
+        emit_u8(st->code, KNC_OP_FLOAT_TO_F32);
+        emit_u8(st->code, out.reg);
+        emit_u8(st->code, value.reg);
+    }
+    out.type = target;
+    return out;
+}
+
 static KncValue knc_coerce_binary_numeric_operand(KncFuncState *st, Expr *site,
                                                    KncValue value, Type target)
 {
-    value = knc_normalize_unsigned_integer_operand(st, value);
+    if (type_is_integerish(value.type))
+        value = knc_normalize_integer_cast(st, value, value.type);
     KncValue out = value;
     int source_reg = value.reg;
+
+    if (target.kind == TY_F32)
+        return knc_narrow_float_value(st, value, target);
 
     if (type_is_floatish(target))
     {
@@ -3962,8 +4255,39 @@ static KncValue knc_coerce_binary_numeric_operand(KncFuncState *st, Expr *site,
         out.reg = -1;
         return out;
     }
+    if (!knc_type_equal(value.type, target))
+        out = knc_normalize_integer_cast(st, out, target);
     out.type = type_make(TY_INT); // all integer widths share the VM Int register kind
     return out;
+}
+
+static int knc_switch_integer_bits(Type type)
+{
+    switch (type.kind)
+    {
+    case TY_BYTE: case TY_CHAR: case TY_I8: case TY_U8: return 8;
+    case TY_I16: case TY_U16: return 16;
+    case TY_I32: case TY_U32: return 32;
+    default: return 64;
+    }
+}
+
+static void knc_coerce_switch_integers(KncFuncState *st, Expr *site,
+                                       KncValue *lhs, KncValue *rhs)
+{
+    if (!type_is_integerish(lhs->type) || !type_is_integerish(rhs->type))
+        return;
+    int left_bits = knc_switch_integer_bits(lhs->type);
+    int right_bits = knc_switch_integer_bits(rhs->type);
+    int bits = left_bits > right_bits ? left_bits : right_bits;
+    int is_unsigned = knc_unsigned_integer_source_bits(lhs->type) != 0 ||
+                      knc_unsigned_integer_source_bits(rhs->type) != 0;
+    Type common = type_make(bits <= 8 ? (is_unsigned ? TY_U8 : TY_I8) :
+                            bits <= 16 ? (is_unsigned ? TY_U16 : TY_I16) :
+                            bits <= 32 ? (is_unsigned ? TY_U32 : TY_I32) :
+                            (is_unsigned ? TY_U64 : TY_I64));
+    *lhs = knc_coerce_binary_numeric_operand(st, site, *lhs, common);
+    *rhs = knc_coerce_binary_numeric_operand(st, site, *rhs, common);
 }
 
 static KncValue knc_finish_binary_arithmetic(KncFuncState *st, Expr *e, KncValue raw)
@@ -3971,7 +4295,7 @@ static KncValue knc_finish_binary_arithmetic(KncFuncState *st, Expr *e, KncValue
     KncValue out = raw;
     out.type = e->type;
     if (e->type.kind != TY_CHAR)
-        return out;
+        return type_is_integerish(e->type) ? knc_normalize_integer_cast(st, out, e->type) : knc_narrow_float_value(st, out, e->type);
 
     out.reg = alloc_reg(st);
     emit_u8(st->code, KNC_OP_INT_TO_CHAR);
@@ -4134,7 +4458,7 @@ static KncValue compile_binary_expr(KncFuncState *st, Expr *e, const KncValue *l
             immediate_allowed = !e->resolved_binary.is_unsigned &&
                                 (binary_op == TOK_LT || binary_op == TOK_LE ||
                                  binary_op == TOK_GT || binary_op == TOK_GE);
-        if (immediate_allowed)
+        if (immediate_allowed && e->resolved_binary.integer_bits == 64)
             use_rhs_int_imm = expr_int_immediate_index(st, e->v.binary.right, &rhs_int_imm_index);
     }
 
@@ -4398,13 +4722,13 @@ static KncValue compile_binary_expr(KncFuncState *st, Expr *e, const KncValue *l
                     emit_u8(st->code, out.reg);
                     emit_u8(st->code, lhs.reg);
                     emit_u16(st->code, rhs_int_imm_index);
-                    return out;
+                    return knc_finish_binary_arithmetic(st, e, out);
                 }
                 emit_u8(st->code, KNC_OP_BITAND_INT);
                 emit_u8(st->code, out.reg);
                 emit_u8(st->code, lhs.reg);
                 emit_u8(st->code, rhs.reg);
-                return out;
+                return knc_finish_binary_arithmetic(st, e, out);
             case TOK_BITOR:
                 if (use_rhs_int_imm)
                 {
@@ -4412,13 +4736,13 @@ static KncValue compile_binary_expr(KncFuncState *st, Expr *e, const KncValue *l
                     emit_u8(st->code, out.reg);
                     emit_u8(st->code, lhs.reg);
                     emit_u16(st->code, rhs_int_imm_index);
-                    return out;
+                    return knc_finish_binary_arithmetic(st, e, out);
                 }
                 emit_u8(st->code, KNC_OP_BITOR_INT);
                 emit_u8(st->code, out.reg);
                 emit_u8(st->code, lhs.reg);
                 emit_u8(st->code, rhs.reg);
-                return out;
+                return knc_finish_binary_arithmetic(st, e, out);
             case TOK_XOR:
                 if (use_rhs_int_imm)
                 {
@@ -4426,13 +4750,13 @@ static KncValue compile_binary_expr(KncFuncState *st, Expr *e, const KncValue *l
                     emit_u8(st->code, out.reg);
                     emit_u8(st->code, lhs.reg);
                     emit_u16(st->code, rhs_int_imm_index);
-                    return out;
+                    return knc_finish_binary_arithmetic(st, e, out);
                 }
                 emit_u8(st->code, KNC_OP_BITXOR_INT);
                 emit_u8(st->code, out.reg);
                 emit_u8(st->code, lhs.reg);
                 emit_u8(st->code, rhs.reg);
-                return out;
+                return knc_finish_binary_arithmetic(st, e, out);
             case TOK_SHL:
                 if (use_rhs_int_imm)
                 {
@@ -4440,13 +4764,13 @@ static KncValue compile_binary_expr(KncFuncState *st, Expr *e, const KncValue *l
                     emit_u8(st->code, out.reg);
                     emit_u8(st->code, lhs.reg);
                     emit_u16(st->code, rhs_int_imm_index);
-                    return out;
+                    return knc_finish_binary_arithmetic(st, e, out);
                 }
                 emit_u8(st->code, KNC_OP_SHL_INT);
                 emit_u8(st->code, out.reg);
                 emit_u8(st->code, lhs.reg);
                 emit_u8(st->code, rhs.reg);
-                return out;
+                return knc_finish_binary_arithmetic(st, e, out);
             case TOK_SHR:
                 if (use_rhs_int_imm)
                 {
@@ -4454,19 +4778,19 @@ static KncValue compile_binary_expr(KncFuncState *st, Expr *e, const KncValue *l
                     emit_u8(st->code, out.reg);
                     emit_u8(st->code, lhs.reg);
                     emit_u16(st->code, rhs_int_imm_index);
-                    return out;
+                    return knc_finish_binary_arithmetic(st, e, out);
                 }
                 if (e->resolved_binary.is_unsigned)
                 {
                     emit_width_binary_op(st, KNC_OP_LSHR_INT, out.reg, lhs.reg, rhs.reg,
                                          e->resolved_binary.integer_bits);
-                    return out;
+                    return knc_finish_binary_arithmetic(st, e, out);
                 }
                 emit_u8(st->code, KNC_OP_SHR_INT);
                 emit_u8(st->code, out.reg);
                 emit_u8(st->code, lhs.reg);
                 emit_u8(st->code, rhs.reg);
-                return out;
+                return knc_finish_binary_arithmetic(st, e, out);
     default:
         knc_diag_expr(st, e, "Internal KNC HIR error: binary plan reached an unsupported operator");
         return out;
@@ -4474,6 +4798,14 @@ static KncValue compile_binary_expr(KncFuncState *st, Expr *e, const KncValue *l
 }
 
 static KncValue compile_expr(KncFuncState *st, Expr *e)
+{
+    KncValue value = compile_expr_raw(st, e);
+    if (kn_diag_error_count() == 0 && e)
+        value = knc_narrow_float_value(st, value, e->type);
+    return value;
+}
+
+static KncValue compile_expr_raw(KncFuncState *st, Expr *e)
 {
     KncValue out;
     out.reg = -1;
@@ -4491,7 +4823,7 @@ static KncValue compile_expr(KncFuncState *st, Expr *e)
         out.reg = alloc_reg(st);
         emit_u8(st->code, KNC_OP_LOAD_INT);
         emit_u8(st->code, out.reg);
-        emit_u16(st->code, program_add_int(st->program, (int)e->v.int_val));
+        emit_u16(st->code, program_add_int(st->program, e->v.int_val));
         return out;
 
     case EXPR_FLOAT:
@@ -4512,7 +4844,7 @@ static KncValue compile_expr(KncFuncState *st, Expr *e)
         out.reg = alloc_reg(st);
         emit_u8(st->code, KNC_OP_LOAD_CHAR);
         emit_u8(st->code, out.reg);
-        emit_u16(st->code, program_add_int(st->program, (int)e->v.int_val));
+        emit_u16(st->code, program_add_int(st->program, e->v.int_val));
         return out;
 
     case EXPR_STRING:
@@ -4570,7 +4902,10 @@ static KncValue compile_expr(KncFuncState *st, Expr *e)
             emit_u16(st->code, program_add_int(st->program, i));
 
             if (i < e->v.array.items.count)
-                item = compile_expr(st, e->v.array.items.items[i]);
+            {
+                item = compile_value_expr(st, e->v.array.items.items[i]);
+                item = knc_narrow_float_value(st, item, elem_type);
+            }
             else
             {
                 item.reg = alloc_reg(st);
@@ -4613,7 +4948,7 @@ static KncValue compile_expr(KncFuncState *st, Expr *e)
             emit_u8(st->code, idx.reg);
             emit_u16(st->code, program_add_int(st->program, i));
             if (i < e->v.package.items.count)
-                item = compile_expr(st, e->v.package.items.items[i]);
+                item = compile_value_expr(st, e->v.package.items.items[i]);
             else
             {
                 item.reg = alloc_reg(st);
@@ -4681,7 +5016,7 @@ static KncValue compile_expr(KncFuncState *st, Expr *e)
             out.reg = alloc_reg(st);
             emit_u8(st->code, KNC_OP_LOAD_INT);
             emit_u8(st->code, out.reg);
-            emit_u16(st->code, program_add_int(st->program, (int)e->v.member.enum_value));
+            emit_u16(st->code, program_add_int(st->program, e->v.member.enum_value));
             return knc_normalize_integer_cast(st, out, e->type);
         }
         if (e->v.member.is_static)
@@ -4861,7 +5196,7 @@ static KncValue compile_expr(KncFuncState *st, Expr *e)
             emit_u8(st->code, type_is_floatish(value.type) ? KNC_OP_NEG_FLOAT : KNC_OP_NEG_INT);
             emit_u8(st->code, out.reg);
             emit_u8(st->code, value.reg);
-            return out;
+            return type_is_integerish(out.type) ? knc_normalize_integer_cast(st, out, out.type) : out;
         }
         if (e->v.unary.op == TOK_NOT)
         {
@@ -4872,7 +5207,7 @@ static KncValue compile_expr(KncFuncState *st, Expr *e)
             emit_u8(st->code, KNC_OP_NOT_BOOL);
             emit_u8(st->code, out.reg);
             emit_u8(st->code, value.reg);
-            return out;
+            return type_is_integerish(out.type) ? knc_normalize_integer_cast(st, out, out.type) : out;
         }
         if (e->v.unary.op == TOK_TILDE)
         {
@@ -4883,7 +5218,7 @@ static KncValue compile_expr(KncFuncState *st, Expr *e)
             emit_u8(st->code, KNC_OP_BITNOT_INT);
             emit_u8(st->code, out.reg);
             emit_u8(st->code, value.reg);
-            return out;
+            return type_is_integerish(out.type) ? knc_normalize_integer_cast(st, out, out.type) : out;
         }
         knc_diag_expr(st, e, "This unary operator is not supported by the bootstrap KNC emitter yet");
         return out;
@@ -4896,7 +5231,7 @@ static KncValue compile_expr(KncFuncState *st, Expr *e)
 
     case EXPR_SWITCH:
     {
-        KncValue switch_value = compile_expr(st, e->v.switch_expr.value);
+        KncValue switch_value = compile_value_expr(st, e->v.switch_expr.value);
         PatchBuf end_patches = {0};
         Expr *default_body = 0;
         if (kn_diag_error_count() > 0)
@@ -4914,7 +5249,9 @@ static KncValue compile_expr(KncFuncState *st, Expr *e)
                 continue;
             }
             {
-                KncValue match = compile_expr(st, c->match);
+                KncValue match = compile_value_expr(st, c->match);
+                KncValue compared = switch_value;
+                knc_coerce_switch_integers(st, c->match, &compared, &match);
                 KncValue cond;
                 KncValue bodyv;
                 if (kn_diag_error_count() > 0)
@@ -4923,10 +5260,13 @@ static KncValue compile_expr(KncFuncState *st, Expr *e)
                 cond.type = type_make(TY_BOOL);
                 emit_u8(st->code, KNC_OP_EQ);
                 emit_u8(st->code, cond.reg);
-                emit_u8(st->code, switch_value.reg);
+                emit_u8(st->code, compared.reg);
                 emit_u8(st->code, match.reg);
                 next_patch = emit_branch_placeholder(st->code, KNC_OP_JUMP_IF_FALSE, cond.reg);
                 bodyv = compile_expr(st, c->body);
+                if ((type_is_integerish(bodyv.type) || type_is_floatish(bodyv.type)) &&
+                    (type_is_integerish(e->type) || type_is_floatish(e->type)))
+                    bodyv = knc_coerce_binary_numeric_operand(st, c->body, bodyv, e->type);
                 if (kn_diag_error_count() > 0)
                     return out;
                 if (bodyv.reg != out.reg)
@@ -4943,6 +5283,9 @@ static KncValue compile_expr(KncFuncState *st, Expr *e)
         if (default_body)
         {
             KncValue dv = compile_expr(st, default_body);
+            if ((type_is_integerish(dv.type) || type_is_floatish(dv.type)) &&
+                (type_is_integerish(e->type) || type_is_floatish(e->type)))
+                dv = knc_coerce_binary_numeric_operand(st, default_body, dv, e->type);
             if (kn_diag_error_count() > 0)
                 return out;
             if (dv.reg != out.reg)
@@ -4968,7 +5311,7 @@ static KncValue compile_expr(KncFuncState *st, Expr *e)
         return compile_resolved_call(st, e);
 
     case EXPR_MEMBER_CALL:
-        return compile_resolved_member_call(st, e);
+        return compile_resolved_member_call(st, e, 0);
     case EXPR_INDEX:
     {
         KncValue recv = compile_expr(st, e->v.index.recv);
@@ -4996,6 +5339,7 @@ static KncValue compile_expr(KncFuncState *st, Expr *e)
         emit_u8(st->code, KNC_OP_NEW_OBJECT);
         emit_u8(st->code, out.reg);
         emit_u16(st->code, type_index);
+        emit_class_struct_defaults(st, out.reg, program_find_class(st->program, e->v.new_expr.class_name));
         if (e->v.new_expr.ctor_index >= 0)
             (void)compile_direct_method_call(st, e, ctor_func_index, type_make(TY_VOID), out, &e->v.new_expr.args);
         return out;
@@ -5145,7 +5489,7 @@ static KncValue compile_expr(KncFuncState *st, Expr *e)
                 knc_diag_expr(st, e->v.invoke.args.items[i], "KNC bootstrap VM currently supports at most four function call arguments");
                 return out;
             }
-            av = compile_expr(st, e->v.invoke.args.items[i]);
+            av = compile_value_expr(st, e->v.invoke.args.items[i]);
             if (kn_diag_error_count() > 0)
                 return out;
             arg_regs[arg_count++] = av.reg;
@@ -5180,7 +5524,11 @@ static KncValue compile_expr(KncFuncState *st, Expr *e)
         KncValue value = compile_expr(st, e->v.cast.expr);
         if (kn_diag_error_count() > 0)
             return out;
-        if (value.type.kind == TY_ENUM)
+        /* Narrow values can occupy a shared signed i64 register without
+           their source-width extension (for example a u32 literal loaded
+           from the signed constant pool). Normalize before widening or
+           changing representation, not just after the target conversion. */
+        if (type_is_integerish(value.type))
             value = knc_normalize_integer_cast(st, value, value.type);
         if (knc_type_equal(value.type, e->type))
         {
@@ -5302,7 +5650,7 @@ static KncValue compile_expr(KncFuncState *st, Expr *e)
                 emit_u8(st->code, KNC_OP_STRING_TO_INT);
                 emit_u8(st->code, out.reg);
                 emit_u8(st->code, value.reg);
-                return out;
+                return knc_normalize_integer_cast(st, out, e->type);
             }
             if (value.type.kind == TY_CHAR)
             {
@@ -5310,7 +5658,7 @@ static KncValue compile_expr(KncFuncState *st, Expr *e)
                 emit_u8(st->code, out.reg);
                 emit_u8(st->code, value.reg);
                 out.type = e->type;
-                return out;
+                return knc_normalize_integer_cast(st, out, e->type);
             }
             if (value.type.kind == TY_BOOL)
             {
@@ -5318,7 +5666,7 @@ static KncValue compile_expr(KncFuncState *st, Expr *e)
                 emit_u8(st->code, out.reg);
                 emit_u8(st->code, value.reg);
                 out.type = e->type;
-                return out;
+                return knc_normalize_integer_cast(st, out, e->type);
             }
             if (type_is_floatish(value.type))
             {
@@ -5326,7 +5674,7 @@ static KncValue compile_expr(KncFuncState *st, Expr *e)
                 emit_u8(st->code, out.reg);
                 emit_u8(st->code, value.reg);
                 out.type = e->type;
-                return out;
+                return knc_normalize_integer_cast(st, out, e->type);
             }
             if (type_is_integerish(value.type))
             {
@@ -5342,6 +5690,14 @@ static KncValue compile_expr(KncFuncState *st, Expr *e)
 
         if (type_is_floatish(e->type))
         {
+            if (type_is_floatish(value.type))
+            {
+                value = knc_narrow_float_value(st, value, e->type);
+                value.type = e->type;
+                return value;
+            }
+            if (e->type.kind == TY_F32 && type_is_integerish(value.type))
+                return knc_narrow_float_value(st, value, e->type);
             if (type_is_integerish(value.type))
             {
                 emit_u8(st->code, KNC_OP_INT_TO_FLOAT);
@@ -5475,7 +5831,8 @@ static int compile_stmt(KncFuncState *st, Stmt *s)
             Type saved_init_type = s->v.var.init->type;
             if (local_type.kind == TY_ARRAY && s->v.var.init->kind == EXPR_ARRAY)
                 s->v.var.init->type = local_type;
-            KncValue value = compile_expr(st, s->v.var.init);
+            KncValue value = compile_value_expr(st, s->v.var.init);
+            value = knc_narrow_float_value(st, value, local_type);
             if (local_type.kind == TY_ARRAY && s->v.var.init->kind == EXPR_ARRAY)
                 s->v.var.init->type = saved_init_type;
             if (kn_diag_error_count() > 0)
@@ -5514,7 +5871,8 @@ static int compile_stmt(KncFuncState *st, Stmt *s)
                     field_index = struct_find_field_index(program_find_struct(st->program, st->self_type.name), s->v.assign.name, &field_type);
                 if (field_index >= 0)
                 {
-                    value = compile_expr(st, s->v.assign.value);
+                    value = compile_value_expr(st, s->v.assign.value);
+                    value = knc_narrow_float_value(st, value, field_type);
                     if (kn_diag_error_count() > 0)
                         return -1;
                     int receiver = load_local_value(st, find_local(st, "This"));
@@ -5529,7 +5887,8 @@ static int compile_stmt(KncFuncState *st, Stmt *s)
                 int global_slot = program_find_global_slot(st->program, s->v.assign.name);
                 if (global_slot >= 0)
                 {
-                    value = compile_expr(st, s->v.assign.value);
+                    value = compile_value_expr(st, s->v.assign.value);
+                    value = knc_narrow_float_value(st, value, st->program->globals.items[global_slot].type);
                     if (kn_diag_error_count() > 0)
                         return -1;
                     emit_u8(st->code, KNC_OP_STORE_GLOBAL);
@@ -5541,7 +5900,8 @@ static int compile_stmt(KncFuncState *st, Stmt *s)
             knc_diag_stmt(st, s, "Only local variable assignment is supported by the bootstrap KNC emitter yet");
             return -1;
         }
-        value = compile_expr(st, s->v.assign.value);
+        value = compile_value_expr(st, s->v.assign.value);
+        value = knc_narrow_float_value(st, value, local->type);
         if (kn_diag_error_count() > 0)
             return -1;
         store_local_value(st, local, value.reg);
@@ -5555,7 +5915,8 @@ static int compile_stmt(KncFuncState *st, Stmt *s)
     case ST_RETURN:
         if (s->v.ret.expr)
         {
-            KncValue value = compile_expr(st, s->v.ret.expr);
+            KncValue value = compile_value_expr(st, s->v.ret.expr);
+            value = knc_narrow_float_value(st, value, record_return_type(&st->program->items[st->func_index]));
             if (kn_diag_error_count() > 0)
                 return -1;
             emit_u8(st->code, KNC_OP_RET);
@@ -5669,7 +6030,7 @@ static int compile_stmt(KncFuncState *st, Stmt *s)
 
     case ST_SWITCH:
     {
-        KncValue switch_value = compile_expr(st, s->v.switchs.value);
+        KncValue switch_value = compile_value_expr(st, s->v.switchs.value);
         PatchBuf end_patches = {0};
         Stmt *default_body = 0;
         if (kn_diag_error_count() > 0)
@@ -5685,7 +6046,9 @@ static int compile_stmt(KncFuncState *st, Stmt *s)
                 continue;
             }
             {
-                KncValue match = compile_expr(st, c->match);
+                KncValue match = compile_value_expr(st, c->match);
+                KncValue compared = switch_value;
+                knc_coerce_switch_integers(st, c->match, &compared, &match);
                 KncValue cond;
                 if (kn_diag_error_count() > 0)
                     return -1;
@@ -5693,7 +6056,7 @@ static int compile_stmt(KncFuncState *st, Stmt *s)
                 cond.type = type_make(TY_BOOL);
                 emit_u8(st->code, KNC_OP_EQ);
                 emit_u8(st->code, cond.reg);
-                emit_u8(st->code, switch_value.reg);
+                emit_u8(st->code, compared.reg);
                 emit_u8(st->code, match.reg);
                 next_patch = emit_branch_placeholder(st->code, KNC_OP_JUMP_IF_FALSE, cond.reg);
                 if (compile_stmt(st, c->body) != 0)
@@ -6078,6 +6441,30 @@ static int compile_function_body(KncProgram *program, KncFuncRecord *record)
         st.max_reg = st.next_reg;
     }
 
+    /* Function objects erase the argument types at the call site. Normalize
+       their f32 parameters at entry as well, after all parameter registers
+       have been reserved. The erased integer representation is signed i64. */
+    for (int i = 0; params && i < params->count; i++)
+    {
+        Param *param = &params->items[i];
+        if (param->type.kind != TY_F32) continue;
+        KncLocal *local = find_local(&st, param->name);
+        KncValue value = {0};
+        value.reg = load_local_value(&st, local);
+        value.type = type_make(TY_ANY);
+        KncValue is_integer = compile_is_check_from_value(&st, 0, value, type_make(TY_INT));
+        int float_patch = emit_branch_placeholder(st.code, KNC_OP_JUMP_IF_FALSE, is_integer.reg);
+        value.type = type_make(TY_INT);
+        KncValue rounded = knc_narrow_float_value(&st, value, param->type);
+        store_local_value(&st, local, rounded.reg);
+        int end_patch = emit_jump_placeholder(st.code, KNC_OP_JUMP);
+        patch_u16(st.code, float_patch, current_ip(st.code));
+        value.type = type_make(TY_FLOAT);
+        rounded = knc_narrow_float_value(&st, value, param->type);
+        store_local_value(&st, local, rounded.reg);
+        patch_u16(st.code, end_patch, current_ip(st.code));
+    }
+
     if (meta.synthetic_is_block)
     {
         KncLocal *start_local = find_local(&st, "__knc_block_start");
@@ -6227,7 +6614,8 @@ static int build_global_init_function(KncProgram *program, StmtList *globals)
                 Type saved_init_type = s->v.var.init->type;
                 if (s->v.var.type.kind == TY_ARRAY && s->v.var.init->kind == EXPR_ARRAY)
                     s->v.var.init->type = s->v.var.type;
-                value = compile_expr(&st, s->v.var.init);
+                value = compile_value_expr(&st, s->v.var.init);
+                value = knc_narrow_float_value(&st, value, s->v.var.type);
                 if (s->v.var.type.kind == TY_ARRAY && s->v.var.init->kind == EXPR_ARRAY)
                     s->v.var.init->type = saved_init_type;
             }
@@ -6265,7 +6653,10 @@ static int build_global_init_function(KncProgram *program, StmtList *globals)
                     continue;
 
                 if (f->init)
-                    value = compile_expr(&st, f->init);
+                {
+                    value = compile_value_expr(&st, f->init);
+                    value = knc_narrow_float_value(&st, value, f->type);
+                }
                 else
                 {
                     value.reg = alloc_reg(&st);
@@ -6380,6 +6771,15 @@ static int write_i32(FILE *fp, int value)
     return write_u32(fp, (uint32_t)value);
 }
 
+static int write_i64(FILE *fp, int64_t value)
+{
+    uint64_t bits = (uint64_t)value;
+    unsigned char buf[8];
+    for (int i = 0; i < 8; i++)
+        buf[i] = (unsigned char)((bits >> (i * 8)) & 0xffu);
+    return write_bytes(fp, buf, sizeof(buf));
+}
+
 static int write_f64(FILE *fp, double value)
 {
     uint64_t bits = 0;
@@ -6425,7 +6825,7 @@ static const char *knc_opcode_name(int op)
         "LoopArraySumIntLeInc", "LoopSumIntLtInc", "LoopSumIntLeInc", "AddIntImm", "SubIntImm",
         "MulIntImm", "DivIntImm", "LtIntImm", "LeIntImm", "GtIntImm", "GeIntImm",
         "BitAndIntImm", "BitOrIntImm", "BitXorIntImm", "ShlIntImm", "ShrIntImm", "UDivInt",
-        "URemInt", "ULtInt", "ULeInt", "UGtInt", "UGeInt", "LShrInt"
+        "URemInt", "ULtInt", "ULeInt", "UGtInt", "UGeInt", "LShrInt", "FloatToF32", "IntToF32"
     };
     return op >= 0 && op < (int)(sizeof(names) / sizeof(names[0])) ? names[op] : "Unknown";
 }
@@ -6439,8 +6839,8 @@ static int knc_instruction_size(int op)
         (op >= KNC_OP_ARRAY_LENGTH && op <= KNC_OP_ARRAY_LENGTH) || (op >= KNC_OP_NEW_CELL && op <= KNC_OP_STORE_CELL) ||
         op == KNC_OP_MAKE_PTR_LOCAL || (op >= KNC_OP_MAKE_PTR_CELL && op <= KNC_OP_STORE_PTR) ||
         (op >= KNC_OP_LOOP_INT_LT_INC && op <= KNC_OP_LOOP_INT_NE_DEC) ||
-        (op >= KNC_OP_INT_TO_FLOAT && op <= KNC_OP_FLOAT_TO_BOOL)) return 3;
-    if (op == KNC_OP_LOAD_INT || op == KNC_OP_LOAD_FLOAT || op == KNC_OP_LOAD_STRING || op == KNC_OP_LOAD_CHAR ||
+        (op >= KNC_OP_INT_TO_FLOAT && op <= KNC_OP_FLOAT_TO_BOOL) || op == KNC_OP_FLOAT_TO_F32) return 3;
+    if (op == KNC_OP_INT_TO_F32 || op == KNC_OP_LOAD_INT || op == KNC_OP_LOAD_FLOAT || op == KNC_OP_LOAD_STRING || op == KNC_OP_LOAD_CHAR ||
         (op >= KNC_OP_ADD_INT && op <= KNC_OP_DIV_FLOAT) || (op >= KNC_OP_EQ && op <= KNC_OP_SHR_INT) ||
         op == KNC_OP_JUMP_IF_FALSE || op == KNC_OP_JUMP_IF_TRUE || op == KNC_OP_NEW_OBJECT || op == KNC_OP_NEW_ARRAY ||
         op == KNC_OP_LOAD_INDEX || op == KNC_OP_STORE_INDEX || op == KNC_OP_ARRAY_ADD ||
@@ -6538,10 +6938,15 @@ static void knc_write_instruction_listing(FILE *fp, const KncProgram *program,
         int index = knc_u16_at(code, pc + 2);
         knc_listing_reg(fp, code[pc + 1]);
         fprintf(fp, ", #%d", index);
-        if (op == KNC_OP_LOAD_INT && index < program->ints.count) fprintf(fp, "               ; %d", program->ints.items[index]);
+        if (op == KNC_OP_LOAD_INT && index < program->ints.count) fprintf(fp, "               ; %" PRId64, program->ints.items[index]);
         else if (op == KNC_OP_LOAD_FLOAT && index < program->floats.count) fprintf(fp, "               ; %.17g", program->floats.items[index]);
         else if (op == KNC_OP_LOAD_STRING && index < program->strings.count) { fputs("               ; ", fp); knc_listing_quoted(fp, program->strings.items[index]); }
-        else if (op == KNC_OP_LOAD_CHAR && index < program->ints.count) fprintf(fp, "               ; '%c'", program->ints.items[index]);
+        else if (op == KNC_OP_LOAD_CHAR && index < program->ints.count) fprintf(fp, "               ; '%c'", (int)program->ints.items[index]);
+    }
+    else if (op == KNC_OP_INT_TO_F32)
+    {
+        knc_listing_reg(fp, code[pc + 1]); fputs(", ", fp); knc_listing_reg(fp, code[pc + 2]);
+        fprintf(fp, ", %s", code[pc + 3] ? "unsigned" : "signed");
     }
     else if (op == KNC_OP_LOAD_BOOL)
     {
@@ -6563,7 +6968,7 @@ static void knc_write_instruction_listing(FILE *fp, const KncProgram *program,
     else if ((op >= KNC_OP_NEG_INT && op <= KNC_OP_NEG_FLOAT) || op == KNC_OP_NOT_BOOL ||
              (op >= KNC_OP_BITNOT_INT && op <= KNC_OP_STRING_TO_CHAR) || op == KNC_OP_ARRAY_LENGTH ||
              (op >= KNC_OP_NEW_CELL && op <= KNC_OP_STORE_CELL) || (op >= KNC_OP_MAKE_PTR_CELL && op <= KNC_OP_STORE_PTR) ||
-             (op >= KNC_OP_INT_TO_FLOAT && op <= KNC_OP_FLOAT_TO_BOOL))
+             (op >= KNC_OP_INT_TO_FLOAT && op <= KNC_OP_FLOAT_TO_BOOL) || op == KNC_OP_FLOAT_TO_F32)
     {
         knc_listing_reg(fp, code[pc + 1]); fputs(", ", fp); knc_listing_reg(fp, code[pc + 2]);
     }
@@ -6660,7 +7065,7 @@ static int write_program_file(const char *out_path, KncProgram *program)
         return -1;
 
     if (write_bytes(fp, "KNC2", 4) != 0 ||
-        write_u16(fp, 2) != 0 ||
+        write_u16(fp, 3) != 0 ||
         write_u16(fp, 0) != 0 ||
         write_i32(fp, program->entry_index) != 0 ||
         write_i32(fp, program->globals.count) != 0 ||
@@ -6676,7 +7081,7 @@ static int write_program_file(const char *out_path, KncProgram *program)
 
     for (int i = 0; i < program->ints.count; i++)
     {
-        if (write_i32(fp, program->ints.items[i]) != 0)
+        if (write_i64(fp, program->ints.items[i]) != 0)
         {
             fclose(fp);
             return -1;

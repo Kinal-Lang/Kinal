@@ -2,6 +2,18 @@
 
 `kinal vm` is the subcommand group for building, inspecting, running, and packaging KinalVM bytecode.
 
+## Bytecode compatibility
+
+The compiler writes KNC format version **3** (the four-byte magic remains
+`KNC2`). Version 3 stores integer constants as signed 64-bit little-endian
+values, preserving all `int`/`i64` bits and the bit patterns used by `u64`.
+The VM continues to read version 2 files with sign-extended 32-bit constants.
+Both standalone `.knc` files and packed executables use these rules.
+
+Update the compiler and VM together. An older, version-2-only VM rejects new
+files with `Unsupported .knc version: 3`; it cannot execute the new format.
+New `f32` rounding/conversion instructions also require the updated VM.
+
 ---
 
 ## Subcommands

@@ -15,7 +15,7 @@ Public Class KNCLoader
         int version = reader.ReadU16();
         int flags = reader.ReadU16();
 
-        If (version != 2)
+        If (version != 2 && version != 3)
         {
             Throw "Unsupported .knc version: " + [string](version);
         }
@@ -41,7 +41,8 @@ Public Class KNCLoader
 
         For (int intIndex = 0; intIndex < intCount; intIndex = intIndex + 1)
         {
-            program.IntConstants = program.IntConstants.Add(reader.ReadI32());
+            int value = version == 2 ? reader.ReadI32() : reader.ReadI64();
+            program.IntConstants = program.IntConstants.Add(value);
         }
 
         For (int floatIndex = 0; floatIndex < floatCount; floatIndex = floatIndex + 1)
@@ -136,7 +137,7 @@ Public Class KNCLoader
         int version = reader.ReadU16();
         int flags = reader.ReadU16();
 
-        If (version != 2)
+        If (version != 2 && version != 3)
         {
             Throw "Unsupported .knc version: " + [string](version);
         }
@@ -162,7 +163,8 @@ Public Class KNCLoader
 
         For (int intIndex = 0; intIndex < intCount; intIndex = intIndex + 1)
         {
-            program.IntConstants = program.IntConstants.Add(reader.ReadI32());
+            int value = version == 2 ? reader.ReadI32() : reader.ReadI64();
+            program.IntConstants = program.IntConstants.Add(value);
         }
 
         For (int floatIndex = 0; floatIndex < floatCount; floatIndex = floatIndex + 1)

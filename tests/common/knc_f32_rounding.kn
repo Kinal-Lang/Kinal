@@ -1,0 +1,83 @@
+Unit Tests.KncF32Rounding;
+
+Get Console By IO.Console;
+
+f32 Saved = 0.0;
+Class Holder
+{
+    Public f32 Value;
+    Public Function f32 Echo(f32 value) { Return value; }
+}
+
+Function f32 RoundArgument(f32 value) { Return value; }
+Function f32 RoundReturn() { Return 16777217.0; }
+
+Function bool CheckTransfers()
+{
+    f32 value = 16777217.0;
+    If ([float](value) != 16777216.0) Return false;
+    value = 16777219.0;
+    If ([float](value) != 16777220.0) Return false;
+    f32[] values = {16777217.0, 16777219.0};
+    If ([float](values[0]) != 16777216.0 || [float](values[1]) != 16777220.0) Return false;
+    Return [float](RoundArgument(16777217.0)) == 16777216.0 &&
+           [float](RoundReturn()) == 16777216.0 &&
+           [float]([f32](16777219.0)) == 16777220.0;
+}
+
+Function bool CheckArithmetic()
+{
+    f32 big = 16777216.0;
+    f32 one = 1.0;
+    If ([float](big + one) != 16777216.0) Return false;
+    If ([float]((big + one) - big) != 0.0) Return false;
+    f32 other = 16777220.0;
+    If ([float](other - one) != 16777220.0) Return false;
+    f32 multiplier = 1.00000011920928955078125;
+    f32 product = multiplier * multiplier;
+    If ([float](product) != 1.0000002384185791015625) Return false;
+    f32 three = 3.0;
+    If ([float](one / three) != 0.3333333432674407958984375) Return false;
+    big++;
+    If ([float](big) != 16777216.0) Return false;
+    other--;
+    Return [float](other) == 16777220.0;
+}
+
+Function bool CheckIntegerConversion()
+{
+    int signedTrap = 4611686293305294849;
+    u64 unsignedTrap = 9223372586610589697;
+    f32 signedValue = signedTrap;
+    f32 unsignedValue = unsignedTrap;
+    Return [float](signedValue) == 4611686568183201792.0 &&
+           [float](unsignedValue) == 9223373136366403584.0 &&
+           [float](RoundArgument(signedTrap)) == 4611686568183201792.0;
+}
+
+Function bool CheckStoredAndIndirectValues()
+{
+    f32[] values = {};
+    values = values.Add(16777217.0);
+    If ([float](values[0]) != 16777216.0) Return false;
+    values[0] = 16777219.0;
+    If ([float](values[0]) != 16777220.0) Return false;
+    Holder box = New Holder();
+    box.Value = 16777217.0;
+    If ([float](box.Value) != 16777216.0) Return false;
+    If ([float](box.Echo(16777217.0)) != 16777216.0) Return false;
+    Object.Function callback = Function void(f32 value) { Saved = value; };
+    callback(16777217.0);
+    If ([float](Saved) != 16777216.0) Return false;
+    callback(16777219);
+    Return [float](Saved) == 16777220.0;
+}
+
+Static Function int Main()
+{
+    If (!CheckTransfers()) Return 1;
+    If (!CheckArithmetic()) Return 2;
+    If (!CheckIntegerConversion()) Return 3;
+    If (!CheckStoredAndIndirectValues()) Return 4;
+    Return 0;
+}

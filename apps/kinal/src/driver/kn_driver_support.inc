@@ -535,12 +535,17 @@ static const char *normalize_target_triple(const char *raw)
 {
     if (!raw || !raw[0] || str_eq_ci(raw, "host"))
         return default_target_triple();
-    if (str_eq_ci(raw, "win86") || str_eq_ci(raw, "win32") || str_eq_ci(raw, "x86"))
+    // LLVM treats a raw vendorless Windows spelling as a different triple.
+    // Expand it here so Windows requests consistently emit the MSVC/COFF ABI.
+    if (str_eq_ci(raw, "win86") || str_eq_ci(raw, "win32") || str_eq_ci(raw, "x86") ||
+        str_eq_ci(raw, "i686-windows-msvc"))
         return "i686-pc-windows-msvc";
-    if (str_eq_ci(raw, "win64") || str_eq_ci(raw, "x64") || str_eq_ci(raw, "windows"))
+    if (str_eq_ci(raw, "win64") || str_eq_ci(raw, "x64") || str_eq_ci(raw, "windows") ||
+        str_eq_ci(raw, "x86_64-windows-msvc"))
         return "x86_64-pc-windows-msvc";
     if (str_eq_ci(raw, "win-arm64") || str_eq_ci(raw, "windows-arm64") ||
-        str_eq_ci(raw, "arm64") || str_eq_ci(raw, "aarch64-windows"))
+        str_eq_ci(raw, "arm64") || str_eq_ci(raw, "aarch64-windows") ||
+        str_eq_ci(raw, "aarch64-windows-msvc"))
         return "aarch64-pc-windows-msvc";
     if (str_eq_ci(raw, "linux64") || str_eq_ci(raw, "linux-x64"))
         return "x86_64-pc-linux-gnu";

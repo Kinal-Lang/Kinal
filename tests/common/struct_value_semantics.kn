@@ -1,0 +1,192 @@
+Unit Tests.StructValueSemantics;
+
+Get Console By IO.Console;
+
+Struct Pair
+{
+    int X;
+    int Y;
+}
+
+Struct ScalarDefaults
+{
+    string Name;
+    int Value;
+    bool Flag;
+    float Number;
+}
+
+Struct Nested
+{
+    Pair Inner;
+}
+
+Class Box
+{
+    Public int Value;
+    Public Pair Item;
+
+    Public Function Pair Change(Pair item)
+    {
+        item.X = 99;
+        Return item;
+    }
+}
+
+Struct SharedFields
+{
+    Nested Value;
+    Box Ref;
+    int[] Items;
+}
+
+Pair Saved;
+
+Function Pair Make(int x, int y)
+{
+    Pair result;
+    result.X = x;
+    result.Y = y;
+    Return result;
+}
+
+Function Pair Change(Pair item)
+{
+    item.X = 99;
+    Return item;
+}
+
+Function Pair ReadSaved()
+{
+    Return Saved;
+}
+
+Function bool CheckAssignment()
+{
+    Pair a = Make(4, 7);
+    Pair b = a;
+    b.X = 9;
+    Pair c;
+    c = a;
+    c.Y = 12;
+    a = a;
+    Return a.X == 4 && a.Y == 7 && b.X == 9 && b.Y == 7 && c.X == 4 && c.Y == 12;
+}
+
+Function bool CheckCalls()
+{
+    Pair a = Make(4, 7);
+    Pair b = Change(a);
+    Box box = New Box();
+    Pair c = box.Change(a);
+    Saved = a;
+    Pair d = ReadSaved();
+    d.Y = 18;
+    Return a.X == 4 && b.X == 99 && c.X == 99 && Saved.Y == 7 && d.Y == 18;
+}
+
+Function bool CheckClosures()
+{
+    Pair original = Make(4, 7);
+    Object.Function change = Function Pair(Pair item)
+    {
+        item.X = 99;
+        Return item;
+    };
+    Pair changed = change(original);
+    Object.Function capture = Function int()
+    {
+        Pair local = original;
+        local.X = 18;
+        Return original.X;
+    };
+    Return original.X == 4 && changed.X == 99 && capture() == 4;
+}
+
+Function bool CheckDefaults()
+{
+    ScalarDefaults scalars;
+    If (scalars.Name != null || scalars.Name == "" || scalars.Value != 0 || scalars.Flag || scalars.Number != 0.0)
+    {
+        Return false;
+    }
+    Nested first;
+    Nested second = first;
+    second.Inner.X = 13;
+    Return first.Inner.X == 0 && first.Inner.Y == 0 && second.Inner.X == 13 && second.Inner.Y == 0;
+}
+
+Function bool CheckDefaultStorage()
+{
+    Pair[2] items;
+    items[0].X = 7;
+    Pair copy = items[1];
+    copy.Y = 9;
+    Box box = New Box();
+    Pair field = box.Item;
+    field.X = 13;
+    Return items[0].X == 7 && items[1].X == 0 && items[1].Y == 0 &&
+           copy.Y == 9 && box.Item.X == 0 && field.X == 13;
+}
+
+Function bool CheckNested()
+{
+    Pair a = Make(4, 7);
+    Nested n;
+    n.Inner = a;
+    n.Inner.Y = 12;
+    Nested copy = n;
+    copy.Inner.X = 18;
+    Box box = New Box();
+    box.Item = a;
+    box.Item.X = 20;
+    Pair extracted = box.Item;
+    extracted.Y = 22;
+    Return a.X == 4 && a.Y == 7 && n.Inner.X == 4 && n.Inner.Y == 12 &&
+           copy.Inner.X == 18 && box.Item.X == 20 && box.Item.Y == 7 && extracted.Y == 22;
+}
+
+Function bool CheckArrays()
+{
+    Pair a = Make(4, 7);
+    Pair[] values = {a, a};
+    values[0].X = 18;
+    Pair extracted = values[0];
+    extracted.Y = 12;
+    values[1] = extracted;
+    extracted.X = 22;
+    Pair[] alias = values;
+    alias[0].Y = 30;
+    Pair[] appended = values.Add(a);
+    appended[2].X = 40;
+    Return a.X == 4 && a.Y == 7 && values[0].X == 18 && values[0].Y == 30 &&
+           values[1].X == 18 && values[1].Y == 12 && extracted.X == 22 && appended[2].X == 40;
+}
+
+Function bool CheckReferenceFields()
+{
+    SharedFields original;
+    original.Value.Inner = Make(4, 7);
+    original.Ref = New Box();
+    original.Ref.Value = 10;
+    original.Items = {20};
+    SharedFields copy = original;
+    copy.Value.Inner.X = 9;
+    copy.Ref.Value = 11;
+    copy.Items[0] = 21;
+    Box reference = original.Ref;
+    reference.Value = 12;
+    Return original.Value.Inner.X == 4 && copy.Value.Inner.X == 9 &&
+           original.Ref.Value == 12 && original.Items[0] == 21;
+}
+
+Static Function int Main()
+{
+    If (CheckAssignment() && CheckCalls() && CheckClosures() && CheckDefaults() && CheckDefaultStorage() && CheckNested() && CheckArrays() && CheckReferenceFields())
+    {
+        Console.PrintLine("ok");
+        Return 0;
+    }
+    Console.PrintLine("bad");
+    Return 1;
+}

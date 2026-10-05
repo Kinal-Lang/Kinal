@@ -118,6 +118,7 @@ static int fmt_token_is_word(TokenType t)
     case TOK_UNIT:
     case TOK_GET:
     case TOK_SET:
+    case TOK_ALIAS:
     case TOK_BY:
     case TOK_PROPERTY:
     case TOK_FUNCTION:
@@ -129,6 +130,7 @@ static int fmt_token_is_word(TokenType t)
     case TOK_ELSEIF:
     case TOK_WHILE:
     case TOK_FOR:
+    case TOK_FOREACH:
     case TOK_SWITCH:
     case TOK_CASE:
     case TOK_BREAK:
@@ -166,6 +168,7 @@ static int fmt_token_is_word(TokenType t)
     case TOK_TRUE:
     case TOK_FALSE:
     case TOK_IS:
+    case TOK_IN:
     case TOK_DEFAULT:
     case TOK_NULL:
     case TOK_TYPE_VOID:
@@ -198,7 +201,7 @@ static int fmt_token_is_word(TokenType t)
 
 static int fmt_token_is_control_with_paren(TokenType t)
 {
-    return t == TOK_IF || t == TOK_ELSEIF || t == TOK_FOR || t == TOK_WHILE || t == TOK_SWITCH || t == TOK_CATCH;
+    return t == TOK_IF || t == TOK_ELSEIF || t == TOK_FOR || t == TOK_FOREACH || t == TOK_WHILE || t == TOK_SWITCH || t == TOK_CATCH;
 }
 
 static int fmt_token_can_end_expr(TokenType t)

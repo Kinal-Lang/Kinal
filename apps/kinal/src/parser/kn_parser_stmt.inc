@@ -466,34 +466,11 @@ static int64_t parse_int_lit(const Token *t)
     return v;
 }
 
+#include "kn_parser_float.inc"
+
 static double parse_float_lit(const Token *t)
 {
-    double v = 0.0;
-    double frac = 0.1;
-    int seen_dot = 0;
-    size_t end = t->length;
-    if (end > 0 && (t->start[end - 1] == 'f' || t->start[end - 1] == 'F'))
-        end--;
-    for (size_t i = 0; i < end; i++)
-    {
-        char c = t->start[i];
-        if (c == '.')
-        {
-            if (seen_dot) break;
-            seen_dot = 1;
-            continue;
-        }
-        if (c < '0' || c > '9') break;
-        int digit = c - '0';
-        if (!seen_dot)
-            v = v * 10.0 + (double)digit;
-        else
-        {
-            v = v + frac * (double)digit;
-            frac *= 0.1;
-        }
-    }
-    return v;
+    return parse_float_decimal(t->start, t->length);
 }
 
 static int decode_literal_escape(char esc, int64_t *out)

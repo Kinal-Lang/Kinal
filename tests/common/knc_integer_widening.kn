@@ -1,0 +1,80 @@
+Unit Tests.KncIntegerWidening;
+
+Get Console By IO.Console;
+
+Enum UnsignedCode By u32
+{
+    High = 3000000000
+}
+
+Function bool CheckUnsigned()
+{
+    u8 a = 255;
+    u16 b = 65535;
+    u32 c = 3000000000;
+    u32 d = -1;
+    Return [string]([int](a)) == "255" &&
+           [string]([int](b)) == "65535" &&
+           [string]([int](c)) == "3000000000" &&
+           [string]([i64](c)) == "3000000000" &&
+           [string]([int](d)) == "4294967295" &&
+           [string](c) == "3000000000" &&
+           [float](c) > [float](2000000000) &&
+           [string]([int](UnsignedCode.High)) == "3000000000";
+}
+
+Function int WidenArgument(int value)
+{
+    Return value;
+}
+
+Function int WidenReturn(u32 value)
+{
+    Return value;
+}
+
+Function bool CheckBoundaries()
+{
+    u32 below = 2147483647;
+    u32 above = 2147483648;
+    u32 maximum = 4294967295;
+    Return [string]([int](below)) == "2147483647" &&
+           [string]([i64](above)) == "2147483648" &&
+           [string]([u64](maximum)) == "4294967295" &&
+           [string](WidenArgument(above)) == "2147483648" &&
+           [string](WidenReturn(maximum)) == "4294967295";
+}
+
+Function bool CheckArithmeticWidth()
+{
+    i8 small = 1;
+    i64 large = 257;
+    Var result = small + large;
+    Return result.TypeOf() == "i8" && result == 2 &&
+           small + large == 2 && small / large == 1 && small / 257 == 1;
+}
+
+Function bool CheckSignedAndNarrowing()
+{
+    i8 a = -100;
+    i16 b = -300;
+    i32 c = -70000;
+    u32 high = 3000000000;
+    int[] indexed = {10, 20, 30};
+    Return indexed[[i8](2.0)] == 30 && indexed[[i8]("258")] == 30 &&
+           [int](a) == -100 && [int](b) == -300 && [int](c) == -70000 &&
+           [string]([i32](high)) == "-1294967296" &&
+           [int]([i8](255)) == -1 && [int]([u8](-1)) == 255 &&
+           [int]([i16](65535)) == -1 && [int]([u16](-1)) == 65535;
+}
+
+Static Function int Main()
+{
+    If (CheckUnsigned() && CheckBoundaries() && CheckArithmeticWidth() && CheckSignedAndNarrowing())
+    {
+        Console.PrintLine("ok");
+        Return 0;
+    }
+    Console.PrintLine("bad");
+    Return 1;
+}
