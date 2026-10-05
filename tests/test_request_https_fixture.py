@@ -50,6 +50,8 @@ class RequestHttpsFixtureTests(unittest.TestCase):
     def test_verified_tls_preserves_endpoints_and_checks_both_sans(self):
         with run_tests.request_https_fixture(port=0) as (server, client):
             self.assertEqual(server.server_address[0], "127.0.0.1")
+            self.assertEqual(server.socket.context.minimum_version, ssl.TLSVersion.TLSv1_2)
+            self.assertEqual(client.minimum_version, ssl.TLSVersion.TLSv1_2)
             self.assertEqual(client.verify_mode, ssl.CERT_REQUIRED)
             self.assertTrue(client.check_hostname)
             self.assertTrue(client.verify_flags & ssl.VERIFY_X509_STRICT)
@@ -57,6 +59,7 @@ class RequestHttpsFixtureTests(unittest.TestCase):
             self.assertIsNone(client.keylog_filename)
             for hostname in ("127.0.0.1", "localhost"):
                 with self.subTest(hostname=hostname), self.connect(server, client, hostname) as connection:
+                    self.assertIn(connection.version(), ("TLSv1.2", "TLSv1.3"))
                     certificate = connection.getpeercert()
                     self.finish_handshake_probe(connection)
                     self.assertEqual(set(certificate["subjectAltName"]),
@@ -78,11 +81,22 @@ class RequestHttpsFixtureTests(unittest.TestCase):
     def test_untrusted_certificate_and_wrong_hostname_are_rejected(self):
         with run_tests.request_https_fixture(port=0) as (server, client):
             untrusted = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+            untrusted.minimum_version = ssl.TLSVersion.TLSv1_2
             with self.assertRaises(ssl.SSLCertVerificationError):
                 self.connect(server, untrusted)
             with self.assertRaises(ssl.SSLCertVerificationError):
                 self.connect(server, client, "wrong.invalid")
             self.assertEqual(self.request(server, client, "GET", "/health")[:2], (200, b"ok"))
+
+    def test_tls_1_2_remains_supported_with_the_explicit_version_floor(self):
+        contexts = run_tests.request_https_contexts()
+        # Set the version cap before any connection uses the client context.
+        contexts[1].maximum_version = ssl.TLSVersion.TLSv1_2
+        with mock.patch.object(run_tests, "request_https_contexts", return_value=contexts):
+            with run_tests.request_https_fixture(port=0) as (server, client):
+                with self.connect(server, client) as connection:
+                    self.assertEqual(connection.version(), "TLSv1.2")
+                    self.finish_handshake_probe(connection)
 
     def test_every_invocation_has_a_new_certificate_and_public_key(self):
         certificates = []
@@ -231,16 +245,24 @@ class RequestHttpsFixtureTests(unittest.TestCase):
         self.assertEqual(servers[0].socket.fileno(), -1)
 
     def test_incomplete_tls_and_http_clients_cannot_hang_cleanup(self):
-        # A subprocess deadline makes a cleanup regression fail instead of
-        # hanging the whole test run. Keep every client open until fixture exit.
+        # Give setup its own budget: OpenSSL alone may take up to 30 seconds.
+        # An independent watchdog still kills a cleanup hang after 3 seconds,
+        # with thread stacks and phase timings instead of an opaque outer timeout.
+        # Keep every client open until fixture exit.
         script = r'''
-import socket, ssl, sys, threading, time
+import faulthandler, socket, ssl, sys, threading, time
 sys.path.insert(0, sys.argv[1])
 from run_tests import request_https_fixture
+probe_started = time.monotonic()
+def phase(name):
+    print(f"{time.monotonic() - probe_started:.3f}s: {name}", flush=True)
 baseline = set(threading.enumerate())
 connections = []
+phase("fixture setup")
+faulthandler.dump_traceback_later(50, exit=True)
 try:
     with request_https_fixture(port=0) as (server, client):
+        phase("incomplete clients")
         connections.append(socket.create_connection(server.server_address, timeout=3))
         for incomplete_body in (False, True):
             raw = socket.create_connection(server.server_address, timeout=3)
@@ -249,8 +271,13 @@ try:
             if incomplete_body:
                 connection.sendall(b"POST /echo HTTP/1.1\r\nHost: localhost\r\nContent-Length: 100\r\n\r\nx")
         time.sleep(0.05)
+        phase("fixture cleanup")
         started = time.monotonic()
+        faulthandler.dump_traceback_later(3, exit=True)
+    faulthandler.cancel_dump_traceback_later()
     assert time.monotonic() - started < 3, "fixture cleanup exceeded deadline"
+    phase("closed-client checks")
+    faulthandler.dump_traceback_later(10, exit=True)
     assert server.socket.fileno() == -1, "listener is still open"
     assert not (set(threading.enumerate()) - baseline), "request threads survived cleanup"
     for connection in connections:
@@ -261,14 +288,20 @@ try:
 finally:
     for connection in connections:
         connection.close()
+    faulthandler.cancel_dump_traceback_later()
 print("bounded TLS and HTTP cleanup passed")
 '''
-        result = subprocess.run(
-            [sys.executable, "-c", script, str(Path(__file__).resolve().parent)],
-            capture_output=True, text=True, timeout=10, check=False,
-        )
+        try:
+            # Leave room for all phase budgets plus interpreter startup.
+            result = subprocess.run(
+                [sys.executable, "-c", script, str(Path(__file__).resolve().parent)],
+                capture_output=True, text=True, timeout=70, check=False,
+            )
+        except subprocess.TimeoutExpired as error:
+            self.fail(f"HTTPS cleanup probe process timed out; "
+                      f"stdout={error.stdout!r}; stderr={error.stderr!r}")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertEqual(result.stdout, "bounded TLS and HTTP cleanup passed\n")
+        self.assertEqual(result.stdout.splitlines()[-1], "bounded TLS and HTTP cleanup passed")
         self.assertEqual(result.stderr, "")
 
     def test_occupied_port_fails_without_leaving_generated_files(self):

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shlex
 import subprocess
 import tempfile
 import unittest
@@ -29,16 +30,19 @@ class LlvmBootstrapTests(unittest.TestCase):
 
     def test_static_archive_builds_shared_runtime_atomically(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            root = self.toolchain(Path(directory))
+            # Exercise both shell-sensitive spaces and Windows-style backslashes
+            # even when this Linux-only bootstrap is tested on a POSIX host.
+            root = self.toolchain(Path(directory) / r"LLVM\prebuilt with spaces")
             core = str(root / "lib/libLLVMCore.a")
             def link(command: list[str]) -> None:
                 self.assertIn("-Wl,--whole-archive", command)
                 self.assertIn("-Wl,-z,defs", command)
                 self.assertIn("-l:libxml2.so.2", command)
+                self.assertIn(core, command)
                 self.assertEqual(command[-1], str(root / "lib/libLLVM.so.tmp"))
                 Path(command[-1]).write_bytes(b"linked")
             with mock.patch("platform.system", return_value="Linux"), \
-                 mock.patch("subprocess.check_output", side_effect=[core, "-lxml2"]), \
+                 mock.patch("subprocess.check_output", side_effect=[shlex.quote(core), "-lxml2"]), \
                  mock.patch("ctypes.util.find_library", return_value="libxml2.so.2"), \
                  mock.patch("infra.toolchains.setup_llvm.run", side_effect=link):
                 ensure_linux_shared_runtime(root)
@@ -47,11 +51,11 @@ class LlvmBootstrapTests(unittest.TestCase):
 
     def test_failed_link_removes_partial_library(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            root = self.toolchain(Path(directory))
+            root = self.toolchain(Path(directory) / r"LLVM\prebuilt with spaces")
             temporary = root / "lib/libLLVM.so.tmp"
             temporary.write_bytes(b"partial")
             with mock.patch("platform.system", return_value="Linux"), \
-                 mock.patch("subprocess.check_output", side_effect=[str(root / "lib/libLLVMCore.a"), ""]), \
+                 mock.patch("subprocess.check_output", side_effect=[shlex.quote(str(root / "lib/libLLVMCore.a")), ""]), \
                  mock.patch("infra.toolchains.setup_llvm.run", side_effect=subprocess.CalledProcessError(1, "clang++")):
                 with self.assertRaisesRegex(SystemExit, "failed to build"):
                     ensure_linux_shared_runtime(root)
