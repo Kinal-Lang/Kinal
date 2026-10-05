@@ -37,6 +37,23 @@ class PackageProducerTests(unittest.TestCase):
         self.assertEqual(package_cli.compiler_producer_path(self.compiler),
                          self.compiler.with_name("kinal.bin").resolve())
 
+    def test_linux_launcher_keeps_lf_on_windows_text_writers(self):
+        original_write_text = Path.write_text
+
+        def windows_write_text(path, text, *args, **kwargs):
+            # Model Windows' native newline translation on every test host.
+            kwargs.setdefault("newline", "\r\n")
+            return original_write_text(path, text, *args, **kwargs)
+
+        with patch.object(runtime_build, "host_tag", return_value="linux-x64"), \
+             patch.object(Path, "write_text", windows_write_text):
+            runtime_build.write_linux_compiler_launcher(self.root)
+        launcher = self.compiler.read_bytes()
+        self.assertTrue(launcher.startswith(b"#!/usr/bin/env sh\n"))
+        self.assertNotIn(b"\r", launcher)
+        self.assertEqual(package_cli.compiler_producer_path(self.compiler),
+                         self.compiler.with_name("kinal.bin").resolve())
+
     def test_missing_launcher_payload_is_rejected(self):
         self.compiler.write_bytes(b'#!/usr/bin/env sh\nexec "$HERE/kinal.bin" "$@"\n')
         with self.assertRaisesRegex(AssertionError, "payload is missing"):

@@ -126,9 +126,11 @@ def request_https_contexts() -> tuple[ssl.SSLContext, ssl.SSLContext]:
         if result.returncode:
             raise OSError(f"HTTPS fixture certificate generation failed (OpenSSL exit {result.returncode})")
         server_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        server_context.minimum_version = ssl.TLSVersion.TLSv1_2
         # Explicit TLS_CLIENT avoids create_default_context's SSLKEYLOGFILE
         # behavior. Trust is scoped to this context, never the OS trust store.
         client_context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        client_context.minimum_version = ssl.TLSVersion.TLSv1_2
         client_context.verify_flags |= ssl.VERIFY_X509_STRICT
         client_context.hostname_checks_common_name = False
         try:

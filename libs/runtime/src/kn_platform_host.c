@@ -630,6 +630,29 @@ KN_DWORD KN_STDCALL GetLastError(void)
     return g_find_last_error;
 }
 
+static KN_DWORD kn_host_find_no_match_error(const char *pattern)
+{
+    const char *slash = strrchr(pattern, '/');
+    struct stat st;
+    char parent[PATH_MAX];
+    size_t length;
+    if (!slash)
+        return KN_ERROR_FILE_NOT_FOUND;
+    length = slash == pattern ? 1 : (size_t)(slash - pattern);
+    memcpy(parent, pattern, length);
+    parent[length] = 0;
+    /* Preserve glob's interpretation of patterns in directory components. */
+    if (strpbrk(parent, "*?["))
+        return KN_ERROR_FILE_NOT_FOUND;
+    /* BSD/macOS glob reports ENOENT/ENOTDIR as GLOB_NOMATCH, even with
+       GLOB_ERR. Check the parent independently: a missing leaf is different
+       from a missing (or non-directory) component of the search path. */
+    if (stat(parent, &st) == 0)
+        return S_ISDIR(st.st_mode) ? KN_ERROR_FILE_NOT_FOUND : KN_ERROR_PATH_NOT_FOUND;
+    return errno == ENOENT || errno == ENOTDIR
+        ? KN_ERROR_PATH_NOT_FOUND : KN_ERROR_ACCESS_DENIED;
+}
+
 KN_HANDLE KN_STDCALL FindFirstFileA(const char *lpFileName, KN_WIN32_FIND_DATAA *lpFindFileData)
 {
     KnHostHandle *h = 0;
@@ -655,9 +678,10 @@ KN_HANDLE KN_STDCALL FindFirstFileA(const char *lpFileName, KN_WIN32_FIND_DATAA 
         if (rc == GLOB_NOSPACE)
             g_find_last_error = KN_ERROR_NOT_ENOUGH_MEMORY;
         else if (rc == GLOB_ABORTED)
-            g_find_last_error = errno == ENOENT ? KN_ERROR_PATH_NOT_FOUND : KN_ERROR_ACCESS_DENIED;
+            g_find_last_error = errno == ENOENT || errno == ENOTDIR
+                ? KN_ERROR_PATH_NOT_FOUND : KN_ERROR_ACCESS_DENIED;
         else
-            g_find_last_error = KN_ERROR_FILE_NOT_FOUND;
+            g_find_last_error = kn_host_find_no_match_error(pattern);
         globfree(&h->u.find.matches);
         free(h);
         return KN_INVALID_HANDLE_VALUE;

@@ -106,10 +106,73 @@ class PlatformHostTests(unittest.TestCase):
             self.assertTrue(close(handle))
             self.assertEqual(find((directory + "/absent/*").encode(), data), ctypes.c_void_p(-1).value)
             self.assertEqual(self.host.GetLastError(), 3)
+            for suffix, expected in (("/absent.txt", 2), ("/absent/file.txt", 3),
+                                     ("/one.txt/*", 3), ("/one.txt/child/*", 3)):
+                with self.subTest(suffix=suffix):
+                    self.assertEqual(find((directory + suffix).encode(), data), ctypes.c_void_p(-1).value)
+                    self.assertEqual(self.host.GetLastError(), expected)
 
     def test_overlong_input_is_rejected(self) -> None:
         buf = ctypes.create_string_buffer(4096)
         self.assertEqual(self.fullpath(b"/" + b"a" * 8192, len(buf), buf, None), 0)
+
+
+@unittest.skipIf(os.name == "nt", "POSIX host shim")
+class PlatformGlobErrorTests(unittest.TestCase):
+    """Exercise BSD and GNU glob error outcomes on every POSIX test host."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        compiler = shutil.which(os.environ.get("CC", "cc"))
+        if not compiler:
+            raise unittest.SkipTest("a C compiler is required")
+        cls.temp = tempfile.TemporaryDirectory()
+        cls.addClassCleanup(cls.temp.cleanup)
+        stub = Path(cls.temp.name) / "glob_errors.c"
+        stub.write_text('''#include <errno.h>
+#include <glob.h>
+static int mode;
+void set_glob_error_mode(int value) { mode = value; }
+int glob(const char *pattern, int flags,
+         int (*on_error)(const char *, int), glob_t *matches) {
+    (void)pattern; (void)flags; (void)on_error; (void)matches;
+    errno = mode == 1 || mode == 3 ? ENOENT
+          : mode == 2 || mode == 4 ? ENOTDIR
+          : mode == 5 ? EACCES : mode == 6 ? ENOMEM : 0;
+    return mode == 6 ? GLOB_NOSPACE : mode >= 3 ? GLOB_ABORTED : GLOB_NOMATCH;
+}
+''', encoding="utf-8")
+        library = Path(cls.temp.name) / ("glob_errors.dylib" if sys.platform == "darwin" else "glob_errors.so")
+        subprocess.run([compiler, "-shared", "-fPIC", "-Dglob=kn_test_glob",
+                        "-I", str(ROOT / "libs/runtime/include"),
+                        str(ROOT / "libs/runtime/src/kn_platform_host.c"), str(stub),
+                        "-o", str(library)], check=True)
+        cls.host = ctypes.CDLL(str(library))
+        cls.host.FindFirstFileA.argtypes = [ctypes.c_char_p, ctypes.c_void_p]
+        cls.host.FindFirstFileA.restype = ctypes.c_void_p
+        cls.host.set_glob_error_mode.argtypes = [ctypes.c_int]
+
+    def assert_error(self, pattern: str, expected: int) -> None:
+        self.assertEqual(self.host.FindFirstFileA(pattern.encode(), None), ctypes.c_void_p(-1).value)
+        self.assertEqual(self.host.GetLastError(), expected)
+
+    def test_no_match_distinguishes_parent_from_leaf_without_relying_on_errno(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            Path(directory, "file").touch()
+            for mode in (0, 1, 2):
+                self.host.set_glob_error_mode(mode)
+                for suffix, expected in (("/*", 2), ("/missing.txt", 2), ("/absent/*", 3),
+                                         ("/absent/file", 3), ("/file/*", 3), ("/file/child/*", 3)):
+                    with self.subTest(mode=mode, suffix=suffix):
+                        self.assert_error(directory + suffix, expected)
+                self.assert_error("missing-relative-file", 2)
+                self.assert_error("/*", 2)
+
+    def test_aborted_and_out_of_memory_errors_are_preserved(self) -> None:
+        for mode, expected in ((3, 3), (4, 3), (5, 5), (6, 8)):
+            with self.subTest(mode=mode):
+                self.host.set_glob_error_mode(mode)
+                self.assert_error("unused/*", expected)
 
 
 if __name__ == "__main__":
