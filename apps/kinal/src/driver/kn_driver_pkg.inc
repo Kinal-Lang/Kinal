@@ -44,6 +44,8 @@ typedef struct
 
 static KN_DRIVER_THREAD_LOCAL int g_pkg_error = 0;
 static KN_DRIVER_THREAD_LOCAL uint64_t g_pkg_cache_nonce = 0;
+static KN_DRIVER_THREAD_LOCAL char g_pkg_cache_root[KN_MAX_PATH];
+static KN_DRIVER_THREAD_LOCAL int g_pkg_cache_has_runtime_assets = 0;
 
 static void pkg_fail(const char *msg, const char *detail)
 {
@@ -888,7 +890,7 @@ static bool collect_manifest_payload_files_recursive(const char *manifest_dir, c
         return false;
     h = FindFirstFileA(pattern, &data);
     if (h == KN_INVALID_HANDLE_VALUE)
-        return false;
+        return GetLastError() == KN_ERROR_FILE_NOT_FOUND;
     do
     {
         char full[KN_MAX_PATH];
@@ -898,10 +900,12 @@ static bool collect_manifest_payload_files_recursive(const char *manifest_dir, c
                 continue;
             if (kn_strcmp(data.cFileName, ".git") == 0 || kn_strcmp(data.cFileName, ".kinal-cache") == 0)
                 continue;
-            if (!path_join(full, sizeof(full), dir, data.cFileName))
-                continue;
-            if (!collect_manifest_payload_files_recursive(manifest_dir, full, files, count, cap))
-                continue;
+            if (!path_join(full, sizeof(full), dir, data.cFileName) ||
+                !collect_manifest_payload_files_recursive(manifest_dir, full, files, count, cap))
+            {
+                FindClose(h);
+                return false;
+            }
             continue;
         }
         if (should_skip_manifest_payload_file(data.cFileName))
@@ -911,14 +915,19 @@ static bool collect_manifest_payload_files_recursive(const char *manifest_dir, c
             FindClose(h);
             return false;
         }
-        if (!path_join(full, sizeof(full), dir, data.cFileName))
-            continue;
-        if (!path_relative_file(manifest_dir, full, files[*count], KN_MAX_PATH))
-            continue;
+        if (!path_join(full, sizeof(full), dir, data.cFileName) ||
+            !path_relative_file(manifest_dir, full, files[*count], KN_MAX_PATH))
+        {
+            FindClose(h);
+            return false;
+        }
         (*count)++;
     } while (FindNextFileA(h, &data));
-    FindClose(h);
-    return true;
+    {
+        bool complete = GetLastError() == KN_ERROR_NO_MORE_FILES;
+        FindClose(h);
+        return complete;
+    }
 }
 
 static void write_u32_le(KN_HANDLE h, uint32_t v)
@@ -939,6 +948,20 @@ static void write_u64_le(KN_HANDLE h, uint64_t v)
     for (int i = 0; i < 8; i++)
         buf[i] = (unsigned char)((v >> (unsigned)(i * 8)) & 0xFFu);
     WriteFile(h, buf, 8, &wrote, 0);
+}
+
+/* kn_read_file rejects empty inputs; package payloads may still be empty. */
+static bool package_payload_is_readable_empty_file(const char *path)
+{
+    KN_HANDLE h = CreateFileA(path, KN_GENERIC_READ, KN_FILE_SHARE_READ, 0,
+                              KN_OPEN_EXISTING, KN_FILE_ATTRIBUTE_NORMAL, 0);
+    int64_t size = 0;
+    bool empty;
+    if (!h || h == KN_INVALID_HANDLE_VALUE)
+        return false;
+    empty = GetFileSizeEx(h, &size) && size == 0;
+    CloseHandle(h);
+    return empty;
 }
 
 static int klib_pack_from_manifest_impl(const char *manifest_path, const char *out_path,
@@ -1029,7 +1052,7 @@ static int klib_pack_from_manifest_impl(const char *manifest_path, const char *o
             return -1;
         }
         src = kn_read_file(full_path, &src_size);
-        if (!src)
+        if (!src && !package_payload_is_readable_empty_file(full_path))
         {
             CloseHandle(h);
             kn_free(manifest_text);
@@ -1368,6 +1391,14 @@ static int klib_extract_to_dir(const char *path, const char *out_dir)
         }
         kn_memcpy(rel, data + off, rel_len);
         rel[rel_len] = 0;
+        /* Shared native payloads can remain runtime dependencies after linking.
+         * Keep their process cache rather than invalidate a successful binary. */
+        if (has_ext_ci(rel, ".dll") || has_ext_ci(rel, ".dylib") || has_ext_ci(rel, ".so"))
+            g_pkg_cache_has_runtime_assets = 1;
+        for (size_t j = 0; j + 3 < rel_len; j++)
+            if (rel[j] == '.' && (rel[j + 1] == 's' || rel[j + 1] == 'S') &&
+                (rel[j + 2] == 'o' || rel[j + 2] == 'O') && rel[j + 3] == '.')
+                g_pkg_cache_has_runtime_assets = 1;
         off += rel_len;
         for (size_t j = 0; rel[j]; j++)
             if (rel[j] == '/') rel[j] = '\\';
@@ -1495,7 +1526,20 @@ static bool register_manifest_into_module_map_depth(const KnPkgManifest *manifes
             if (!default_klib_cache_root(cache_root, sizeof(cache_root)))
                 return false;
             if (!dir_exists(cache_root))
-                ensure_dir_recursive(cache_root);
+            {
+                char parent[KN_MAX_PATH];
+                path_dirname(cache_root, parent, sizeof(parent));
+                ensure_dir_recursive(parent);
+                /* Record ownership only after exclusive creation succeeds. */
+#if defined(_WIN32) || defined(_WIN64)
+                if (CreateDirectoryA(cache_root, 0))
+#else
+                if (mkdir(cache_root, 0700) == 0)
+#endif
+                    copy_str(g_pkg_cache_root, sizeof(g_pkg_cache_root), cache_root);
+                else if (!dir_exists(cache_root))
+                    return false;
+            }
             sanitize_cache_component(safe_name, sizeof(safe_name), manifest->name);
             sanitize_cache_component(safe_version, sizeof(safe_version), manifest->version[0] ? manifest->version : "0");
             copy_str(cache_name, sizeof(cache_name), safe_name);

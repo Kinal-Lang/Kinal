@@ -53,6 +53,8 @@ static KnHostHandle g_stderr_handle = { KN_HOST_HANDLE_FD, 0, { .fd = 2 } };
 static int g_heap_token = 0;
 static char g_cmdline_cache[8192];
 static int g_cmdline_ready = 0;
+/* Win32-compatible status for the directory enumeration API. */
+static _Thread_local KN_DWORD g_find_last_error = 0;
 
 static KnHostHandle *kn_host_new_handle(int kind)
 {
@@ -123,7 +125,7 @@ static void kn_host_norm_copy(char *dst, size_t cap, const char *src)
 
 static int kn_host_norm_path(const char *src, char *dst, size_t cap)
 {
-    if (!src || !dst || cap == 0)
+    if (!src || !dst || cap == 0 || strlen(src) >= cap)
         return 0;
     kn_host_norm_copy(dst, cap, src);
     return dst[0] != 0;
@@ -136,10 +138,7 @@ static int kn_host_make_abs(const char *path, char *out, size_t cap)
     if (!path || !out || cap == 0)
         return 0;
     if (kn_host_is_absolute(path))
-    {
-        kn_host_norm_copy(out, cap, path);
-        return 1;
-    }
+        return kn_host_norm_path(path, out, cap);
     if (!getcwd(cwd, sizeof(cwd)))
         return 0;
     n = strlen(cwd);
@@ -149,8 +148,7 @@ static int kn_host_make_abs(const char *path, char *out, size_t cap)
     if (n > 0 && out[n - 1] != '/')
         out[n++] = '/';
     out[n] = 0;
-    kn_host_norm_copy(out + n, cap - n, path);
-    return 1;
+    return kn_host_norm_path(path, out + n, cap - n);
 }
 
 static void kn_host_normalize_abs_path(char *path)
@@ -198,9 +196,10 @@ static void kn_host_normalize_abs_path(char *path)
                 seg = strtok_r(0, "/", &save);
                 continue;
             }
+            /* Save the offset before the separator so .. removes both. */
+            stack[depth++] = write_off;
             if (write_off > 1 && write_off + 1 < PATH_MAX)
                 path[write_off++] = '/';
-            stack[depth++] = write_off;
             while (*seg && write_off + 1 < PATH_MAX)
                 path[write_off++] = *seg++;
             path[write_off] = 0;
@@ -626,21 +625,39 @@ KN_BOOL KN_STDCALL FileTimeToSystemTime(const KN_FILETIME *lpFileTime, KN_SYSTEM
     return 1;
 }
 
+KN_DWORD KN_STDCALL GetLastError(void)
+{
+    return g_find_last_error;
+}
+
 KN_HANDLE KN_STDCALL FindFirstFileA(const char *lpFileName, KN_WIN32_FIND_DATAA *lpFindFileData)
 {
     KnHostHandle *h = 0;
     int rc = 0;
     char pattern[PATH_MAX];
-    if (!lpFileName || !lpFileName[0])
+    g_find_last_error = 0;
+    if (!lpFileName || !lpFileName[0] ||
+        !kn_host_norm_path(lpFileName, pattern, sizeof(pattern)))
+    {
+        g_find_last_error = KN_ERROR_INVALID_PARAMETER;
         return KN_INVALID_HANDLE_VALUE;
-    if (!kn_host_norm_path(lpFileName, pattern, sizeof(pattern)))
-        return KN_INVALID_HANDLE_VALUE;
+    }
     h = kn_host_new_handle(KN_HOST_HANDLE_FIND);
     if (!h)
+    {
+        g_find_last_error = KN_ERROR_NOT_ENOUGH_MEMORY;
         return KN_INVALID_HANDLE_VALUE;
-    rc = glob(pattern, 0, 0, &h->u.find.matches);
+    }
+    errno = 0;
+    rc = glob(pattern, GLOB_ERR, 0, &h->u.find.matches);
     if (rc != 0 || h->u.find.matches.gl_pathc == 0)
     {
+        if (rc == GLOB_NOSPACE)
+            g_find_last_error = KN_ERROR_NOT_ENOUGH_MEMORY;
+        else if (rc == GLOB_ABORTED)
+            g_find_last_error = errno == ENOENT ? KN_ERROR_PATH_NOT_FOUND : KN_ERROR_ACCESS_DENIED;
+        else
+            g_find_last_error = KN_ERROR_FILE_NOT_FOUND;
         globfree(&h->u.find.matches);
         free(h);
         return KN_INVALID_HANDLE_VALUE;
@@ -653,10 +670,17 @@ KN_HANDLE KN_STDCALL FindFirstFileA(const char *lpFileName, KN_WIN32_FIND_DATAA 
 KN_BOOL KN_STDCALL FindNextFileA(KN_HANDLE hFindFile, KN_WIN32_FIND_DATAA *lpFindFileData)
 {
     KnHostHandle *h = kn_host_as_handle(hFindFile);
-    if (!h || h->kind != KN_HOST_HANDLE_FIND)
+    if (!h || hFindFile == KN_INVALID_HANDLE_VALUE || h->kind != KN_HOST_HANDLE_FIND)
+    {
+        g_find_last_error = KN_ERROR_INVALID_HANDLE;
         return 0;
+    }
     if (h->u.find.index >= h->u.find.matches.gl_pathc)
+    {
+        g_find_last_error = KN_ERROR_NO_MORE_FILES;
         return 0;
+    }
+    g_find_last_error = 0;
     kn_host_fill_find_data(h->u.find.matches.gl_pathv[h->u.find.index], lpFindFileData);
     h->u.find.index++;
     return 1;
@@ -665,7 +689,7 @@ KN_BOOL KN_STDCALL FindNextFileA(KN_HANDLE hFindFile, KN_WIN32_FIND_DATAA *lpFin
 KN_BOOL KN_STDCALL FindClose(KN_HANDLE hFindFile)
 {
     KnHostHandle *h = kn_host_as_handle(hFindFile);
-    if (!h || h->kind != KN_HOST_HANDLE_FIND)
+    if (!h || hFindFile == KN_INVALID_HANDLE_VALUE || h->kind != KN_HOST_HANDLE_FIND)
         return 0;
     globfree(&h->u.find.matches);
     free(h);
@@ -731,17 +755,22 @@ KN_DWORD KN_STDCALL GetCurrentDirectoryA(KN_DWORD nBufferLength, char *lpBuffer)
 
 KN_DWORD KN_STDCALL GetFullPathNameA(const char *lpFileName, KN_DWORD nBufferLength, char *lpBuffer, char **lpFilePart)
 {
+    char full[PATH_MAX];
     size_t len = 0;
-    const char *base = 0;
-    if (!lpBuffer || nBufferLength == 0 || !kn_host_make_abs(lpFileName, lpBuffer, (size_t)nBufferLength))
-        return 0;
-    kn_host_normalize_abs_path(lpBuffer);
-    len = strlen(lpBuffer);
     if (lpFilePart)
-    {
-        base = kn_host_basename(lpBuffer);
-        *lpFilePart = (char *)base;
-    }
+        *lpFilePart = 0;
+    if (!kn_host_make_abs(lpFileName, full, sizeof(full)))
+        return 0;
+    kn_host_normalize_abs_path(full);
+    len = strlen(full);
+    /* Match the Windows size-query contract; never return a truncated path. */
+    if (nBufferLength <= len)
+        return (KN_DWORD)(len + 1);
+    if (!lpBuffer)
+        return 0;
+    memcpy(lpBuffer, full, len + 1);
+    if (lpFilePart)
+        *lpFilePart = lpBuffer + (kn_host_basename(full) - full);
     return (KN_DWORD)len;
 }
 

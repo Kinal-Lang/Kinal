@@ -60,6 +60,9 @@ Extern Unsafe Function f64 ParseFloat64(string text) By C;
 [LinkName("kn_native_executable_path")]
 Extern Unsafe Function char* ExecutablePath() By C;
 
+[LinkName("kn_native_process_initialize_arguments")]
+Extern Unsafe Function void InitializeProcessArguments(i32 argc, char** argv) By C;
+
 [LinkName("kn_native_process_run")]
 Extern Unsafe Function int ProcessRun(string executable,
                                       string[] arguments,

@@ -41,6 +41,7 @@ from .context import (
 from .llvm import llvm_lib_dir
 from .zig import detect_zig_path, ensure_zig_available
 from .util import copy_tree, download_file, extract_zip_safely, run, write_text
+from .vm_metadata import generate_kinalvm_build_info
 
 
 def windows_drive_roots() -> list[Path]:
@@ -805,6 +806,7 @@ exec "$HERE/kinal.bin" "$@"
 
 
 def build_kinal_vm_binary(compiler: Path, bundle_dir: Path) -> Path:
+    generate_kinalvm_build_info()
     vm_src = ROOT / "apps" / "kinalvm" / "src" / "Main.kn"
     vm_out = bundle_dir / exe_name("kinalvm")
     cmd: list[str | Path] = [compiler, "build", vm_src, "-o", vm_out]

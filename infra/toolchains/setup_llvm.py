@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import argparse
+import ctypes.util
+import shlex
 import platform
 import shutil
 import subprocess
@@ -116,6 +118,61 @@ def download(url: str, dest: Path) -> None:
     print(f"[OK] download complete: {dest}", flush=True)
 
 
+def ensure_linux_shared_runtime(toolchain: Path) -> None:
+    """Official Linux archives may contain only static LLVM components.
+
+    The compiler, staged bundle and selfhost bridge all need a monolithic C API
+    shared library. Build it from the matching archive, rather than mixing LLVM
+    versions or claiming the bootstrap succeeded with an unusable toolchain.
+    """
+    if platform.system().lower() != "linux":
+        return
+    lib = toolchain / "lib"
+    output = lib / "libLLVM.so"
+    if output.is_file():
+        return
+    existing = sorted(p for pattern in ("libLLVM.so.*", "libLLVM-*.so*")
+                      for p in lib.glob(pattern) if p.is_file() and not p.name.endswith(".tmp"))
+    if existing:
+        output.symlink_to(existing[0].name)
+        return
+    config, compiler = toolchain / "bin/llvm-config", toolchain / "bin/clang++"
+    if not config.is_file() or not compiler.is_file():
+        raise SystemExit(f"LLVM prebuilt is missing llvm-config or clang++: {toolchain}")
+
+    def query(option: str) -> list[str]:
+        return shlex.split(subprocess.check_output(
+            [str(config), "--link-static", option, "all"], text=True).strip())
+
+    libraries = query("--libfiles")
+    if not libraries or any(not Path(path).is_file() for path in libraries):
+        raise SystemExit(f"LLVM prebuilt is missing static component libraries: {toolchain}")
+    system_libraries = []
+    for value in query("--system-libs"):
+        # Runtime-only hosts may lack the unversioned .so developer symlink.
+        # llvm-config may also embed a build-machine-specific archive path.
+        name = value[2:] if value.startswith("-l") else ""
+        if not name and Path(value).is_absolute() and not Path(value).exists():
+            name = Path(value).name.removeprefix("lib").split(".", 1)[0]
+        soname = ctypes.util.find_library(name) if name else None
+        system_libraries.append(f"-l:{soname}" if soname and not Path(soname).is_absolute()
+                                else soname or value)
+    temporary = lib / "libLLVM.so.tmp"
+    try:
+        run([str(compiler), "-fuse-ld=lld", "-shared", "-Wl,-z,defs",
+             "-Wl,-soname,libLLVM.so", "-Wl,--whole-archive", *libraries,
+             "-Wl,--no-whole-archive", *system_libraries, "-o", str(temporary)])
+        temporary.replace(output)
+    except (OSError, subprocess.CalledProcessError) as exc:
+        temporary.unlink(missing_ok=True)
+        raise SystemExit(
+            f"failed to build the LLVM shared runtime in {toolchain}; "
+            "install the host C++ toolchain and LLVM system dependencies, "
+            "or select a complete LLVM installation with LLVM_DIR"
+        ) from exc
+    print(f"[OK] built matching LLVM shared runtime: {output}", flush=True)
+
+
 def fetch_prebuilt(url: str) -> None:
     ensure_dir(PREBUILT_ROOT)
     archive = PREBUILT_ROOT / Path(url).name
@@ -125,6 +182,13 @@ def fetch_prebuilt(url: str) -> None:
     else:
         print(f"[INFO] archive already present: {archive}", flush=True)
     extract_archive(archive, PREBUILT_ROOT)
+    # Archive layouts vary; select only the toolchain unpacked from this archive.
+    archive_root = archive.name
+    for suffix in (".tar.xz", ".tar.gz", ".zip"):
+        if archive_root.endswith(suffix):
+            archive_root = archive_root[:-len(suffix)]
+            break
+    ensure_linux_shared_runtime(PREBUILT_ROOT / archive_root)
     print(f"[OK] prebuilt LLVM ready under {PREBUILT_ROOT}", flush=True)
 
 

@@ -39,6 +39,14 @@
 #define KN_FILE_ATTRIBUTE_DIRECTORY 0x00000010u
 #define KN_FILE_ATTRIBUTE_REPARSE_POINT 0x00000400u
 
+#define KN_ERROR_FILE_NOT_FOUND 2u
+#define KN_ERROR_PATH_NOT_FOUND 3u
+#define KN_ERROR_ACCESS_DENIED 5u
+#define KN_ERROR_INVALID_HANDLE 6u
+#define KN_ERROR_NOT_ENOUGH_MEMORY 8u
+#define KN_ERROR_NO_MORE_FILES 18u
+#define KN_ERROR_INVALID_PARAMETER 87u
+
 #define KN_INFINITE 0xFFFFFFFFu
 
 #define KN_MAX_PATH 260
@@ -160,6 +168,8 @@ KN_DLLIMPORT KN_BOOL KN_STDCALL QueryPerformanceCounter(int64_t *lpPerformanceCo
 KN_DLLIMPORT KN_BOOL KN_STDCALL QueryPerformanceFrequency(int64_t *lpFrequency);
 KN_DLLIMPORT void KN_STDCALL GetSystemTimeAsFileTime(KN_FILETIME *lpSystemTimeAsFileTime);
 KN_DLLIMPORT KN_BOOL KN_STDCALL FileTimeToSystemTime(const KN_FILETIME *lpFileTime, KN_SYSTEMTIME *lpSystemTime);
+/* On POSIX, GetLastError currently reports directory enumeration status only. */
+KN_DLLIMPORT KN_DWORD KN_STDCALL GetLastError(void);
 KN_DLLIMPORT KN_HANDLE KN_STDCALL FindFirstFileA(const char *lpFileName, KN_WIN32_FIND_DATAA *lpFindFileData);
 KN_DLLIMPORT KN_BOOL KN_STDCALL FindNextFileA(KN_HANDLE hFindFile, KN_WIN32_FIND_DATAA *lpFindFileData);
 KN_DLLIMPORT KN_BOOL KN_STDCALL FindClose(KN_HANDLE hFindFile);

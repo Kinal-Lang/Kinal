@@ -97,6 +97,11 @@ Trusted Function string AdoptNativeText(char* text)
 // argc/argv are borrowed process-startup values.  Array construction and
 // ownership belong to the Kinal runtime; argv[0] remains excluded for
 // compatibility with the stage0 Main(string[]) contract.
+Trusted Function void InitializeProcessArguments(i32 argc, char** argv)
+{
+    IO.Kinal.Runtime.Native.InitializeProcessArguments(argc, argv);
+}
+
 Trusted Function string[] ArgumentsFromArgv(i32 argc, char** argv)
 {
     string[] arguments = {};

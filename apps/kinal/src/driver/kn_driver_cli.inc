@@ -2244,6 +2244,81 @@ static int kn_pkg_unpack_main(int argc, char **argv)
     if (klib_extract_to_dir(input, out) != 0) { kn_write_str("failed to extract klib\n"); return 1; }
     return 0;
 }
+/* Package extraction is process-private, not a persistent reusable cache.
+ * Remove only this invocation's directory after all compilation/linking/running
+ * has finished. Never walk through symlinks into a different cache or tree. */
+#if defined(_WIN32) || defined(_WIN64)
+static void cleanup_cli_package_tree(const char *path)
+{
+    char pattern[KN_MAX_PATH];
+    KN_WIN32_FIND_DATAA data;
+    KN_HANDLE find;
+    if (!path_join(pattern, sizeof(pattern), path, "*"))
+        return;
+    find = FindFirstFileA(pattern, &data);
+    if (find != KN_INVALID_HANDLE_VALUE)
+    {
+        do
+        {
+            char child[KN_MAX_PATH];
+            if (kn_strcmp(data.cFileName, ".") == 0 || kn_strcmp(data.cFileName, "..") == 0)
+                continue;
+            if (!path_join(child, sizeof(child), path, data.cFileName))
+                continue;
+            if (data.dwFileAttributes & KN_FILE_ATTRIBUTE_DIRECTORY)
+            {
+                if (data.dwFileAttributes & KN_FILE_ATTRIBUTE_REPARSE_POINT)
+                    RemoveDirectoryA(child);
+                else
+                    cleanup_cli_package_tree(child);
+            }
+            else
+                DeleteFileA(child);
+        } while (FindNextFileA(find, &data));
+        FindClose(find);
+    }
+    RemoveDirectoryA(path);
+}
+#else
+static void cleanup_cli_package_directory_fd(int fd)
+{
+    DIR *directory = fdopendir(fd);
+    struct dirent *entry;
+    if (!directory)
+    {
+        close(fd);
+        return;
+    }
+    while ((entry = readdir(directory)) != 0)
+    {
+        struct stat info;
+        const char *name = entry->d_name;
+        if (kn_strcmp(name, ".") == 0 || kn_strcmp(name, "..") == 0)
+            continue;
+        if (fstatat(fd, name, &info, AT_SYMLINK_NOFOLLOW) != 0)
+            continue;
+        if (S_ISDIR(info.st_mode))
+        {
+            int child = openat(fd, name, O_RDONLY | O_DIRECTORY | O_NOFOLLOW);
+            if (child >= 0)
+                cleanup_cli_package_directory_fd(child);
+            unlinkat(fd, name, AT_REMOVEDIR);
+        }
+        else
+            unlinkat(fd, name, 0);
+    }
+    closedir(directory);
+}
+
+static void cleanup_cli_package_tree(const char *path)
+{
+    int fd = open(path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW);
+    if (fd >= 0)
+        cleanup_cli_package_directory_fd(fd);
+    rmdir(path);
+}
+#endif
+
 // This is required when statically linking LLVM (C++), so we use `main` instead
 // of a freestanding `mainCRTStartup` entry point.
 static int kn_run_cli_session(int argc, char **argv)
@@ -2258,6 +2333,16 @@ static int kn_run_cli_session(int argc, char **argv)
     int result = kn_main(argc, argv);
     kn_compile_session_leave(session);
     kn_compile_session_destroy(session);
+    int keep_package_cache = 0;
+    for (int i = 1; i < argc; i++)
+        if (kn_strcmp(argv[i], "--keep-temps") == 0)
+            keep_package_cache = 1;
+    if (g_pkg_cache_root[0] && !keep_package_cache &&
+        (result != 0 || !g_pkg_cache_has_runtime_assets))
+        cleanup_cli_package_tree(g_pkg_cache_root);
+    g_pkg_cache_root[0] = 0;
+    g_pkg_cache_nonce = 0;
+    g_pkg_cache_has_runtime_assets = 0;
     return result;
 }
 

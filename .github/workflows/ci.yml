@@ -18,7 +18,6 @@ on:
       - "libs/**"
       - "tests/**"
   pull_request:
-    branches: [ main ]
     paths:
       - ".github/workflows/ci.yml"
       - "CMakeLists.txt"

@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import re
 import subprocess
+import tempfile
 from pathlib import Path
 
 
@@ -155,6 +156,43 @@ def check_capture_storage(compiler: Path, out_dir: Path) -> None:
         if not re.search(r"and i\d+ %capture\.cell\.rounded\d*, -32", aggregate):
             raise AssertionError(f"{target}: aligned struct capture lost its alignment")
         print(f"[OK] stage_capture_storage_{target}")
+
+
+def check_project_source_paths(compiler: Path, out_dir: Path) -> None:
+    with tempfile.TemporaryDirectory(prefix="project-paths-", dir=out_dir) as directory:
+        project = Path(directory)
+        (project / "src/placeholder").mkdir(parents=True)
+        (project / "src/Main.kn").write_text(
+            "Unit Tests.ProjectPaths;\nStatic Function int Main() { Return 0; }\n", encoding="utf-8")
+        manifest = project / "kinal.knproj"
+        for index, (root, entry) in enumerate([
+            ("src", "src/placeholder/../Main.kn"),
+            ("src/placeholder/../", "src/Main.kn"),
+            ("src/placeholder/../", "src/placeholder/../Main.kn"),
+        ]):
+            manifest.write_text(
+                'Project PathChecks {\n'
+                f' SourceSet "main" {{ Roots = ["{root}"]; Include = ["**/*.kn"]; RequireUnit = true; }}\n'
+                ' DefaultProfile = "test";\n'
+                ' Profile "test" {\n'
+                f'  Source {{ Entry = "{entry}"; Sets = ["main"]; Mode = ReachableUnits; }}\n'
+                '  Build { Backend = Native; Environment = Hosted; }\n'
+                ' }\n}\n', encoding="utf-8")
+            output = project / f"case-{index}.ll"
+            command = [str(compiler), "build", "--project", str(project), "--profile", "test",
+                       "--emit", "ir", "-o", str(output)]
+            result = subprocess.run(command, cwd=ROOT, capture_output=True, text=True, timeout=60)
+            if result.returncode != 0 or not output.is_file():
+                raise AssertionError(f"normalized project paths {index}:\n{result.stdout}{result.stderr}")
+        print("[OK] stage_project_normalized_source_paths")
+        # Recursive failure must propagate instead of silently dropping invalid sources.
+        (project / "src/placeholder/Bad.kn").write_text(
+            "Static Function int MissingUnit() { Return 1; }\n", encoding="utf-8")
+        output.unlink()
+        result = subprocess.run(command, cwd=ROOT, capture_output=True, text=True, timeout=60)
+        if result.returncode == 0 or output.exists() or "must declare Unit" not in result.stdout + result.stderr:
+            raise AssertionError(f"nested RequireUnit validation was swallowed:\n{result.stdout}{result.stderr}")
+        print("[OK] stage_project_nested_source_validation")
 
 
 def main() -> int:
@@ -347,6 +385,7 @@ def main() -> int:
         raise AssertionError("unsupported KNC builtin left a stale artifact")
     print("[OK] stage_knc_unregistered_builtin")
     check_capture_storage(compiler, out_dir)
+    check_project_source_paths(compiler, out_dir)
     return 0
 
 

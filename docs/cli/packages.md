@@ -125,6 +125,14 @@ inputs such as object files and static libraries. Use package roots for
 `.klib` discovery and Kinal FFI metadata or project Link options for native
 payloads.
 
+The C CLI uses invocation-private extraction directories and removes them after
+normal success or failure, once compilation and any launched program finish.
+It retains caches containing shared native libraries (`.so`, `.dll`, `.dylib`)
+because those files can remain runtime dependencies. Explicit `pkg unpack`
+outputs are never part of this cleanup; `--keep-temps` also retains the cache.
+Forced termination may leave a stale
+process directory.
+
 Selfhost extracts installed packages into an executable-relative
 `stdlib-cache` generation and project archives into content-fingerprinted
 `package-cache` directories. Changed archive contents do not reuse stale

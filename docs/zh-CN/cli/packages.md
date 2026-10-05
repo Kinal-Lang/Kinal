@@ -125,3 +125,7 @@ C CLI 的单文件构建还支持 `--pkg-root <dir>`。
 - [CLI 概览](compiler.md)
 - [项目结构](../getting-started/project-structure.md)
 - [模块系统](../language/modules.md)
+
+C 版 CLI 使用单次调用独占的解包目录，编译及启动的程序结束后，在正常成功或失败
+退出时清理。包含共享原生库（`.so`、`.dll`、`.dylib`）的缓存会保留，以免破坏程序
+运行时依赖。显式 `pkg unpack` 的输出不会被清理，`--keep-temps` 也会保留缓存；强制终止仍可能留下进程缓存目录。
