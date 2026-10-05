@@ -1,0 +1,11 @@
+Unit Tests.BuiltinStringLengthReference;
+Get IO.Console;
+Get IO.Type.string;
+
+Static Function int Main()
+{
+    Object.Function length = IO.Type.string.Length;
+    int count = [int](length("abc"));
+    IO.Console.PrintLine(count);
+    Return count == 3 ? 0 : 1;
+}

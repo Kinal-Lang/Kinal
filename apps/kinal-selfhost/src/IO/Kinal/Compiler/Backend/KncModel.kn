@@ -1,0 +1,1125 @@
+Unit IO.Kinal.Compiler.Backend.KncModel;
+
+Get IO.Text;
+Get IO.File;
+Get IO.Path;
+Get IO.Directory;
+Get IO.Kinal.Runtime.Native;
+
+// KNC2 revision 3. All multibyte integers and IEEE-754 payloads are little
+// endian. These values are the wire ABI shared with IO.Kinal.VM.Bytecode.
+Enum KncOpCode By u8
+{
+    LoadInt,
+    LoadFloat,
+    LoadBool,
+    LoadString,
+    LoadChar,
+    Move,
+    AddInt,
+    SubInt,
+    MulInt,
+    DivInt,
+    AddFloat,
+    SubFloat,
+    MulFloat,
+    DivFloat,
+    NegInt,
+    NegFloat,
+    Eq,
+    Ne,
+    LtInt,
+    LeInt,
+    GtInt,
+    GeInt,
+    LtFloat,
+    LeFloat,
+    GtFloat,
+    GeFloat,
+    NotBool,
+    BitAndInt,
+    BitOrInt,
+    BitXorInt,
+    ShlInt,
+    ShrInt,
+    BitNotInt,
+    IntToString,
+    BoolToString,
+    CharToString,
+    StringToInt,
+    StringToBool,
+    CharToInt,
+    IntToChar,
+    StringToChar,
+    JumpOp,
+    JumpIfFalse,
+    JumpIfTrue,
+    CallBuiltin,
+    CallFunc,
+    NewObject,
+    NewArray,
+    LoadField,
+    StoreField,
+    LoadIndex,
+    StoreIndex,
+    ArrayLength,
+    ArrayAdd,
+    CallVirt,
+    IsType,
+    LoadGlobal,
+    StoreGlobal,
+    Ret,
+    Halt,
+    MakeFunc,
+    CallClosure,
+    NewCell,
+    LoadCell,
+    StoreCell,
+    LoadCapture,
+    StoreCapture,
+    LoadCaptureCell,
+    PushTry,
+    PopTry,
+    ThrowOp,
+    MakePtrLocal,
+    MakePtrGlobal,
+    MakePtrIndex,
+    MakePtrField,
+    MakePtrFunc,
+    MakePtrCell,
+    LoadPtr,
+    StorePtr,
+    AddPtr,
+    LoopIntLtInc,
+    LoopIntLeInc,
+    LoopIntGtDec,
+    LoopIntGeDec,
+    LoopIntEqInc,
+    LoopIntNeInc,
+    LoopIntEqDec,
+    LoopIntNeDec,
+    JumpIfIntLtFalse,
+    JumpIfIntLeFalse,
+    JumpIfIntGtFalse,
+    JumpIfIntGeFalse,
+    JumpIfIntEqFalse,
+    JumpIfIntNeFalse,
+    IncInt,
+    DecInt,
+    IntToFloat,
+    FloatToInt,
+    FloatToString,
+    StringToFloat,
+    BoolToInt,
+    BoolToFloat,
+    FloatToBool,
+    LoopBackIntLtInc,
+    LoopBackIntLeInc,
+    LoopBackIntGtDec,
+    LoopBackIntGeDec,
+    LoopBackIntEqInc,
+    LoopBackIntNeInc,
+    LoopBackIntEqDec,
+    LoopBackIntNeDec,
+    LoopArrayFillIntLtInc,
+    LoopArrayFillIntLeInc,
+    LoopArraySumIntLtInc,
+    LoopArraySumIntLeInc,
+    LoopSumIntLtInc,
+    LoopSumIntLeInc,
+    AddIntImm,
+    SubIntImm,
+    MulIntImm,
+    DivIntImm,
+    LtIntImm,
+    LeIntImm,
+    GtIntImm,
+    GeIntImm,
+    BitAndIntImm,
+    BitOrIntImm,
+    BitXorIntImm,
+    ShlIntImm,
+    ShrIntImm,
+    UDivInt = 130,
+    URemInt = 131,
+    ULtInt = 132,
+    ULeInt = 133,
+    UGtInt = 134,
+    UGeInt = 135,
+    LShrInt = 136,
+    FloatToF32 = 137,
+    IntToF32 = 138
+}
+
+Enum KncValueKind By u8
+{
+    Null,
+    Int,
+    Float,
+    Bool,
+    String,
+    Char,
+    Array,
+    Object,
+    Pointer
+}
+
+
+Enum KncTypeKind By u8
+{
+    ClassType = 1,
+    StructType = 2,
+    InterfaceType = 3
+}
+
+// A checked, append-only writer. Patching is bounded to bytes already written.
+// Error is sticky: invalid operands never silently wrap onto the wire.
+Public Class KncByteBuffer
+{
+    Public byte[] Data;
+    Public int Count;
+    Public string Error;
+
+    Public Safe Constructor()
+    {
+        This.Data = {};
+        This.Count = 0;
+        This.Error = "";
+    }
+
+    Public Safe Function void Fail(string message)
+    {
+        If (IO.Text.IsEmpty(This.Error)) This.Error = message;
+    }
+
+    Public Safe Function bool IsValid()
+    {
+        Return IO.Text.IsEmpty(This.Error);
+    }
+
+    Private Safe Function bool RequireSpace(int count)
+    {
+        If (!This.IsValid()) Return false;
+        If (This.Count != This.Data.Length() || count < 0 ||
+            This.Count > 2147483647 - count)
+        {
+            This.Fail("KNC buffer exceeds the 2 GiB limit or has inconsistent length");
+            Return false;
+        }
+        Return true;
+    }
+
+    Public Safe Function void WriteU8(int value)
+    {
+        If (value < 0 || value > 255)
+        {
+            This.Fail("KNC u8 operand is outside 0..255");
+            Return;
+        }
+        If (!This.RequireSpace(1)) Return;
+        This.Data = This.Data.Add([byte](value));
+        This.Count = This.Count + 1;
+    }
+
+    Public Safe Function void WriteU16(int value)
+    {
+        If (value < 0 || value > 65535)
+        {
+            This.Fail("KNC u16 operand is outside 0..65535");
+            Return;
+        }
+        If (!This.RequireSpace(2)) Return;
+        This.WriteU8(value & 255);
+        This.WriteU8((value >> 8) & 255);
+    }
+
+    Public Safe Function void WriteI32(int value)
+    {
+        If (value < -2147483648 || value > 2147483647)
+        {
+            This.Fail("KNC i32 value is outside the signed 32-bit range");
+            Return;
+        }
+        If (!This.RequireSpace(4)) Return;
+        u64 bits = [u64](value);
+        int index = 0;
+        While (index < 4)
+        {
+            This.WriteU8([int]((bits >> (index * 8)) & [u64](255)));
+            index = index + 1;
+        }
+    }
+
+    Public Safe Function void WriteI64(i64 value)
+    {
+        If (!This.RequireSpace(8)) Return;
+        u64 bits = [u64](value);
+        int index = 0;
+        While (index < 8)
+        {
+            This.WriteU8([int]((bits >> (index * 8)) & [u64](255)));
+            index = index + 1;
+        }
+    }
+
+    Public Trusted Function void WriteF64(float value)
+    {
+        // Reinterpret locally in Kinal; no native encoder or compiler bridge.
+        u64* bits = [u64*](&value);
+        This.WriteI64([i64](bits[0]));
+    }
+
+    Public Safe Function void WriteString(string value)
+    {
+        // Kinal text uses UTF-8 bytes; ToChars preserves those bytes verbatim.
+        char[] characters = value.ToChars();
+        int length = characters.Length();
+        If (length > 2147483643)
+        {
+            This.Fail("KNC string exceeds the 2 GiB buffer limit");
+            Return;
+        }
+        If (!This.RequireSpace(length + 4)) Return;
+        This.WriteI32(length);
+        int index = 0;
+        While (index < length)
+        {
+            This.WriteU8([int]([byte](characters[index])));
+            index = index + 1;
+        }
+    }
+
+    Public Safe Function void WriteBytes(byte[] bytes)
+    {
+        int length = bytes.Length();
+        If (!This.RequireSpace(length)) Return;
+        int index = 0;
+        While (index < length)
+        {
+            This.WriteU8([int](bytes[index]));
+            index = index + 1;
+        }
+    }
+
+    Private Safe Function bool RequirePatch(int offset, int length)
+    {
+        If (!This.IsValid()) Return false;
+        If (This.Count != This.Data.Length() || offset < 0 ||
+            length > This.Count || offset > This.Count - length)
+        {
+            This.Fail("KNC patch is outside the emitted buffer");
+            Return false;
+        }
+        Return true;
+    }
+
+    Public Safe Function void PatchU16(int offset, int value)
+    {
+        If (value < 0 || value > 65535)
+        {
+            This.Fail("KNC branch target is outside 0..65535");
+            Return;
+        }
+        If (!This.RequirePatch(offset, 2)) Return;
+        This.Data[offset] = [byte](value & 255);
+        This.Data[offset + 1] = [byte]((value >> 8) & 255);
+    }
+
+    Public Safe Function void PatchI32(int offset, int value)
+    {
+        If (value < -2147483648 || value > 2147483647)
+        {
+            This.Fail("KNC i32 patch is outside the signed 32-bit range");
+            Return;
+        }
+        If (!This.RequirePatch(offset, 4)) Return;
+        u64 bits = [u64](value);
+        int index = 0;
+        While (index < 4)
+        {
+            This.Data[offset + index] = [byte]((bits >> (index * 8)) & [u64](255));
+            index = index + 1;
+        }
+    }
+
+    Public Trusted Function bool Emit(string path)
+    {
+        If (!This.RequireSpace(0)) Return false;
+        If (IO.Text.IsEmpty(path))
+        {
+            This.Fail("KNC output path is empty");
+            Return false;
+        }
+        byte* data = null;
+        If (This.Count > 0) data = &This.Data[0];
+        If (IO.Kinal.Runtime.Native.FileWriteAllBytes(path, data, [u64](This.Count)) == 0)
+        {
+            This.Fail("cannot write KNC output: " + path);
+            Return false;
+        }
+        Return true;
+    }
+}
+
+// Debug annotations are deliberately absent from the binary wire records.
+Public Class KncListingComment
+{
+    Public int Offset;
+    Public string Text;
+    Public KncListingComment Next;
+
+    Public Safe Constructor(int offset, string text)
+    {
+        This.Offset = offset;
+        This.Text = text;
+        This.Next = null;
+    }
+}
+
+Public Class KncFunctionRecord
+{
+    Public string Name;
+    Public int ParameterCount;
+    Public int RegisterCount;
+    Public int ReturnKind;
+    Public KncByteBuffer Code;
+    Public string[] RegisterNames;
+    Public KncListingComment FirstComment;
+    Public KncListingComment LastComment;
+
+    Public Safe Constructor()
+    {
+        This.Name = "";
+        This.ParameterCount = 0;
+        This.RegisterCount = 0;
+        This.ReturnKind = 0;
+        This.Code = New KncByteBuffer();
+        This.RegisterNames = {};
+        This.FirstComment = null;
+        This.LastComment = null;
+    }
+
+    Public Safe Function void SetRegisterName(int register, string name)
+    {
+        // Optional debug data must never invalidate otherwise valid bytecode.
+        If (register < 0 || register >= 255) Return;
+        While (This.RegisterNames.Length() <= register)
+            This.RegisterNames = This.RegisterNames.Add("");
+        This.RegisterNames[register] = name;
+    }
+
+    Public Safe Function void AddComment(int byteOffset, string text)
+    {
+        If (byteOffset < 0 || IO.Text.IsEmpty(text)) Return;
+        KncListingComment comment = New KncListingComment(byteOffset, text);
+        If (This.FirstComment == null) This.FirstComment = comment;
+        Else This.LastComment.Next = comment;
+        This.LastComment = comment;
+    }
+}
+
+Public Class KncTypeRecord
+{
+    Public int Kind;
+    Public int FieldCount;
+    Public int BaseTypeIndex;
+    Public int[] VTable;
+    Public int[] InterfaceTypes;
+    Public string Name;
+
+    Public Safe Constructor()
+    {
+        This.Kind = [int](KncTypeKind.ClassType);
+        This.FieldCount = 0;
+        This.BaseTypeIndex = -1;
+        This.VTable = {};
+        This.InterfaceTypes = {};
+        This.Name = "";
+    }
+}
+
+Public Class KncProgram
+{
+    Public int EntryFunction;
+    Public int GlobalCount;
+    Public i64[] IntConstants;
+    Public float[] FloatConstants;
+    Public string[] StringConstants;
+    Public KncTypeRecord[] Types;
+    Public KncFunctionRecord[] Functions;
+    Public string Error;
+
+    Public Safe Constructor()
+    {
+        This.EntryFunction = -1;
+        This.GlobalCount = 0;
+        This.IntConstants = {};
+        This.FloatConstants = {};
+        This.StringConstants = {};
+        This.Types = {};
+        This.Functions = {};
+        This.Error = "";
+    }
+
+    Public Safe Function void Fail(string message)
+    {
+        If (IO.Text.IsEmpty(This.Error)) This.Error = message;
+    }
+
+    Public Safe Function bool IsValid()
+    {
+        Return IO.Text.IsEmpty(This.Error);
+    }
+
+    Private Safe Function bool RequireTableSlot(int count)
+    {
+        If (!This.IsValid()) Return false;
+        If (count >= 65536)
+        {
+            This.Fail("KNC table exceeds the 65536-entry operand limit");
+            Return false;
+        }
+        Return true;
+    }
+
+    Public Safe Function int InternInt(i64 value)
+    {
+        int index = 0;
+        While (index < This.IntConstants.Length())
+        {
+            If (This.IntConstants[index] == value) Return index;
+            index = index + 1;
+        }
+        If (!This.RequireTableSlot(index)) Return -1;
+        This.IntConstants = This.IntConstants.Add(value);
+        Return index;
+    }
+
+    Public Trusted Function int InternFloat(float value)
+    {
+        // Preserve signed zero and NaN payloads rather than merging by ==.
+        u64* valueBits = [u64*](&value);
+        u64 bits = valueBits[0];
+        int index = 0;
+        While (index < This.FloatConstants.Length())
+        {
+            float candidate = This.FloatConstants[index];
+            u64* candidateBits = [u64*](&candidate);
+            If (candidateBits[0] == bits) Return index;
+            index = index + 1;
+        }
+        If (!This.RequireTableSlot(index)) Return -1;
+        This.FloatConstants = This.FloatConstants.Add(value);
+        Return index;
+    }
+
+    Public Safe Function int InternString(string value)
+    {
+        int index = 0;
+        While (index < This.StringConstants.Length())
+        {
+            If (This.StringConstants[index] == value) Return index;
+            index = index + 1;
+        }
+        If (!This.RequireTableSlot(index)) Return -1;
+        This.StringConstants = This.StringConstants.Add(value);
+        Return index;
+    }
+
+    Public Safe Function int AddType(KncTypeRecord value)
+    {
+        int index = This.Types.Length();
+        If (value == null)
+        {
+            This.Fail("KNC type record is null");
+            Return -1;
+        }
+        If (!This.RequireTableSlot(index)) Return -1;
+        This.Types = This.Types.Add(value);
+        Return index;
+    }
+
+    Public Safe Function int AddFunction(KncFunctionRecord value)
+    {
+        int index = This.Functions.Length();
+        If (value == null)
+        {
+            This.Fail("KNC function record is null");
+            Return -1;
+        }
+        If (!This.RequireTableSlot(index)) Return -1;
+        This.Functions = This.Functions.Add(value);
+        Return index;
+    }
+
+    Public Safe Static Function int InstructionSize(int op)
+    {
+        If (op < 0 || op > 138) Return 0;
+        If (op == 59 || op == 69) Return 1;
+        If (op == 58 || op == 70 || op == 94 || op == 95) Return 2;
+        If (op == 2 || op == 5 || (op >= 14 && op <= 15) || op == 26 ||
+            (op >= 32 && op <= 41) || op == 52 || (op >= 62 && op <= 64) ||
+            op == 71 || (op >= 76 && op <= 78) || (op >= 80 && op <= 87) ||
+            (op >= 96 && op <= 102) || op == 137) Return 3;
+        If (op == 0 || op == 1 || op == 3 || op == 4 || (op >= 6 && op <= 13) ||
+            (op >= 16 && op <= 31) || op == 42 || op == 43 || op == 46 ||
+            op == 47 || op == 50 || op == 51 || op == 53 || op == 56 || op == 57 ||
+            (op >= 65 && op <= 67) || op == 72 || op == 73 || op == 75 ||
+            op == 79 || op == 111 || op == 112 || op == 115 || op == 116 ||
+            op == 138) Return 4;
+        If (op == 48 || op == 49 || op == 74 || (op >= 88 && op <= 93) ||
+            (op >= 103 && op <= 110) || op == 113 || op == 114 ||
+            (op >= 117 && op <= 136)) Return 5;
+        If (op == 55) Return 6;
+        If (op == 68) Return 7;
+        If (op == 60 || op == 61) Return 8;
+        If (op == 44 || op == 45 || op == 54) Return 9;
+        Return 0;
+    }
+
+    Public Safe Function bool Validate()
+    {
+        If (!This.IsValid()) Return false;
+        If (This.EntryFunction < 0 || This.EntryFunction >= This.Functions.Length())
+            This.Fail("KNC entry function index is invalid");
+        If (This.GlobalCount < 0 || This.GlobalCount > 65536 ||
+            This.IntConstants.Length() > 65536 || This.FloatConstants.Length() > 65536 ||
+            This.StringConstants.Length() > 65536 || This.Types.Length() > 65536 ||
+            This.Functions.Length() > 65536)
+            This.Fail("KNC table count exceeds the 16-bit operand range");
+        int index = 0;
+        While (This.IsValid() && index < This.Types.Length())
+        {
+            KncTypeRecord record = This.Types[index];
+            If (record == null)
+            {
+                This.Fail("KNC type record is null");
+                Return false;
+            }
+            If (record.Kind < 1 || record.Kind > 3 || record.FieldCount < 0 ||
+                record.FieldCount > 65536 || record.BaseTypeIndex < -1 ||
+                record.BaseTypeIndex >= This.Types.Length() || record.BaseTypeIndex == index ||
+                record.VTable.Length() > 65536 || record.InterfaceTypes.Length() > 65536)
+                This.Fail("KNC type metadata is invalid: " + record.Name);
+            int slot = 0;
+            While (slot < record.VTable.Length())
+            {
+                int target = record.VTable[slot];
+                If (target < -1 || target >= This.Functions.Length())
+                    This.Fail("KNC virtual function index is invalid: " + record.Name);
+                slot = slot + 1;
+            }
+            slot = 0;
+            While (slot < record.InterfaceTypes.Length())
+            {
+                int target = record.InterfaceTypes[slot];
+                If (target < 0 || target >= This.Types.Length())
+                    This.Fail("KNC interface type index is invalid: " + record.Name);
+                slot = slot + 1;
+            }
+            index = index + 1;
+        }
+        index = 0;
+        While (This.IsValid() && index < This.Functions.Length())
+        {
+            KncFunctionRecord record = This.Functions[index];
+            If (record == null || record.Code == null)
+            {
+                This.Fail("KNC function or code buffer is null");
+                Return false;
+            }
+            If (!record.Code.IsValid())
+                This.Fail("KNC function " + record.Name + ": " + record.Code.Error);
+            If (record.ParameterCount < 0 || record.RegisterCount < record.ParameterCount ||
+                record.RegisterCount > 255 || record.ReturnKind < 0 || record.ReturnKind > 8 ||
+                record.Code.Count != record.Code.Data.Length())
+                This.Fail("KNC function metadata is invalid: " + record.Name);
+            int offset = 0;
+            While (This.IsValid() && offset < record.Code.Count)
+            {
+                int size = KncProgram.InstructionSize([int](record.Code.Data[offset]));
+                If (size == 0 || size > record.Code.Count - offset)
+                {
+                    This.Fail("KNC instruction is invalid or truncated in " + record.Name +
+                        " at byte " + [string](offset));
+                    Return false;
+                }
+                offset = offset + size;
+            }
+            index = index + 1;
+        }
+        Return This.IsValid();
+    }
+
+    Public Trusted Function KncByteBuffer Serialize()
+    {
+        KncByteBuffer output = New KncByteBuffer();
+        If (!This.Validate())
+        {
+            output.Fail(This.Error);
+            Return output;
+        }
+        output.WriteU8(75);
+        output.WriteU8(78);
+        output.WriteU8(67);
+        output.WriteU8(50);
+        output.WriteU16(3);
+        output.WriteU16(0);
+        output.WriteI32(This.EntryFunction);
+        output.WriteI32(This.GlobalCount);
+        output.WriteI32(This.IntConstants.Length());
+        output.WriteI32(This.FloatConstants.Length());
+        output.WriteI32(This.StringConstants.Length());
+        output.WriteI32(This.Types.Length());
+        output.WriteI32(This.Functions.Length());
+        int index = 0;
+        While (index < This.IntConstants.Length())
+        {
+            output.WriteI64(This.IntConstants[index]);
+            index = index + 1;
+        }
+        index = 0;
+        While (index < This.FloatConstants.Length())
+        {
+            output.WriteF64(This.FloatConstants[index]);
+            index = index + 1;
+        }
+        index = 0;
+        While (index < This.StringConstants.Length())
+        {
+            output.WriteString(This.StringConstants[index]);
+            index = index + 1;
+        }
+        index = 0;
+        While (index < This.Types.Length())
+        {
+            KncTypeRecord record = This.Types[index];
+            output.WriteU8(record.Kind);
+            output.WriteU8(0);
+            output.WriteU16(0);
+            output.WriteI32(record.FieldCount);
+            output.WriteI32(record.BaseTypeIndex);
+            output.WriteI32(record.VTable.Length());
+            output.WriteI32(record.InterfaceTypes.Length());
+            output.WriteString(record.Name);
+            int slot = 0;
+            While (slot < record.VTable.Length())
+            {
+                output.WriteI32(record.VTable[slot]);
+                slot = slot + 1;
+            }
+            slot = 0;
+            While (slot < record.InterfaceTypes.Length())
+            {
+                output.WriteI32(record.InterfaceTypes[slot]);
+                slot = slot + 1;
+            }
+            index = index + 1;
+        }
+        index = 0;
+        While (index < This.Functions.Length())
+        {
+            KncFunctionRecord record = This.Functions[index];
+            output.WriteI32(record.ParameterCount);
+            output.WriteI32(record.RegisterCount);
+            output.WriteI32(record.ReturnKind);
+            output.WriteString(record.Name);
+            output.WriteI32(record.Code.Count);
+            output.WriteBytes(record.Code.Data);
+            index = index + 1;
+        }
+        If (!output.IsValid()) This.Fail(output.Error);
+        Return output;
+    }
+
+    Public Safe Static Function string OpcodeName(int opcode)
+    {
+        If (opcode == 0) Return "LoadInt";
+        If (opcode == 1) Return "LoadFloat";
+        If (opcode == 2) Return "LoadBool";
+        If (opcode == 3) Return "LoadString";
+        If (opcode == 4) Return "LoadChar";
+        If (opcode == 5) Return "Move";
+        If (opcode == 6) Return "AddInt";
+        If (opcode == 7) Return "SubInt";
+        If (opcode == 8) Return "MulInt";
+        If (opcode == 9) Return "DivInt";
+        If (opcode == 10) Return "AddFloat";
+        If (opcode == 11) Return "SubFloat";
+        If (opcode == 12) Return "MulFloat";
+        If (opcode == 13) Return "DivFloat";
+        If (opcode == 14) Return "NegInt";
+        If (opcode == 15) Return "NegFloat";
+        If (opcode == 16) Return "Eq";
+        If (opcode == 17) Return "Ne";
+        If (opcode == 18) Return "LtInt";
+        If (opcode == 19) Return "LeInt";
+        If (opcode == 20) Return "GtInt";
+        If (opcode == 21) Return "GeInt";
+        If (opcode == 22) Return "LtFloat";
+        If (opcode == 23) Return "LeFloat";
+        If (opcode == 24) Return "GtFloat";
+        If (opcode == 25) Return "GeFloat";
+        If (opcode == 26) Return "NotBool";
+        If (opcode == 27) Return "BitAndInt";
+        If (opcode == 28) Return "BitOrInt";
+        If (opcode == 29) Return "BitXorInt";
+        If (opcode == 30) Return "ShlInt";
+        If (opcode == 31) Return "ShrInt";
+        If (opcode == 32) Return "BitNotInt";
+        If (opcode == 33) Return "IntToString";
+        If (opcode == 34) Return "BoolToString";
+        If (opcode == 35) Return "CharToString";
+        If (opcode == 36) Return "StringToInt";
+        If (opcode == 37) Return "StringToBool";
+        If (opcode == 38) Return "CharToInt";
+        If (opcode == 39) Return "IntToChar";
+        If (opcode == 40) Return "StringToChar";
+        If (opcode == 41) Return "Jump";
+        If (opcode == 42) Return "JumpIfFalse";
+        If (opcode == 43) Return "JumpIfTrue";
+        If (opcode == 44) Return "CallBuiltin";
+        If (opcode == 45) Return "CallFunc";
+        If (opcode == 46) Return "NewObject";
+        If (opcode == 47) Return "NewArray";
+        If (opcode == 48) Return "LoadField";
+        If (opcode == 49) Return "StoreField";
+        If (opcode == 50) Return "LoadIndex";
+        If (opcode == 51) Return "StoreIndex";
+        If (opcode == 52) Return "ArrayLength";
+        If (opcode == 53) Return "ArrayAdd";
+        If (opcode == 54) Return "CallVirt";
+        If (opcode == 55) Return "IsType";
+        If (opcode == 56) Return "LoadGlobal";
+        If (opcode == 57) Return "StoreGlobal";
+        If (opcode == 58) Return "Ret";
+        If (opcode == 59) Return "Halt";
+        If (opcode == 60) Return "MakeFunc";
+        If (opcode == 61) Return "CallClosure";
+        If (opcode == 62) Return "NewCell";
+        If (opcode == 63) Return "LoadCell";
+        If (opcode == 64) Return "StoreCell";
+        If (opcode == 65) Return "LoadCapture";
+        If (opcode == 66) Return "StoreCapture";
+        If (opcode == 67) Return "LoadCaptureCell";
+        If (opcode == 68) Return "PushTry";
+        If (opcode == 69) Return "PopTry";
+        If (opcode == 70) Return "Throw";
+        If (opcode == 71) Return "MakePtrLocal";
+        If (opcode == 72) Return "MakePtrGlobal";
+        If (opcode == 73) Return "MakePtrIndex";
+        If (opcode == 74) Return "MakePtrField";
+        If (opcode == 75) Return "MakePtrFunc";
+        If (opcode == 76) Return "MakePtrCell";
+        If (opcode == 77) Return "LoadPtr";
+        If (opcode == 78) Return "StorePtr";
+        If (opcode == 79) Return "AddPtr";
+        If (opcode == 80) Return "LoopIntLtInc";
+        If (opcode == 81) Return "LoopIntLeInc";
+        If (opcode == 82) Return "LoopIntGtDec";
+        If (opcode == 83) Return "LoopIntGeDec";
+        If (opcode == 84) Return "LoopIntEqInc";
+        If (opcode == 85) Return "LoopIntNeInc";
+        If (opcode == 86) Return "LoopIntEqDec";
+        If (opcode == 87) Return "LoopIntNeDec";
+        If (opcode == 88) Return "JumpIfIntLtFalse";
+        If (opcode == 89) Return "JumpIfIntLeFalse";
+        If (opcode == 90) Return "JumpIfIntGtFalse";
+        If (opcode == 91) Return "JumpIfIntGeFalse";
+        If (opcode == 92) Return "JumpIfIntEqFalse";
+        If (opcode == 93) Return "JumpIfIntNeFalse";
+        If (opcode == 94) Return "IncInt";
+        If (opcode == 95) Return "DecInt";
+        If (opcode == 96) Return "IntToFloat";
+        If (opcode == 97) Return "FloatToInt";
+        If (opcode == 98) Return "FloatToString";
+        If (opcode == 99) Return "StringToFloat";
+        If (opcode == 100) Return "BoolToInt";
+        If (opcode == 101) Return "BoolToFloat";
+        If (opcode == 102) Return "FloatToBool";
+        If (opcode == 103) Return "LoopBackIntLtInc";
+        If (opcode == 104) Return "LoopBackIntLeInc";
+        If (opcode == 105) Return "LoopBackIntGtDec";
+        If (opcode == 106) Return "LoopBackIntGeDec";
+        If (opcode == 107) Return "LoopBackIntEqInc";
+        If (opcode == 108) Return "LoopBackIntNeInc";
+        If (opcode == 109) Return "LoopBackIntEqDec";
+        If (opcode == 110) Return "LoopBackIntNeDec";
+        If (opcode == 111) Return "LoopArrayFillIntLtInc";
+        If (opcode == 112) Return "LoopArrayFillIntLeInc";
+        If (opcode == 113) Return "LoopArraySumIntLtInc";
+        If (opcode == 114) Return "LoopArraySumIntLeInc";
+        If (opcode == 115) Return "LoopSumIntLtInc";
+        If (opcode == 116) Return "LoopSumIntLeInc";
+        If (opcode == 117) Return "AddIntImm";
+        If (opcode == 118) Return "SubIntImm";
+        If (opcode == 119) Return "MulIntImm";
+        If (opcode == 120) Return "DivIntImm";
+        If (opcode == 121) Return "LtIntImm";
+        If (opcode == 122) Return "LeIntImm";
+        If (opcode == 123) Return "GtIntImm";
+        If (opcode == 124) Return "GeIntImm";
+        If (opcode == 125) Return "BitAndIntImm";
+        If (opcode == 126) Return "BitOrIntImm";
+        If (opcode == 127) Return "BitXorIntImm";
+        If (opcode == 128) Return "ShlIntImm";
+        If (opcode == 129) Return "ShrIntImm";
+        If (opcode == 130) Return "UDivInt";
+        If (opcode == 131) Return "URemInt";
+        If (opcode == 132) Return "ULtInt";
+        If (opcode == 133) Return "ULeInt";
+        If (opcode == 134) Return "UGtInt";
+        If (opcode == 135) Return "UGeInt";
+        If (opcode == 136) Return "LShrInt";
+        If (opcode == 137) Return "FloatToF32";
+        If (opcode == 138) Return "IntToF32";
+        Return "Invalid";
+    }
+
+    Public Safe Static Function string ListingEscape(string value)
+    {
+        value = IO.Text.Replace(value, "\\", "\\\\");
+        value = IO.Text.Replace(value, "\r", "\\r");
+        value = IO.Text.Replace(value, "\n", "\\n");
+        value = IO.Text.Replace(value, "\t", "\\t");
+        Return IO.Text.Replace(value, "\"", "\\\"");
+    }
+
+    Public Safe Static Function string ListingPad(string value, int width, bool left)
+    {
+        While (IO.Text.Length(value) < width) value = left ? "0" + value : value + " ";
+        Return value;
+    }
+
+    Public Safe Static Function int ListingU16(byte[] code, int offset)
+    {
+        If (offset < 0 || offset >= code.Length() - 1) Return -1;
+        Return [int](code[offset]) | ([int](code[offset + 1]) << 8);
+    }
+
+    Public Safe Static Function string ListingRegister(KncFunctionRecord function, int register)
+    {
+        If (register == 255) Return "_";
+        string result = "r" + [string](register);
+        If (register >= 0 && register < function.RegisterNames.Length())
+        {
+            string name = function.RegisterNames[register];
+            If (!IO.Text.IsEmpty(name)) result = result + "(" + KncProgram.ListingEscape(name) + ")";
+        }
+        Return result;
+    }
+
+    Public Safe Static Function string ListingArguments(KncFunctionRecord function, int first,
+                                                         int count, int capacity)
+    {
+        If (first < 0 || count < 0 || capacity < 0) Return "(invalid arguments)";
+        string result = "(";
+        int index = 0;
+        While (index < count && index < capacity && first + index < function.Code.Count)
+        {
+            If (index > 0) result = result + ", ";
+            result = result + KncProgram.ListingRegister(function, [int](function.Code.Data[first + index]));
+            index = index + 1;
+        }
+        If (count > capacity) result = result + ", ...invalid argument count " + [string](count);
+        Return result + ")";
+    }
+
+    Public Safe Function string ListingType(int index)
+    {
+        string result = "type#" + [string](index);
+        If (index >= 0 && index < This.Types.Length() && This.Types[index] != null)
+            result = result + "(" + KncProgram.ListingEscape(This.Types[index].Name) + ")";
+        Return result;
+    }
+
+    Public Safe Function string ListingFunction(int index)
+    {
+        string result = "function#" + [string](index);
+        If (index >= 0 && index < This.Functions.Length() && This.Functions[index] != null)
+            result = result + "(" + KncProgram.ListingEscape(This.Functions[index].Name) + ")";
+        Return result;
+    }
+
+    Public Safe Function string ListingConstant(int opcode, int index)
+    {
+        string result = "#" + [string](index);
+        If ((opcode == 0 || opcode == 4 || (opcode >= 117 && opcode <= 129)) &&
+            index >= 0 && index < This.IntConstants.Length())
+            Return result + " ; " + [string](This.IntConstants[index]);
+        If (opcode == 1 && index >= 0 && index < This.FloatConstants.Length())
+            Return result + " ; " + [string](This.FloatConstants[index]);
+        If (opcode == 3 && index >= 0 && index < This.StringConstants.Length())
+        {
+            string text = This.StringConstants[index];
+            bool shortened = IO.Text.Length(text) > 64;
+            If (shortened) text = IO.Text.Slice(text, 0, 64);
+            Return result + " ; \"" + KncProgram.ListingEscape(text) + (shortened ? "..." : "") + "\"";
+        }
+        Return result;
+    }
+
+    Public Safe Function string ListingTypeTest(int kind, int payload)
+    {
+        If (kind == 0) Return "any";
+        If (kind == 1) Return "bool";
+        If (kind == 2) Return "char";
+        If (kind == 3) Return "int";
+        If (kind == 4) Return "float";
+        If (kind == 5) Return "string";
+        If (kind == 6) Return This.ListingType(payload);
+        Return "kind#" + [string](kind) + ", #" + [string](payload);
+    }
+
+    Public Safe Function string ListingInstruction(KncFunctionRecord function, int offset)
+    {
+        If (offset < 0 || offset >= function.Code.Count) Return "<invalid instruction offset>";
+        byte[] code = function.Code.Data;
+        int opcode = [int](code[offset]);
+        int size = KncProgram.InstructionSize(opcode);
+        string line = KncProgram.ListingPad([string](offset), 4, true) + ": " +
+            KncProgram.ListingPad(KncProgram.OpcodeName(opcode), 24, false);
+        If (size <= 0 || size > code.Length() - offset) Return line + "<invalid or truncated>";
+        If (size == 1) Return line;
+        int a = [int](code[offset + 1]);
+        string first = KncProgram.ListingRegister(function, a);
+        If (size == 2) Return line + first;
+        int b = [int](code[offset + 2]);
+        string second = KncProgram.ListingRegister(function, b);
+        If (opcode == 0 || opcode == 1 || opcode == 3 || opcode == 4)
+            Return line + first + ", " + This.ListingConstant(opcode, KncProgram.ListingU16(code, offset + 2));
+        If (opcode == 2) Return line + first + ", " + (b == 0 ? "false" : "true");
+        If (opcode == 41) Return line + "@" + [string](KncProgram.ListingU16(code, offset + 1));
+        If (opcode == 42 || opcode == 43)
+            Return line + first + ", @" + [string](KncProgram.ListingU16(code, offset + 2));
+        If (opcode == 44 || opcode == 45)
+        {
+            int target = KncProgram.ListingU16(code, offset + 2);
+            string reference = opcode == 44 ? "builtin#" + [string](target) : This.ListingFunction(target);
+            Return line + first + ", " + reference + ", " +
+                KncProgram.ListingArguments(function, offset + 5, [int](code[offset + 4]), 4);
+        }
+        If (opcode == 46) Return line + first + ", " + This.ListingType(KncProgram.ListingU16(code, offset + 2));
+        If (opcode == 47) Return line + first + ", " + second + ", element-kind=" + [string]([int](code[offset + 3]));
+        If (opcode == 48 || opcode == 49 || opcode == 74)
+            Return line + first + ", " + second + ", field#" + [string](KncProgram.ListingU16(code, offset + 3));
+        If (opcode == 54)
+            Return line + first + ", " + second + ", slot#" + [string](KncProgram.ListingU16(code, offset + 3)) +
+                ", " + KncProgram.ListingArguments(function, offset + 6, [int](code[offset + 5]), 3);
+        If (opcode == 55)
+            Return line + first + ", " + second + ", " + This.ListingTypeTest([int](code[offset + 3]), KncProgram.ListingU16(code, offset + 4));
+        If (opcode == 56 || opcode == 57 || opcode == 72)
+            Return line + first + ", global#" + [string](KncProgram.ListingU16(code, offset + 2));
+        If (opcode == 60)
+        {
+            int target = KncProgram.ListingU16(code, offset + 5);
+            string reference = code[offset + 4] == [byte](0) ? This.ListingFunction(target) : "builtin#" + [string](target);
+            Return line + first + ", " + This.ListingType(KncProgram.ListingU16(code, offset + 2)) +
+                ", " + reference + ", env=" + KncProgram.ListingRegister(function, [int](code[offset + 7]));
+        }
+        If (opcode == 61)
+            Return line + first + ", " + second + ", " +
+                KncProgram.ListingArguments(function, offset + 4, [int](code[offset + 3]), 4);
+        If (opcode >= 65 && opcode <= 67)
+            Return line + first + ", capture#" + [string](KncProgram.ListingU16(code, offset + 2));
+        If (opcode == 68)
+            Return line + first + ", " + This.ListingTypeTest(b, KncProgram.ListingU16(code, offset + 3)) +
+                ", @" + [string](KncProgram.ListingU16(code, offset + 5));
+        If (opcode == 75)
+            Return line + first + ", " + This.ListingFunction(KncProgram.ListingU16(code, offset + 2));
+        If ((opcode >= 88 && opcode <= 93) || (opcode >= 103 && opcode <= 110))
+            Return line + first + ", " + second + ", @" + [string](KncProgram.ListingU16(code, offset + 3));
+        If (opcode >= 117 && opcode <= 129)
+            Return line + first + ", " + second + ", " + This.ListingConstant(opcode, KncProgram.ListingU16(code, offset + 3));
+        If (opcode >= 130 && opcode <= 136)
+            Return line + first + ", " + second + ", " + KncProgram.ListingRegister(function, [int](code[offset + 3])) +
+                ", width=" + [string]([int](code[offset + 4]));
+        If (opcode == 138)
+            Return line + first + ", " + second + ", " + (code[offset + 3] == [byte](0) ? "signed" : "unsigned");
+        // The remaining instructions have only register operands, including
+        // MakePtrIndex, fused array loops and FloatToF32. No raw byte fallback.
+        line = line + first;
+        int operand = 2;
+        While (operand < size)
+        {
+            line = line + ", " + KncProgram.ListingRegister(function, [int](code[offset + operand]));
+            operand = operand + 1;
+        }
+        Return line;
+    }
+
+    Public Safe Function void AppendListingComments(list lines, KncFunctionRecord function, int offset)
+    {
+        KncListingComment comment = function.FirstComment;
+        While (comment != null)
+        {
+            If (comment.Offset == offset)
+                lines.Add("; " + KncProgram.ListingEscape(comment.Text));
+            comment = comment.Next;
+        }
+    }
+
+    Public Trusted Function bool EmitListing(string path)
+    {
+        If (!This.Validate()) Return false;
+        If (IO.Text.IsEmpty(path)) { This.Fail("KNC listing output path is empty"); Return false; }
+        list lines = list.Create();
+        lines.Add("; Kinal readable KNC listing, KNC2 v3");
+        lines.Add("; entry = #" + [string](This.EntryFunction) + ", globals = " + [string](This.GlobalCount));
+        lines.Add("; constants: ints=" + [string](This.IntConstants.Length()) +
+            ", floats=" + [string](This.FloatConstants.Length()) + ", strings=" + [string](This.StringConstants.Length()));
+        int index = 0;
+        While (index < This.Types.Length())
+        {
+            KncTypeRecord type = This.Types[index];
+            lines.Add(".type #" + [string](index) + " " + KncProgram.ListingEscape(type.Name) +
+                " kind=" + [string](type.Kind) + " fields=" + [string](type.FieldCount) +
+                " base=#" + [string](type.BaseTypeIndex));
+            index = index + 1;
+        }
+        index = 0;
+        While (index < This.Functions.Length())
+        {
+            KncFunctionRecord function = This.Functions[index];
+            lines.Add("");
+            lines.Add(".function #" + [string](index) + " " + KncProgram.ListingEscape(function.Name) +
+                " params=" + [string](function.ParameterCount) + " registers=" + [string](function.RegisterCount) +
+                " return=" + [string](function.ReturnKind));
+            int offset = 0;
+            While (offset < function.Code.Count)
+            {
+                This.AppendListingComments(lines, function, offset);
+                lines.Add(This.ListingInstruction(function, offset));
+                offset = offset + KncProgram.InstructionSize([int](function.Code.Data[offset]));
+            }
+            This.AppendListingComments(lines, function, function.Code.Count);
+            lines.Add(".end");
+            index = index + 1;
+        }
+        lines.Add("");
+        string parent = IO.Path.Directory(path);
+        If (!IO.Text.IsEmpty(parent) && !IO.Directory.Ensure(parent))
+        {
+            This.Fail("cannot create KNC listing directory: " + parent);
+            Return false;
+        }
+        If (!IO.File.WriteAllText(path, IO.Text.Join(lines, "\n")))
+        {
+            This.Fail("cannot write KNC listing: " + path);
+            Return false;
+        }
+        Return true;
+    }
+
+    Public Trusted Function bool Emit(string path)
+    {
+        KncByteBuffer output = This.Serialize();
+        If (!output.IsValid()) Return false;
+        If (!output.Emit(path))
+        {
+            This.Fail(output.Error);
+            Return false;
+        }
+        Return true;
+    }
+}

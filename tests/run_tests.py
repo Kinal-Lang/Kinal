@@ -863,6 +863,26 @@ def run_driver_integration_tests(compiler: Path, out_dir: Path) -> int:
 
     if run_knc_case("knc_vm_struct_value_semantics", "struct_value_semantics.kn", "ok\n") != 0:
         return 1
+    if run_knc_case("knc_vm_builtin_string_length_reference", "builtin_string_length_reference.kn", "3\n") != 0:
+        return 1
+    if run_knc_case("knc_vm_string_builtin_references", "string_builtin_references.kn", "ok\n") != 0:
+        return 1
+    if run_knc_case("knc_vm_typeof_static_query", "typeof_static_query.kn", "ok\n") != 0:
+        return 1
+    if run_knc_case("knc_vm_pointer_rhs_addition", "pointer_rhs_addition.kn", "ok\n") != 0:
+        return 1
+    if run_knc_case("knc_vm_global_block_records", "global_block_records.kn", "b\na\n") != 0:
+        return 1
+    if run_knc_case("knc_vm_f32_compound_operand_promotion", "f32_compound_operand_promotion.kn", "") != 0:
+        return 1
+    if run_knc_case("knc_vm_if_numeric_join", "knc_if_numeric_join.kn", "") != 0:
+        return 1
+    if run_knc_case("knc_vm_property_static_accessors", "property_static_accessors_native_knc.kn", "ok\n") != 0:
+        return 1
+    if run_knc_case("knc_vm_selfhost_property_compound_order", "selfhost_property_compound_order.kn", "ok\n") != 0:
+        return 1
+    if run_knc_case("knc_vm_switch_default_prefix", "switch_default_prefix.kn", "") != 0:
+        return 1
     if run_knc_case("knc_vm_wide_integer_literals", "knc_wide_integer_literals.kn", "") != 0:
         return 1
     if run_knc_case("knc_vm_narrow_integer_switch", "knc_narrow_integer_switch.kn", "") != 0:

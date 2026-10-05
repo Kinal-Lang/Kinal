@@ -16,6 +16,10 @@ Class KlibArchive
     Public int Length;
     Public int Offset;
     Public string Error;
+    Public string CompilerPath;
+    Public int ManifestLength;
+    Public int SourceCount;
+    Public u64 SourceBytes;
 
     Public Trusted Constructor(string path)
     {
@@ -23,6 +27,10 @@ Class KlibArchive
         This.Length = 0;
         This.Offset = 0;
         This.Error = "";
+        This.CompilerPath = "";
+        This.ManifestLength = 0;
+        This.SourceCount = 0;
+        This.SourceBytes = [u64](0);
 
         u64 length = [u64](0);
         This.Data = IO.Kinal.Runtime.Native.FileReadAllBytes(path, &length);
@@ -177,9 +185,10 @@ Class KlibArchive
         Return true;
     }
 
-    Public Trusted Function bool ExtractLoaded(string outputRoot)
+    Public Trusted Function bool ReadHeader()
     {
         If (!This.IsValid()) Return false;
+        This.Offset = 0;
         If (!This.Require([u64](24))) Return false;
         If (This.ReadU8() != 75 || This.ReadU8() != 78 ||
             This.ReadU8() != 75 || This.ReadU8() != 76 ||
@@ -205,18 +214,49 @@ Class KlibArchive
             This.Fail("archive has an invalid file count");
             Return false;
         }
-        If (!This.Skip(compilerLength) || !This.Require(manifestLength)) Return false;
+        If (!This.Require(compilerLength)) Return false;
+        This.CompilerPath = This.ReadText([int](compilerLength));
+        If (!This.Require(manifestLength)) Return false;
+        This.ManifestLength = [int](manifestLength);
+        This.SourceCount = [int](fileCount);
+        This.SourceBytes = [u64](0);
+        Return true;
+    }
+
+    Public Trusted Function bool ReadInfo()
+    {
+        If (!This.ReadHeader() || !This.Skip([u64](This.ManifestLength))) Return false;
+        int index = 0;
+        While (index < This.SourceCount)
+        {
+            u64 pathLength = This.ReadU32();
+            u64 payloadLength = This.ReadU64();
+            If (!This.Skip(pathLength) || !This.Skip(payloadLength)) Return false;
+            This.SourceBytes = This.SourceBytes + payloadLength;
+            index = index + 1;
+        }
+        If (This.Offset != This.Length)
+        {
+            This.Fail("archive contains trailing data");
+            Return false;
+        }
+        Return true;
+    }
+
+    Public Trusted Function bool ExtractLoaded(string outputRoot)
+    {
+        If (!This.ReadHeader()) Return false;
         If (!IO.Directory.Ensure(outputRoot))
         {
             This.Fail("cannot create archive output root: " + outputRoot);
             Return false;
         }
         string manifestPath = IO.Path.Combine(outputRoot, "package.knpkg.json");
-        If (!This.WriteSlice(manifestPath, This.Offset, manifestLength)) Return false;
-        This.Offset = This.Offset + [int](manifestLength);
+        If (!This.WriteSlice(manifestPath, This.Offset, [u64](This.ManifestLength))) Return false;
+        This.Offset = This.Offset + This.ManifestLength;
 
         int fileIndex = 0;
-        While (fileIndex < [int](fileCount))
+        While (fileIndex < This.SourceCount)
         {
             u64 relativeLength = This.ReadU32();
             u64 payloadLength = This.ReadU64();

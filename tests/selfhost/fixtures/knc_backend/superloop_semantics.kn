@@ -1,0 +1,174 @@
+Unit Tests.Selfhost.KncSuperloopSemantics;
+
+
+int BoundCalls = 0;
+Static Function int Bound()
+{
+    BoundCalls = BoundCalls + 1;
+    Return 3;
+}
+
+Static Function bool Check1()
+{
+    int a = 0;
+    For (; a < 3; a++) {}
+    Return !(a != 3);
+}
+
+Static Function bool Check2()
+{
+    int b = 0;
+    For (; b <= 3; b += 1) {}
+    Return !(b != 4);
+}
+
+Static Function bool Check3()
+{
+    int c = 3;
+    For (; c > 0; c--) {}
+    Return !(c != 0);
+}
+
+Static Function bool Check4()
+{
+    int d = 3;
+    For (; d >= 1; d -= 1) {}
+    Return !(d != 0);
+}
+
+Static Function bool Check5()
+{
+    int e = 2;
+    While (e == 2) { e = 1 + e; }
+    Return !(e != 3);
+}
+
+Static Function bool Check6()
+{
+    int f = 0;
+    While (3 != f) { f = f + 1; }
+    Return !(f != 3);
+}
+
+Static Function bool Check7()
+{
+    int g = 2;
+    While (2 == g) { g = g - 1; }
+    Return !(g != 1);
+}
+
+Static Function bool Check8()
+{
+    int h = 3;
+    While (h != 0) { h--; }
+    Return !(h != 0);
+}
+
+Static Function bool Check9()
+{
+
+    // Reversed comparisons, invariant local bounds, and zero-trip loops.
+    int limit = 4;
+    int i = 0;
+    While (limit > i) { i++; }
+    Return !(i != 4 || limit != 4);
+}
+
+Static Function bool Check10()
+{
+    int j = 6;
+    For (; j < 3; j++) {}
+    Return !(j != 6);
+}
+
+Static Function bool Check11()
+{
+    int k = 0;
+    For (; 3 <= k; k--) {}
+    Return !(k != 0);
+}
+
+Static Function bool Check12()
+{
+    i64 wide = 0;
+    For (; wide < 2; wide++) {}
+    Return !(wide != 2);
+}
+
+Static Function bool Check13()
+{
+
+    // These cases deliberately require ordinary lowering.
+    int changing = 0;
+    While (changing < Bound()) { changing++; }
+    Return !(changing != 3 || BoundCalls != 4);
+}
+
+Static Function bool Check14()
+{
+    int total = 0;
+    int body = 0;
+    For (; body < 3; body++) { total += body; }
+    Return !(body != 3 || total != 3);
+}
+
+Static Function bool Check15()
+{
+    int stride = 0;
+    For (; stride < 5; stride += 2) {}
+    Return !(stride != 6);
+}
+
+Static Function bool Check16()
+{
+    u32 unsignedCounter = 0;
+    For (; unsignedCounter < 3; unsignedCounter++) {}
+    Return !(unsignedCounter != 3);
+}
+
+Static Function bool Check17()
+{
+    i8 narrowCounter = 0;
+    For (; narrowCounter < 3; narrowCounter++) {}
+    Return !(narrowCounter != 3);
+}
+
+Static Function bool Check18()
+{
+    int captured = 0;
+    Object.Function readCaptured = Function int() { Return captured; };
+    While (captured < 3) { captured++; }
+    Return !([int](readCaptured()) != 3);
+}
+
+Static Function bool Check19()
+{
+    int movingBound = 4;
+    int moving = 0;
+    While (moving < movingBound) { moving++; movingBound--; }
+    Return !(moving != 2 || movingBound != 2);
+}
+
+Static Function int Main()
+{
+    If (!Check1()) Return 1;
+    If (!Check2()) Return 2;
+    If (!Check3()) Return 3;
+    If (!Check4()) Return 4;
+    If (!Check5()) Return 5;
+    If (!Check6()) Return 6;
+    If (!Check7()) Return 7;
+    If (!Check8()) Return 8;
+    If (!Check9()) Return 9;
+    If (!Check10()) Return 10;
+    If (!Check11()) Return 11;
+    If (!Check12()) Return 12;
+    If (!Check13()) Return 13;
+    If (!Check14()) Return 14;
+    If (!Check15()) Return 15;
+    If (!Check16()) Return 16;
+    If (!Check17()) Return 17;
+    If (!Check18()) Return 18;
+    If (!Check19()) Return 19;
+    Return 0;
+}

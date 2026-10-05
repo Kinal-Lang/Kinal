@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import subprocess
+import sys
 from pathlib import Path
 
 
@@ -36,7 +37,19 @@ def main() -> int:
     root = args.root.resolve()
     compiler = args.compiler.resolve()
     baseline = json.loads(args.baseline.resolve().read_text(encoding="utf-8"))
-    cases = collect_positive_cases(root, baseline["platform"])
+    # Target-dependent branches are bound for the compiler's host here.
+    # Never feed Windows-only semantic fixtures to a Linux/macOS compiler.
+    platform = {"win32": "windows", "linux": "linux", "darwin": "macos"}[sys.platform]
+    expected_count = baseline.get("positive_cases_by_platform", {}).get(platform)
+    if expected_count is None:
+        if platform != baseline["platform"]:
+            raise SystemExit(f"No semantic baseline for host platform: {platform}")
+        expected_count = baseline["positive_cases"]
+    cases = collect_positive_cases(root, platform)
+    reference_cases = collect_positive_cases(root, baseline["platform"])
+    reference_names = {name for name, _, _ in reference_cases}
+    selected_names = {name for name, _, _ in cases}
+    excluded_platform_cases = sorted(reference_names - selected_names)
     failures: list[str] = []
     diagnostics: dict[str, str] = {}
     for name, sources, auto_link in cases:
@@ -62,7 +75,12 @@ def main() -> int:
     actual = sorted(failures)
     report = {
         "format": "kinal-selfhost-manifest-sema-v1",
-        "platform": baseline["platform"],
+        "platform": platform,
+        "reference_platform": baseline["platform"],
+        "excluded_platform_cases": excluded_platform_cases,
+        "excluded_platform_case_count": len(excluded_platform_cases),
+        "platform_filter_reason": "manifest platform restrictions must match the semantic target host",
+        "added_platform_cases": sorted(selected_names - reference_names),
         "cases": len(cases),
         "passed": len(cases) - len(failures),
         "failed": len(failures),
@@ -72,8 +90,8 @@ def main() -> int:
     }
     if args.output:
         args.output.resolve().write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
-    if len(cases) != baseline["positive_cases"]:
-        print(f"manifest case count changed: expected {baseline['positive_cases']}, got {len(cases)}")
+    if len(cases) != expected_count:
+        print(f"manifest case count changed: expected {expected_count}, got {len(cases)}")
         return 1
     if actual != expected:
         print("manifest semantic baseline changed")

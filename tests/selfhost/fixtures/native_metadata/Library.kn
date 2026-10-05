@@ -1,0 +1,23 @@
+Unit Tests.MetadataExport;
+Meta Mark(string label = "default")
+{
+    On @function, @class, @struct, @enum, @interface, @method, @field;
+    Keep @runtime;
+    Repeatable;
+}
+Meta Values(int number = 17, bool flag = true, char letter = 'q', float fraction = 2.5)
+{
+    On @function;
+    Keep @runtime;
+}
+Meta Hidden(string secret) { On @function; Keep @compile; }
+[Mark("add")][Mark("repeat")][Values][Hidden("omit")]
+Function int Add(int left, int right) { Return left + right; }
+[Mark] Class Holder
+{
+    [Mark("field")] Public int Value;
+    [Mark("method")] Public Static Function int Twice(int value) { Return value * 2; }
+}
+[Mark] Struct Shape { [Mark] int Value; }
+[Mark] Enum Choice { First = 1 }
+[Mark] Interface IValue { [Mark] Function int Read(); }

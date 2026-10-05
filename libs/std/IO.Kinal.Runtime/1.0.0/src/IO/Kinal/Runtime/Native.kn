@@ -71,6 +71,10 @@ Extern Unsafe Function int ProcessRun(string executable,
 [LinkName("kn_native_system_get_symbol")]
 Extern Unsafe Function byte* ResolveSymbol(byte* library, string name) By C;
 
+// Missing optional exports leave System.LastError unchanged.
+[LinkName("kn_native_system_get_optional_symbol")]
+Extern Unsafe Function byte* ResolveOptionalSymbol(byte* library, string name) By C;
+
 [LinkName("kn_native_task_sleep_ms")]
 Extern Unsafe Function void SleepMilliseconds(int milliseconds) By C;
 

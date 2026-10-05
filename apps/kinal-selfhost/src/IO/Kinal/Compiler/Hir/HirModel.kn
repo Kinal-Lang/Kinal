@@ -48,6 +48,8 @@ Class HirExpression
     Public ExpressionNode Syntax;
     Public TypeSymbol Type;
     Public TypeSymbol AsyncResultType;
+    // Sema-selected scalar coercion, distinct from a comparison's bool result.
+    Public TypeSymbol OperandType;
     Public ValueSymbol Symbol;
     Public FunctionSymbol Function;
     Public string Name;
@@ -67,6 +69,7 @@ Class HirExpression
         This.Syntax = syntax;
         This.Type = type;
         This.AsyncResultType = null;
+        This.OperandType = null;
         This.Symbol = null;
         This.Function = null;
         This.Name = syntax == null ? "" : syntax.Text;

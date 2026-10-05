@@ -3103,7 +3103,8 @@ Safe Function void ReadAliasDeclaration(ParseCursor cursor, SyntaxTree tree)
     tree.AddImport(alias);
 }
 
-Safe Function SyntaxTree Build(SourceFile source, list tokens, list diagnostics)
+Safe Function SyntaxTree Build(SourceFile source, list tokens, list diagnostics,
+                              bool allowRecovery = false)
 {
     int errorsBefore = IO.Kinal.Compiler.Core.Diagnostics.ErrorCount(diagnostics);
     PreparedTokenStream prepared = PrepareTokens(source, tokens, diagnostics);
@@ -3312,6 +3313,6 @@ Safe Function SyntaxTree Build(SourceFile source, list tokens, list diagnostics)
         Record Done
     / >
     TopLevelDispatch.Run();
-    Return IO.Kinal.Compiler.Core.Diagnostics.ErrorCount(diagnostics) == errorsBefore ?
+    Return allowRecovery || IO.Kinal.Compiler.Core.Diagnostics.ErrorCount(diagnostics) == errorsBefore ?
         tree : null;
 }

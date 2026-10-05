@@ -1,0 +1,37 @@
+Unit Tests.MetadataConsumer;
+Get IO.Meta;
+Get IO.System;
+Unsafe Static Function int Main(string[] arguments)
+{
+    If (arguments.Length() != 1) Return 1;
+    byte* library = IO.System.LoadLibrary(arguments[0]);
+    If (library == null) Return 2;
+    dict add = IO.Meta.Find("Tests.MetadataExport.Add", "Mark");
+    If (add == null) Return 3;
+    IO.Type.Object.Function invoke = [Object.Function]([byte*](add.Fetch("owner_ptr")));
+    If ([int](invoke(19, 23)) != 42) Return 4;
+    If ([int](invoke()) != 0) Return 5;
+    dict twice = IO.Meta.Find("Tests.MetadataExport.Holder.Twice", "Mark");
+    If (twice == null) Return 6;
+    IO.Type.Object.Function method = [Object.Function]([byte*](twice.Fetch("owner_ptr")));
+    If ([int](method(21)) != 42) Return 7;
+    list metadata = IO.Meta.Of("Tests.MetadataExport.Add");
+    If (metadata.Count() != 3) Return 8;
+    If ([string](metadata.Fetch(0)) != "Tests.MetadataExport.Mark") Return 9;
+    dict defaults = IO.Meta.Find("Tests.MetadataExport.Add", "Values");
+    If ([int](defaults.Fetch("arg.number")) != 17 ||
+        [bool](defaults.Fetch("arg.flag")) != true ||
+        [char](defaults.Fetch("arg.letter")) != 'q' ||
+        [float](defaults.Fetch("arg.fraction")) != 2.5) Return 10;
+    If (IO.Meta.Has("Tests.MetadataExport.Add", "Hidden")) Return 11;
+    If (!IO.Meta.Has("Tests.MetadataExport.Holder", "Mark") ||
+        !IO.Meta.Has("Tests.MetadataExport.Holder.Value", "Mark") ||
+        !IO.Meta.Has("Tests.MetadataExport.Shape", "Mark") ||
+        !IO.Meta.Has("Tests.MetadataExport.Shape.Value", "Mark") ||
+        !IO.Meta.Has("Tests.MetadataExport.Choice", "Mark") ||
+        !IO.Meta.Has("Tests.MetadataExport.IValue", "Mark") ||
+        !IO.Meta.Has("Tests.MetadataExport.IValue.Read", "Mark")) Return 12;
+    If (!IO.System.CloseLibrary(library)) Return 13;
+    If (IO.Meta.Has("Tests.MetadataExport.Add", "Mark")) Return 14;
+    Return 0;
+}

@@ -22,7 +22,7 @@ In "bare-metal" mode:
 Enables bare-metal mode, equivalent to `--env freestanding`:
 
 ```bash
-kinal --freestanding main.kn -o firmware.elf
+kinal build --freestanding main.kn -o firmware.elf
 ```
 
 Effects:
@@ -43,15 +43,21 @@ Controls the runtime support level:
 
 | Value | Description |
 |-------|-------------|
-| `alloc` | Enable heap allocation (requires implementing `malloc`/`free` or using a custom allocator; default) |
-| `none` | Completely disable heap allocation; reference types and collections cannot be used |
-| `gc` | Enable garbage collection runtime (suitable for desktop scenarios) |
+| `alloc` | Custom allocation/string hooks plus frame/root hooks; the target supplies their implementation |
+| `none` | Freestanding default: no heap allocation; managed objects and dynamic collections are unavailable |
+| `gc` | Hosted default; freestanding use requires custom GC/runtime hooks |
 
-Embedded scenarios typically use `--runtime none`:
+Freestanding builds default to `none`; the explicit form is:
 
 ```bash
-kinal --freestanding --runtime none main.kn -o firmware.elf
+kinal build --freestanding --runtime none main.kn -o firmware.elf
 ```
+
+The Alloc and GC profiles do not bundle a bare-metal allocator or collector. The
+`__kn_*` ABI is documented in `libs/runtime/include/kn/freestanding.h`; additional
+string, collection, exception or async operations require their corresponding
+hooks. Alloc also emits frame/root calls, which a non-collecting runtime can
+implement as no-ops.
 
 ### `--panic <strategy>`
 
@@ -63,7 +69,7 @@ Controls how runtime panics (such as out-of-bounds access, null pointer derefere
 | `loop` | Infinite loop (non-recoverable, deterministic behavior) |
 
 ```bash
-kinal --freestanding --panic trap main.kn -o firmware.elf
+kinal build --freestanding --panic trap main.kn -o firmware.elf
 ```
 
 ---
@@ -74,22 +80,22 @@ Use `--target` to select an embedded/bare-metal target:
 
 | Alias | Equivalent Triple | Description |
 |-------|------------------|-------------|
-| `bare64` | `x86_64-unknown-none` | x86_64 bare-metal |
-| `bare-arm64` | `aarch64-unknown-none` | ARM64 bare-metal |
+| `bare64` | `x86_64-unknown-none-elf` | x86_64 bare-metal |
+| `bare-arm64` | `aarch64-unknown-none-elf` | ARM64 bare-metal |
 
-Or use a full LLVM triple:
+The current compiler target backends support X86 and AArch64. Cortex-M/Thumb
+and RISC-V are not supported targets. A full supported LLVM triple can also be
+used, for example:
 
 ```bash
-# ARM Cortex-M4
-kinal --target thumbv7em-unknown-none-eabihf \
+kinal build --target aarch64-unknown-none-elf \
       --freestanding --runtime none \
-      main.kn -o firmware.elf
-
-# RISC-V 32-bit
-kinal --target riscv32i-unknown-none-elf \
-      --freestanding --runtime none \
-      main.kn -o firmware.elf
+      main.kn --emit obj -o firmware.o
 ```
+
+Target emission and linking do not establish that a board can boot the result.
+A matching memory map, boot protocol, initialized stack and platform startup
+code are still the application's responsibility.
 
 ---
 
@@ -98,7 +104,7 @@ kinal --target riscv32i-unknown-none-elf \
 Embedded targets typically require a custom linker script to define the memory layout:
 
 ```bash
-kinal --target bare-arm64 \
+kinal build --target bare-arm64 \
       --freestanding --runtime none \
       --link-script linker.ld \
       --no-crt \
@@ -108,7 +114,7 @@ kinal --target bare-arm64 \
 Example linker script `linker.ld`:
 
 ```ld
-ENTRY(_start)
+ENTRY(__kn_entry)
 
 MEMORY
 {
@@ -128,9 +134,11 @@ SECTIONS
 
 ## Bare-Metal Entry Point
 
-In a freestanding environment, the program entry point is typically not `Main()`, but a custom assembly or Extern function.
-
-In Kinal, FFI can be used to interface with a custom entry point:
+The default Kinal entry is `KMain`; `--entry KernelMain` selects another
+zero-argument or one-pointer function. The compiler exports an `__kn_entry`
+wrapper that initializes globals and invokes that function. A bootloader or
+platform startup stub must satisfy the target ABI before entering the wrapper.
+For the example below, build with `--entry KernelMain`:
 
 ```kinal
 Unit Kernel.Boot;
@@ -188,45 +196,38 @@ Unsafe Function int ReadReg(usize addr)
 
 ---
 
-## Complete Example: Minimal Bare-Metal Program
+## Complete Example: Minimal Bare-Metal Core
+
+This example uses only static memory and volatile operations. It makes no claim
+about a particular board's GPIO addresses or boot protocol.
 
 ```kinal
 Unit Bare.Main;
+Get IO.Volatile;
 
-// Assume external GPIO register address is defined
-Const usize GPIO_ODR = 0x40020014;
+u64 Counter = 0;
 
-Extern Function void delay(int ms) By C;
-
-Unsafe Function int bare_main()
+Trusted Static Function void KMain()
 {
     While (true)
     {
-        // Turn on LED
-        int* gpio = [int*](GPIO_ODR);
-        *gpio = *gpio | 0x20;  // Set bit5
-        delay(500);
-
-        // Turn off LED
-        *gpio = *gpio & ~0x20; // Clear bit5
-        delay(500);
+        IO.Volatile.Write64(&Counter, IO.Volatile.Read64(&Counter) + 1);
     }
-    Return 0;
 }
 ```
 
-Build command:
+Build a bare ARM64 ELF using a platform-appropriate `linker.ld`:
 
 ```bash
 kinal build bare_main.kn \
-      --target thumbv7em-unknown-none-eabihf \
-      --freestanding \
-      --runtime none \
-      --panic trap \
-      --no-crt \
-      --link-script stm32.ld \
+      --target bare-arm64 \
+      --freestanding --runtime none --panic trap \
+      --no-crt --link-script linker.ld \
       -o firmware.elf
 ```
+
+The entry is `__kn_entry`. The selected boot environment must load the ELF
+sections and initialize the stack and zero-filled storage before executing it.
 
 ---
 
@@ -238,7 +239,6 @@ When using `--runtime none`, the following language features are unavailable:
 |---------|--------|
 | `New ClassName()` | Heap allocation |
 | `list`, `dict`, `set` | Dynamic collections require heap allocation |
-| `string` concatenation | Dynamic strings require heap allocation |
 | `async`/`await` | Depends on scheduler and heap |
 | Exceptions (`Throw`/`Catch`) | Depends on runtime |
 
@@ -247,11 +247,19 @@ Features that remain available:
 - `Struct` and `Enum` (value types, stack-allocated)
 - Primitive types (`int`, `float`, `bool`, etc.)
 - Fixed-size arrays (`int[16]`, etc.)
-- Functions, math operations, bitwise operations
+- Functions, primitive arithmetic and bitwise operations
+- Static strings, length/equality, and bounded scratch-string concatenation/formatting
+- Primitive `any` values, tag/type predicates and equality
 - `Extern` FFI (access to C libraries/hardware drivers)
 - Pointers (`Unsafe` context)
 
 ---
+
+Core string helpers share eight 512-byte scratch slots. Concatenation is bounded
+to 511 bytes plus a terminator; float formatting truncates to an integer. These
+results are temporary and are overwritten as the scratch slots are reused.
+String parsing, aggregate boxing and dynamically allocated string storage still
+require a runtime.
 
 ## See Also
 

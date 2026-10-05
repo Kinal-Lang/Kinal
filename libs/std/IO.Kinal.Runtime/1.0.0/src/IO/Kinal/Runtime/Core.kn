@@ -205,68 +205,67 @@ Trusted Function byte* StringToChars(string text, u64* outLength)
     Return result;
 }
 
-// The compiler exception ABI uses the ordinary IO.Error object layout:
-// vtable, runtime type id, Title, Message, Trace, Inner.  Keeping the small
-// amount of object policy here makes the native bridge an allocation/OS leaf.
+// The selfhost exception ABI uses the ordinary IO.Error object layout.
+// Describe it as a Struct so pointer width and i64 padding follow LLVM's
+// output data layout, rather than treating every field as a pointer word.
+Struct RuntimeErrorStorage
+{
+    byte* Vtable;
+    i64 RuntimeTypeId;
+    string Title;
+    string Message;
+    string Trace;
+    byte* Inner;
+}
+
 Trusted Function byte* ErrorNew(i64 runtimeTypeId, string title, string message)
 {
-    int pointerBytes = IO.Target.PointerBits / 8;
-    byte* memory = AllocateRaw([usize](pointerBytes * 6));
-    If (memory == null)
-    {
-        Return null;
-    }
+    RuntimeErrorStorage layout;
+    usize bytes = [usize]((&layout) + 1) - [usize](&layout);
+    byte* memory = AllocateRaw(bytes);
+    If (memory == null) Return null;
 
-    byte** pointers = [byte**](memory);
-    i64* integers = [i64*](memory);
-    pointers[0] = null;
-    integers[1] = runtimeTypeId;
-    pointers[2] = [byte*](title == null ? "Error" : title);
-    pointers[3] = [byte*](message == null ? "" : message);
-    pointers[4] = [byte*]("");
-    pointers[5] = null;
+    RuntimeErrorStorage* error = [RuntimeErrorStorage*](memory);
+    error[0].Vtable = null;
+    error[0].RuntimeTypeId = runtimeTypeId;
+    error[0].Title = title == null ? "Error" : title;
+    error[0].Message = message == null ? "" : message;
+    error[0].Trace = "";
+    error[0].Inner = null;
     Return memory;
 }
 
 Trusted Function string ErrorTitle(byte* value)
 {
-    Return value == null ? null : [string](([byte**](value))[2]);
+    Return value == null ? null : ([RuntimeErrorStorage*](value))[0].Title;
 }
 
 Trusted Function string ErrorMessage(byte* value)
 {
-    Return value == null ? null : [string](([byte**](value))[3]);
+    Return value == null ? null : ([RuntimeErrorStorage*](value))[0].Message;
 }
 
 Trusted Function string ErrorTrace(byte* value)
 {
-    Return value == null ? null : [string](([byte**](value))[4]);
+    Return value == null ? null : ([RuntimeErrorStorage*](value))[0].Trace;
 }
 
 Trusted Function byte* ErrorInner(byte* value)
 {
-    Return value == null ? null : ([byte**](value))[5];
+    Return value == null ? null : ([RuntimeErrorStorage*](value))[0].Inner;
 }
 
 Trusted Function void ErrorLinkInner(byte* value, byte* inner)
 {
-    If (value == null || inner == null || value == inner)
-    {
-        Return;
-    }
-    byte** pointers = [byte**](value);
-    If (pointers[5] == null)
-    {
-        pointers[5] = inner;
-    }
+    If (value == null || inner == null || value == inner) Return;
+    RuntimeErrorStorage* error = [RuntimeErrorStorage*](value);
+    If (error[0].Inner == null) error[0].Inner = inner;
 }
 
 Trusted Function void ErrorSetTrace(byte* value, string trace)
 {
     If (value != null)
-    {
-        ([byte**](value))[4] = [byte*](trace == null ? "" : trace);
-    }
+        ([RuntimeErrorStorage*](value))[0].Trace = trace == null ? "" : trace;
 }
 
 Trusted Function string Int64ToString(i64 value)

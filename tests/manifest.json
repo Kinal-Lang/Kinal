@@ -1,5 +1,100 @@
 [
   {
+    "name": "any_mixed_kind_equals",
+    "file": "tests/common/any_mixed_kind_equals.kn",
+    "expected": ""
+  },
+  {
+    "name": "property_static_accessors_native_knc",
+    "file": "tests/common/property_static_accessors_native_knc.kn",
+    "expected": "ok\n"
+  },
+  {
+    "name": "builtin_string_length_reference",
+    "file": "tests/common/builtin_string_length_reference.kn",
+    "expected": "3\n"
+  },
+  {
+    "name": "string_builtin_references",
+    "file": "tests/common/string_builtin_references.kn",
+    "expected": "ok\n"
+  },
+  {
+    "name": "typeof_static_query",
+    "file": "tests/common/typeof_static_query.kn",
+    "expected": "ok\n"
+  },
+  {
+    "name": "pointer_rhs_addition",
+    "file": "tests/common/pointer_rhs_addition.kn",
+    "expected": "ok\n"
+  },
+  {
+    "name": "global_block_records",
+    "file": "tests/common/global_block_records.kn",
+    "expected": "b\na\n"
+  },
+  {
+    "name": "f32_compound_operand_promotion",
+    "file": "tests/common/f32_compound_operand_promotion.kn",
+    "expected": ""
+  },
+  {
+    "name": "knc_if_numeric_join",
+    "file": "tests/common/knc_if_numeric_join.kn",
+    "expected": ""
+  },
+  {
+    "name": "selfhost_property_compound_order",
+    "file": "tests/common/selfhost_property_compound_order.kn",
+    "expected": "ok\n"
+  },
+  {
+    "name": "switch_default_prefix",
+    "file": "tests/common/switch_default_prefix.kn",
+    "expected": ""
+  },
+  {
+    "name": "knc_wide_integer_literals",
+    "file": "tests/common/knc_wide_integer_literals.kn",
+    "expected": ""
+  },
+  {
+    "name": "knc_narrow_integer_switch",
+    "file": "tests/common/knc_narrow_integer_switch.kn",
+    "expected": ""
+  },
+  {
+    "name": "knc_f32_rounding",
+    "file": "tests/common/knc_f32_rounding.kn",
+    "expected": ""
+  },
+  {
+    "name": "property_compound_receiver_once",
+    "file": "tests/common/property_compound_receiver_once.kn",
+    "expected": "ok\n"
+  },
+  {
+    "name": "array_add_value_semantics",
+    "file": "tests/common/array_add_value_semantics.kn",
+    "expected": "ok\n"
+  },
+  {
+    "name": "float_literal_rounding",
+    "file": "tests/common/float_literal_rounding.kn",
+    "expected": ""
+  },
+  {
+    "name": "struct_value_semantics",
+    "file": "tests/common/struct_value_semantics.kn",
+    "expected": "ok\n"
+  },
+  {
+    "name": "knc_integer_widening",
+    "file": "tests/common/knc_integer_widening.kn",
+    "expected": "ok\n"
+  },
+  {
     "name": "escaping_capture_contract",
     "file": "tests/common/escaping_capture_contract.kn",
     "expected": "7\n9\n11\n21\n13\n"

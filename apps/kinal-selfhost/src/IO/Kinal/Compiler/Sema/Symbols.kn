@@ -222,6 +222,8 @@ Class ValueSymbol
     Public string PackageLabels;
     Public string BlockRecords;
     Public FunctionSymbol CallableFunction;
+    // Known local builtin origin is separate from ordinary callable metadata.
+    Public string BuiltinReferenceTarget;
     Public CallableElementSymbol FirstCallableElement;
     Public ValueSymbol Next;
 
@@ -237,6 +239,7 @@ Class ValueSymbol
         This.PackageLabels = "";
         This.BlockRecords = "";
         This.CallableFunction = null;
+        This.BuiltinReferenceTarget = "";
         This.FirstCallableElement = null;
         This.Next = null;
     }

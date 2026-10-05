@@ -2,13 +2,15 @@ Unit IO.Kinal.Compiler.Core.IntrinsicUnits;
 
 Get IO.Text;
 
-// These namespaces are compiler facts/control-flow/memory intrinsics, not
+// These namespaces are compiler-owned facts, types and runtime intrinsics, not
 // source-library modules. In particular, importing IO.Target must not discover
 // an unrelated parent Unit IO (for example the math package).
 Safe Function bool IsUnit(string name)
 {
     Return name == "IO.Target" || name == "IO.Host" || name == "IO.Runtime" ||
-        name == "IO.Version" || name == "IO.Panic" || name == "IO.Volatile";
+        name == "IO.Version" || name == "IO.Panic" || name == "IO.Volatile" ||
+        name == "IO.GC" || name == "IO.Meta" || name == "IO.Collection" ||
+        name == "IO.Error" || name == "IO.Async" || name == "IO.Type";
 }
 
 Safe Function bool IsImport(string name)
@@ -16,5 +18,8 @@ Safe Function bool IsImport(string name)
     If (IsUnit(name)) Return true;
     Return IO.Text.StartsWith(name, "IO.Target.") || IO.Text.StartsWith(name, "IO.Host.") ||
         IO.Text.StartsWith(name, "IO.Runtime.") || IO.Text.StartsWith(name, "IO.Version.") ||
-        IO.Text.StartsWith(name, "IO.Panic.") || IO.Text.StartsWith(name, "IO.Volatile.");
+        IO.Text.StartsWith(name, "IO.Panic.") || IO.Text.StartsWith(name, "IO.Volatile.") ||
+        IO.Text.StartsWith(name, "IO.GC.") || IO.Text.StartsWith(name, "IO.Meta.") ||
+        IO.Text.StartsWith(name, "IO.Collection.") || IO.Text.StartsWith(name, "IO.Error.") ||
+        IO.Text.StartsWith(name, "IO.Async.") || IO.Text.StartsWith(name, "IO.Type.");
 }

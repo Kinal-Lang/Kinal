@@ -22,6 +22,8 @@ int kn_sh_llvm_build_probe(void *module_handle, const char *function_name,
 char *kn_sh_llvm_module_ir(void *module_handle);
 int kn_sh_llvm_emit_object(void *module_handle, const char *target_triple,
                            const char *output_path);
+int kn_sh_llvm_emit_assembly(void *module_handle, const char *target_triple,
+                             const char *output_path);
 const char *kn_sh_llvm_last_error(void);
 
 /* Types. */
@@ -40,6 +42,9 @@ void *kn_sh_llvm_type_array(void *element_type, int count);
 void *kn_sh_llvm_type_of(void *value);
 
 /* Functions, blocks, and constants. */
+int kn_sh_llvm_prune_unused(void *module_handle);
+int kn_sh_llvm_set_dll_export(void *global);
+int kn_sh_llvm_link_ir(void *module_handle, const char *ir);
 void *kn_sh_llvm_add_function(void *module_handle, const char *name,
                               void *function_type);
 void *kn_sh_llvm_get_function(void *module_handle, const char *name);
@@ -62,6 +67,7 @@ void *kn_sh_llvm_const_int_to_ptr(void *value, void *type);
 void *kn_sh_llvm_add_global(void *module_handle, void *type, const char *name);
 int kn_sh_llvm_set_initializer(void *global, void *value);
 int kn_sh_llvm_set_private_linkage(void *global);
+int kn_sh_llvm_set_call_convention(void *function, int convention);
 int kn_sh_llvm_set_alignment(void *value, int alignment);
 int kn_sh_llvm_set_volatile(void *instruction, int enabled);
 int kn_sh_llvm_set_section(void *global, const char *section);
@@ -109,6 +115,8 @@ void *kn_sh_llvm_build_fsub(void *module_handle, void *left, void *right,
 void *kn_sh_llvm_build_fmul(void *module_handle, void *left, void *right,
                             const char *name);
 void *kn_sh_llvm_build_fdiv(void *module_handle, void *left, void *right,
+                            const char *name);
+void *kn_sh_llvm_build_frem(void *module_handle, void *left, void *right,
                             const char *name);
 void *kn_sh_llvm_build_fneg(void *module_handle, void *value,
                             const char *name);

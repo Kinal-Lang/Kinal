@@ -11,12 +11,29 @@ from pathlib import Path
 
 from check_targets import check_targets
 from check_freestanding import check_freestanding
+from check_freestanding_profiles import check_profiles
 from check_array_types import check_array_types
 from check_callables import check_callables
+from check_switch_loop_control import check_switch_loop_control
+from check_scalar_types import check_scalar_types
+from check_project_probes import check_project_probes
+from check_startup_arguments import check_startup_arguments
+from check_cli_workflows import check_cli_workflows
+from check_driver_parity import check_driver_parity, check_shared_metadata_cli
+from check_driver_target_linking import check_driver_target_linking
+from check_metadata_artifacts import check_metadata_artifacts
+from check_format_diagnostics import check_formatter, check_diagnostics
+from check_package_cli import check_package_cli
+from check_vm_cli import check_vm_cli
+from check_vm_lifecycle import check_vm_lifecycle
+from check_knc_backend import check_knc_backend, check_knc_workflow
+from check_knc_model import check_knc_model
 
 
 def run(command: list[str], *, cwd: Path) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(command, cwd=cwd, text=True, capture_output=True, check=False)
+    if os.environ.get("KINAL_SELFHOST_VERBOSE"):
+        print("[RUN] " + " ".join(command), flush=True)
+    return subprocess.run(command, cwd=cwd, text=True, capture_output=True, check=False, timeout=900)
 
 
 def require(condition: bool, message: str, proc: subprocess.CompletedProcess[str] | None = None) -> None:
@@ -276,9 +293,16 @@ def main() -> int:
         os.environ["PATH"] = str(compiler.parent) + os.pathsep + os.environ.get("PATH", "")
 
     results: list[dict[str, object]] = []
-    version = run([str(compiler), "version"], cwd=root)
-    require(version.returncode == 0 and "stage1" in version.stdout, "stage1 version smoke failed", version)
-    results.append({"name": "version", "ok": True})
+    versions = dict(line.split("=", 1) for line in (root / "VERSION").read_text(encoding="utf-8").splitlines()
+                    if "=" in line)
+    for option in ("version", "--version", "-V"):
+        version = run([str(compiler), option], cwd=out_dir)
+        require(version.returncode == 0
+                and version.stdout.replace("\r\n", "\n") == f"Kinal selfhost {versions['kinal']}\n"
+                and not version.stderr, "selfhost version metadata differs", version)
+    require((compiler.parent / "VERSION").read_bytes() == (root / "VERSION").read_bytes(),
+            "selfhost packaged VERSION differs from canonical VERSION")
+    results.append({"name": "version", "ok": True, "cases": 3, "version": versions["kinal"]})
 
     probe_object = out_dir / ("llvm-probe.obj" if compiler.suffix.lower() == ".exe" else "llvm-probe.o")
     llvm_probe = run([str(compiler), "llvm-probe", str(probe_object)], cwd=root)
@@ -293,10 +317,55 @@ def main() -> int:
                                  stage0_reference=args.stage0_role == "reference"))
     results.append(check_freestanding(compiler, stage0, root, out_dir / "freestanding-core",
                                       stage0_reference=args.stage0_role == "reference"))
+    results.append(check_profiles(compiler, stage0, root, out_dir / "freestanding-profiles",
+                                 stage0_reference=args.stage0_role == "reference"))
     results.append(check_array_types(compiler, stage0, root, out_dir / "array-types",
                                     stage0_reference=args.stage0_role == "reference"))
     results.append(check_callables(compiler, stage0, root, out_dir / "callables",
                                   stage0_reference=args.stage0_role == "reference"))
+    results.append(check_switch_loop_control(compiler, stage0, root, out_dir / "switch-loop-control",
+                                             stage0_reference=args.stage0_role == "reference"))
+    results.append(check_scalar_types(compiler, stage0, root, out_dir / "scalar-types",
+                                     stage0_reference=args.stage0_role == "reference"))
+    results.append(check_project_probes(compiler, stage0, root, out_dir / "project-probes",
+                                       stage0_reference=args.stage0_role == "reference"))
+    results.append(check_startup_arguments(compiler, stage0, root, out_dir / "startup-arguments",
+                                          stage0_reference=args.stage0_role == "reference"))
+    results.append(check_cli_workflows(compiler, stage0, root, out_dir / "cli-workflows",
+                                      stage0_reference=args.stage0_role == "reference"))
+    if args.stage0_role == "reference":
+        results.append(check_driver_parity(compiler, stage0, root, out_dir / "driver-parity"))
+        results.append(check_driver_target_linking(compiler, stage0, root, out_dir / "driver-target-linking"))
+        results.append(check_shared_metadata_cli(compiler, stage0, root, out_dir / "shared-metadata-cli"))
+        results.append(check_metadata_artifacts(compiler, stage0, root, out_dir / "metadata-artifacts"))
+        formatter = check_formatter(compiler, stage0, root, out_dir / "formatter")
+        results.append({"name": "formatter_cli", "ok": True, **formatter})
+    diagnostic_policy = check_diagnostics(compiler, root, out_dir / "diagnostic-policy")
+    results.append({"name": "diagnostic_policy", "ok": True, **diagnostic_policy})
+    results.append(check_package_cli(compiler, stage0, root, out_dir / "package-cli",
+                                    stage0_reference=args.stage0_role == "reference"))
+    vm = compiler.parent / ("kinalvm.exe" if os.name == "nt" else "kinalvm")
+    require(vm.is_file(), "selfhost KinalVM runner is missing; rebuild the packaged selfhost stage")
+    vm_version = run([sys.executable, str(root / "tests/check_vm_version.py"),
+                      "--vm", str(vm), "--require-packaged-version"], cwd=root)
+    require(vm_version.returncode == 0, "selfhost VM version metadata differs", vm_version)
+    results.append({"name": "vm_version_metadata", "ok": True, "cases": 2})
+    results.append(check_vm_cli(compiler, stage0, vm, root, out_dir / "vm-cli",
+                                stage0_reference=args.stage0_role == "reference"))
+    results.append(check_vm_lifecycle(compiler, vm, root, out_dir / "vm-lifecycle"))
+    results.append(check_knc_model(compiler, root, out_dir / "knc-model", vm))
+    if args.stage0_role == "reference":
+        reference_vm = stage0.parent / ("kinalvm.exe" if os.name == "nt" else "kinalvm")
+        baseline_vm = reference_vm if reference_vm.is_file() else None
+        knc = check_knc_backend(stage0, vm, root, out_dir / "knc-registered",
+                               compiler=compiler, baseline_vm=baseline_vm, suite="registered")
+        require(knc["ok"], "registered selfhost KNC source/runtime corpus failed")
+        results.append(knc)
+        results.append(check_knc_workflow(stage0, vm, root, out_dir / "knc-workflow",
+                                         compiler=compiler, baseline_vm=baseline_vm))
+    else:
+        results.append({"name": "knc_reference_corpus", "skipped": True,
+                        "reason": "the full differential corpus needs a current reference stage0"})
 
     fixture = root / "tests" / "selfhost" / "fixtures" / "lex_basic.kn"
     lex = run([str(compiler), "lex", str(fixture)], cwd=root)
@@ -2457,10 +2526,27 @@ def main() -> int:
         "stage1 global-literal fixture output differs",
         global_literals_run,
     )
+    global_literals_stage0_executable = out_dir / f"global-literals-stage0{executable_suffix}"
+    global_literals_stage0_build = run(
+        [str(stage0), "build", "--project", str(global_literals_project),
+         "--profile", "test", "-o", str(global_literals_stage0_executable)],
+        cwd=root,
+    )
+    require(global_literals_stage0_build.returncode == 0,
+            "stage0 global-literal fixture build failed", global_literals_stage0_build)
+    global_literals_stage0_run = run([str(global_literals_stage0_executable)], cwd=root)
+    require(global_literals_stage0_run.returncode == 0,
+            "stage0 global-literal fixture execution failed", global_literals_stage0_run)
+    require(
+        global_literals_stage0_run.stdout.replace("\r\n", "\n").strip()
+        == global_literals_run.stdout.replace("\r\n", "\n").strip(),
+        "stage0/stage1 global callable startup order and GC behavior differs",
+        global_literals_stage0_run,
+    )
     results.append({"name": "global_literals", "ok": True})
 
     array_project = root / "tests" / "selfhost" / "fixtures" / "array_types" / "kinal.knproj"
-    array_executable = out_dir / f"array-types{executable_suffix}"
+    array_executable = out_dir / f"array-types-fixture{executable_suffix}"
     array_ir = out_dir / "array-types.ll"
     array_build = run(
         [str(compiler), "build", str(array_project), str(array_executable), "test"],
@@ -2503,9 +2589,10 @@ def main() -> int:
     require(expression_ops_executable.is_file(), "stage1 expression-ops fixture executable is missing")
     expression_ops_run = run([str(expression_ops_executable)], cwd=root)
     require(expression_ops_run.returncode == 0, "stage1 expression-ops fixture execution failed", expression_ops_run)
+    expression_ops_platform = {"win32": "windows", "linux": "linux", "darwin": "macos"}[sys.platform]
     require(
         expression_ops_run.stdout.replace("\r\n", "\n").strip() ==
-        "1\n3\n9\n3\n1\n3\n10\n12\n3\n6\n6\nwindows",
+        "1\n3\n9\n3\n1\n3\n10\n12\n3\n6\n6\n" + expression_ops_platform,
         "stage1 expression-ops fixture output differs",
         expression_ops_run,
     )
@@ -2847,6 +2934,22 @@ def main() -> int:
             manifest_diagnostics_data["all_stage_differential_cases"],
     })
 
+    manifest_audit_harness = run(
+        [sys.executable, str(root / "tests" / "selfhost" / "test_manifest_audits.py")],
+        cwd=root,
+    )
+    require(manifest_audit_harness.returncode == 0,
+            "manifest audit harness contract tests failed", manifest_audit_harness)
+    results.append({"name": "manifest_audit_harness", "ok": True})
+
+    vm_packaging_contract = run(
+        [sys.executable, str(root / "tests" / "selfhost" / "test_vm_packaging.py")],
+        cwd=root,
+    )
+    require(vm_packaging_contract.returncode == 0,
+            "VM packaging contract tests failed", vm_packaging_contract)
+    results.append({"name": "vm_packaging_contract", "ok": True, "cases": 4})
+
     manifest_native = run(
         [
             sys.executable,
@@ -2866,7 +2969,10 @@ def main() -> int:
     results.append({
         "name": "manifest_native_coverage",
         "ok": True,
-        "positive_cases": manifest_native_data.get("positive_cases", 0),
+        "host": manifest_native_data["host"],
+        "positive_cases": manifest_native_data["positive_cases"],
+        "passed": manifest_native_data["passed"],
+        "excluded_case_counts": manifest_native_data["excluded_case_counts"],
         "unsupported_cases": manifest_native_data.get("unsupported_cases", []),
         "skipped": manifest_native_data.get("skipped", False),
     })
@@ -2890,7 +2996,11 @@ def main() -> int:
     results.append({
         "name": "manifest_runtime_coverage",
         "ok": True,
-        "runtime_cases": manifest_runtime_data.get("runtime_cases", 0),
+        "host": manifest_runtime_data["host"],
+        "runtime_candidates": manifest_runtime_data["runtime_candidates"],
+        "runtime_cases": manifest_runtime_data["runtime_cases"],
+        "passed": manifest_runtime_data["passed"],
+        "excluded_case_counts": manifest_runtime_data["excluded_case_counts"],
         "unsupported_cases": manifest_runtime_data.get("unsupported_cases", []),
         "skipped": manifest_runtime_data.get("skipped", False),
     })

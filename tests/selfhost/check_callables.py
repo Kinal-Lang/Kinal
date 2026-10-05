@@ -1,4 +1,4 @@
-"""Native callable identity and escaping-storage differential contracts."""
+"""Native callable, property accessor and escaping-storage differential contracts."""
 from __future__ import annotations
 
 import argparse
@@ -11,7 +11,8 @@ from pathlib import Path
 from check_targets import TARGETS, function_body
 
 
-def check_capture_ir(body: str, *, loop: str | None = None, aligned: bool = False) -> None:
+def check_capture_ir(body: str, *, loop: str | None = None, aligned: bool = False,
+                     pointer_bits: int = 64) -> None:
     """Heap cells are values owned by stack slots, never frame scan regions."""
     stack_slots = set(re.findall(r"(%[\w.]+) = alloca ", body))
     captures = set(re.findall(r"(%captured_root\d+) = alloca ptr", body))
@@ -40,13 +41,14 @@ def check_capture_ir(body: str, *, loop: str | None = None, aligned: bool = Fals
     if loop:
         assert loop_allocation, f"capture allocation must execute inside {loop}"
     if aligned:
-        assert re.search(r"%captured_aligned\d+ = and i64 %captured_padded\d+, -32", body), \
+        assert re.search(r"%captured_aligned\d+ = and i" + str(pointer_bits) +
+                         r" %captured_padded\d+, -32", body), \
             "Align(32) capture lost its alignment"
 
 
 def check_capture_targets(compiler: Path, projects: dict[str, Path], root: Path,
                           out: Path, env: dict[str, str]) -> int:
-    for target, _, _, _ in TARGETS:
+    for target, _, _, architecture in TARGETS:
         for name, functions in (
             ("escaping_capture_storage", (("RepeatedManagedCapture", "while_body", False),
                                            ("AggregateCapture", None, True))),
@@ -61,7 +63,8 @@ def check_capture_targets(compiler: Path, projects: dict[str, Path], root: Path,
             assert proc.returncode == 0, (target, name, proc.stdout, proc.stderr)
             ir = output.read_text(encoding="utf-8")
             for function, loop, aligned in functions:
-                check_capture_ir(function_body(ir, function), loop=loop, aligned=aligned)
+                check_capture_ir(function_body(ir, function), loop=loop, aligned=aligned,
+                                 pointer_bits=32 if architecture == 1 else 64)
         print(f"[OK] callable capture roots/alignment {target}", flush=True)
     return len(TARGETS)
 
@@ -70,6 +73,7 @@ def check_callables(compiler: Path, stage0: Path, root: Path, out: Path,
                     *, stage0_reference: bool = True) -> dict:
     out.mkdir(parents=True, exist_ok=True)
     cases = [
+        ("static-property-inheritance", root / "tests/selfhost/fixtures/property_static_inherited/kinal.knproj", "ok\n"),
         ("identity", root / "tests/pkg/callable_identity/kinal.knproj",
          "11\n22\nfirst\nsecond\n7\n9\n33\n"),
         ("same-unit", root / "tests/selfhost/fixtures/callable_same_unit/kinal.knproj",

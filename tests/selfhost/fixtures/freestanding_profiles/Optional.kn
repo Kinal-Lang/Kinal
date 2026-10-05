@@ -1,0 +1,16 @@
+Unit Tests.FreestandingOptional;
+Get IO.Target;
+Class Item { Public int Value; Safe Constructor(int value) { This.Value = value; } }
+int First = 5;
+int Second = First;
+string GlobalText = "global" + " value";
+Trusted Static Function void KMain(int* result)
+{
+    Item item = New Item(9);
+    string value = "heap " + [string](33);
+    int[3] local = {1, 2};
+    If (item.Value == 9 && value == "heap 33" && GlobalText == "global value" &&
+        Second == 5 && local.Length() == 3 && local[2] == 0 &&
+        IO.Target.Env == IO.Target.Env.Freestanding) *result = 42;
+    Else *result = -1;
+}

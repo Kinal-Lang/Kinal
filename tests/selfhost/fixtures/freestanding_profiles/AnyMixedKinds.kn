@@ -1,0 +1,12 @@
+Unit Tests.FreestandingAnyMixedKinds;
+int Runs = 0;
+Trusted Static Function void KMain(int* result)
+{
+    any text = "value";
+    any number = 42;
+    any empty = null;
+    bool correct = !text.Equals(number) && !number.Equals(text) &&
+        !text.Equals(empty) && !empty.Equals(text);
+    Runs++;
+    *result = correct ? 41 + Runs : -1;
+}

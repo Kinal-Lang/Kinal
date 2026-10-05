@@ -2,6 +2,7 @@ Unit IO.System;
 
 Get IO.File;
 Get IO.Kinal.Runtime;
+Get IO.Kinal.Runtime.Metadata;
 
 // Public system operations live in the standard package.  These foreign
 // declarations are limited to process and dynamic-loader ABI leaves.
@@ -46,7 +47,9 @@ Trusted Function int Exec(string commandLine)
 
 Trusted Function byte* LoadLibrary(string path)
 {
-    Return __SystemLoadLibrary(path);
+    byte* library = __SystemLoadLibrary(path);
+    IO.Kinal.Runtime.Metadata.RegisterLoaded(library);
+    Return library;
 }
 
 // GetSymbol remains a compiler intrinsic while its delegate argument carries
@@ -55,7 +58,9 @@ Trusted Function byte* LoadLibrary(string path)
 
 Trusted Function bool CloseLibrary(byte* library)
 {
-    Return __SystemCloseLibrary(library);
+    bool closed = __SystemCloseLibrary(library);
+    If (closed) IO.Kinal.Runtime.Metadata.Unregister(library);
+    Return closed;
 }
 
 Trusted Function string LastError()

@@ -1,0 +1,15 @@
+Unit Tests.SwitchDefaultPrefix;
+Function int Value(int tag)
+{
+    Return Switch (tag)
+    {
+        Case (0) { default; }
+        Case (1) { default; }
+        Case (default) { 7; }
+    };
+}
+Static Function int Main()
+{
+    If (Value(0) != 0 || Value(1) != 0 || Value(2) != 7) Return 1;
+    Return 0;
+}

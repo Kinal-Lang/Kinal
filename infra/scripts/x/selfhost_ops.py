@@ -20,6 +20,8 @@ from .llvm import detect_llvm_dir, llvm_bin_dir
 from .release_ops import build_official_stdpkg_klibs, create_kinalvm_stdpkg
 from .runtime_build import build_runtime_for_host
 from .util import run
+from .vm_metadata import generate_kinalvm_build_info
+from .compiler_metadata import generate_selfhost_build_info
 
 
 def default_staged_compiler(release: bool) -> Path:
@@ -152,6 +154,7 @@ def write_selfhost_clang_wrapper(stage1_root: Path) -> None:
 def package_selfhost_toolchain(stage0: Path, stage1: Path) -> None:
     stage0_root = stage0.parent
     stage1_root = stage1.parent
+    shutil.copy2(ROOT / "VERSION", stage1_root / "VERSION")
     bridge_dir = selfhost_bridge_object().parent
     shutil.copytree(bridge_dir, stage1_root / "bridge", dirs_exist_ok=True)
     for stale in (
@@ -175,10 +178,24 @@ def package_selfhost_toolchain(stage0: Path, stage1: Path) -> None:
         shutil.copytree(linker_source, stage1_root / "linker", dirs_exist_ok=True)
     write_selfhost_clang_wrapper(stage1_root)
 
-    runtime_source = stage0_root / "runtime" / host_tag()
-    runtime_target = stage1_root / "runtime" / host_tag()
+    # Archive and foreign-object linking use the same selected LLVM toolchain
+    # as the bridge.  These are native host tools; copying a target linker does
+    # not imply that a foreign executable can be executed on this host.
+    llvm_bin = llvm_bin_dir(detect_llvm_dir())
+    linker_target = stage1_root / "linker"
+    linker_target.mkdir(parents=True, exist_ok=True)
+    for name in ("llvm-ar", "llvm-lib", "lld-link", "ld64.lld"):
+        tool = llvm_bin / exe_name(name)
+        if tool.is_file():
+            shutil.copy2(tool, linker_target / tool.name)
+
+    # PIC shared artifacts and explicitly requested cross-target builds need
+    # the platform ABI source/headers as well as prebuilt host leaves. Runtime
+    # policy still comes from the Kinal package, and the VM is built by stage1.
+    runtime_source = stage0_root / "runtime"
     if runtime_source.is_dir():
-        shutil.copytree(runtime_source, runtime_target, dirs_exist_ok=True)
+        shutil.copytree(runtime_source, stage1_root / "runtime", dirs_exist_ok=True)
+    runtime_target = stage1_root / "runtime" / host_tag()
     required_runtime = (
         (
             "kn_runtime.obj",
@@ -300,7 +317,22 @@ def prepare_selfhost_stage0(*, clean_first: bool, cmd_dist, bundle_dir: Path | N
     return stage0
 
 
+def build_selfhost_vm_runner(compiler: Path) -> Path:
+    """Build the matching KinalVM with the newly built selfhost compiler.
+
+    Published bootstrap bundles may contain older bytecode ABIs. Never copy an
+    arbitrary frozen VM into a stage that emits the current format, and never
+    invoke the C compiler as a callback for this runner build.
+    """
+    generate_kinalvm_build_info()
+    runner = compiler.parent / exe_name("kinalvm")
+    run([compiler, "build", "--project", ROOT / "apps" / "kinalvm",
+         "--profile", "release", "-o", runner])
+    return runner
+
+
 def build_selfhost_stage1(stage0: Path) -> Path:
+    generate_selfhost_build_info()
     bridge_llvm = build_selfhost_bridge()
     bridge_runtime = bridge_llvm.with_name("kn_selfhost_runtime.o")
     stage1 = selfhost_stage1_exe()
@@ -346,6 +378,7 @@ def build_selfhost_stage1(stage0: Path) -> Path:
     run(command)
     copy_selfhost_llvm_runtime(stage0, stage1)
     package_selfhost_toolchain(stage0, stage1)
+    build_selfhost_vm_runner(stage1)
     return stage1
 
 

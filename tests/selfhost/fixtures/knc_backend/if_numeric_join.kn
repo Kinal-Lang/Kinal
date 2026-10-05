@@ -1,0 +1,81 @@
+Unit Tests.KncIfNumericJoin;
+
+int IntegerCalls = 0;
+int FloatCalls = 0;
+int ConditionCalls = 0;
+
+Function bool Select(bool flag) { ConditionCalls = ConditionCalls + 1; Return flag; }
+Function int IntegerBranch() { IntegerCalls = IntegerCalls + 1; Return 16777217; }
+Function float FloatBranch() { FloatCalls = FloatCalls + 1; Return 1.0; }
+
+Function bool CheckThenInteger(bool flag)
+{
+    f32 value = If (flag) { 16777217 } Else { 1.0 };
+    Return [float](value) == (If (flag) { 16777216.0 } Else { 1.0 });
+}
+
+Function bool CheckElseInteger(bool flag)
+{
+    f32 value = If (flag) { 1.0 } Else { 16777219 };
+    Return [float](value) == (If (flag) { 1.0 } Else { 16777220.0 });
+}
+
+Function bool CheckJoinPrecedesDestination(bool flag)
+{
+    // The integer branch first converts to the resolved f64 join type.
+    int value = 4611686293305294849;
+    f32 result = If (flag) { value } Else { 1.0 };
+    Return [float](result) == (If (flag) { 4611686018427387904.0 } Else { 1.0 });
+}
+
+Function bool CheckTypedBranches(bool flag)
+{
+    f32 left = 16777217.0;
+    // Branch merge rules choose f32 here, even though the destination is f64.
+    float result = If (flag) { left } Else { 16777219.0 };
+    If (result != (If (flag) { 16777216.0 } Else { 16777220.0 })) Return false;
+    i8 narrow = -1;
+    i64 wide = 257;
+    int integer = If (flag) { narrow } Else { wide };
+    Return integer == (If (flag) { -1 } Else { 1 });
+}
+
+Function bool CheckSelectedSideEffects(bool flag)
+{
+    IntegerCalls = 0;
+    FloatCalls = 0;
+    ConditionCalls = 0;
+    f32 value = If (Select(flag)) { IntegerBranch() } Else { FloatBranch() };
+    Return ConditionCalls == 1 &&
+           IntegerCalls == (If (flag) { 1 } Else { 0 }) &&
+           FloatCalls == (If (flag) { 0 } Else { 1 }) &&
+           [float](value) == (If (flag) { 16777216.0 } Else { 1.0 });
+}
+
+Function bool CheckSwitchJoins(int tag)
+{
+    IntegerCalls = 0;
+    FloatCalls = 0;
+    f32 value = Switch (tag)
+    {
+        Case (0) { IntegerBranch(); }
+        Case (1) { FloatBranch(); }
+        Case (default) { 16777219; }
+    };
+    If (IntegerCalls != (If (tag == 0) { 1 } Else { 0 })) Return false;
+    If (FloatCalls != (If (tag == 1) { 1 } Else { 0 })) Return false;
+    If (tag == 0) Return [float](value) == 16777216.0;
+    If (tag == 1) Return [float](value) == 1.0;
+    Return [float](value) == 16777220.0;
+}
+
+Static Function int Main()
+{
+    If (!CheckThenInteger(true) || !CheckThenInteger(false)) Return 1;
+    If (!CheckElseInteger(true) || !CheckElseInteger(false)) Return 2;
+    If (!CheckJoinPrecedesDestination(true) || !CheckJoinPrecedesDestination(false)) Return 3;
+    If (!CheckTypedBranches(true) || !CheckTypedBranches(false)) Return 4;
+    If (!CheckSelectedSideEffects(true) || !CheckSelectedSideEffects(false)) Return 5;
+    If (!CheckSwitchJoins(0) || !CheckSwitchJoins(1) || !CheckSwitchJoins(2)) Return 6;
+    Return 0;
+}

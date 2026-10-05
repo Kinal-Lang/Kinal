@@ -17,13 +17,26 @@ Class TargetInfo
         This.Triple = triple;
         This.OS = os;
         This.Architecture = architecture;
-        This.PointerBits = 64;
+        This.PointerBits = architecture == 1 ? 32 : 64;
     }
 
     Public Safe Function bool IsHost()
     {
         Return This.OS == IO.Host.OS.Current &&
             This.Architecture == IO.Host.Arch.Current;
+    }
+
+    // Search-directory aliases shared with the stage0 driver.
+    Public Safe Function string Tag()
+    {
+        If (This.OS == 1)
+            Return This.Architecture == 1 ? "win-x86" :
+                (This.Architecture == 3 ? "win-arm64" : "win-x64");
+        If (This.OS == 2)
+            Return This.Architecture == 3 ? "linux-arm64" : "linux-x64";
+        If (This.OS == 3)
+            Return This.Architecture == 3 ? "macos-arm64" : "macos-x64";
+        Return This.Architecture == 3 ? "bare-arm64" : "bare64";
     }
 
     Public Safe Function string PathSeparator() { Return This.OS == 1 ? "\\" : "/"; }
@@ -40,6 +53,8 @@ Class TargetInfo
 
 Safe Function string HostTriple()
 {
+    If (IO.Host.OS == IO.Host.OS.Windows && IO.Host.Arch == IO.Host.Arch.X86)
+        Return "i686-pc-windows-msvc";
     If (IO.Host.Arch != IO.Host.Arch.X64 && IO.Host.Arch != IO.Host.Arch.Arm64)
         Return "";
     If (IO.Host.OS == IO.Host.OS.Windows)
@@ -58,10 +73,16 @@ Safe Function TargetInfo Resolve(string requested)
 {
     string target = IO.Text.ToLower(IO.Text.Trim(requested));
     If (IO.Text.IsEmpty(target) || target == "host") target = HostTriple();
-    If (target == "win64" || target == "x64" || target == "windows" || target == "win-x64")
+    // Normalize vendorless Windows spellings before LLVM chooses its ABI.
+    If (target == "win86" || target == "win32" || target == "x86" ||
+        target == "i686-windows-msvc")
+        target = "i686-pc-windows-msvc";
+    If (target == "win64" || target == "x64" || target == "windows" || target == "win-x64" ||
+        target == "x86_64-windows-msvc")
         target = "x86_64-pc-windows-msvc";
     If (target == "win-arm64" || target == "windows-arm64" ||
-        target == "arm64" || target == "aarch64-windows") target = "aarch64-pc-windows-msvc";
+        target == "arm64" || target == "aarch64-windows" ||
+        target == "aarch64-windows-msvc") target = "aarch64-pc-windows-msvc";
     If (target == "linux64" || target == "linux-x64") target = "x86_64-pc-linux-gnu";
     If (target == "linux-arm64" || target == "linuxarm64" || target == "aarch64-linux")
         target = "aarch64-unknown-linux-gnu";
@@ -69,10 +90,13 @@ Safe Function TargetInfo Resolve(string requested)
         target == "darwin" || target == "darwin-x64") target = "x86_64-apple-darwin";
     If (target == "macos-arm64" || target == "macarm64" ||
         target == "darwin-arm64" || target == "aarch64-darwin") target = "aarch64-apple-darwin";
-    If (target == "bare64") target = "x86_64-unknown-none";
-    If (target == "bare-arm64") target = "aarch64-unknown-none";
+    If (target == "bare64" || target == "freestanding64" || target == "kernel64")
+        target = "x86_64-unknown-none-elf";
+    If (target == "bare-arm64" || target == "freestanding-arm64" || target == "kernel-arm64")
+        target = "aarch64-unknown-none-elf";
 
     // Reject unimplemented ABIs rather than silently treating them as x64.
+    If (target == "i686-pc-windows-msvc") Return New TargetInfo(target, 1, 1);
     If (target == "x86_64-pc-windows-msvc") Return New TargetInfo(target, 1, 2);
     If (target == "aarch64-pc-windows-msvc") Return New TargetInfo(target, 1, 3);
     If (target == "x86_64-pc-linux-gnu" || target == "x86_64-unknown-linux-gnu" ||
@@ -81,7 +105,9 @@ Safe Function TargetInfo Resolve(string requested)
         Return New TargetInfo(target, 2, 3);
     If (target == "x86_64-apple-darwin") Return New TargetInfo(target, 3, 2);
     If (target == "aarch64-apple-darwin") Return New TargetInfo(target, 3, 3);
-    If (target == "x86_64-unknown-none") Return New TargetInfo(target, 0, 2);
-    If (target == "aarch64-unknown-none") Return New TargetInfo(target, 0, 3);
+    If (target == "x86_64-unknown-none" || target == "x86_64-unknown-none-elf")
+        Return New TargetInfo(target, 0, 2);
+    If (target == "aarch64-unknown-none" || target == "aarch64-unknown-none-elf")
+        Return New TargetInfo(target, 0, 3);
     Return null;
 }

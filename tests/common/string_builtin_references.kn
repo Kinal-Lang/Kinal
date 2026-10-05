@@ -1,0 +1,30 @@
+Unit Tests.BuiltinStringReferenceFamily;
+Get IO.Console;
+Get IO.Type.string;
+
+Static Function int Main()
+{
+    Object.Function length = IO.Type.string.Length;
+    Object.Function lengthCopy = length;
+    If (length("abc") != 3) Return 1;
+    If (lengthCopy("hello") != 5) Return 2;
+
+    Object.Function concat = IO.Type.string.Concat;
+    Object.Function concatCopy = concat;
+    If (concat("ab", "cd") != "abcd") Return 3;
+    If (concatCopy("x", "yz") != "xyz") Return 4;
+
+    Object.Function equals = IO.Type.string.Equals;
+    Object.Function equalsCopy = equals;
+    If (!equals("same", "same")) Return 5;
+    If (equalsCopy("left", "right")) Return 6;
+
+    Object.Function toChars = IO.Type.string.ToChars;
+    Object.Function toCharsCopy = toChars;
+    char first[] = toChars("ab");
+    char second[] = toCharsCopy("xyz");
+    If (first.Length() != 2 || first[0] != 'a' || first[1] != 'b') Return 7;
+    If (second.Length() != 3 || second[0] != 'x' || second[2] != 'z') Return 8;
+    IO.Console.PrintLine("ok");
+    Return 0;
+}

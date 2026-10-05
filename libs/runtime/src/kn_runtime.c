@@ -4234,6 +4234,21 @@ void *kn_native_system_get_symbol(void *library, const char *name)
     return __kn_sys_get_symbol(library, name);
 }
 
+// Optional runtime exports are probed without changing System.LastError.
+// Absence is normal for libraries that were not built by Kinal.
+void *kn_native_system_get_optional_symbol(void *library, const char *name)
+{
+    if (!library || !name || !name[0]) return 0;
+#if defined(_WIN32) || defined(_WIN64)
+    return GetProcAddress((KN_HANDLE)library, name);
+#else
+    dlerror();
+    void *symbol = dlsym(library, name);
+    const char *error = dlerror();
+    return error && error[0] ? 0 : symbol;
+#endif
+}
+
 char *kn_native_system_last_error(void)
 {
     return rt_strdup_native(g_sys_last_error);

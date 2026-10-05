@@ -313,8 +313,10 @@ Trusted Function int ScanRegion(byte* address, usize size,
     usize offset = [usize](0);
     While (offset + PointerBytes() <= size)
     {
-        usize value = ([usize*](address))[offset / PointerBytes()];
-        stackPointer = MarkPointer([byte*](value), index, indexCount,
+        // usize has i64 language storage even on x86. Scan actual pointer
+        // slots so a 32-bit root is neither read past its end nor skipped.
+        byte* value = ([byte**](address))[offset / PointerBytes()];
+        stackPointer = MarkPointer(value, index, indexCount,
             stack, stackPointer, capacity);
         offset = offset + PointerBytes();
     }

@@ -3,10 +3,12 @@ from __future__ import annotations
 import argparse
 import contextlib
 import json
+import os
 import re
 import shutil
 import subprocess
 import sys
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
@@ -14,23 +16,19 @@ from audit_manifest_native import (
     entry_source,
     quote,
     related_sources,
-    supports_windows,
+    exclusion_reason,
+    manifest_exclusions,
+    host_platform,
 )
 
 
-EXPECTED_WINDOWS_RUNTIME_CASES = 167
+EXPECTED_HOST_RUNTIME_CASES = {"windows": 186, "linux": 184, "macos": 182}
 ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;]*m")
 
 
-def runtime_cases(manifest: list[dict[str, object]]) -> list[dict[str, object]]:
-    cases: list[dict[str, object]] = []
-    for case in manifest:
-        if "expect_error" in case or not supports_windows(case):
-            continue
-        if case.get("compile_only") or "expected" not in case:
-            continue
-        cases.append(case)
-    return cases
+def runtime_cases(manifest: list[dict[str, object]], host: str | None = None) -> list[dict[str, object]]:
+    host = host or host_platform()
+    return [case for case in manifest if exclusion_reason(case, host, runtime=True) is None]
 
 
 def case_sources(root: Path, case: dict[str, object]) -> tuple[Path, list[Path]]:
@@ -74,6 +72,64 @@ def runtime_link_options(
             continue
         index += 1
     return link_files, lib_dirs, libs
+
+
+def native_ffi_commands(root: Path, asset_dir: Path, host: str, llvm: Path) -> list[list[str]]:
+    """Preserve manifest fixture names while building actual host-format assets.
+
+    The .obj/.dll names are literals in existing source-level LinkFile and
+    LoadLibrary tests. They do not select COFF/PE on POSIX: clang selects the
+    object format, and the native loader accepts the shared library by content.
+    Keep a distinct import-library alias so ffi_lib still tests a static archive
+    and ffi_dll/ffi_abi still test real shared-library linking/loading.
+    """
+    if host not in {"linux", "macos"}:
+        raise ValueError(f"Unsupported POSIX FFI fixture host: {host}")
+    obj = asset_dir / "native_ffi.obj"
+    shared = asset_dir / "native_ffi.dll"
+    shared_options = (["-dynamiclib", "-Wl,-install_name,@loader_path/native_ffi.dll"]
+                      if host == "macos" else ["-shared", "-Wl,-soname,native_ffi.dll"])
+    return [
+        [str(llvm / "clang"), "-c", str(root / "tests" / "ffi_native" / "native_ffi.c"),
+         "-o", str(obj), "-fPIC", "-ffreestanding", "-fno-builtin", "-fno-stack-protector"],
+        [str(llvm / "llvm-ar"), *(["--format=darwin"] if host == "macos" else []),
+         "rcs", str(asset_dir / "libnative_ffi.a"), str(obj)],
+        [str(llvm / "clang"), *shared_options, str(obj), "-o", str(shared)],
+    ]
+
+
+def build_native_ffi_assets(root: Path, asset_dir: Path, legacy_tests: object) -> None:
+    asset_dir.mkdir(parents=True, exist_ok=True)
+    host = host_platform()
+    if host == "windows":
+        legacy_tests.build_native_ffi_assets(asset_dir)
+        return
+    # Follow selfhost's selected LLVM toolchain instead of assuming system clang.
+    sys.path.insert(0, str(root))
+    from infra.scripts.x.llvm import detect_llvm_dir, llvm_bin_dir
+
+    llvm = llvm_bin_dir(detect_llvm_dir())
+    for command in native_ffi_commands(root, asset_dir, host, llvm):
+        proc = subprocess.run(command, cwd=root, text=True, capture_output=True,
+                              encoding="utf-8", errors="replace", timeout=120, check=False)
+        if proc.returncode:
+            raise RuntimeError(f"FFI fixture command failed: {command!r}\n"
+                               + (proc.stdout or "") + (proc.stderr or ""))
+    suffix = ".dylib" if host == "macos" else ".so"
+    shutil.copy2(asset_dir / "native_ffi.dll", asset_dir / ("libnative_ffi_import" + suffix))
+
+
+def runtime_environment(executable: Path, case: dict[str, object]) -> dict[str, str]:
+    env = os.environ.copy()
+    # Only dynamic FFI fixtures need loader search-path changes. Preserve any
+    # user-provided entries, and leave unrelated runtimes/fixtures untouched.
+    dynamic_ffi = any(Path(str(value)).name == "native_ffi.dll"
+                      for value in case.get("runtime_files", []))
+    if sys.platform != "win32" and dynamic_ffi:
+        key = "DYLD_LIBRARY_PATH" if sys.platform == "darwin" else "LD_LIBRARY_PATH"
+        previous = env.get(key, "")
+        env[key] = str(executable.parent) + (os.pathsep + previous if previous else "")
+    return env
 
 
 def write_runtime_project(
@@ -131,21 +187,27 @@ def build_case(
     project = case_dir / "kinal.knproj"
     link_files, lib_dirs, libs = runtime_link_options(root, asset_dir, case)
     write_runtime_project(project, name, entry, sources, link_files, lib_dirs, libs)
-    executable = case_dir / f"{name}.exe"
-    proc = subprocess.run(
-        [str(compiler), "build", str(project), str(executable), "native"],
-        cwd=root,
-        text=True,
-        capture_output=True,
-        encoding="utf-8",
-        errors="replace",
-        check=False,
-        timeout=120,
-    )
-    detail = (proc.stdout or "") + (proc.stderr or "")
-    if proc.returncode != 0 or not executable.is_file():
-        return name, None, detail
-    return name, executable, detail
+    executable = case_dir / (name + (".exe" if sys.platform == "win32" else ""))
+    executable.unlink(missing_ok=True)
+    try:
+        proc = subprocess.run(
+            [str(compiler), "build", str(project), str(executable), "native"],
+            cwd=root,
+            text=True,
+            capture_output=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+            timeout=120,
+        )
+        detail = (proc.stdout or "") + (proc.stderr or "")
+        ok = proc.returncode == 0 and executable.is_file()
+        if not ok:
+            detail = f"exit={proc.returncode}; executable_exists={executable.is_file()}\n" + detail
+    except (subprocess.TimeoutExpired, OSError) as error:
+        ok, detail = False, str(error)
+    (case_dir / "build.log").write_text(detail, encoding="utf-8")
+    return name, executable if ok else None, detail
 
 
 def normalize_unhandled_runtime_output(output: str) -> str:
@@ -184,14 +246,13 @@ def run_case(
     root: Path, asset_dir: Path, executable: Path,
     case: dict[str, object], legacy_tests: object
 ) -> tuple[bool, str]:
-    for runtime_file in case.get("runtime_files", []):
-        source = asset_dir / Path(str(runtime_file)).name
-        shutil.copy2(source, executable.parent / source.name)
-    if case.get("needs_openssl_runtime"):
-        legacy_tests.copy_windows_openssl_runtime(executable.parent)
-
     stdin_text = case.get("stdin")
     try:
+        for runtime_file in case.get("runtime_files", []):
+            source = asset_dir / Path(str(runtime_file)).name
+            shutil.copy2(source, executable.parent / source.name)
+        if sys.platform == "win32" and case.get("needs_openssl_runtime"):
+            legacy_tests.copy_windows_openssl_runtime(executable.parent)
         fixture_responses: list[tuple[int, str]] | None = None
         if case.get("runtime_fixture") == "web_gc_roots":
             proc, fixture_responses = legacy_tests.run_web_gc_roots_fixture(executable)
@@ -203,6 +264,7 @@ def run_case(
                 proc = subprocess.run(
                     [str(executable)],
                     cwd=root,
+                    env=runtime_environment(executable, case),
                     text=True,
                     input=None if stdin_text is None else str(stdin_text),
                     capture_output=True,
@@ -211,8 +273,8 @@ def run_case(
                     check=False,
                     timeout=30,
                 )
-    except subprocess.TimeoutExpired as error:
-        return False, f"runtime timed out: {error}"
+    except (subprocess.TimeoutExpired, OSError) as error:
+        return False, f"runtime fixture/execution failed: {error}"
 
     if fixture_responses is not None and fixture_responses != [(200, "ok"), (200, "ok")]:
         return False, f"unexpected web fixture responses: {fixture_responses!r}"
@@ -228,7 +290,8 @@ def run_case(
             f"actual exit={proc.returncode}, stdout={(proc.stdout or '')!r}\n"
             f"stderr={(proc.stderr or '')!r}",
         )
-    return True, ""
+    return True, (f"exit={proc.returncode}\nstdout={(proc.stdout or '')!r}\n"
+                  f"stderr={(proc.stderr or '')!r}\n")
 
 
 def main() -> int:
@@ -236,43 +299,55 @@ def main() -> int:
     parser.add_argument("--compiler", type=Path, required=True)
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument("--out-dir", type=Path, required=True)
+    parser.add_argument("--jobs", type=int, default=4)
+    parser.add_argument("--output", type=Path, help="write a JSON report, including failures")
     args = parser.parse_args()
-
-    if sys.platform != "win32":
-        print(json.dumps({"format": "kinal-selfhost-manifest-runtime-v1", "skipped": True}))
-        return 0
+    if args.jobs < 1:
+        parser.error("--jobs must be positive")
 
     compiler = args.compiler.resolve()
     root = args.root.resolve()
     out_dir = args.out_dir.resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
+    host = host_platform()
+    if host not in EXPECTED_HOST_RUNTIME_CASES:
+        raise SystemExit(f"Unsupported manifest audit host: {host}")
+    if not compiler.is_file():
+        raise SystemExit(f"Compiler not found: {compiler}")
     sys.path.insert(0, str(root / "tests"))
     import run_tests as legacy_tests
 
-    # The manifest intentionally contains source-relative LinkFile attributes
-    # and filesystem fixtures rooted under out/test.  Mirror the canonical
-    # test-runner layout instead of placing native assets in an audit-only
-    # directory, otherwise those paths fail before runtime behavior is tested.
+    # Source-relative LinkFile attributes and filesystem fixtures intentionally
+    # use out/test. Preserve the canonical runner's layout on every host.
     asset_dir = root / "out" / "test"
     asset_dir.mkdir(parents=True, exist_ok=True)
-    legacy_tests.build_native_ffi_assets(asset_dir)
     manifest = json.loads((root / "tests" / "manifest.json").read_text(encoding="utf-8"))
-    cases = runtime_cases(manifest)
-    if len(cases) != EXPECTED_WINDOWS_RUNTIME_CASES:
+    candidates = runtime_cases(manifest, host)
+    expected = EXPECTED_HOST_RUNTIME_CASES[host]
+    if len(candidates) != expected:
         raise SystemExit(
-            "Windows runtime manifest baseline changed: "
-            f"expected {EXPECTED_WINDOWS_RUNTIME_CASES}, found {len(cases)}"
+            f"{host} runtime manifest baseline changed: expected {expected}, found {len(candidates)}"
         )
+    cases = candidates
+    ffi_names = {str(case["name"]) for case in cases if legacy_tests.case_needs_native_ffi(case)}
+    fixture_error = ""
+    if ffi_names:
+        try:
+            build_native_ffi_assets(root, asset_dir, legacy_tests)
+        except (subprocess.SubprocessError, OSError, RuntimeError, SystemExit) as error:
+            fixture_error = str(error)
 
     case_by_name = {str(case["name"]): case for case in cases}
     executables: dict[str, Path] = {}
-    failures: list[tuple[str, str, str]] = []
-    with ThreadPoolExecutor(max_workers=4) as executor:
+    failures: list[tuple[str, str, str]] = [
+        (name, "fixture", fixture_error) for name in sorted(ffi_names) if fixture_error
+    ]
+    with ThreadPoolExecutor(max_workers=args.jobs) as executor:
         futures = {
             executor.submit(
                 build_case, compiler, root, out_dir, asset_dir, case
             ): str(case["name"])
-            for case in cases
+            for case in cases if not (fixture_error and case["name"] in ffi_names)
         }
         for future in as_completed(futures):
             name, executable, detail = future.result()
@@ -289,25 +364,31 @@ def main() -> int:
         ok, detail = run_case(
             root, asset_dir, executable, case_by_name[name], legacy_tests
         )
+        (executable.parent / "runtime.log").write_text(detail, encoding="utf-8")
         if not ok:
             failures.append((name, "runtime", detail))
 
-    if failures:
-        for name, phase, detail in sorted(failures):
-            print(f"[{name}:{phase}]\n{detail}", file=sys.stderr)
-        return 1
-
-    print(
-        json.dumps(
-            {
-                "format": "kinal-selfhost-manifest-runtime-v1",
-                "runtime_cases": len(cases),
-                "unsupported_cases": [],
-            },
-            sort_keys=True,
-        )
-    )
-    return 0
+    for name, phase, detail in sorted(failures):
+        print(f"[{name}:{phase}]\n{detail}", file=sys.stderr)
+    exclusions = manifest_exclusions(manifest, host, runtime=True)
+    report = {
+        "format": "kinal-selfhost-manifest-runtime-v1",
+        "host": host,
+        "runtime_candidates": len(candidates),
+        "runtime_cases": len(cases),
+        "built": len(executables),
+        "passed": len(cases) - len(failures),
+        "unsupported_cases": [],
+        "excluded_cases": exclusions,
+        "excluded_case_counts": dict(Counter(case["reason"] for case in exclusions)),
+        "failures": [{"name": name, "phase": phase, "detail": detail}
+                     for name, phase, detail in sorted(failures)],
+    }
+    if args.output:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+    print(json.dumps(report, sort_keys=True))
+    return int(bool(failures))
 
 
 if __name__ == "__main__":

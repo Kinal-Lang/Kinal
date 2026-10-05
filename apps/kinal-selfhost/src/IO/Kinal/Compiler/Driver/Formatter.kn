@@ -1,0 +1,427 @@
+Unit IO.Kinal.Compiler.Driver.Formatter;
+
+Get IO.Console;
+Get IO.Directory;
+Get IO.File;
+Get IO.Text;
+Get IO.Kinal.Compiler.Core.ConsoleIO;
+Get IO.Kinal.Compiler.Source.SourceFile;
+Get IO.Kinal.Compiler.Lex.Lexer;
+Get IO.Kinal.Compiler.Lex.Token;
+Get IO.Kinal.Compiler.Lex.TokenKind;
+
+Class FormatToken
+{
+    Public Token Token;
+    Public int Start;
+    Public int End;
+    Public Safe Constructor(Token token, int start, int end)
+    {
+        This.Token = token;
+        This.Start = start;
+        This.End = end;
+    }
+}
+
+Class FormatState
+{
+    Public string Source;
+    Public char[] Chars;
+    Public string Newline;
+    Public list Lines;
+    Public string Line;
+    Public string Error;
+    Public int Indent;
+    Public int ParenDepth;
+    Public int BracketDepth;
+    Public bool LineStart;
+    Public bool PendingBlank;
+    Public bool ForceSpace;
+    Public bool HasPrevious;
+    Public bool PreviousCase;
+    Public TokenKind Previous;
+
+    Public Safe Constructor(string source)
+    {
+        This.Source = source;
+        This.Chars = source.ToChars();
+        This.Newline = "\r\n";
+        int index = 0;
+        While (index < This.Chars.Length())
+        {
+            If (This.Chars[index] == '\n') { This.Newline = "\n"; Break; }
+            If (This.Chars[index] == '\r')
+            {
+                If (index + 1 >= This.Chars.Length() || This.Chars[index + 1] != '\n')
+                    This.Newline = "\n";
+                Break;
+            }
+            index = index + 1;
+        }
+        This.Lines = list.Create();
+        This.Line = "";
+        This.Error = "";
+        This.Indent = 0;
+        This.ParenDepth = 0;
+        This.BracketDepth = 0;
+        This.LineStart = true;
+        This.PendingBlank = false;
+        This.ForceSpace = false;
+        This.HasPrevious = false;
+        This.PreviousCase = false;
+        This.Previous = TokenKind.Eof;
+    }
+
+    Public Safe Function void EmitIndent()
+    {
+        If (!This.LineStart) Return;
+        int index = 0;
+        While (index < This.Indent) { This.Line = This.Line + "    "; index = index + 1; }
+        This.LineStart = false;
+    }
+
+    Public Safe Function void EmitNewline()
+    {
+        While (IO.Text.EndsWith(This.Line, " ") || IO.Text.EndsWith(This.Line, "\t"))
+            This.Line = IO.Text.Slice(This.Line, 0, IO.Text.Length(This.Line) - 1);
+        This.Lines.Add(This.Line + This.Newline);
+        This.Line = "";
+        This.LineStart = true;
+        This.ForceSpace = false;
+    }
+
+    Public Safe Function void EmitBlank()
+    {
+        If (!This.PendingBlank) Return;
+        If (!This.LineStart) This.EmitNewline();
+        If (This.Lines.Count() > 0 || This.Line != "") This.EmitNewline();
+        This.PendingBlank = false;
+    }
+
+    Public Safe Function void EmitSpace()
+    {
+        If (!This.LineStart && !IO.Text.EndsWith(This.Line, " ")) This.Line = This.Line + " ";
+    }
+
+    Public Safe Function string Finish()
+    {
+        If (This.Line != "" || This.Lines.Count() == 0) This.EmitNewline();
+        Return IO.Text.Join(This.Lines, "");
+    }
+}
+
+Safe Function bool IsWord(TokenKind kind)
+{
+    // Keep new lexical keywords word-like without changing spellings.
+    Return [int](kind) >= [int](TokenKind.Identifier) && [int](kind) <= [int](TokenKind.TypeAny);
+}
+
+Safe Function bool ControlWithParen(TokenKind kind)
+{
+    Return kind == TokenKind.KwIf || kind == TokenKind.KwElseIf ||
+        kind == TokenKind.KwFor || kind == TokenKind.KwForeach ||
+        kind == TokenKind.KwWhile || kind == TokenKind.KwSwitch || kind == TokenKind.KwCatch;
+}
+
+Safe Function bool EndsExpression(TokenKind kind)
+{
+    Return ([int](kind) >= [int](TokenKind.Identifier) && [int](kind) <= [int](TokenKind.BadCharacter)) ||
+        kind == TokenKind.KwTrue || kind == TokenKind.KwFalse || kind == TokenKind.KwNull ||
+        kind == TokenKind.KwThis || kind == TokenKind.KwBase || kind == TokenKind.RightParen ||
+        kind == TokenKind.RightBracket || kind == TokenKind.PlusPlus || kind == TokenKind.MinusMinus;
+}
+
+Safe Function bool IsBinary(TokenKind kind, bool hasPrevious, TokenKind previous)
+{
+    If (kind == TokenKind.Plus || kind == TokenKind.Minus || kind == TokenKind.Star ||
+        kind == TokenKind.Ampersand) Return hasPrevious && EndsExpression(previous);
+    Return kind == TokenKind.Assign || kind == TokenKind.PlusAssign ||
+        kind == TokenKind.MinusAssign || kind == TokenKind.StarAssign ||
+        kind == TokenKind.SlashAssign || kind == TokenKind.PercentAssign ||
+        kind == TokenKind.Equal || kind == TokenKind.NotEqual || kind == TokenKind.Less ||
+        kind == TokenKind.LessEqual || kind == TokenKind.Greater || kind == TokenKind.GreaterEqual ||
+        kind == TokenKind.AndAnd || kind == TokenKind.OrOr || kind == TokenKind.BitOr ||
+        kind == TokenKind.Xor || kind == TokenKind.ShiftLeft || kind == TokenKind.ShiftRight ||
+        kind == TokenKind.Slash || kind == TokenKind.Percent || kind == TokenKind.KwIs;
+}
+
+Safe Function bool InitializerContext(TokenKind kind)
+{
+    Return IsBinary(kind, true, TokenKind.Identifier) || kind == TokenKind.Comma ||
+        kind == TokenKind.LeftParen || kind == TokenKind.LeftBracket ||
+        kind == TokenKind.Colon || kind == TokenKind.Question || kind == TokenKind.KwReturn ||
+        kind == TokenKind.KwThrow || kind == TokenKind.Not || kind == TokenKind.Tilde ||
+        kind == TokenKind.KwBy;
+}
+
+Safe Function bool BlockBrace(FormatState state, TokenKind kind)
+{
+    Return kind == TokenKind.LeftBrace && state.HasPrevious && !InitializerContext(state.Previous);
+}
+
+Safe Function bool NeedSpace(FormatState state, TokenKind kind)
+{
+    If (!state.HasPrevious || state.LineStart) Return false;
+    TokenKind previous = state.Previous;
+    If (kind == TokenKind.RightParen || kind == TokenKind.RightBracket ||
+        kind == TokenKind.Comma || kind == TokenKind.Semicolon || kind == TokenKind.Dot ||
+        kind == TokenKind.Colon) Return false;
+    If (previous == TokenKind.LeftParen || previous == TokenKind.LeftBracket ||
+        previous == TokenKind.Dot || previous == TokenKind.At) Return false;
+    If (state.ForceSpace) Return true;
+    If (kind == TokenKind.LeftBracket) Return IsWord(previous) && !EndsExpression(previous);
+    If (kind == TokenKind.LeftParen) Return ControlWithParen(previous);
+    If (previous == TokenKind.RightBracket && (kind == TokenKind.String ||
+        kind == TokenKind.BadString || kind == TokenKind.Character || kind == TokenKind.BadCharacter)) Return false;
+    If (IsWord(previous) && IsWord(kind)) Return true;
+    If (IsWord(kind) && (previous == TokenKind.RightParen || previous == TokenKind.RightBracket)) Return true;
+    If (EndsExpression(previous) && IsBinary(kind, state.HasPrevious, previous)) Return true;
+    If (kind == TokenKind.LeftBrace) Return !BlockBrace(state, kind);
+    Return false;
+}
+
+Safe Function void ProcessGap(FormatState state, int begin, int end)
+{
+    int newlines = 0;
+    int position = begin;
+    While (position < end)
+    {
+        char current = state.Chars[position];
+        If (current == '/' && position + 1 < end && state.Chars[position + 1] == '/')
+        {
+            int start = position;
+            position = position + 2;
+            While (position < end && state.Chars[position] != '\n' && state.Chars[position] != '\r')
+                position = position + 1;
+            If (newlines >= 2) state.PendingBlank = true;
+            state.EmitBlank();
+            state.EmitSpace();
+            state.EmitIndent();
+            state.Line = state.Line + IO.Text.Slice(state.Source, start, position - start);
+            state.EmitNewline();
+            If (position < end && state.Chars[position] == '\r' &&
+                position + 1 < end && state.Chars[position + 1] == '\n') position = position + 2;
+            ElseIf (position < end && (state.Chars[position] == '\r' || state.Chars[position] == '\n'))
+                position = position + 1;
+            newlines = 0;
+            Continue;
+        }
+        If (current == '/' && position + 1 < end && state.Chars[position + 1] == '*')
+        {
+            int start = position;
+            bool hasNewline = false;
+            bool closed = false;
+            position = position + 2;
+            While (position < end)
+            {
+                If (state.Chars[position] == '\n' || state.Chars[position] == '\r') hasNewline = true;
+                If (state.Chars[position] == '*' && position + 1 < end && state.Chars[position + 1] == '/')
+                { position = position + 2; closed = true; Break; }
+                position = position + 1;
+            }
+            If (!closed) state.Error = "unterminated block comment";
+            If (newlines >= 2) state.PendingBlank = true;
+            state.EmitBlank();
+            state.EmitSpace();
+            state.EmitIndent();
+            state.Line = state.Line + IO.Text.Slice(state.Source, start, position - start);
+            If (hasNewline) state.EmitNewline();
+            newlines = 0;
+            Continue;
+        }
+        If (current == '\r')
+        {
+            newlines = newlines + 1;
+            If (position + 1 < end && state.Chars[position + 1] == '\n') position = position + 1;
+        }
+        ElseIf (current == '\n') newlines = newlines + 1;
+        position = position + 1;
+    }
+    If (newlines >= 2) state.PendingBlank = true;
+}
+
+Safe Function void EmitToken(FormatState state, Token token, TokenKind next)
+{
+    TokenKind kind = token.Kind;
+    If (kind == TokenKind.RightBrace)
+    {
+        If (state.Indent > 0) state.Indent = state.Indent - 1;
+        If (!state.LineStart) state.EmitNewline();
+    }
+    If ((kind == TokenKind.KwCase || kind == TokenKind.KwDefault || kind == TokenKind.KwCatch) && !state.LineStart)
+        state.EmitNewline();
+    If (BlockBrace(state, kind) && !state.LineStart) state.EmitNewline();
+    state.EmitBlank();
+    If (NeedSpace(state, kind)) state.EmitSpace();
+    state.EmitIndent();
+    state.Line = state.Line + token.Text;
+    state.LineStart = false;
+    state.ForceSpace = false;
+    If (kind == TokenKind.LeftParen) state.ParenDepth = state.ParenDepth + 1;
+    ElseIf (kind == TokenKind.RightParen && state.ParenDepth > 0) state.ParenDepth = state.ParenDepth - 1;
+    ElseIf (kind == TokenKind.LeftBracket) state.BracketDepth = state.BracketDepth + 1;
+    ElseIf (kind == TokenKind.RightBracket && state.BracketDepth > 0) state.BracketDepth = state.BracketDepth - 1;
+    If (kind == TokenKind.LeftBrace) { state.Indent = state.Indent + 1; state.EmitNewline(); }
+    ElseIf (kind == TokenKind.RightBrace)
+    {
+        If (next != TokenKind.Semicolon && next != TokenKind.Comma && next != TokenKind.Eof) state.EmitNewline();
+    }
+    ElseIf (kind == TokenKind.Semicolon)
+    {
+        If (state.ParenDepth == 0 && state.BracketDepth == 0) state.EmitNewline();
+        Else state.ForceSpace = true;
+    }
+    ElseIf (kind == TokenKind.Comma) state.ForceSpace = true;
+    ElseIf (kind == TokenKind.Colon)
+    {
+        If (state.PreviousCase) state.EmitNewline();
+        Else state.ForceSpace = true;
+    }
+    ElseIf (IsBinary(kind, state.HasPrevious, state.Previous)) state.ForceSpace = true;
+    state.PreviousCase = kind == TokenKind.KwCase || kind == TokenKind.KwDefault;
+    state.Previous = kind;
+    state.HasPrevious = true;
+}
+
+Safe Function string FormatSource(FormatState state)
+{
+    SourceFile source = New SourceFile("<format>", state.Source);
+    LexerState lexer = New LexerState(source);
+    int cursor = 0;
+    If (lexer.Length >= 3 && [int](lexer.Chars[0]) == 239 &&
+        [int](lexer.Chars[1]) == 187 && [int](lexer.Chars[2]) == 191)
+    {
+        state.Line = IO.Text.Slice(state.Source, 0, 3);
+        lexer.Position = 3;
+        cursor = 3;
+    }
+    list tokens = list.Create();
+    While (true)
+    {
+        IO.Kinal.Compiler.Lex.Lexer.SkipTrivia(lexer);
+        int start = lexer.Position;
+        char current = IO.Kinal.Compiler.Lex.Lexer.Current(lexer);
+        Token token = null;
+        If (current == '\0') token = New Token(TokenKind.Eof, "", lexer.Line, lexer.Column);
+        ElseIf (IO.Kinal.Compiler.Lex.Lexer.IsIdentifierStart(current))
+            token = IO.Kinal.Compiler.Lex.Lexer.ReadIdentifier(lexer, lexer.Line, lexer.Column);
+        ElseIf (IO.Kinal.Compiler.Lex.Lexer.IsDigit(current))
+            token = IO.Kinal.Compiler.Lex.Lexer.ReadNumber(lexer, lexer.Line, lexer.Column);
+        ElseIf (current == '"') token = IO.Kinal.Compiler.Lex.Lexer.ReadString(lexer, lexer.Line, lexer.Column);
+        ElseIf (current == '\'') token = IO.Kinal.Compiler.Lex.Lexer.ReadCharacter(lexer, lexer.Line, lexer.Column);
+        Else token = IO.Kinal.Compiler.Lex.Lexer.ReadSymbol(lexer, lexer.Line, lexer.Column);
+        If (token.Kind == TokenKind.BadString || token.Kind == TokenKind.BadCharacter ||
+            (token.Kind == TokenKind.Eof && current != '\0'))
+        {
+            state.Error = "invalid token at " + [string](token.Line) + ":" + [string](token.Column);
+            Return "";
+        }
+        // Lexer tokens retain the original spelling, including quotes and
+        // escapes. Never decode/re-encode their payloads during formatting.
+        tokens.Add(New FormatToken(token, start, lexer.Position));
+        If (token.Kind == TokenKind.Eof) Break;
+    }
+    int index = 0;
+    While (index < tokens.Count())
+    {
+        FormatToken current = [FormatToken](tokens.Fetch(index));
+        If (current.Start > cursor) ProcessGap(state, cursor, current.Start);
+        If (current.Token.Kind == TokenKind.Eof) Break;
+        FormatToken next = [FormatToken](tokens.Fetch(index + 1));
+        EmitToken(state, current.Token, next.Token.Kind);
+        cursor = current.End;
+        index = index + 1;
+    }
+    Return state.Finish();
+}
+
+Safe Function void Help()
+{
+    IO.Console.PrintLine("Usage: kinal-selfhost fmt [options] <files|dirs...>");
+    IO.Console.PrintLine("  --check                 Return 1 if formatting would change a file");
+    IO.Console.PrintLine("  --stdin                 Read source from stdin");
+    IO.Console.PrintLine("  --stdout                Write formatted output to stdout");
+    IO.Console.PrintLine("  --stdin-filepath <path>  Virtual path used for stdin errors");
+    IO.Console.PrintLine("Directories are scanned recursively for .kn files.");
+}
+
+Safe Function int Failure(string message)
+{
+    IO.Kinal.Compiler.Core.ConsoleIO.Write(2, "fmt: " + message + "\n");
+    Return 1;
+}
+
+Safe Function int Run(string[] args, int start)
+{
+    bool check = false;
+    bool stdin = false;
+    bool stdout = false;
+    string stdinPath = "<stdin>";
+    list files = list.Create();
+    int index = start;
+    While (index < args.Length())
+    {
+        string arg = args[index];
+        If (arg == "--help" || arg == "-h") { Help(); Return 0; }
+        If (arg == "--check") check = true;
+        ElseIf (arg == "--stdin") stdin = true;
+        ElseIf (arg == "--stdout") stdout = true;
+        ElseIf (arg == "--stdin-filepath")
+        {
+            index = index + 1;
+            If (index >= args.Length()) Return Failure("missing value after --stdin-filepath");
+            stdinPath = args[index];
+        }
+        ElseIf (IO.Text.StartsWith(arg, "-")) Return Failure("unknown option: " + arg);
+        ElseIf (IO.Directory.Exists(arg))
+        {
+            list discovered = IO.Directory.Files(arg, true);
+            int fileIndex = 0;
+            While (fileIndex < discovered.Count())
+            {
+                string path = [string](discovered.Fetch(fileIndex));
+                If (IO.Text.EndsWith(path, ".kn")) files.Add(path);
+                fileIndex = fileIndex + 1;
+            }
+        }
+        Else files.Add(arg);
+        index = index + 1;
+    }
+    If (!stdin && files.Count() == 0) { Help(); Return 1; }
+    bool changed = false;
+    index = stdin ? -1 : 0;
+    While (index < files.Count())
+    {
+        string path = index < 0 ? stdinPath : [string](files.Fetch(index));
+        string source = "";
+        If (index < 0) source = IO.Kinal.Compiler.Core.ConsoleIO.ReadInput();
+        Else
+        {
+            If (!IO.File.Exists(path)) Return Failure("failed to read file: " + path);
+            source = IO.File.ReadAllText(path);
+            If (IO.File.Size(path) != IO.Text.Length(source))
+                Return Failure("failed to read text file (or embedded NUL): " + path);
+        }
+        If (source == null) Return Failure("failed to read text: " + path);
+        FormatState state = New FormatState(source);
+        string formatted = FormatSource(state);
+        If (state.Error != "") Return Failure(path + ": " + state.Error);
+        bool differs = source != formatted;
+        If (differs) changed = true;
+        If (index < 0)
+        {
+            If (!check || stdout)
+                If (!IO.Kinal.Compiler.Core.ConsoleIO.Write(1, formatted)) Return Failure("failed to write stdout");
+        }
+        ElseIf (!check)
+        {
+            If (stdout)
+            {
+                If (!IO.Kinal.Compiler.Core.ConsoleIO.Write(1, formatted)) Return Failure("failed to write stdout");
+            }
+            ElseIf (differs && !IO.File.WriteAllText(path, formatted)) Return Failure("failed to write file: " + path);
+        }
+        index = index + 1;
+    }
+    Return check && changed ? 1 : 0;
+}

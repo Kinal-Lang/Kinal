@@ -1,7 +1,8 @@
 """Compare supported compiler/backend behavior with a bounded Python oracle.
 
 This is a functional regression check, not a claim of full language parity.
-Only host executables are run; the selfhost compiler has no KNC backend.
+C native, optional C KNC, and selfhost native execution are compared here.
+Selfhost KNC has dedicated backend regression checks.
 """
 from __future__ import annotations
 

@@ -1,0 +1,10 @@
+Unit Tests.MetaEnumDefinitions;
+Enum Choice { First = 7, Second = 11 }
+Meta EnumMark(Choice value = Choice.Second)
+{
+    On @function;
+    Keep @runtime;
+}
+[EnumMark(Choice.First)] Function int Short() { Return 0; }
+[EnumMark(Tests.MetaEnumDefinitions.Choice.Second)] Function int Qualified() { Return 0; }
+[EnumMark] Function int Default() { Return 0; }

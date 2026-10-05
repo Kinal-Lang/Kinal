@@ -1,6 +1,9 @@
 Unit IO.Kinal.Compiler.Project.ProjectLoader;
 
 Get IO.Text;
+Get IO.File;
+Get IO.Path;
+Get IO.Kinal.Compiler.Project.PackageManifest;
 Get IO.Kinal.Compiler.Core.Diagnostics;
 Get IO.Kinal.Compiler.Source.SourceFile;
 Get IO.Kinal.Compiler.Lex.Lexer;
@@ -58,7 +61,7 @@ Class ProjectReader
 
     Public Safe Function bool MatchText(string text)
     {
-        If (This.Text() != text) Return false;
+        If (IO.Text.ToLower(This.Text()) != IO.Text.ToLower(text)) Return false;
         This.Advance();
         Return true;
     }
@@ -153,7 +156,7 @@ Class ProjectReader
 
     Public Safe Function bool ReadBooleanAssignment(string field)
     {
-        string value = This.ReadScalarAssignment();
+        string value = IO.Text.ToLower(This.ReadScalarAssignment());
         If (value == "true") Return true;
         If (value == "false") Return false;
         This.Report("Invalid Boolean", field + " requires true or false");
@@ -218,11 +221,11 @@ Class ProjectReader
                              "Packages body is missing")) Return;
         While (!This.AtEnd() && This.Kind() != TokenKind.RightBrace)
         {
-            string field = This.Text();
+            string field = IO.Text.ToLower(This.Text());
             This.Advance();
-            If (field == "Roots")
+            If (field == "roots")
                 This.CopyList(roots, This.ReadListAssignment());
-            ElseIf (field == "OfficialRoots")
+            ElseIf (field == "officialroots")
                 This.CopyList(officialRoots, This.ReadListAssignment());
             Else This.RejectUnknownField("Packages", field);
         }
@@ -236,9 +239,9 @@ Class ProjectReader
                              "Workspace body is missing")) Return;
         While (!This.AtEnd() && This.Kind() != TokenKind.RightBrace)
         {
-            string field = This.Text();
+            string field = IO.Text.ToLower(This.Text());
             This.Advance();
-            If (field == "Ignore")
+            If (field == "ignore")
                 This.CopyList(project.WorkspaceIgnores, This.ReadListAssignment());
             Else This.RejectUnknownField("Workspace", field);
         }
@@ -252,11 +255,11 @@ Class ProjectReader
                              "Lsp body is missing")) Return;
         While (!This.AtEnd() && This.Kind() != TokenKind.RightBrace)
         {
-            string field = This.Text();
+            string field = IO.Text.ToLower(This.Text());
             This.Advance();
-            If (field == "Profile") This.ReadScalarAssignment();
-            ElseIf (field == "ExtraSets") This.ReadListAssignment();
-            ElseIf (field == "StrictProjectScope")
+            If (field == "profile") This.ReadScalarAssignment();
+            ElseIf (field == "extrasets") This.ReadListAssignment();
+            ElseIf (field == "strictprojectscope")
                 This.ReadBooleanAssignment("Lsp.StrictProjectScope");
             Else This.RejectUnknownField("Lsp", field);
         }
@@ -271,13 +274,13 @@ Class ProjectReader
         If (!This.ExpectKind(TokenKind.LeftBrace, "Expected '{'", "SourceSet body is missing")) Return sourceSet;
         While (!This.AtEnd() && This.Kind() != TokenKind.RightBrace)
         {
-            string field = This.Text();
+            string field = IO.Text.ToLower(This.Text());
             This.Advance();
-            If (field == "Roots") This.CopyList(sourceSet.Roots, This.ReadListAssignment());
-            ElseIf (field == "Files") This.CopyList(sourceSet.Files, This.ReadListAssignment());
-            ElseIf (field == "Include") This.CopyList(sourceSet.Includes, This.ReadListAssignment());
-            ElseIf (field == "Exclude") This.CopyList(sourceSet.Excludes, This.ReadListAssignment());
-            ElseIf (field == "RequireUnit")
+            If (field == "roots") This.CopyList(sourceSet.Roots, This.ReadListAssignment());
+            ElseIf (field == "files") This.CopyList(sourceSet.Files, This.ReadListAssignment());
+            ElseIf (field == "include") This.CopyList(sourceSet.Includes, This.ReadListAssignment());
+            ElseIf (field == "exclude") This.CopyList(sourceSet.Excludes, This.ReadListAssignment());
+            ElseIf (field == "requireunit")
                 sourceSet.RequireUnit = This.ReadBooleanAssignment("SourceSet.RequireUnit");
             Else This.RejectUnknownField("SourceSet", field);
         }
@@ -290,12 +293,12 @@ Class ProjectReader
         If (!This.ExpectKind(TokenKind.LeftBrace, "Expected '{'", "Source body is missing")) Return;
         While (!This.AtEnd() && This.Kind() != TokenKind.RightBrace)
         {
-            string field = This.Text();
+            string field = IO.Text.ToLower(This.Text());
             This.Advance();
-            If (field == "Entry") profile.Entry = This.ReadScalarAssignment();
-            ElseIf (field == "Sets") This.CopyList(profile.Sets, This.ReadListAssignment());
-            ElseIf (field == "Mode") profile.Mode = This.ReadScalarAssignment();
-            ElseIf (field == "AutoDiscovery")
+            If (field == "entry") profile.Entry = This.ReadScalarAssignment();
+            ElseIf (field == "sets") This.CopyList(profile.Sets, This.ReadListAssignment());
+            ElseIf (field == "mode") profile.Mode = This.ReadScalarAssignment();
+            ElseIf (field == "autodiscovery")
                 profile.AutoDiscovery = This.ReadBooleanAssignment("Source.AutoDiscovery");
             Else This.RejectUnknownField("Source", field);
         }
@@ -307,15 +310,22 @@ Class ProjectReader
         If (!This.ExpectKind(TokenKind.LeftBrace, "Expected '{'", "Build body is missing")) Return;
         While (!This.AtEnd() && This.Kind() != TokenKind.RightBrace)
         {
-            string field = This.Text();
+            string field = IO.Text.ToLower(This.Text());
             This.Advance();
-            If (field == "Backend") profile.Backend = This.ReadScalarAssignment();
-            ElseIf (field == "Environment") profile.Environment = This.ReadScalarAssignment();
-            ElseIf (field == "Runtime") profile.Runtime = This.ReadScalarAssignment();
-            ElseIf (field == "Panic") profile.Panic = This.ReadScalarAssignment();
-            ElseIf (field == "Target") profile.Target = This.ReadScalarAssignment();
-            ElseIf (field == "Output") profile.Output = This.ReadScalarAssignment();
-            ElseIf (field == "EntrySymbol") profile.EntrySymbol = This.ReadScalarAssignment();
+            If (field == "backend")
+            {
+                profile.Backend = This.ReadScalarAssignment();
+                profile.BackendExplicit = true;
+            }
+            ElseIf (field == "environment") { profile.Environment = This.ReadScalarAssignment(); profile.EnvironmentExplicit = true; }
+            ElseIf (field == "runtime") { profile.Runtime = This.ReadScalarAssignment(); profile.RuntimeExplicit = true; }
+            ElseIf (field == "panic") { profile.Panic = This.ReadScalarAssignment(); profile.PanicExplicit = true; }
+            ElseIf (field == "target") profile.Target = This.ReadScalarAssignment();
+            ElseIf (field == "output") profile.Output = This.ReadScalarAssignment();
+            ElseIf (field == "entrysymbol") profile.EntrySymbol = This.ReadScalarAssignment();
+            ElseIf (field == "linker") profile.Linker = IO.Text.ToLower(This.ReadScalarAssignment());
+            ElseIf (field == "linkerpath") profile.LinkerPath = This.ReadScalarAssignment();
+            ElseIf (field == "superloop") { profile.Superloop = This.ReadBooleanAssignment("Build.Superloop"); profile.SuperloopExplicit = true; }
             Else This.RejectUnknownField("Build", field);
         }
         This.ExpectKind(TokenKind.RightBrace, "Expected '}'", "Build body is not closed");
@@ -326,18 +336,18 @@ Class ProjectReader
         If (!This.ExpectKind(TokenKind.LeftBrace, "Expected '{'", "Link body is missing")) Return;
         While (!This.AtEnd() && This.Kind() != TokenKind.RightBrace)
         {
-            string field = This.Text();
+            string field = IO.Text.ToLower(This.Text());
             This.Advance();
-            If (field == "Script") profile.LinkScript = This.ReadScalarAssignment();
-            ElseIf (field == "NoCRT")
+            If (field == "script") profile.LinkScript = This.ReadScalarAssignment();
+            ElseIf (field == "nocrt")
                 profile.NoCRT = This.ReadBooleanAssignment("Link.NoCRT");
-            ElseIf (field == "NoDefaultLibs")
+            ElseIf (field == "nodefaultlibs")
                 profile.NoDefaultLibs = This.ReadBooleanAssignment("Link.NoDefaultLibs");
-            ElseIf (field == "LibDirs") This.CopyList(profile.LibDirs, This.ReadListAssignment());
-            ElseIf (field == "Libs") This.CopyList(profile.Libs, This.ReadListAssignment());
-            ElseIf (field == "LinkFiles") This.CopyList(profile.LinkFiles, This.ReadListAssignment());
-            ElseIf (field == "LinkArgs") This.CopyList(profile.LinkArgs, This.ReadListAssignment());
-            ElseIf (field == "LinkRoots") This.CopyList(profile.LinkRoots, This.ReadListAssignment());
+            ElseIf (field == "libdirs") This.CopyList(profile.LibDirs, This.ReadListAssignment());
+            ElseIf (field == "libs") This.CopyList(profile.Libs, This.ReadListAssignment());
+            ElseIf (field == "linkfiles") This.CopyList(profile.LinkFiles, This.ReadListAssignment());
+            ElseIf (field == "linkargs") This.CopyList(profile.LinkArgs, This.ReadListAssignment());
+            ElseIf (field == "linkroots") This.CopyList(profile.LinkRoots, This.ReadListAssignment());
             Else This.RejectUnknownField("Link", field);
         }
         This.ExpectKind(TokenKind.RightBrace, "Expected '}'", "Link body is not closed");
@@ -350,12 +360,12 @@ Class ProjectReader
         If (!This.ExpectKind(TokenKind.LeftBrace, "Expected '{'", "Profile body is missing")) Return profile;
         While (!This.AtEnd() && This.Kind() != TokenKind.RightBrace)
         {
-            string section = This.Text();
+            string section = IO.Text.ToLower(This.Text());
             This.Advance();
-            If (section == "Source") This.ReadProfileSource(profile);
-            ElseIf (section == "Build") This.ReadProfileBuild(profile);
-            ElseIf (section == "Link") This.ReadProfileLink(profile);
-            ElseIf (section == "Packages")
+            If (section == "source") This.ReadProfileSource(profile);
+            ElseIf (section == "build") This.ReadProfileBuild(profile);
+            ElseIf (section == "link") This.ReadProfileLink(profile);
+            ElseIf (section == "packages")
                 This.ReadPackages(profile.PackageRoots, profile.OfficialPackageRoots);
             Else This.RejectUnknownField("Profile", section);
         }
@@ -373,24 +383,71 @@ Class ProjectReader
 
         While (!This.AtEnd() && This.Kind() != TokenKind.RightBrace)
         {
-            string field = This.Text();
+            string field = IO.Text.ToLower(This.Text());
             This.Advance();
-            If (field == "DefaultProfile") project.DefaultProfile = This.ReadScalarAssignment();
-            ElseIf (field == "SourceSet") project.AddSourceSet(This.ReadSourceSet());
-            ElseIf (field == "Profile") project.AddProfile(This.ReadProfile());
-            ElseIf (field == "Packages")
+            If (field == "defaultprofile") project.DefaultProfile = This.ReadScalarAssignment();
+            ElseIf (field == "sourceset") project.AddSourceSet(This.ReadSourceSet());
+            ElseIf (field == "profile") project.AddProfile(This.ReadProfile());
+            ElseIf (field == "packages")
                 This.ReadPackages(project.PackageRoots, project.OfficialPackageRoots);
-            ElseIf (field == "Workspace") This.ReadWorkspace(project);
-            ElseIf (field == "Lsp") This.ReadLsp();
+            ElseIf (field == "workspace") This.ReadWorkspace(project);
+            ElseIf (field == "lsp") This.ReadLsp();
             Else This.RejectUnknownField("Project", field);
         }
         This.ExpectKind(TokenKind.RightBrace, "Expected '}'", "Project body is not closed");
+        If (!This.AtEnd()) This.Report("Unexpected token", "unexpected token after project block");
+        If (project.FirstProfile == null) This.Report("Missing profile", "project file must declare at least one profile");
+        ElseIf (IO.Text.IsEmpty(project.DefaultProfile)) project.DefaultProfile = project.FirstProfile.Name;
         Return project;
     }
 }
 
 Safe Function ProjectConfig Load(string manifestPath, list diagnostics)
 {
+    If (IO.Text.ToLower(IO.Path.Extension(manifestPath)) != "knproj")
+        Return LoadLegacy(manifestPath, diagnostics);
     ProjectReader reader = New ProjectReader(manifestPath, diagnostics);
     Return reader.Read();
+}
+
+// Legacy project JSON shares the bounded JSON reader with package manifests.
+Safe Function ProjectConfig LoadLegacy(string path, list diagnostics)
+{
+    ProjectConfig project = New ProjectConfig(path);
+    project.Name = IO.Path.BaseName(path);
+    project.DefaultProfile = "legacy";
+    project.IsLegacy = true;
+    ProjectProfileConfig profile = New ProjectProfileConfig("legacy");
+    project.AddProfile(profile);
+    PackageJsonReader reader = New PackageJsonReader(IO.File.ReadAllText(path));
+    string kind = "";
+    If (!reader.Consume('{')) reader.Fail("project manifest must contain a JSON object");
+    bool closed = reader.Consume('}');
+    While (!closed && !reader.AtEnd() && IO.Text.IsEmpty(reader.Error))
+    {
+        string key = IO.Text.ToLower(reader.ReadString());
+        If (!reader.Consume(':')) { reader.Fail("expected ':' after JSON field"); Break; }
+        If (key == "kind") kind = reader.ReadString();
+        ElseIf (key == "name") project.Name = reader.ReadString();
+        ElseIf (key == "entry") profile.Entry = reader.ReadString();
+        ElseIf (key == "out") profile.Output = reader.ReadString();
+        ElseIf (key == "package_roots") project.PackageRoots = reader.ReadStringList();
+        Else reader.SkipValue();
+        If (reader.Consume('}')) closed = true;
+        ElseIf (!reader.Consume(',')) reader.Fail("expected ',' or '}' in project manifest");
+    }
+    reader.SkipWhitespace();
+    If (!closed) reader.Fail("unterminated project manifest");
+    If (!reader.AtEnd()) reader.Fail("unexpected data after project manifest");
+    If (IO.Text.ToLower(kind) != "project") reader.Fail("--project expects a project manifest");
+    If (!IO.Text.IsEmpty(reader.Error))
+        IO.Kinal.Compiler.Core.Diagnostics.Add(diagnostics,
+            IO.Kinal.Compiler.Source.SourceFile.Load(path), "Project",
+            "Invalid project manifest", reader.Error, 1, 1, 1);
+    // Legacy manifests discover adjacent Unit files just like direct inputs.
+    SourceSetConfig sources = New SourceSetConfig("legacy");
+    sources.Roots.Add(IO.Path.Directory(profile.Entry));
+    sources.RequireUnit = false;
+    project.AddSourceSet(sources);
+    Return project;
 }

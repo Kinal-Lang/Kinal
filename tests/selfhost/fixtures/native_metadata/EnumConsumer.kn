@@ -1,0 +1,14 @@
+Unit Tests.MetaEnumConsumer;
+Get IO.Meta;
+Get Tests.MetaEnumDefinitions;
+// A default belongs to the metadata declaration's scope, not this caller's.
+Enum Choice { First = 97, Second = 99 }
+[EnumMark] Function int ImportedDefault() { Return 0; }
+Static Function int Main()
+{
+    If ([int](IO.Meta.Find("Tests.MetaEnumDefinitions.Short", "EnumMark").Fetch("arg.value")) != 7) Return 1;
+    If ([int](IO.Meta.Find("Tests.MetaEnumDefinitions.Qualified", "EnumMark").Fetch("arg.value")) != 11) Return 2;
+    If ([int](IO.Meta.Find("Tests.MetaEnumDefinitions.Default", "EnumMark").Fetch("arg.value")) != 11) Return 3;
+    If ([int](IO.Meta.Find("Tests.MetaEnumConsumer.ImportedDefault", "EnumMark").Fetch("arg.value")) != 11) Return 4;
+    Return 0;
+}

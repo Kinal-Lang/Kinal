@@ -1,0 +1,59 @@
+Unit Tests.SelfhostPropertyCompoundOrder;
+Get IO.Console;
+
+int trace = 0;
+int calls = 0;
+Class Box
+{
+    Public int Stored;
+    Public Property int Value
+    {
+        Get { trace = trace * 10 + 2; Return Stored; }
+        Set { trace = trace * 10 + 4; Stored = value; }
+    }
+}
+Static Function Box Receiver(Box value) { calls += 1; trace = trace * 10 + 1; Return value; }
+Static Function int Change(Box value) { trace = trace * 10 + 3; value.Stored = 1; Return 4; }
+Class BaseBox
+{
+    Public int Stored;
+    Public Virtual Property int Value
+    {
+        Get { Return Stored; }
+        Set { Stored = value; }
+    }
+}
+Class DerivedBox By BaseBox
+{
+    Public Override Property int Value
+    {
+        Get { trace = trace * 10 + 2; Return Stored * 2; }
+        Set { trace = trace * 10 + 4; Stored = value + 100; }
+    }
+    Public Function int AddThroughBase() { Return Base.Value += 4; }
+}
+Static Function BaseBox VirtualReceiver(BaseBox value) { calls += 1; trace = trace * 10 + 1; Return value; }
+Static Function int Right() { trace = trace * 10 + 3; Return 4; }
+Static Function int Main()
+{
+    Box value = New Box();
+    value.Stored = 20;
+    int result = Receiver(value).Value += Change(value);
+    If (calls != 1 || trace != 1234 || result != 24 || value.Stored != 24) Return 1;
+    DerivedBox instance = New DerivedBox();
+    BaseBox virtualValue = instance;
+    virtualValue.Stored = 3;
+    trace = 0;
+    calls = 0;
+    result = VirtualReceiver(virtualValue).Value += Right();
+    If (calls != 1 || trace != 1234 || result != 10 || virtualValue.Stored != 110) Return 2;
+    trace = 0;
+    result = virtualValue.Value = 5;
+    If (trace != 4 || result != 5 || virtualValue.Stored != 105) Return 3;
+    virtualValue.Stored = 3;
+    trace = 0;
+    result = instance.AddThroughBase();
+    If (trace != 0 || result != 7 || virtualValue.Stored != 7) Return 4;
+    IO.Console.PrintLine("ok");
+    Return 0;
+}

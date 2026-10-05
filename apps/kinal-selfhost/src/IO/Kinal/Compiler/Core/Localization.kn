@@ -1,0 +1,169 @@
+Unit IO.Kinal.Compiler.Core.Localization;
+
+Get IO.File;
+Get IO.Text;
+Get IO.Kinal.Compiler.Project.PackageManifest;
+
+Class LocaleEntry
+{
+    Public string Key;
+    Public string Title;
+    Public string Detail;
+    Public string Text;
+    Public Safe Constructor(string key)
+    {
+        This.Key = key;
+        This.Title = "";
+        This.Detail = "";
+        This.Text = "";
+    }
+}
+
+Class DiagnosticTemplate
+{
+    Public string Code;
+    Public string Title;
+    Public string Detail;
+    Public string ChineseTitle;
+    Public string ChineseDetail;
+    Public Safe Constructor(string code, string title, string detail, string chineseTitle, string chineseDetail)
+    {
+        This.Code = code;
+        This.Title = title;
+        This.Detail = detail;
+        This.ChineseTitle = chineseTitle;
+        This.ChineseDetail = chineseDetail;
+    }
+}
+
+Class LocaleMap
+{
+    Public list Entries;
+    Public string Error;
+    Public Safe Constructor()
+    {
+        This.Entries = list.Create();
+        This.Error = "";
+    }
+
+    Public Safe Function string Find(string key, string field)
+    {
+        int index = This.Entries.Count() - 1;
+        While (index >= 0)
+        {
+            LocaleEntry entry = [LocaleEntry](This.Entries.Fetch(index));
+            If (entry.Key == key)
+            {
+                If (field == "title") Return entry.Title;
+                If (field == "detail") Return entry.Detail;
+                Return entry.Text;
+            }
+            index = index - 1;
+        }
+        Return "";
+    }
+}
+
+Safe Function LocaleMap ReadLocale(string path)
+{
+    LocaleMap locale = New LocaleMap();
+    If (IO.Text.IsEmpty(path)) Return locale;
+    If (!IO.File.Exists(path)) { locale.Error = "locale file does not exist: " + path; Return locale; }
+    string source = IO.File.ReadAllText(path);
+    If (source == null || IO.File.Size(path) != IO.Text.Length(source))
+    { locale.Error = "cannot read locale text: " + path; Return locale; }
+    PackageJsonReader reader = New PackageJsonReader(source);
+    If (!reader.Consume('{')) reader.Fail("locale must contain a JSON object");
+    bool closed = reader.Consume('}');
+    While (!closed && reader.Error == "" && !reader.AtEnd())
+    {
+        string key = reader.ReadString();
+        If (!reader.Consume(':')) { reader.Fail("expected ':' after locale key"); Break; }
+        If (!reader.Consume('{')) { reader.Fail("locale entry must contain a JSON object"); Break; }
+        LocaleEntry entry = New LocaleEntry(key);
+        bool entryClosed = reader.Consume('}');
+        While (!entryClosed && reader.Error == "" && !reader.AtEnd())
+        {
+            string field = reader.ReadString();
+            If (!reader.Consume(':')) { reader.Fail("expected ':' after locale field"); Break; }
+            If (field == "title") entry.Title = reader.ReadString();
+            ElseIf (field == "detail") entry.Detail = reader.ReadString();
+            ElseIf (field == "text") entry.Text = reader.ReadString();
+            Else reader.SkipValue();
+            If (reader.Consume('}')) entryClosed = true;
+            ElseIf (!reader.Consume(',')) { reader.Fail("expected ',' or '}' in locale entry"); Break; }
+        }
+        If (!entryClosed && reader.Error == "") reader.Fail("unterminated locale entry");
+        locale.Entries.Add(entry);
+        If (reader.Consume('}')) closed = true;
+        ElseIf (!reader.Consume(',')) { reader.Fail("expected ',' or '}' in locale map"); Break; }
+    }
+    If (!closed && reader.Error == "") reader.Fail("unterminated locale map");
+    reader.SkipWhitespace();
+    If (!reader.AtEnd() && reader.Error == "") reader.Fail("unexpected data after locale map");
+    If (reader.Error != "") locale.Error = "invalid locale file " + path + ": " + reader.Error;
+    Return locale;
+}
+
+Safe Function string JsonString(string value)
+{
+    string result = "\"";
+    char[] chars = value.ToChars();
+    char[] hex = "0123456789abcdef".ToChars();
+    int index = 0;
+    While (index < chars.Length())
+    {
+        char current = chars[index];
+        int number = [int]([byte](current));
+        If (current == '\\') result = result + "\\\\";
+        ElseIf (current == '"') result = result + "\\\"";
+        ElseIf (current == '\n') result = result + "\\n";
+        ElseIf (current == '\r') result = result + "\\r";
+        ElseIf (current == '\t') result = result + "\\t";
+        ElseIf (number < 32) result = result + "\\u00" + [string](hex[number / 16]) + [string](hex[number % 16]);
+        Else result = result + [string](current);
+        index = index + 1;
+    }
+    Return result + "\"";
+}
+
+Safe Function string CanonicalDetail(string title, string detail)
+{
+    If (title == "Argument Count") Return "Wrong number of arguments";
+    If (title == "Type Mismatch") Return "Type mismatch";
+    If (title == "Unknown Parameter") Return "Unknown named argument";
+    If (title == "Duplicate Named Argument") Return "Duplicate named argument";
+    If (title == "Unused Variable") Return "Variable is never used";
+    If (title == "Unreachable Code") Return "Unreachable code";
+    If (title == "Invalid Cast" && IO.Text.StartsWith(detail, "Cannot cast ") && IO.Text.Contains(detail, " to "))
+        Return "Cannot cast value to target type";
+    If (title == "Invalid Named Argument")
+    {
+        If (IO.Text.StartsWith(detail, "Named arguments are not supported for constructors"))
+            Return "Named arguments are not supported for constructors";
+        If (IO.Text.StartsWith(detail, "Positional argument cannot follow named argument"))
+            Return "Positional argument cannot follow named argument";
+        Return "Named arguments are not supported for this callable";
+    }
+    Return detail;
+}
+
+Safe Function DiagnosticTemplate FindTemplate(list templates, string title, string detail, bool warning)
+{
+    string canonical = CanonicalDetail(title, detail);
+    int index = 0;
+    DiagnosticTemplate titleMatch = null;
+    While (index < templates.Count())
+    {
+        DiagnosticTemplate item = [DiagnosticTemplate](templates.Fetch(index));
+        If (item.Title == title && IO.Text.StartsWith(item.Code, warning ? "W-" : "E-"))
+        {
+            If (CanonicalDetail(title, item.Detail) == canonical) Return item;
+            If (titleMatch == null) titleMatch = item;
+        }
+        index = index + 1;
+    }
+    // A title fallback may translate only the title. Its concrete detail must
+    // still match before an entry's detail can replace the diagnostic payload.
+    Return titleMatch;
+}
