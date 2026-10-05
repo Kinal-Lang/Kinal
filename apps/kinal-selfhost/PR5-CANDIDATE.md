@@ -6,8 +6,10 @@ Local branch: `codex/pr5-usable`. This is not merged into main or published.
 ## Supported use
 
 The candidate retains the hosted Native compiler, HIR-to-KNC backend, VM CLI,
-formatter, package CLI and shared-library metadata from the PR. It is suitable
-for targeted trials with ASCII Windows filesystem paths and process arguments.
+formatter, package CLI and shared-library metadata from the PR. Use the
+C-stage0-built **stage1** for targeted trials with ASCII Windows filesystem
+paths and process arguments. Stage2/stage3 are not recommended: their large
+symbol-summary and batch Native checks expose an unresolved memory defect.
 Use the matching KinalVM and adjacent toolchain/stdlib bundle, not an arbitrary
 older released VM. Standard-library/runtime policy stays in Kinal `.klib`.
 
@@ -36,6 +38,10 @@ Do not interpret the stage0-only extended-profile tests as selfhost support.
 ## Local evidence (Windows x64, LLVM 21.1.8)
 
 - Fresh C stage0 and stage1 built; stage1 compiled the matching KinalVM.
+- Stage1 manifest Native object compilation: 190/190 positive cases.
+- Stage1 manifest executable/runtime checks: 186/186 cases, including hosted
+  standard-library and native FFI fixtures. Negative diagnostics and other
+  host platforms are separate gates.
 - Formatter: 61 fixtures (including 41 compiler sources), 282 invocations,
   13 before/after lexer-stream comparisons and executable semantic checks.
 - Package CLI: 27 cases/40 commands, cross-compiler package consumption, and
@@ -52,13 +58,24 @@ Do not interpret the stage0-only extended-profile tests as selfhost support.
 
 ## Not a release gate
 
-Full PR acceptance is not claimed. Windows CRT argv is currently ANSI/system
+Full PR acceptance is not claimed. Stage1 builds stage2, and stage2 builds
+stage3. Stage2/stage3 executables have identical SHA-256
+`1db883f94f01fcbbc1538dec457a07204c2f525305cc49eb55f19791d39cfe8e`;
+project-AST and check summaries also match across stages. However, stage2's
+large `symbols` command repeatedly exits with `0xC0000005`. The bootstrap
+runner stops there and does not reach the IR comparison. Stage3's Native
+object audit passes 164/190 and its executable/runtime audit passes 155/186;
+the failures are compiler memory exceptions, not declared unsupported cases.
+The precise cause remains unresolved. Binary equality alone is not a passing
+bootstrap gate.
+
+Windows CRT argv is currently ANSI/system
 code-page text, while Kinal strings/literals are UTF-8. A direct stage0 probe
 with `雪` receives bytes `D1 A9` on CP936, not UTF-8 `E9 9B AA`. The Unicode CLI
 argument and diagnostic-path checks remain failing. This needs an end-to-end
 UTF-8 CLI/filesystem boundary repair, not a change to test expectations.
 
-Linux/macOS host execution and the full Native/stdlib/aggregate KNC regressions
-have not been run for this candidate. Existing uncommitted main-branch work is
-not incorporated. A successful bootstrap establishes stage reproducibility,
-not complete C-stage0 behavior parity or unrestricted project support.
+Linux/macOS host execution, full negative-diagnostic parity and the aggregate
+KNC regressions have not been run for this candidate. Existing uncommitted
+main-branch work is not incorporated. Passing stage1 hosted regressions does
+not establish complete C-stage0 behavior parity or unrestricted project support.

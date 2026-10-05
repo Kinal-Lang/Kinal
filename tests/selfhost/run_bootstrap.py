@@ -16,7 +16,7 @@ def require(condition: bool, message: str, process: subprocess.CompletedProcess[
     if condition:
         return
     if process is not None:
-        message += "\n" + (process.stdout or "") + (process.stderr or "")
+        message += f"\nexit={process.returncode}\n" + (process.stdout or "") + (process.stderr or "")
     raise SystemExit(message)
 
 
