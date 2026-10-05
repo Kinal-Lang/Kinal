@@ -450,9 +450,27 @@ static void fmt_process_gap(KnFmtState *st, size_t begin, size_t end)
         st->pending_blank_line = 1;
 }
 
+/* Whitespace is semantic when removing it would merge operators, introduce a
+ * comment, or turn a number/dot/number sequence into one floating literal. */
+static int fmt_boundary_needs_space(Token previous, Token current)
+{
+    if (!previous.length || !current.length) return 0;
+    char left = previous.start[previous.length - 1];
+    char right = current.start[0];
+    if (previous.type == TOK_NUMBER && current.type == TOK_DOT) return 1;
+    if (left == '/' && (right == '/' || right == '*')) return 1;
+    if (right == '=' && (left == '=' || left == '!' || left == '<' ||
+        left == '>' || left == '+' || left == '-' || left == '*' ||
+        left == '/' || left == '%')) return 1;
+    return left == right && (left == '+' || left == '-' || left == '<' ||
+        left == '>' || left == '&' || left == '|');
+}
+
 static int fmt_need_space_before(const KnFmtState *st, Token current)
 {
     if (!st->has_prev || st->line_start) return 0;
+
+    if (fmt_boundary_needs_space(st->prev, current)) return 1;
 
     TokenType prev = st->prev.type;
     TokenType curr = current.type;

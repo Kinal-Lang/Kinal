@@ -62,7 +62,7 @@ def check_metadata_artifacts(compiler: Path, stage0: Path, root: Path, out: Path
             invoke(consumer + "-loads-" + producer, [executable, library])
             records.append({"producer": producer, "consumer": consumer, "host_executed": True})
             print(f"[OK] {consumer} consumer loads {producer} shared metadata: all owner kinds, "
-                  "retention, defaults, callback arity and unload", flush=True)
+                  "retention, defaults, callback arity, repeated-load references and unload", flush=True)
     enum_checked = False
     if not reference_only:
         # This accepted selfhost extension is intentionally separate from the

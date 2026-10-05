@@ -200,6 +200,9 @@ Class CompileSession
         If (This.Profile.Runtime != "GC" && This.Profile.Runtime != "Alloc" && This.Profile.Runtime != "None")
             This.ReportProject("Unsupported project option",
                 "Build.Runtime=" + This.Profile.Runtime);
+        If (This.IsFreestanding() && This.Profile.Runtime != "None")
+            This.ReportProject("Unsupported project option",
+                "freestanding Alloc/GC requires a Kinal runtime package; currently only Runtime=None is supported");
         If (This.Profile.Panic != "Trap" &&
             !(This.IsFreestanding() && This.Profile.Panic == "Loop"))
             This.ReportProject("Unsupported project option",

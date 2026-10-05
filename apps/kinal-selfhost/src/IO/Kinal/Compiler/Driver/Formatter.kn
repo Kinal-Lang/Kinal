@@ -40,6 +40,7 @@ Class FormatState
     Public bool HasPrevious;
     Public bool PreviousCase;
     Public TokenKind Previous;
+    Public char PreviousEnd;
 
     Public Safe Constructor(string source)
     {
@@ -70,6 +71,7 @@ Class FormatState
         This.HasPrevious = false;
         This.PreviousCase = false;
         This.Previous = TokenKind.Eof;
+        This.PreviousEnd = '\0';
     }
 
     Public Safe Function void EmitIndent()
@@ -159,10 +161,24 @@ Safe Function bool BlockBrace(FormatState state, TokenKind kind)
     Return kind == TokenKind.LeftBrace && state.HasPrevious && !InitializerContext(state.Previous);
 }
 
-Safe Function bool NeedSpace(FormatState state, TokenKind kind)
+// Preserve lexer boundaries independently of presentation/style rules. A
+// space can distinguish two unary operators, comments and floating literals.
+Safe Function bool BoundaryNeedsSpace(TokenKind previous, char left, TokenKind kind, char right)
+{
+    If (previous == TokenKind.Number && kind == TokenKind.Dot) Return true;
+    If (left == '/' && (right == '/' || right == '*')) Return true;
+    If (right == '=' && (left == '=' || left == '!' || left == '<' ||
+        left == '>' || left == '+' || left == '-' || left == '*' ||
+        left == '/' || left == '%')) Return true;
+    Return left == right && (left == '+' || left == '-' || left == '<' ||
+        left == '>' || left == '&' || left == '|');
+}
+
+Safe Function bool NeedSpace(FormatState state, TokenKind kind, char first)
 {
     If (!state.HasPrevious || state.LineStart) Return false;
     TokenKind previous = state.Previous;
+    If (BoundaryNeedsSpace(previous, state.PreviousEnd, kind, first)) Return true;
     If (kind == TokenKind.RightParen || kind == TokenKind.RightBracket ||
         kind == TokenKind.Comma || kind == TokenKind.Semicolon || kind == TokenKind.Dot ||
         kind == TokenKind.Colon) Return false;
@@ -252,7 +268,8 @@ Safe Function void EmitToken(FormatState state, Token token, TokenKind next)
         state.EmitNewline();
     If (BlockBrace(state, kind) && !state.LineStart) state.EmitNewline();
     state.EmitBlank();
-    If (NeedSpace(state, kind)) state.EmitSpace();
+    char[] spelling = token.Text.ToChars();
+    If (NeedSpace(state, kind, spelling[0])) state.EmitSpace();
     state.EmitIndent();
     state.Line = state.Line + token.Text;
     state.LineStart = false;
@@ -280,6 +297,7 @@ Safe Function void EmitToken(FormatState state, Token token, TokenKind next)
     ElseIf (IsBinary(kind, state.HasPrevious, state.Previous)) state.ForceSpace = true;
     state.PreviousCase = kind == TokenKind.KwCase || kind == TokenKind.KwDefault;
     state.Previous = kind;
+    state.PreviousEnd = spelling[spelling.Length() - 1];
     state.HasPrevious = true;
 }
 

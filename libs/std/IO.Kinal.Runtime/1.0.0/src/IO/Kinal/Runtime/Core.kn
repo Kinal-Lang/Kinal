@@ -34,8 +34,50 @@ Trusted Function string ExecutablePath()
 
 Trusted Function int ProcessRun(string executable, string[] arguments)
 {
-    Return IO.Kinal.Runtime.Native.ProcessRun(executable, arguments,
-                                               arguments.Length());
+    If (IO.Target.OS == IO.Target.OS.Windows)
+    {
+        string commandLine = QuoteWindowsArgument(executable);
+        int index = 0;
+        While (index < arguments.Length())
+        {
+            commandLine = StringConcat(StringConcat(commandLine, " "),
+                QuoteWindowsArgument(arguments[index]));
+            index = index + 1;
+        }
+        Return IO.Kinal.Runtime.Native.ProcessRunCommandLine(executable, commandLine);
+    }
+    Else Return IO.Kinal.Runtime.Native.ProcessRun(executable, arguments,
+                                                  arguments.Length());
+}
+
+// Encode one Microsoft CRT argv element, including empty strings, quotes and
+// backslashes immediately before a quote/the closing delimiter. No shell
+// expansion is involved. The host leaf accepts these bytes unchanged.
+Trusted Function string QuoteWindowsArgument(string argument)
+{
+    If (argument == null) argument = "";
+    int length = [int](StringLength(argument));
+    char* source = [char*](argument);
+    char* encoded = AllocateText(length * 2 + 2);
+    If (encoded == null) Return "";
+    int output = 0;
+    encoded[output++] = '"';
+    int index = 0;
+    int slashes = 0;
+    While (index < length)
+    {
+        char current = source[index++];
+        If (current == '\\') { slashes = slashes + 1; Continue; }
+        int count = current == '"' ? slashes * 2 + 1 : slashes;
+        While (count > 0) { encoded[output++] = '\\'; count = count - 1; }
+        encoded[output++] = current;
+        slashes = 0;
+    }
+    slashes = slashes * 2;
+    While (slashes > 0) { encoded[output++] = '\\'; slashes = slashes - 1; }
+    encoded[output++] = '"';
+    encoded[output] = '\0';
+    Return [string](encoded);
 }
 
 [KncIntrinsic(1)]

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import json
 import shutil
 import subprocess
 import tempfile
@@ -48,6 +49,47 @@ int main(void) {
                             "-lm", "-ldl", "-lpthread", "-o", str(output)], check=True)
             process = subprocess.run([str(output)], capture_output=True, text=True, timeout=15)
             self.assertEqual(process.returncode, 0, process.stdout + process.stderr)
+
+
+class KinalProcessArgumentTests(unittest.TestCase):
+    def test_process_run_keeps_exact_argv(self) -> None:
+        configured = os.environ.get("KINAL_TEST_COMPILER")
+        if not configured or not Path(configured).is_file():
+            self.skipTest("set KINAL_TEST_COMPILER to test the Kinal package")
+        from infra.scripts.x.llvm import detect_llvm_dir, llvm_bin_dir
+        clang = llvm_bin_dir(detect_llvm_dir()) / ("clang.exe" if os.name == "nt" else "clang")
+        arguments = ["two words", "", 'quoted "value"', "trailing\\", '\\"',
+                     "\\\\", "tab\tvalue", "plain", "&|<>%!"]
+        expected = ",".join(json.dumps(value) for value in arguments)
+        with tempfile.TemporaryDirectory(prefix="kinal process arguments ") as directory:
+            root = Path(directory)
+            child_source = root / "probe.c"
+            child_source.write_text('''#include <stdio.h>
+#include <string.h>
+int main(int argc, char **argv) {
+    const char *expected[] = {''' + expected + '''};
+    if (argc != 10) return 80;
+    for (int i = 0; i < 9; i++) if (strcmp(argv[i + 1], expected[i])) return 81 + i;
+    puts("arguments-ok");
+    return 0;
+}
+''', encoding="utf-8")
+            child = root / ("argv probe.exe" if os.name == "nt" else "argv probe")
+            subprocess.run([str(clang), str(child_source), "-o", str(child)], check=True)
+            parent_source = root / "Main.kn"
+            parent_source.write_text('''Get IO.Kinal.Runtime;
+Trusted Static Function int Main(string[] args) {
+    string[] values = {''' + expected + '''};
+    Return IO.Kinal.Runtime.ProcessRun(args[0], values);
+}
+''', encoding="utf-8")
+            parent = root / ("parent program.exe" if os.name == "nt" else "parent program")
+            built = subprocess.run([configured, "build", "--no-module-discovery", str(parent_source),
+                                    "-o", str(parent)], cwd=ROOT, capture_output=True, timeout=180)
+            self.assertEqual(built.returncode, 0, built.stdout + built.stderr)
+            execution = subprocess.run([str(parent), str(child)], capture_output=True, timeout=30)
+            self.assertEqual(execution.returncode, 0, execution.stdout + execution.stderr)
+            self.assertEqual(execution.stdout.replace(b"\r\n", b"\n"), b"arguments-ok\n")
 
 
 if __name__ == "__main__":

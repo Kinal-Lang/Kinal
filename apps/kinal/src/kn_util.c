@@ -405,17 +405,20 @@ char *kn_read_stdin(size_t *out_size)
             avail = cap - len;
         }
 
-        size_t read = fread(buf + len, 1, avail, stdin);
-        len += read;
-        if (read < avail)
+        // Source input is bytes. CRT text mode on Windows otherwise silently
+        // replaces CRLF with LF before the formatter can preserve newlines.
+        KN_DWORD read = 0;
+        if (!ReadFile(GetStdHandle(KN_STDIN_HANDLE), buf + len, (KN_DWORD)avail, &read, 0))
         {
-            if (ferror(stdin))
-            {
-                kn_free(buf);
-                return 0;
-            }
-            break;
+#if defined(_WIN32) || defined(_WIN64)
+            if (GetLastError() == 109u) break; // ERROR_BROKEN_PIPE: redirected EOF.
+#endif
+            kn_free(buf);
+            return 0;
         }
+        len += read;
+        if (read == 0)
+            break;
     }
 
     buf[len] = 0;

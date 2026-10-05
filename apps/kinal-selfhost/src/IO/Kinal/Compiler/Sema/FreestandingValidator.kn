@@ -11,8 +11,9 @@ Get IO.Kinal.Compiler.Lex.TokenKind;
 
 // This gate checks the bound program, not public library names. Runtime-free
 // output must never acquire hidden heap/exception dependencies during lowering.
-// Core strings and primitive any values use compiler-emitted helpers. Heap
-// allocation, managed callables and runtime-only operations remain guarded.
+// Runtime implementations belong in Kinal packages, never LLVM IR strings in
+// the compiler. Only scalar operations, borrowed/static storage and intrinsics
+// can lower without a runtime package.
 Class FreestandingValidator
 {
     Public SemanticCompilation Semantics;
@@ -39,7 +40,7 @@ Class FreestandingValidator
         If (kind == [int](TypeKind.NamedType) &&
             !This.Semantics.IsStructType(type) && !This.Semantics.IsEnumType(type))
             This.Reject("managed reference type requires a runtime: " + type.QualifiedName(), origin);
-        If (kind == [int](TypeKind.ListType) ||
+        If (kind == [int](TypeKind.AnyType) || kind == [int](TypeKind.ListType) ||
             kind == [int](TypeKind.DictType) || kind == [int](TypeKind.SetType) ||
             kind == [int](TypeKind.PackageType))
             This.Reject("managed value requires a runtime: " + type.QualifiedName(), origin);
@@ -54,9 +55,9 @@ Class FreestandingValidator
         int source = value.Type.Kind;
         int destination = target.Kind;
         If (source == destination || source == [int](TypeKind.NullType)) Return;
-        If (source == [int](TypeKind.StringType) &&
-            destination != [int](TypeKind.PointerType) && destination != [int](TypeKind.AnyType))
-            This.Reject("parsing strings requires a runtime", value.Syntax);
+        If ((source == [int](TypeKind.StringType) && destination != [int](TypeKind.PointerType)) ||
+            (destination == [int](TypeKind.StringType) && source != [int](TypeKind.PointerType)))
+            This.Reject("string conversion requires a Kinal runtime package", value.Syntax);
         If (destination == [int](TypeKind.AnyType) &&
             (source == [int](TypeKind.ArrayType) || This.Semantics.IsStructType(value.Type)))
             This.Reject("boxing an aggregate requires allocation", value.Syntax);
@@ -80,12 +81,19 @@ Class FreestandingValidator
             If (kind == [int](HirExpressionKind.Binary))
             {
                 If (current.Left != null) This.CheckConversion(current.Left.Type, current.Right);
+                If (current.Operator != TokenKind.Assign &&
+                    ((current.Left != null && current.Left.Type.Kind == [int](TypeKind.StringType)) ||
+                     (current.Right != null && current.Right.Type.Kind == [int](TypeKind.StringType))))
+                    This.Reject("string operation requires a Kinal runtime package", current.Syntax);
             }
             If (kind == [int](HirExpressionKind.Conditional))
             {
                 This.CheckConversion(current.Type, current.Right);
                 This.CheckConversion(current.Type, current.Third);
             }
+            If (kind == [int](HirExpressionKind.Switch) && current.Left != null &&
+                current.Left.Type.Kind == [int](TypeKind.StringType))
+                This.Reject("string Switch requires a Kinal runtime package", current.Syntax);
             If (kind == [int](HirExpressionKind.Call))
             {
                 If (current.CallKind == [int](HirCallKind.RuntimeBuiltin))
@@ -97,34 +105,8 @@ Class FreestandingValidator
                         current.Target == "IO.Panic.Abort" ||
                         IO.Text.StartsWith(current.Target, "IO.Volatile.Read") ||
                         IO.Text.StartsWith(current.Target, "IO.Volatile.Write");
-                    bool coreString = current.Target == "Length" || current.Target == "Index" ||
-                        current.Target == "ToString" || current.Target == "TypeOf" ||
-                        current.Target == "IO.Type.string.Length" ||
-                        current.Target == "IO.Type.string.Equals" ||
-                        current.Target == "IO.Type.string.Concat" ||
-                        current.Target == "IO.Type.string";
-                    string anyName = This.Semantics.AttributeShortName(current.Target);
-                    bool anyReceiver = (current.Left != null &&
-                        current.Left.Type.Kind == [int](TypeKind.AnyType)) ||
-                        IO.Text.StartsWith(current.Target, "IO.Type.any.");
-                    bool coreAny = anyReceiver && (anyName == "IsNull" || anyName == "ToString" ||
-                        anyName == "Equals" || anyName == "Tag" || anyName == "TypeName" ||
-                        anyName == "IsNumber" || anyName == "IsPointer" || anyName == "IsInt" ||
-                        anyName == "IsFloat" || anyName == "IsString" || anyName == "IsBool" ||
-                        anyName == "IsChar" || anyName == "IsObject");
-                    If (coreAny)
-                    {
-                        // These operators inspect primitive tags/payloads. Their
-                        // implicit arguments must not introduce aggregate boxing.
-                        HirExpression argument = current.FirstArgument;
-                        While (argument != null)
-                        {
-                            This.CheckConversion(This.Semantics.Primitive("any"), argument);
-                            argument = argument.Next;
-                        }
-                    }
-                    If (!arrayAccess && !intrinsic && !coreString && !coreAny)
-                        This.Reject("operation requires a runtime: " + current.Target, current.Syntax);
+                    If (!arrayAccess && !intrinsic)
+                        This.Reject("operation requires a Kinal runtime package: " + current.Target, current.Syntax);
                 }
                 If (current.CallKind == [int](HirCallKind.DynamicFunction))
                     This.Reject("dynamic call requires a runtime", current.Syntax);
@@ -162,6 +144,10 @@ Class FreestandingValidator
             }
             If (current.Kind == [int](StatementKind.Return))
                 This.CheckConversion(This.Function.ReturnType, current.Expression);
+            If ((current.Kind == [int](StatementKind.Switch) ||
+                 current.Kind == [int](StatementKind.Foreach)) && current.Expression != null &&
+                current.Expression.Type.Kind == [int](TypeKind.StringType))
+                This.Reject("string iteration/comparison requires a Kinal runtime package", current.Expression.Syntax);
             This.CheckExpressions(current.Expression);
             This.CheckExpressions(current.SecondExpression);
             This.CheckExpressions(current.ThirdExpression);

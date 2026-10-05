@@ -1,6 +1,7 @@
 """Pure-Kinal formatter and diagnostic policy contract.
 
-Formatting is compared byte-for-byte with stage0 on valid lexical inputs.
+Formatting is compared byte-for-byte with stage0 on valid lexical inputs, and
+re-lexed independently of formatter parity on boundary-sensitive inputs.
 Malformed text is intentionally rejected rather than silently truncated. The
 selfhost's established diagnostic envelope/stdout channel is preserved; this
 checks effective language, locale, color and warning policies, not identical
@@ -34,6 +35,7 @@ def check_formatter(compiler: Path, stage0: Path, root: Path, out: Path) -> dict
         b"", b"//comment", b"\n\n\n", b"/*comment*/", b"\xef\xbb\xbf",
         b"Function void Main(){/*multi\nline*/Return;}\n",
         b"Function int Main(){int a=-1;int b=+a;int c=a*-b;Return a++ + --b;}\n",
+        b"Unsafe Static Function int Main(){int x=7;int a=- - x;int c=- - - x;int* p=&x;int** q=&p;int d=* * q;Return a==7 && c==-7 && d==7 && x==7 ? 0 : 1;}\n",
         b"Function void Main(){Switch(1){Case(1){Break;}Case(default){Return;}}}\n",
         b"Function void Main(){Try{Throw \"message\";}Catch(string text){Return;}}\n",
         b"Function string Main(){Return \"quote: \\\" slash: \\\\ line: \\n\";}\n",
@@ -55,6 +57,39 @@ def check_formatter(compiler: Path, stage0: Path, root: Path, out: Path) -> dict
         assert again.returncode == 0 and again.stdout == actual.stdout, (number, "not idempotent")
         checked = invoke(compiler, "--stdin", "--check", data=actual.stdout)
         assert checked.returncode == 0 and checked.stdout == b"" and checked.stderr == b""
+
+    # Use the compiler's lexer (kind + exact spelling), ignoring only locations.
+    # Stage0 parity and formatter idempotence can share the same semantic bug.
+    boundaries = [b"- - x", b"+ + x", b"- - - x", b"/ /", b"/ *", b"1 . 2",
+                  b"< <", b"> >", b"& &", b"| |", b"! =", b"+ =", b"- ="]
+    for number, original in enumerate(boundaries):
+        formatted = invoke(compiler, "--stdin", data=original)
+        assert formatted.returncode == 0
+        streams = []
+        for label, content in (("before", original), ("after", formatted.stdout)):
+            path = out / f"boundary-{number}-{label}.kn"
+            path.write_bytes(content)
+            token_path = path.with_suffix(".ktokens")
+            result = subprocess.run([str(compiler), "build", "--emit", "tokens", "--no-module-discovery",
+                                     str(path), "-o", str(token_path)], cwd=root, capture_output=True, timeout=60)
+            assert result.returncode == 0, (path, result.stdout, result.stderr)
+            fields = [line.split("\t") for line in token_path.read_text(encoding="utf-8").splitlines()]
+            streams.append([(parts[0], parts[3]) for parts in fields if len(parts) == 4])
+        assert streams[0] and streams[0] == streams[1], (original, formatted.stdout, streams)
+
+    # Executable behavior is an additional oracle for the original corruption.
+    executable_source = next(source for source in fixtures if b"int a=- - x" in source)
+    for role, tool in (("stage0", stage0), ("selfhost", compiler)):
+        formatted = invoke(tool, "--stdin", data=executable_source)
+        for label, content in (("before", executable_source), ("after", formatted.stdout)):
+            path = out / f"operators-{role}-{label}.kn"
+            path.write_bytes(content)
+            executable = path.with_suffix(".exe" if os.name == "nt" else "")
+            result = subprocess.run([str(tool), "build", "--no-module-discovery", str(path), "-o", str(executable)],
+                                    cwd=root, capture_output=True, timeout=180)
+            assert result.returncode == 0, (path, result.stdout, result.stderr)
+            result = subprocess.run([str(executable)], cwd=root, capture_output=True, timeout=30)
+            assert result.returncode == 0, (path, result.stdout, result.stderr)
 
     original = fixtures[0]
     expected = invoke(compiler, "--stdin", data=original).stdout
@@ -99,7 +134,8 @@ def check_formatter(compiler: Path, stage0: Path, root: Path, out: Path) -> dict
         assert result.returncode == 1 and result.stdout == b"" and result.stderr
     assert invoke(compiler, "--help").returncode == 0
     assert invoke(compiler).returncode == 1
-    return {"fixtures": len(fixtures), "compiler_source_files": len(corpus), "checks": checks}
+    return {"fixtures": len(fixtures), "compiler_source_files": len(corpus), "checks": checks,
+            "boundary_token_streams": len(boundaries), "executable_semantics": True}
 
 
 def check_diagnostics(compiler: Path, root: Path, out: Path) -> dict:

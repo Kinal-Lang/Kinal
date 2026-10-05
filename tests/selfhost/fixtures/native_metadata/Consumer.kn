@@ -6,6 +6,8 @@ Unsafe Static Function int Main(string[] arguments)
     If (arguments.Length() != 1) Return 1;
     byte* library = IO.System.LoadLibrary(arguments[0]);
     If (library == null) Return 2;
+    byte* second = IO.System.LoadLibrary(arguments[0]);
+    If (second == null || second != library) Return 17;
     dict add = IO.Meta.Find("Tests.MetadataExport.Add", "Mark");
     If (add == null) Return 3;
     IO.Type.Object.Function invoke = [Object.Function]([byte*](add.Fetch("owner_ptr")));
@@ -31,6 +33,9 @@ Unsafe Static Function int Main(string[] arguments)
         !IO.Meta.Has("Tests.MetadataExport.Choice", "Mark") ||
         !IO.Meta.Has("Tests.MetadataExport.IValue", "Mark") ||
         !IO.Meta.Has("Tests.MetadataExport.IValue.Read", "Mark")) Return 12;
+    If (!IO.System.CloseLibrary(second)) Return 18;
+    If (!IO.Meta.Has("Tests.MetadataExport.Add", "Mark")) Return 19;
+    If ([int](invoke(19, 23)) != 42) Return 20;
     If (!IO.System.CloseLibrary(library)) Return 13;
     If (IO.Meta.Has("Tests.MetadataExport.Add", "Mark")) Return 14;
     Return 0;

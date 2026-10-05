@@ -20,6 +20,37 @@ class FormatterKeywordTests(unittest.TestCase):
             raise unittest.SkipTest("build kinal or set KINAL_TEST_COMPILER")
         cls.compiler = cls.compiler.resolve()
 
+    def test_adjacent_operators_preserve_execution(self) -> None:
+        source = (b"Unsafe Static Function int Main(){int x=7;int a=- - x;"
+                  b"int c=- - - x;int* p=&x;int** q=&p;int d=* * q;"
+                  b"Return a==7 && c==-7 && d==7 && x==7 ? 0 : 1;}\n")
+        formatted = subprocess.run([str(self.compiler), "fmt", "--stdin"], input=source,
+                                   cwd=ROOT, capture_output=True, timeout=60)
+        self.assertEqual(formatted.returncode, 0, formatted.stderr)
+        self.assertIn(b"- -", formatted.stdout)
+        with tempfile.TemporaryDirectory(prefix="kinal-fmt-operators-") as directory:
+            for label, content in (("original", source), ("formatted", formatted.stdout)):
+                path = Path(directory) / (label + ".kn")
+                output = Path(directory) / (label + (".exe" if os.name == "nt" else ""))
+                path.write_bytes(content)
+                built = subprocess.run([str(self.compiler), "build", str(path), "--no-module-discovery",
+                                        "-o", str(output)], cwd=ROOT, capture_output=True, timeout=120)
+                self.assertEqual(built.returncode, 0, built.stdout + built.stderr)
+                execution = subprocess.run([str(output)], cwd=ROOT, capture_output=True, timeout=30)
+                self.assertEqual(execution.returncode, 0, execution.stdout + execution.stderr)
+
+    def test_operator_and_number_boundaries(self) -> None:
+        for original, required in ((b"- -", b"- -"), (b"+ +", b"+ +"),
+                                   (b"/ /", b"/ /"), (b"/ *", b"/ *"),
+                                   (b"1 . 2", b"1 .2"), (b"< <", b"< <"),
+                                   (b"> >", b"> >"), (b"& &", b"& &"),
+                                   (b"| |", b"| |"), (b"! =", b"! =")):
+            with self.subTest(original=original):
+                formatted = subprocess.run([str(self.compiler), "fmt", "--stdin"], input=original,
+                                           cwd=ROOT, capture_output=True, timeout=60)
+                self.assertEqual(formatted.returncode, 0, formatted.stderr)
+                self.assertIn(required, formatted.stdout)
+
     def test_alias_foreach_in_preserve_program(self) -> None:
         source = (b"Unit Tests.FormatKeywords;\n"
                   b"Get IO.Console; Alias Print By IO.Console.PrintLine;\n"

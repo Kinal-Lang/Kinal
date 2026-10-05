@@ -72,6 +72,8 @@ def main() -> int:
     parser.add_argument("--bootstrap-backend", choices=["host", "self"], default="self")
     parser.add_argument("--metric-backend", choices=["host", "self"], default="self")
     parser.add_argument("--clean", action="store_true")
+    parser.add_argument("--out-dir", type=Path,
+                        help="stage bundle/output directory (default: out/selfhost)")
     args = parser.parse_args()
 
     require(args.bootstrap_backend == "self", "host callbacks are not accepted as selfhosting")
@@ -79,7 +81,7 @@ def main() -> int:
     require(args.max_stage >= 3, "genuine bootstrap validation requires stage2 and stage3")
 
     root = Path(__file__).resolve().parents[2]
-    out = root / "out" / "selfhost"
+    out = args.out_dir.resolve() if args.out_dir is not None else root / "out" / "selfhost"
     if args.clean:
         for stage in range(2, args.max_stage + 1):
             directory = out / f"stage{stage}"
@@ -145,7 +147,8 @@ def main() -> int:
     report = {
         "format": "kinal-selfhost-bootstrap-v1",
         "completion": completion,
-        "stages": {str(stage): str(path.relative_to(root)) for stage, path in stages.items()},
+        "stages": {str(stage): str(path.relative_to(root)) if path.is_relative_to(root) else str(path)
+                   for stage, path in stages.items()},
         "compiler_sha256": {str(stage): digest(path) for stage, path in stages.items()},
         "equivalence": comparisons,
         "ir_sha256": ir_hashes,

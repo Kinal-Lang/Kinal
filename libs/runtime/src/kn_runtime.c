@@ -153,6 +153,7 @@ struct KnMetaModuleReg
 {
     void *handle;
     const KnMetaExportModule *module;
+    uint64_t load_count;
     KnMetaModuleReg *next;
 };
 
@@ -625,24 +626,28 @@ int __kn_sys_exec(const char *command_line)
     return (int)exit_code;
 }
 
-int kn_native_process_run(const char *executable,
-                          const char *const *arguments,
-                          int argument_count)
+/* Windows argument serialization belongs to the Kinal runtime. This leaf
+ * starts one process with an already encoded command line; it never invokes
+ * a shell or splits/quotes user arguments. */
+int kn_native_process_run_command_line(const char *executable, const char *command_line)
 {
-    char **argv;
-    int result;
-    if (!executable || !executable[0] || argument_count < 0)
-        return -1;
-    argv = (char **)malloc(sizeof(char *) * (size_t)(argument_count + 2));
-    if (!argv)
-        return -1;
-    argv[0] = (char *)executable;
-    for (int i = 0; i < argument_count; i++)
-        argv[i + 1] = (char *)(arguments ? arguments[i] : 0);
-    argv[argument_count + 1] = 0;
-    result = (int)_spawnv(_P_WAIT, executable, (const char *const *)argv);
-    free(argv);
-    return result;
+    if (!executable || !executable[0] || !command_line) return -1;
+    size_t length = (size_t)rt_strlen(command_line);
+    char *mutable_line = (char *)malloc(length + 1);
+    if (!mutable_line) return -1;
+    rt_memcpy(mutable_line, command_line, length + 1);
+    KN_STARTUPINFOA startup = {0};
+    KN_PROCESS_INFORMATION process = {0};
+    startup.cb = (uint32_t)sizeof(startup);
+    KN_BOOL started = CreateProcessA(executable, mutable_line, 0, 0, 0, 0, 0, 0, &startup, &process);
+    free(mutable_line);
+    if (!started) return -1;
+    WaitForSingleObject(process.hProcess, KN_INFINITE);
+    KN_DWORD result = 1;
+    if (!GetExitCodeProcess(process.hProcess, &result)) result = 1;
+    CloseHandle(process.hThread);
+    CloseHandle(process.hProcess);
+    return (int)result;
 }
 
 void *__kn_async_process_spawn(const char *command_line)
@@ -2330,6 +2335,11 @@ static void rt_meta_unregister_handle(void *handle)
     {
         if (cur->handle == handle)
         {
+            if (handle && cur->load_count > 1)
+            {
+                cur->load_count--;
+                return;
+            }
             KnMetaModuleReg *next = cur->next;
             if (prev)
                 prev->next = next;
@@ -2354,6 +2364,7 @@ static void rt_meta_register_module(void *handle, const KnMetaExportModule *modu
         if (cur->handle == handle)
         {
             cur->module = module;
+            if (handle) cur->load_count++;
             return;
         }
         if (cur->module == module)
@@ -2367,6 +2378,7 @@ static void rt_meta_register_module(void *handle, const KnMetaExportModule *modu
     if (!cur) return;
     cur->handle = handle;
     cur->module = module;
+    cur->load_count = 1;
     cur->next = g_meta_modules;
     g_meta_modules = cur;
 }
@@ -4141,6 +4153,17 @@ int __kn_file_replace_text(const char *path, const char *from, const char *to)
 int kn_native_file_exists(const char *path)
 {
     return __kn_sys_file_exists(path);
+}
+
+int kn_native_paths_same_file(const char *left, const char *right)
+{
+#if defined(_WIN32) || defined(_WIN64)
+    return kn_paths_same_file(left, right);
+#else
+    struct stat a, b;
+    if (!left || !right || stat(left, &a) != 0 || stat(right, &b) != 0) return 0;
+    return a.st_dev == b.st_dev && a.st_ino == b.st_ino;
+#endif
 }
 
 int kn_native_file_create(const char *path)

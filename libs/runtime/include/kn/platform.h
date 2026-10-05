@@ -32,6 +32,7 @@
 #define KN_GENERIC_WRITE 0x40000000u
 #define KN_FILE_SHARE_READ 0x00000001u
 #define KN_FILE_SHARE_WRITE 0x00000002u
+#define KN_FILE_SHARE_DELETE 0x00000004u
 #define KN_CREATE_ALWAYS 2u
 #define KN_OPEN_ALWAYS 4u
 #define KN_OPEN_EXISTING 3u
@@ -74,6 +75,20 @@ typedef struct
     uint32_t dwLowDateTime;
     uint32_t dwHighDateTime;
 } KN_FILETIME;
+
+typedef struct
+{
+    uint32_t dwFileAttributes;
+    KN_FILETIME ftCreationTime;
+    KN_FILETIME ftLastAccessTime;
+    KN_FILETIME ftLastWriteTime;
+    uint32_t dwVolumeSerialNumber;
+    uint32_t nFileSizeHigh;
+    uint32_t nFileSizeLow;
+    uint32_t nNumberOfLinks;
+    uint32_t nFileIndexHigh;
+    uint32_t nFileIndexLow;
+} KN_BY_HANDLE_FILE_INFORMATION;
 
 typedef struct
 {
@@ -154,6 +169,7 @@ KN_DLLIMPORT KN_HANDLE KN_STDCALL CreateFileA(const char *lpFileName, KN_DWORD d
 KN_DLLIMPORT KN_BOOL KN_STDCALL ReadFile(KN_HANDLE hFile, void *lpBuffer, KN_DWORD nNumberOfBytesToRead, KN_DWORD *lpNumberOfBytesRead, void *lpOverlapped);
 KN_DLLIMPORT KN_BOOL KN_STDCALL CloseHandle(KN_HANDLE hObject);
 KN_DLLIMPORT KN_BOOL KN_STDCALL GetFileSizeEx(KN_HANDLE hFile, int64_t *lpFileSize);
+KN_DLLIMPORT KN_BOOL KN_STDCALL GetFileInformationByHandle(KN_HANDLE hFile, KN_BY_HANDLE_FILE_INFORMATION *lpFileInformation);
 KN_DLLIMPORT const char *KN_STDCALL GetCommandLineA(void);
 KN_DLLIMPORT KN_BOOL KN_STDCALL CreateProcessA(const char *lpApplicationName, char *lpCommandLine, KN_SECURITY_ATTRIBUTES *lpProcessAttributes, KN_SECURITY_ATTRIBUTES *lpThreadAttributes, KN_BOOL bInheritHandles, KN_DWORD dwCreationFlags, void *lpEnvironment, const char *lpCurrentDirectory, KN_STARTUPINFOA *lpStartupInfo, KN_PROCESS_INFORMATION *lpProcessInformation);
 KN_DLLIMPORT KN_HANDLE KN_STDCALL CreateThread(KN_SECURITY_ATTRIBUTES *lpThreadAttributes, size_t dwStackSize, KN_THREAD_START_ROUTINE lpStartAddress, void *lpParameter, KN_DWORD dwCreationFlags, KN_DWORD *lpThreadId);
@@ -185,3 +201,26 @@ KN_DLLIMPORT int KN_STDCALL MultiByteToWideChar(KN_DWORD CodePage, KN_DWORD dwFl
 KN_DLLIMPORT int KN_STDCALL WideCharToMultiByte(KN_DWORD CodePage, KN_DWORD dwFlags, const uint16_t *lpWideCharStr, int cchWideChar, char *lpMultiByteStr, int cbMultiByte, const char *lpDefaultChar, KN_BOOL *lpUsedDefaultChar);
 KN_DLLIMPORT int KN_STDCALL GetWindowTextLengthW(KN_HANDLE hWnd);
 KN_DLLIMPORT int KN_STDCALL GetWindowTextW(KN_HANDLE hWnd, uint16_t *lpString, int nMaxCount);
+
+/* Raw filesystem identity, not lexical/case-folded path equality. This also
+ * recognizes hard links, symlinks and Windows short/case aliases. Missing
+ * files are distinct; an identity-query failure is reported separately. */
+static inline int kn_paths_same_file(const char *left, const char *right)
+{
+    KN_BY_HANDLE_FILE_INFORMATION a, b;
+    KN_DWORD share = KN_FILE_SHARE_READ | KN_FILE_SHARE_WRITE | KN_FILE_SHARE_DELETE;
+    KN_HANDLE first = CreateFileA(left, 0, share, 0, KN_OPEN_EXISTING, KN_FILE_ATTRIBUTE_NORMAL, 0);
+    if (!first || first == KN_INVALID_HANDLE_VALUE) return 0;
+    KN_HANDLE second = CreateFileA(right, 0, share, 0, KN_OPEN_EXISTING, KN_FILE_ATTRIBUTE_NORMAL, 0);
+    if (!second || second == KN_INVALID_HANDLE_VALUE)
+    {
+        CloseHandle(first);
+        return 0;
+    }
+    int ok = GetFileInformationByHandle(first, &a) && GetFileInformationByHandle(second, &b);
+    CloseHandle(second);
+    CloseHandle(first);
+    if (!ok) return -1;
+    return a.dwVolumeSerialNumber == b.dwVolumeSerialNumber &&
+           a.nFileIndexHigh == b.nFileIndexHigh && a.nFileIndexLow == b.nFileIndexLow;
+}

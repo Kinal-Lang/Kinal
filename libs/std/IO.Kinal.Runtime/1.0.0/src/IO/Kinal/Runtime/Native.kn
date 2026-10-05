@@ -33,6 +33,10 @@ Extern Unsafe Function byte* FileReadAllBytes(string path,
 Extern Unsafe Function i32 FileWriteAllBytes(string path, byte* data,
                                               u64 length) By C;
 
+// 1: same existing file, 0: distinct/missing, -1: identity query failed.
+[LinkName("kn_native_paths_same_file")]
+Extern Unsafe Function i32 PathsSameFile(string left, string right) By C;
+
 [LinkName("kn_native_spin_lock")]
 Extern Unsafe Function void SpinLock(i32* lock) By C;
 
@@ -67,6 +71,9 @@ Extern Unsafe Function void InitializeProcessArguments(i32 argc, char** argv) By
 Extern Unsafe Function int ProcessRun(string executable,
                                       string[] arguments,
                                       int argumentCount) By C;
+
+[LinkName("kn_native_process_run_command_line")]
+Extern Unsafe Function int ProcessRunCommandLine(string executable, string commandLine) By C;
 
 [LinkName("kn_native_system_get_symbol")]
 Extern Unsafe Function byte* ResolveSymbol(byte* library, string name) By C;

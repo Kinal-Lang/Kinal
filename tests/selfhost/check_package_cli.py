@@ -73,6 +73,45 @@ def check_package_cli(compiler: Path, stage0: Path, root: Path, out: Path,
         assert proc.returncode == 0, (label, proc.returncode, proc.stdout, proc.stderr)
         return proc
 
+    # Reject input/output filesystem aliases before truncating or deleting any
+    # file. Name comparison alone misses case, hard-link and symlink aliases.
+    alias_package = out / "alias inputs"
+    (alias_package / "src").mkdir(parents=True, exist_ok=True)
+    alias_manifest = alias_package / "package.knpkg.json"
+    alias_source = alias_package / "src/Payload.kn"
+    alias_manifest.write_text('{"kind":"package","name":"Tests.Alias","version":"1.0.0",'
+                              '"source_root":"src"}\n', encoding="utf-8")
+    alias_source.write_text("Unit Tests.Alias; Function int Value(){Return 42;}\n", encoding="utf-8")
+    alias_checks = 0
+    for label, producer in tools:
+        targets = [("manifest", alias_manifest), ("payload", alias_source)]
+        if os.name == "nt":
+            targets += [("case-manifest", alias_manifest.with_name("PACKAGE.KNPKG.JSON")),
+                        ("case-payload", alias_source.with_name("pAYLOAD.KN"))]
+        for kind, original in (("hard-manifest", alias_manifest), ("hard-payload", alias_source),
+                               ("symlink-manifest", alias_manifest), ("symlink-payload", alias_source)):
+            link = out / f"{label}-{kind}.klib"
+            link.unlink(missing_ok=True)
+            try:
+                if kind.startswith("hard"):
+                    os.link(original, link)
+                else:
+                    link.symlink_to(original)
+            except OSError:
+                if kind.startswith("hard"):
+                    raise  # Local test outputs must support the hard-link case.
+                continue  # Windows symlink privilege is environment-dependent.
+            targets.append((kind, link))
+        for kind, target in targets:
+            before = (alias_manifest.read_bytes(), alias_source.read_bytes())
+            command = [str(producer), "pkg", "build", "--manifest", str(alias_manifest), "-o", str(target)]
+            proc = subprocess.run(command, cwd=out, text=True, capture_output=True, timeout=180)
+            assert proc.returncode != 0, (label, kind, proc.stdout, proc.stderr)
+            assert "archive output must differ" in proc.stdout + proc.stderr, (label, kind, proc.stdout, proc.stderr)
+            assert before == (alias_manifest.read_bytes(), alias_source.read_bytes()), (label, kind)
+            assert target.is_file(), (label, kind, "input alias was deleted")
+            alias_checks += 1
+
     package = out / "package source"
     package.mkdir(exist_ok=True)
     payload = {
@@ -213,6 +252,7 @@ def check_package_cli(compiler: Path, stage0: Path, root: Path, out: Path,
         cases += 1
     result = {"name": "selfhost_package_cli", "ok": True, "cases": cases, "commands": sequence,
               "stage0_reference": stage0_reference, "consumer_compilation": compile_consumers,
+              "input_alias_rejections": alias_checks,
               "payload_files": len(payload), "payload_bytes": total,
               "stage0_empty_payload_packing": "supported",
               "selfhost_archive_sha256": hashlib.sha256(expected).hexdigest()}

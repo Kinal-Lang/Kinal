@@ -18,7 +18,6 @@ Get IO.Kinal.Compiler.Sema.SemanticCompilation;
 Get IO.Kinal.Compiler.Hir.HirModel;
 Get IO.Kinal.Compiler.Backend.LlvmBridge;
 Get IO.Kinal.Compiler.Backend.LlvmModel;
-Get IO.Kinal.Compiler.Backend.FreestandingRuntime;
 
 Class NativeBackend
 {
@@ -35,7 +34,6 @@ Class NativeBackend
     Private byte* GlobalInitializer;
     Private byte* GlobalInitializerType;
     Private bool InitializingGlobals;
-    Private bool HasFreestandingErrors;
 
     Public Trusted Constructor(SemanticCompilation semantics)
     {
@@ -52,7 +50,6 @@ Class NativeBackend
         This.GlobalInitializer = null;
         This.GlobalInitializerType = null;
         This.InitializingGlobals = false;
-        This.HasFreestandingErrors = false;
     }
 
     Public Safe Function string Unique(string prefix)
@@ -1151,208 +1148,6 @@ Class NativeBackend
         LlvmHandles values = New LlvmHandles(); values.Add(a); values.Add(b); values.Add(c); values.Add(d); Return values;
     }
 
-    Public Trusted Function void PrepareFreestandingRuntime()
-    {
-        If (!This.Semantics.Session.IsFreestanding()) Return;
-        string ir = IO.Kinal.Compiler.Backend.FreestandingRuntime.CoreIR();
-        If (This.Semantics.Session.IsFreestandingCore())
-            ir = ir + IO.Kinal.Compiler.Backend.FreestandingRuntime.ScratchIR();
-        If (!This.Module.LinkIr(ir))
-        {
-            This.Fail("freestanding helper import failed: " + IO.Kinal.Compiler.Backend.LlvmBridge.LastError());
-            Return;
-        }
-        // Helpers are private to an object, so separately compiled libraries
-        // never export or collide on compiler-generated core routines.
-        string[] helpers = {"__kn_strlen", "__kn_str_eq", "__kn_fs_memory_zero",
-            "__kn_fs_scratch_acquire", "__kn_str_concat", "__kn_i64_to_string",
-            "__kn_char_to_string", "__kn_ptr_to_string", "__kn_f64_to_string",
-            "__kn_fs_any_to_string"};
-        int index = 0;
-        While (index < helpers.Length())
-        {
-            byte* helper = This.Module.GetFunction(helpers[index]);
-            If (helper != null) This.Module.SetPrivateLinkage(helper);
-            index = index + 1;
-        }
-    }
-
-    Public Trusted Function byte* CallFreestandingRuntime(string target,
-                                                            LlvmHandles arguments,
-                                                            string resultName)
-    {
-        byte* pointer = This.Module.PointerType(This.Module.IntType(8));
-        byte* resultType = pointer;
-        string name = "";
-        If (target == "IO.Kinal.Runtime.GarbageCollector.Allocate")
-            { name = "__kn_gc_alloc"; resultType = pointer; }
-        ElseIf (target == "IO.Kinal.Runtime.GarbageCollector.Collect")
-            { name = "__kn_gc_collect"; resultType = This.Module.VoidType(); }
-        ElseIf (target == "IO.Kinal.Runtime.GarbageCollector.PushFrame")
-            { name = "__kn_gc_push_frame"; resultType = pointer; }
-        ElseIf (target == "IO.Kinal.Runtime.GarbageCollector.PopFrame")
-            { name = "__kn_gc_pop_frame"; resultType = This.Module.VoidType(); }
-        ElseIf (target == "IO.Kinal.Runtime.GarbageCollector.AddRoot")
-            { name = "__kn_gc_add_root"; resultType = This.Module.VoidType(); }
-        ElseIf (target == "IO.Kinal.Runtime.GarbageCollector.AddGlobalRoot")
-            { name = "__kn_gc_add_global_root"; resultType = This.Module.VoidType(); }
-        ElseIf (target == "IO.Kinal.Runtime.GarbageCollector.Initialize")
-            { name = "__kn_gc_init"; resultType = This.Module.VoidType(); }
-        ElseIf (target == "IO.Kinal.Runtime.StringLength")
-            { name = "__kn_strlen"; resultType = This.Module.IntType(64); }
-        ElseIf (target == "IO.Kinal.Runtime.StringEqual")
-            { name = "__kn_str_eq"; resultType = This.Module.IntType(1); }
-        ElseIf (target == "IO.Kinal.Runtime.StringConcat")
-            { name = "__kn_str_concat"; resultType = pointer; }
-        ElseIf (target == "IO.Kinal.Runtime.MemoryZero")
-            { name = "__kn_fs_memory_zero"; resultType = This.Module.VoidType(); }
-        ElseIf (target == "IO.Kinal.Runtime.Int64ToString")
-            { name = "__kn_i64_to_string"; resultType = pointer; }
-        ElseIf (target == "IO.Kinal.Runtime.CharToString")
-            { name = "__kn_char_to_string"; resultType = pointer; }
-        ElseIf (target == "IO.Kinal.Runtime.PointerToString")
-            { name = "__kn_ptr_to_string"; resultType = pointer; }
-        ElseIf (target == "IO.Kinal.Runtime.Float64ToString")
-            { name = "__kn_f64_to_string"; resultType = pointer; }
-        ElseIf (target == "IO.Kinal.Runtime.AnyToString")
-            { name = "__kn_any_to_string"; resultType = pointer; }
-        ElseIf (target == "IO.Kinal.Runtime.StringToChars")
-            { name = "__kn_string_to_chars"; resultType = pointer; }
-        ElseIf (target == "IO.Kinal.Runtime.Exception.SetCurrent")
-            { name = "__kn_exc_set"; resultType = This.Module.VoidType(); }
-        ElseIf (target == "IO.Kinal.Runtime.Exception.Current")
-            { name = "__kn_exc_get"; resultType = pointer; }
-        ElseIf (target == "IO.Kinal.Runtime.Exception.Has")
-            { name = "__kn_exc_has"; resultType = This.Module.IntType(1); }
-        ElseIf (target == "IO.Kinal.Runtime.Exception.Last")
-            { name = "__kn_exc_last"; resultType = pointer; }
-        ElseIf (target == "IO.Kinal.Runtime.Exception.Clear")
-            { name = "__kn_exc_clear"; resultType = This.Module.VoidType(); }
-        ElseIf (target == "IO.Kinal.Runtime.Exception.Push")
-            { name = "__kn_exc_push"; resultType = This.Module.VoidType(); }
-        ElseIf (target == "IO.Kinal.Runtime.Exception.Trace")
-            { name = "__kn_exc_trace"; resultType = pointer; }
-        ElseIf (target == "IO.Kinal.Runtime.Exception.Reset")
-            { name = "__kn_exc_clear"; resultType = This.Module.VoidType(); }
-        ElseIf (target == "IO.Kinal.Runtime.Async.TaskSpawn")
-            { name = "__kn_async_task_spawn"; resultType = pointer; }
-        ElseIf (target == "IO.Kinal.Runtime.Async.TaskRun")
-            { name = "__kn_async_task_run"; resultType = This.Module.VoidType(); }
-        ElseIf (target == "IO.Kinal.Runtime.Async.TaskComplete")
-            { name = "__kn_async_task_complete"; resultType = This.Module.VoidType(); }
-        ElseIf (target == "IO.Kinal.Runtime.Async.TaskFail")
-            { name = "__kn_async_task_fail"; resultType = This.Module.VoidType(); }
-        ElseIf (target == "IO.Kinal.Runtime.Async.TaskSleep")
-            { name = "__kn_async_task_sleep"; resultType = pointer; }
-        ElseIf (target == "IO.Kinal.Runtime.Async.TaskYield")
-            { name = "__kn_async_task_yield"; resultType = pointer; }
-        ElseIf (target == "IO.Kinal.Runtime.Collections.DictionaryNew")
-            { name = "__kn_dict_new"; resultType = pointer; }
-        ElseIf (target == "IO.Kinal.Runtime.Collections.DictionarySet")
-            { name = "__kn_dict_set"; resultType = This.Module.VoidType(); }
-        ElseIf (target == "IO.Kinal.Runtime.Collections.DictionaryGet")
-            { name = "__kn_dict_get"; resultType = This.Module.VoidType(); }
-        ElseIf (target == "IO.Kinal.Runtime.Collections.DictionaryContains")
-            { name = "__kn_dict_contains"; resultType = This.Module.IntType(1); }
-        ElseIf (target == "IO.Kinal.Runtime.Collections.DictionaryCount")
-            { name = "__kn_dict_count"; resultType = This.Module.IntType(64); }
-        ElseIf (target == "IO.Kinal.Runtime.Collections.DictionaryRemove")
-            { name = "__kn_dict_remove"; resultType = This.Module.IntType(1); }
-        ElseIf (target == "IO.Kinal.Runtime.Collections.DictionaryIsEmpty")
-            { name = "__kn_dict_is_empty"; resultType = This.Module.IntType(1); }
-        ElseIf (target == "IO.Kinal.Runtime.Collections.DictionaryKeys")
-            { name = "__kn_dict_keys"; resultType = pointer; }
-        ElseIf (target == "IO.Kinal.Runtime.Collections.DictionaryValues")
-            { name = "__kn_dict_values"; resultType = pointer; }
-        ElseIf (target == "IO.Kinal.Runtime.Collections.ListNew")
-            { name = "__kn_list_new"; resultType = pointer; }
-        ElseIf (target == "IO.Kinal.Runtime.Collections.ListAdd")
-            { name = "__kn_list_add"; resultType = This.Module.VoidType(); }
-        ElseIf (target == "IO.Kinal.Runtime.Collections.ListGet")
-            { name = "__kn_list_get"; resultType = This.Module.VoidType(); }
-        ElseIf (target == "IO.Kinal.Runtime.Collections.ListSet")
-            { name = "__kn_list_set"; resultType = This.Module.VoidType(); }
-        ElseIf (target == "IO.Kinal.Runtime.Collections.ListInsert")
-            { name = "__kn_list_insert"; resultType = This.Module.VoidType(); }
-        ElseIf (target == "IO.Kinal.Runtime.Collections.ListCount")
-            { name = "__kn_list_count"; resultType = This.Module.IntType(64); }
-        ElseIf (target == "IO.Kinal.Runtime.Collections.ListClear")
-            { name = "__kn_list_clear"; resultType = This.Module.VoidType(); }
-        ElseIf (target == "IO.Kinal.Runtime.Collections.ListRemoveAt")
-            { name = "__kn_list_remove_at"; resultType = This.Module.VoidType(); }
-        ElseIf (target == "IO.Kinal.Runtime.Collections.ListContains")
-            { name = "__kn_list_contains"; resultType = This.Module.IntType(1); }
-        ElseIf (target == "IO.Kinal.Runtime.Collections.ListPop")
-            { name = "__kn_list_pop"; resultType = This.Module.VoidType(); }
-        ElseIf (target == "IO.Kinal.Runtime.Collections.ListIndexOf")
-            { name = "__kn_list_index_of"; resultType = This.Module.IntType(64); }
-        ElseIf (target == "IO.Kinal.Runtime.Collections.ListIsEmpty")
-            { name = "__kn_list_is_empty"; resultType = This.Module.IntType(1); }
-        ElseIf (target == "IO.Kinal.Runtime.Collections.SetNew")
-            { name = "__kn_set_new"; resultType = pointer; }
-        ElseIf (target == "IO.Kinal.Runtime.Collections.SetAdd")
-            { name = "__kn_set_add"; resultType = This.Module.VoidType(); }
-        ElseIf (target == "IO.Kinal.Runtime.Collections.SetContains")
-            { name = "__kn_set_contains"; resultType = This.Module.IntType(1); }
-        ElseIf (target == "IO.Kinal.Runtime.Collections.SetCount")
-            { name = "__kn_set_count"; resultType = This.Module.IntType(64); }
-        ElseIf (target == "IO.Kinal.Runtime.Collections.SetClear")
-            { name = "__kn_set_clear"; resultType = This.Module.VoidType(); }
-        ElseIf (target == "IO.Kinal.Runtime.Collections.SetIsEmpty")
-            { name = "__kn_set_is_empty"; resultType = This.Module.IntType(1); }
-        ElseIf (target == "IO.Kinal.Runtime.Collections.SetValues")
-            { name = "__kn_set_values"; resultType = pointer; }
-        ElseIf (target == "IO.Kinal.Runtime.Collections.SetRemove")
-            { name = "__kn_set_remove"; resultType = This.Module.IntType(1); }
-        If (IO.Text.StartsWith(target, "IO.Kinal.Runtime.Error"))
-        {
-            If (!This.HasFreestandingErrors)
-            {
-                If (!This.Module.LinkIr(IO.Kinal.Compiler.Backend.FreestandingRuntime.ErrorIR()))
-                {
-                    This.Fail("freestanding error helper import failed: " + IO.Kinal.Compiler.Backend.LlvmBridge.LastError());
-                    Return null;
-                }
-                This.HasFreestandingErrors = true;
-                string[] helpers = {"new", "title", "message", "trace", "inner", "set_trace", "link_inner"};
-                int helperIndex = 0;
-                While (helperIndex < helpers.Length())
-                {
-                    This.Module.SetPrivateLinkage(This.Module.GetFunction("__kn_fs_error_" + helpers[helperIndex]));
-                    helperIndex = helperIndex + 1;
-                }
-            }
-            If (target == "IO.Kinal.Runtime.ErrorNew") { name = "__kn_fs_error_new"; resultType = pointer; }
-            If (target == "IO.Kinal.Runtime.ErrorTitle") { name = "__kn_fs_error_title"; resultType = pointer; }
-            If (target == "IO.Kinal.Runtime.ErrorMessage") { name = "__kn_fs_error_message"; resultType = pointer; }
-            If (target == "IO.Kinal.Runtime.ErrorTrace") { name = "__kn_fs_error_trace"; resultType = pointer; }
-            If (target == "IO.Kinal.Runtime.ErrorInner") { name = "__kn_fs_error_inner"; resultType = pointer; }
-            If (target == "IO.Kinal.Runtime.ErrorSetTrace") { name = "__kn_fs_error_set_trace"; resultType = This.Module.VoidType(); }
-            If (target == "IO.Kinal.Runtime.ErrorLinkInner") { name = "__kn_fs_error_link_inner"; resultType = This.Module.VoidType(); }
-        }
-        If (target == "IO.Kinal.Runtime.AnyToString" && This.Semantics.Session.IsFreestandingCore())
-        {
-            byte* value = arguments.Fetch(0);
-            arguments = This.Types2(This.Module.ExtractValue(value, 0, This.Unique("any_tag")),
-                This.Module.ExtractValue(value, 1, This.Unique("any_payload")));
-            name = "__kn_fs_any_to_string";
-        }
-        If (IO.Text.IsEmpty(name))
-        {
-            This.Fail("freestanding runtime operation is unavailable: " + target);
-            Return null;
-        }
-        LlvmHandles parameters = This.Types0();
-        int index = 0;
-        While (index < arguments.Count())
-        {
-            parameters.Add(This.Module.ValueType(arguments.Fetch(index)));
-            index = index + 1;
-        }
-        byte* type = This.Module.FunctionType(resultType, parameters, false);
-        byte* function = This.Module.AddFunction(name, type);
-        Return This.Module.Call(type, function, arguments, resultName);
-    }
 
     Public Trusted Function byte* CallKinalRuntime(string target,
                                                     int parameterCount,
@@ -1360,7 +1155,10 @@ Class NativeBackend
                                                     string resultName)
     {
         If (This.Semantics.Session.IsFreestanding())
-            Return This.CallFreestandingRuntime(target, arguments, resultName);
+        {
+            This.Fail("runtime operation requires a Kinal freestanding package: " + target);
+            Return null;
+        }
         LlvmFunctionBinding implementation = This.FindFunctionByTarget(
             target, parameterCount);
         If (implementation == null)
@@ -7147,8 +6945,6 @@ Class NativeBackend
             This.Fail("LLVM target configuration failed: " + IO.Kinal.Compiler.Backend.LlvmBridge.LastError());
             Return false;
         }
-        This.PrepareFreestandingRuntime();
-        If (This.Failed()) Return false;
         This.PrepareTypes();
         This.DeclareFunctions();
         This.DeclareGlobals();

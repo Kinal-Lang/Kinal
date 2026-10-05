@@ -166,8 +166,8 @@ Class NativeLinker
         arguments.Add("-Wno-override-module");
         arguments.Add(mode == "build-asm" ? "-S" : "-c");
         If (extension == "s" || extension == "asm") { arguments.Add("-x"); arguments.Add("assembler"); }
-        If (This.Profile.ArtifactKind == "shared" ||
-            (This.Profile.ArtifactKind == "static" && This.Session.IsFreestanding())) arguments.Add("-fPIC");
+        If (This.Target.OS != 1 && (This.Profile.ArtifactKind == "shared" ||
+            (This.Profile.ArtifactKind == "static" && This.Session.IsFreestanding()))) arguments.Add("-fPIC");
         If (extension == "ll" && This.Profile.LTO != "off" && mode != "build-asm")
             arguments.Add(This.Profile.LTO == "thin" ? "-flto=thin" : "-flto");
         arguments.Add(input);

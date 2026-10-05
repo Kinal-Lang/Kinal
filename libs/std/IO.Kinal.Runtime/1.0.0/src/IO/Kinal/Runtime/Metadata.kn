@@ -64,6 +64,7 @@ Class ModuleRegistration
 {
     Public byte* Handle;
     Public ExportModule* Module;
+    Public u64 LoadCount;
     Public CallableRegistration Callables;
     Public ModuleRegistration Next;
 }
@@ -91,6 +92,7 @@ Trusted Function void Register(byte* handle, byte* descriptor)
         If (current.Handle == handle)
         {
             current.Module = module;
+            If (handle != null) current.LoadCount = current.LoadCount + [u64](1);
             Return;
         }
         If (current.Module == module) Return;
@@ -100,6 +102,7 @@ Trusted Function void Register(byte* handle, byte* descriptor)
     ModuleRegistration registration = New ModuleRegistration();
     registration.Handle = handle;
     registration.Module = module;
+    registration.LoadCount = [u64](1);
     // Main is always oldest, even when first queried after a library load.
     If (handle == null && last != null) last.Next = registration;
     Else
@@ -133,6 +136,13 @@ Trusted Function void Unregister(byte* handle)
         ModuleRegistration next = current.Next;
         If (current.Handle == handle)
         {
+            // Native loaders retain one reference per successful load. The
+            // module and callbacks stay live until the final successful close.
+            If (current.LoadCount > [u64](1))
+            {
+                current.LoadCount = current.LoadCount - [u64](1);
+                Return;
+            }
             // Existing reflection dictionaries may outlive the library. Their
             // callable objects must never jump into unmapped library code.
             CallableRegistration callable = current.Callables;

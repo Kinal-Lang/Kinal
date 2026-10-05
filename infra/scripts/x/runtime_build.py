@@ -226,6 +226,7 @@ EXPORTS
   UnmapViewOfFile
   CloseHandle
   GetFileSizeEx
+  GetFileInformationByHandle
   GetCommandLineA
   CreateProcessA
   WaitForSingleObject

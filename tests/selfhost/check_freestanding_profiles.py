@@ -1,7 +1,8 @@
-"""Stage0 differential profile ABI and lazy-global execution contract.
+"""Stage0 profile ABI and selfhost package-boundary rejection contract.
 
-Custom hooks below are test doubles, not a bundled freestanding runtime. Only
-host objects execute. Bare x64/ARM64 artifacts are checked by IR/object symbols.
+Custom C hooks below test stage0 compatibility only, not a bundled runtime.
+Selfhost rejects the extended profiles until they have Kinal package-backed
+implementations. The supported runtime-free subset is check_freestanding.py.
 """
 from __future__ import annotations
 
@@ -45,6 +46,15 @@ def check_profiles(compiler: Path, stage0: Path, root: Path, out: Path,
                 command = [str(binary), "build", "--project", str(project)]
                 ir_path.unlink(missing_ok=True)
                 obj.unlink(missing_ok=True)
+                if role == "selfhost":
+                    expected = "Freestanding Core" if runtime == "None" else "requires a Kinal runtime package"
+                    invoke(command + ["--emit", "ir", "-o", str(ir_path)], root, error=expected)
+                    assert not ir_path.exists()
+                    records.append({"compiler": role, "runtime": runtime, "target": target,
+                                    "status": "rejected: Kinal package implementation pending",
+                                    "host_executed": False})
+                    print(f"[OK] selfhost Freestanding/{runtime} {target}: explicit package-boundary rejection", flush=True)
+                    continue
                 invoke(command + ["--emit", "ir", "-o", str(ir_path)], root)
                 ir = ir_path.read_text(encoding="utf-8")
                 assert not re.search(r"^define .*@main\(", ir, re.M)
@@ -56,7 +66,9 @@ def check_profiles(compiler: Path, stage0: Path, root: Path, out: Path,
                 output = invoke([str(nm), "--undefined-only", "--format=posix", str(obj)], root)
                 undefined = {line.split()[0].lstrip("_") for line in output.splitlines() if line.strip()}
                 # Normalize object-format leading underscores, not ABI prefixes.
-                allowed = {"fltused"} if os_id == 1 else set()
+                # Large frames may need the target's stack-probe ABI, supplied
+                # by the normal compiler support library, not a managed runtime.
+                allowed = {"fltused", "chkstk", "chkstk_ms", "chkstk_arm64ec"} if os_id == 1 else set()
                 if runtime == "None":
                     assert undefined <= allowed, (stem, sorted(undefined))
                 else:
@@ -77,6 +89,8 @@ def check_profiles(compiler: Path, stage0: Path, root: Path, out: Path,
                     link = [str(clang)]
                     if host_os == 2:
                         link.append("-no-pie")
+                    if runtime != "None":
+                        link += ["-Wno-override-module", str(fixtures / "any-runtime-adapter.ll")]
                     link.extend([str(harness), str(obj), "-o", str(exe)])
                     invoke(link, root)
                     invoke([str(exe)], root)
@@ -98,10 +112,16 @@ def check_profiles(compiler: Path, stage0: Path, root: Path, out: Path,
         exe = out / (role + "-any-mixed" + suffix)
         obj.unlink(missing_ok=True)
         exe.unlink(missing_ok=True)
+        if role == "selfhost":
+            invoke([str(binary), "build", "--project", str(project), "--emit", "obj", "-o", str(obj)],
+                   root, error="Freestanding Core")
+            assert not obj.exists()
+            continue
         invoke([str(binary), "build", "--project", str(project), "--emit", "obj", "-o", str(obj)], root)
         output = invoke([str(nm), "--undefined-only", "--format=posix", str(obj)], root)
         undefined = {line.split()[0].lstrip("_") for line in output.splitlines() if line.strip()}
-        assert undefined <= ({"fltused"} if host_os == 1 else set()), sorted(undefined)
+        assert undefined <= ({"fltused", "chkstk", "chkstk_ms", "chkstk_arm64ec"}
+                             if host_os == 1 else set()), sorted(undefined)
         link = [str(clang)] + (["-no-pie"] if host_os == 2 else [])
         invoke(link + [str(fixtures / "none-consumer.c"), str(obj), "-o", str(exe)], root)
         invoke([str(exe)], root)

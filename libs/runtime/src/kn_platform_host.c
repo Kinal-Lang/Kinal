@@ -402,6 +402,22 @@ KN_BOOL KN_STDCALL GetFileSizeEx(KN_HANDLE hFile, int64_t *lpFileSize)
     return 1;
 }
 
+KN_BOOL KN_STDCALL GetFileInformationByHandle(KN_HANDLE hFile, KN_BY_HANDLE_FILE_INFORMATION *info)
+{
+    KnHostHandle *h = kn_host_as_handle(hFile);
+    struct stat st;
+    if (!h || h->kind != KN_HOST_HANDLE_FD || !info || fstat(h->u.fd, &st) != 0)
+        return 0;
+    memset(info, 0, sizeof(*info));
+    info->dwVolumeSerialNumber = (uint32_t)st.st_dev;
+    info->nFileIndexHigh = (uint32_t)((uint64_t)st.st_ino >> 32);
+    info->nFileIndexLow = (uint32_t)st.st_ino;
+    info->nFileSizeHigh = (uint32_t)((uint64_t)st.st_size >> 32);
+    info->nFileSizeLow = (uint32_t)st.st_size;
+    info->nNumberOfLinks = (uint32_t)st.st_nlink;
+    return 1;
+}
+
 const char *KN_STDCALL GetCommandLineA(void)
 {
     kn_host_cache_cmdline();

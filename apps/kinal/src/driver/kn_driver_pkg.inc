@@ -1011,6 +1011,26 @@ static int klib_pack_from_manifest_impl(const char *manifest_path, const char *o
         return -1;
     }
 
+    /* Check all input identities before opening the archive with truncation.
+     * A different spelling (or hard link) must not destroy package sources. */
+    if (kn_paths_same_file(manifest_full, out_path) != 0)
+    {
+        kn_free(manifest_text);
+        pkg_fail("archive output must differ from its package manifest", out_path);
+        return -1;
+    }
+    for (int i = 0; i < file_count; i++)
+    {
+        char full_path[KN_MAX_PATH];
+        if (!path_join(full_path, sizeof(full_path), manifest_dir, files[i]) ||
+            kn_paths_same_file(full_path, out_path) != 0)
+        {
+            kn_free(manifest_text);
+            pkg_fail("archive output must differ from its payload files", out_path);
+            return -1;
+        }
+    }
+
     if (!get_exe_path(compiler_path, sizeof(compiler_path)))
         compiler_path[0] = 0;
 
