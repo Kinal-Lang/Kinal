@@ -1,6 +1,7 @@
 Unit Tests.Selfhost.GlobalLiterals;
 
 Get IO.Console;
+Get IO.GC;
 
 Object.Function globalFunction = Function int()
 {
@@ -10,8 +11,28 @@ Object.Block globalBlock = Block< / IO.Console.PrintLine("block");
 Object.Class globalClass = globalBlock;
 char* globalPointer = null;
 
+// Literal values must exist before following copies and calls run. Calling
+// startupFunction during initialization also reenters the guarded startup.
+int startupCalls = 0;
+Object.Function startupFunction = Function int()
+{
+    startupCalls = startupCalls + 1;
+    IO.GC.Collect();
+    Return 41;
+};
+Object.Function startupFunctionCopy = startupFunction;
+int startupValue = startupFunctionCopy();
+Object.Block startupBlock = Block< / startupCalls = startupCalls + 10; / >;
+Object.Block startupBlockCopy = startupBlock;
+
 Static Function int Main()
 {
+    If (startupValue != 41 || startupCalls != 1) Return 1;
+    IO.GC.Collect();
+    startupBlockCopy.Run();
+    If (startupCalls != 11) Return 2;
+    int repeatedValue = startupFunctionCopy();
+    If (repeatedValue != 41 || startupCalls != 12) Return 3;
     IO.Console.PrintLine(globalFunction());
     If (globalPointer == null) IO.Console.PrintLine("null");
     globalBlock.Run();

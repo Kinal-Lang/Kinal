@@ -44,6 +44,10 @@ def copy_stage_support(source: Path, target: Path) -> None:
         candidate = source / directory
         if candidate.is_dir():
             shutil.copytree(candidate, target / directory, dirs_exist_ok=True)
+    for name in ("VERSION", "kinalvm", "kinalvm.exe"):
+        candidate = source / name
+        if candidate.is_file():
+            shutil.copy2(candidate, target / name)
     for pattern in ("*.dll", "*.so", "*.dylib"):
         for candidate in source.glob(pattern):
             shutil.copy2(candidate, target / candidate.name)

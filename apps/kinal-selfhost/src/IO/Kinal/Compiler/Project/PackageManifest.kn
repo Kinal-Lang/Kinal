@@ -14,6 +14,11 @@ Class PackageManifestConfig
     Public string Kind;
     Public string Name;
     Public string Version;
+    Public string Summary;
+    Public string Url;
+    Public string Entry;
+    Public list Modules;
+    Public list Dependencies;
     Public string SourceRoot;
     Public string KlibPath;
     Public list SourceFiles;
@@ -26,6 +31,11 @@ Class PackageManifestConfig
         This.Kind = "";
         This.Name = "";
         This.Version = "";
+        This.Summary = "";
+        This.Url = "";
+        This.Entry = "";
+        This.Modules = list.Create();
+        This.Dependencies = list.Create();
         This.SourceRoot = "";
         This.KlibPath = "";
         This.SourceFiles = list.Create();
@@ -417,10 +427,13 @@ Safe Function PackageManifestConfig ReadPackageManifest(string path)
                     index = index + 1;
                 }
             }
-            ElseIf (key == "summary" || key == "url" || key == "entry" || key == "out")
-                reader.ReadString();
-            ElseIf (key == "modules" || key == "dependencies" || key == "package_roots")
-                reader.ReadStringList();
+            ElseIf (key == "summary") manifest.Summary = reader.ReadString();
+            ElseIf (key == "url") manifest.Url = reader.ReadString();
+            ElseIf (key == "entry") manifest.Entry = reader.ReadString();
+            ElseIf (key == "modules") manifest.Modules = reader.ReadStringList();
+            ElseIf (key == "dependencies") manifest.Dependencies = reader.ReadStringList();
+            ElseIf (key == "out") reader.ReadString();
+            ElseIf (key == "package_roots") reader.ReadStringList();
             Else reader.SkipValue();
             If (!IO.Text.IsEmpty(reader.Error)) Break;
             If (reader.Consume('}'))
@@ -450,5 +463,7 @@ Safe Function PackageManifestConfig ReadPackageManifest(string path)
             manifest.SourceFiles.Count() == 0 &&
             IO.Text.IsEmpty(manifest.KlibPath))
         manifest.Error = "package has no source_root, source_files, or klib";
+    If (IO.Text.IsEmpty(manifest.Entry) && manifest.SourceFiles.Count() > 0)
+        manifest.Entry = [string](manifest.SourceFiles.Fetch(0));
     Return manifest;
 }

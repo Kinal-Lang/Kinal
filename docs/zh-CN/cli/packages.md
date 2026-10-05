@@ -5,7 +5,7 @@ Kinal 包使用 `package.knpkg.json` 描述（兼容旧文件名 `package.knpkg`
 
 ## 包管理命令
 
-C stage0 CLI 提供：
+C stage0 和纯 Kinal 自举 CLI 均提供：
 
 ```sh
 kinal pkg build --manifest ./mylib -o ./mylib.klib
@@ -19,8 +19,17 @@ kinal pkg unpack ./mylib.klib -o ./recovered
 与 `-o` 二选一。`pkg info` 显示归档文件、生成它的编译器、
 条目数及条目总字节数，不提供“已编译导出符号表”。
 
-自举编译器已能在工程编译时使用这些包；自举版 CLI 尚未实现
-`pkg build/info/unpack` 命令。
+两种编译器都生成现有版本 1 的 `KNKLIB1` 归档，可互相读取、解包和使用。
+归档保留原始清单字节和清单目录下的全部载荷，包括空文件及二进制/原生资源。
+排除包清单、已有 `.klib` 文件以及 `.git`、`.kinal-cache` 子树。
+`source_root` 和 `source_files` 控制使用包时的源码发现，不限制归档资源。
+构建最多包含 256 个载荷文件；自举版目前将单个归档限制为 2 GiB。
+
+不指定 `-o` 时，构建在当前目录生成 `<name>-<version>.klib`，
+无版本时生成 `<name>.klib`。解包默认使用归档文件名第一个点之前的部分作为目录，
+与 stage0 一致。布局模式在缺少版本时使用 `0.0.0`，并保留摘要、URL、入口、
+模块和依赖元数据。自举版使用 Kinal 进行确定性的归档序列化与解包，
+仅依赖底层文件 I/O，不调用 C 编译器。
 
 ## 包清单
 
@@ -103,8 +112,7 @@ Project Example
 `AutoDiscovery = false` 限制工程本地源码发现及普通依赖；
 显式导入的官方标准库仍可解析。
 
-C CLI 的单文件构建还支持 `--pkg-root <dir>`。
-自举版目前通过 `kinal.knproj` 配置额外包根目录。
+两种 CLI 的单文件构建均支持 `--pkg-root <dir>`。
 
 ## 归档内容与原生库
 

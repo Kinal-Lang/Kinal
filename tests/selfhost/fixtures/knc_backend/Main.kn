@@ -1,0 +1,91 @@
+Unit Tests.Selfhost.KncBackendDriver;
+
+Get IO.Console;
+Get IO.Text;
+Get IO.Kinal.Compiler.Core.CompileSession;
+Get IO.Kinal.Compiler.Core.Diagnostics;
+Get IO.Kinal.Compiler.Project.PackageResolver;
+Get IO.Kinal.Compiler.Project.DependencyResolver;
+Get IO.Kinal.Compiler.Sema.SemanticCompilation;
+Get IO.Kinal.Compiler.Backend.KncBackend;
+
+// Deliberately omit Driver and NativeBackend: test the real parser, dependency
+// resolver, bound HIR and KNC lowering without importing the LLVM backend.
+Trusted Static Function int Main(string[] args)
+{
+    If (args.Length() < 4)
+    {
+        IO.Console.PrintLine("usage: knc-backend-driver <project> <output.knc> <stdpkg-root> <cache-root> [--listing path] [--no-superloop] [--repeat output]");
+        Return 2;
+    }
+    string listingPath = "";
+    string repeatPath = "";
+    bool noSuperloop = false;
+    int option = 4;
+    While (option < args.Length())
+    {
+        string flag = args[option];
+        If (flag == "--no-superloop") noSuperloop = true;
+        ElseIf ((flag == "--listing" || flag == "--repeat") && option + 1 < args.Length())
+        {
+            option++;
+            If (flag == "--listing") listingPath = args[option];
+            Else repeatPath = args[option];
+        }
+        Else
+        {
+            IO.Console.PrintLine("unknown or incomplete harness option: " + flag);
+            Return 2;
+        }
+        option++;
+    }
+    CompileSession session = New CompileSession();
+    session.LoadProject(args[0], "test");
+    If (!session.HasErrors()) session.Profile.Backend = "VM";
+    If (!session.HasErrors()) session.ParseProject();
+    If (session.HasErrors())
+    {
+        IO.Kinal.Compiler.Core.Diagnostics.PrintAll(session.Diagnostics);
+        Return 1;
+    }
+    PackageSourceCatalog catalog = IO.Kinal.Compiler.Project.PackageResolver.ResolveProjectPackages(
+        session.Project, session.Profile, args[2], args[3]);
+    If (!IO.Text.IsEmpty(catalog.Error))
+    {
+        IO.Console.PrintLine("package resolution failed: " + catalog.Error);
+        Return 1;
+    }
+    int index = 0;
+    While (index < catalog.RuntimeSources.Count())
+    {
+        session.ParseFile([string](catalog.RuntimeSources.Fetch(index)));
+        index = index + 1;
+    }
+    DependencyResolver resolver = New DependencyResolver(session, catalog);
+    If (!session.HasErrors()) resolver.Resolve();
+    SemanticCompilation semantics = New SemanticCompilation(session);
+    If (!session.HasErrors()) semantics.Analyze();
+    If (session.HasErrors())
+    {
+        IO.Kinal.Compiler.Core.Diagnostics.PrintAll(session.Diagnostics);
+        Return 1;
+    }
+    KncBackend backend = New KncBackend(semantics);
+    backend.EnableSuperloop = !noSuperloop;
+    If (!backend.Emit(args[1]))
+    {
+        IO.Console.PrintLine(backend.Error);
+        Return 1;
+    }
+    If (!IO.Text.IsEmpty(listingPath) && !backend.EmitListing(listingPath))
+    {
+        IO.Console.PrintLine(backend.Error);
+        Return 1;
+    }
+    If (!IO.Text.IsEmpty(repeatPath) && !backend.Emit(repeatPath))
+    {
+        IO.Console.PrintLine(backend.Error);
+        Return 1;
+    }
+    Return 0;
+}

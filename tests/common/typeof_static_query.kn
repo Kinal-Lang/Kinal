@@ -1,0 +1,35 @@
+Unit Tests.TypeOfStaticQuery;
+Get IO.Console;
+
+int Effects = 0;
+Static Function int Next() { Effects = Effects + 1; Return 7; }
+string GlobalType = Next().TypeOf();
+string[] GlobalTypes = {Next().TypeOf(), true.TypeOf()};
+
+Class Value
+{
+    Public Property int Data
+    {
+        Get { Effects = Effects + 1; Return 4; }
+    }
+}
+
+Trusted Static Function int Main()
+{
+    Value value = New Value();
+    Value[] values = {value};
+    Value* address = &value;
+    int[2] fixedValues = {1, 2};
+    If (Effects != 0 || GlobalType != "int") Return 1;
+    If (Next().TypeOf() != "int" || Effects != 0) Return 2;
+    If (value.Data.TypeOf() != "int" || Effects != 0) Return 3;
+    If (value.TypeOf() != "Tests.TypeOfStaticQuery.Value") Return 4;
+    If (values.TypeOf() != "Tests.TypeOfStaticQuery.Value[]") Return 5;
+    If (address.TypeOf() != "Tests.TypeOfStaticQuery.Value*") Return 6;
+    If (fixedValues.TypeOf() != "int[2]") Return 7;
+    If (([f32](1.0)).TypeOf() != "f32") Return 8;
+    If (true.TypeOf() != "bool") Return 9;
+    If (GlobalTypes[0] != "int" || GlobalTypes[1] != "bool" || Effects != 0) Return 10;
+    IO.Console.PrintLine("ok");
+    Return 0;
+}

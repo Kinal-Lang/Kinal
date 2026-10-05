@@ -40,7 +40,7 @@ from .context import (
 )
 from .llvm import llvm_lib_dir
 from .zig import detect_zig_path, ensure_zig_available
-from .util import copy_tree, download_file, extract_zip_safely, run, write_text
+from .util import copy_tree, download_file, extract_zip_safely, run
 from .vm_metadata import generate_kinalvm_build_info
 
 
@@ -801,7 +801,8 @@ else
 fi
 exec "$HERE/kinal.bin" "$@"
 """
-    write_text(compiler, launcher)
+    # This payload is a POSIX shell script even when generated on Windows.
+    compiler.write_text(launcher, encoding="utf-8", newline="\n")
     compiler.chmod(0o755)
 
 

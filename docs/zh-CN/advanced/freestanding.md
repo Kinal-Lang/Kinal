@@ -22,7 +22,7 @@ Kinal 支持无操作系统（freestanding）环境下的开发，适用于嵌�
 启用裸机模式，等同于 `--env freestanding`：
 
 ```bash
-kinal --freestanding main.kn -o firmware.elf
+kinal build --freestanding main.kn -o firmware.elf
 ```
 
 效果：
@@ -43,15 +43,20 @@ kinal --freestanding main.kn -o firmware.elf
 
 | 值 | 说明 |
 |----|------|
-| `alloc` | 启用堆分配（需要实现 `malloc`/`free` 或使用自定义分配器，默认） |
-| `none` | 完全禁用堆分配，不可使用引用类型和集合 |
-| `gc` | 启用垃圾回收运行时（适合桌面场景） |
+| `alloc` | 需要目标提供分配、字符串以及栈帧/根登记钩子 |
+| `none` | 裸机模式的默认值：不进行堆分配，不支持托管对象和动态集合 |
+| `gc` | Hosted 模式的默认值；裸机模式需要目标提供 GC/运行时钩子 |
 
-嵌入式场景通常使用 `--runtime none`：
+裸机模式默认使用 `none`，也可以显式指定：
 
 ```bash
-kinal --freestanding --runtime none main.kn -o firmware.elf
+kinal build --freestanding --runtime none main.kn -o firmware.elf
 ```
+
+Alloc 和 GC 配置不会附带裸机分配器或收集器。`__kn_*` ABI 见
+`libs/runtime/include/kn/freestanding.h`；字符串、集合、异常及异步操作
+需要相应的钩子。Alloc 同样会调用栈帧/根登记钩子；不执行垃圾回收的
+自定义运行时可以将这些钩子实现为空操作。
 
 ### `--panic <策略>`
 
@@ -63,7 +68,7 @@ kinal --freestanding --runtime none main.kn -o firmware.elf
 | `loop` | 无限循环（不可恢复，确定性行为） |
 
 ```bash
-kinal --freestanding --panic trap main.kn -o firmware.elf
+kinal build --freestanding --panic trap main.kn -o firmware.elf
 ```
 
 ---
@@ -74,22 +79,20 @@ kinal --freestanding --panic trap main.kn -o firmware.elf
 
 | 别名 | 等效三元组 | 说明 |
 |------|-----------|------|
-| `bare64` | `x86_64-unknown-none` | x86_64 裸机 |
-| `bare-arm64` | `aarch64-unknown-none` | ARM64 裸机 |
+| `bare64` | `x86_64-unknown-none-elf` | x86_64 裸机 |
+| `bare-arm64` | `aarch64-unknown-none-elf` | ARM64 裸机 |
 
-或使用完整 LLVM 三元组：
+当前编译器支持 X86 和 AArch64 目标后端，不支持 Cortex-M/Thumb 或
+RISC-V。也可以使用受支持的完整 LLVM 三元组，例如：
 
 ```bash
-# ARM Cortex-M4
-kinal --target thumbv7em-unknown-none-eabihf \
+kinal build --target aarch64-unknown-none-elf \
       --freestanding --runtime none \
-      main.kn -o firmware.elf
-
-# RISC-V 32位
-kinal --target riscv32i-unknown-none-elf \
-      --freestanding --runtime none \
-      main.kn -o firmware.elf
+      main.kn --emit obj -o firmware.o
 ```
+
+成功生成或链接目标文件不等于已经能在某块开发板上启动。应用仍需提供
+匹配的内存布局、启动协议、已初始化的栈及平台启动代码。
 
 ---
 
@@ -98,7 +101,7 @@ kinal --target riscv32i-unknown-none-elf \
 嵌入式目标通常需要自定义链接脚本来定义内存布局：
 
 ```bash
-kinal --target bare-arm64 \
+kinal build --target bare-arm64 \
       --freestanding --runtime none \
       --link-script linker.ld \
       --no-crt \
@@ -108,7 +111,7 @@ kinal --target bare-arm64 \
 示例链接脚本 `linker.ld`：
 
 ```ld
-ENTRY(_start)
+ENTRY(__kn_entry)
 
 MEMORY
 {
@@ -128,9 +131,10 @@ SECTIONS
 
 ## 裸机入口点
 
-在裸机环境中，程序入口通常不是 `Main()`，而是自定义的汇编或 Extern 函数。
-
-在 Kinal 中可以使用 FFI 与自定义入口对接：
+Kinal 默认入口为 `KMain`；`--entry KernelMain` 可选择其他无参数或单指针
+参数的函数。编译器导出 `__kn_entry` 包装函数，在初始化全局变量后调用
+所选入口。引导程序或平台启动代码必须先满足目标 ABI 的要求。
+下面的示例需要使用 `--entry KernelMain`：
 
 ```kinal
 Unit Kernel.Boot;
@@ -188,45 +192,38 @@ Unsafe Function int ReadReg(usize addr)
 
 ---
 
-## 完整示例：极简裸机程序
+## 完整示例：极简裸机核心
+
+此示例仅使用静态存储和 volatile 操作，不假定特定开发板的 GPIO 地址
+或启动协议。
 
 ```kinal
 Unit Bare.Main;
+Get IO.Volatile;
 
-// 假设已定义外部 GPIO 寄存器地址
-Const usize GPIO_ODR = 0x40020014;
+u64 Counter = 0;
 
-Extern Function void delay(int ms) By C;
-
-Unsafe Function int bare_main()
+Trusted Static Function void KMain()
 {
     While (true)
     {
-        // 点亮 LED
-        int* gpio = [int*](GPIO_ODR);
-        *gpio = *gpio | 0x20;  // 设置 bit5
-        delay(500);
-
-        // 熄灭 LED
-        *gpio = *gpio & ~0x20; // 清除 bit5
-        delay(500);
+        IO.Volatile.Write64(&Counter, IO.Volatile.Read64(&Counter) + 1);
     }
-    Return 0;
 }
 ```
 
-编译命令：
+使用与平台匹配的 `linker.ld` 构建 ARM64 裸机 ELF：
 
 ```bash
 kinal build bare_main.kn \
-      --target thumbv7em-unknown-none-eabihf \
-      --freestanding \
-      --runtime none \
-      --panic trap \
-      --no-crt \
-      --link-script stm32.ld \
+      --target bare-arm64 \
+      --freestanding --runtime none --panic trap \
+      --no-crt --link-script linker.ld \
       -o firmware.elf
 ```
+
+入口符号为 `__kn_entry`。执行前，启动环境必须加载 ELF 段并初始化栈和
+需要清零的存储区。
 
 ---
 
@@ -238,7 +235,6 @@ kinal build bare_main.kn \
 |------|------|
 | `New ClassName()` | 堆分配 |
 | `list`、`dict`、`set` | 动态集合，需堆分配 |
-| `string` 拼接 | 动态字符串，需堆分配 |
 | `async`/`await` | 依赖调度器和堆 |
 | 异常（`Throw`/`Catch`） | 依赖运行时 |
 
@@ -247,11 +243,17 @@ kinal build bare_main.kn \
 - `Struct` 和 `Enum`（值类型，栈分配）
 - 原始类型（`int`、`float`、`bool` 等）
 - 固定大小数组（`int[16]` 等）
-- 函数、Math 运算、位操作
+- 函数、基础算术与位操作
+- 静态字符串、长度/相等比较及有界临时字符串拼接/格式化
+- 基本 `any` 值、标签/类型判断及相等比较
 - `Extern` FFI（访问 C 库/硬件驱动）
 - 指针（`Unsafe` 上下文）
 
 ---
+
+核心字符串辅助函数共享八个 512 字节的临时槽。拼接结果最多为 511 字节
+加终止符；浮点格式化会截断为整数。这些结果只在临时槽被再次使用前
+有效。字符串解析、聚合值装箱和动态分配的字符串存储仍需运行时支持。
 
 ## 相关
 

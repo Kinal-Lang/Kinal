@@ -54,7 +54,10 @@ Class CompileSession
     Public ProjectProfileConfig Profile;
     Public TargetInfo Target;
     Public string RequestedTarget;
+    Public string RequestedBackend;
+    Public string FrontendMode;
     Public list SourcePaths;
+    Public dict ProjectProbeCache;
     Public CompilationUnit FirstUnit;
     Public string EntryUnitName;
 
@@ -66,7 +69,10 @@ Class CompileSession
         This.Profile = null;
         This.Target = IO.Kinal.Compiler.Core.TargetInfo.Resolve("host");
         This.RequestedTarget = "";
+        This.RequestedBackend = "Native";
+        This.FrontendMode = "";
         This.SourcePaths = list.Create();
+        This.ProjectProbeCache = dict.Create();
         This.FirstUnit = null;
         This.EntryUnitName = "";
     }
@@ -74,6 +80,11 @@ Class CompileSession
     Public Safe Function bool HasErrors()
     {
         Return IO.Kinal.Compiler.Core.Diagnostics.HasAny(This.Diagnostics);
+    }
+
+    Public Safe Function bool IsFreestanding()
+    {
+        Return This.Profile != null && This.Profile.Environment == "Freestanding";
     }
 
     Public Safe Function bool IsFreestandingCore()
@@ -88,7 +99,7 @@ Class CompileSession
         IO.Kinal.Compiler.Core.Diagnostics.Add(This.Diagnostics, source, "Project", title, detail, 1, 1, 1);
     }
 
-    Public Safe Function bool LoadProject(string manifestPath, string profileName)
+    Public Safe Function bool LoadProject(string manifestPath, string profileName, string explicitEntry = "")
     {
         This.Project = IO.Kinal.Compiler.Project.ProjectLoader.Load(manifestPath, This.Diagnostics);
         If (This.HasErrors()) Return false;
@@ -99,40 +110,20 @@ Class CompileSession
                 This.Project.DefaultProfile : profileName);
             Return false;
         }
-        If (This.Profile.Mode != "FileOnly" &&
-            This.Profile.Mode != "EntryUnit" &&
-            This.Profile.Mode != "ReachableUnits" &&
-            This.Profile.Mode != "AllSources")
-            This.ReportProject("Unsupported project option",
-                "Source.Mode=" + This.Profile.Mode);
-        If (This.Profile.Backend != "Native")
-            This.ReportProject("Unsupported project option",
-                "Build.Backend=" + This.Profile.Backend);
-        If (This.Profile.Environment != "Hosted" && !This.IsFreestandingCore())
-            This.ReportProject("Unsupported project option",
-                "Build.Environment=" + This.Profile.Environment);
-        If (This.Profile.Runtime != "GC" && !This.IsFreestandingCore())
-            This.ReportProject("Unsupported project option",
-                "Build.Runtime=" + This.Profile.Runtime);
-        If (This.Profile.Panic != "Trap" &&
-            !(This.IsFreestandingCore() && This.Profile.Panic == "Loop"))
-            This.ReportProject("Unsupported project option",
-                "Build.Panic=" + This.Profile.Panic);
-        string targetName = IO.Text.IsEmpty(This.RequestedTarget) ?
-            This.Profile.Target : This.RequestedTarget;
-        This.Target = IO.Kinal.Compiler.Core.TargetInfo.Resolve(targetName);
-        If (This.Target == null)
-            This.ReportProject("Unsupported target", targetName +
-                "; supported targets are Windows/Linux/macOS/bare x64 and arm64");
-        ElseIf (This.Target.OS == 0 && !This.IsFreestandingCore())
-            This.ReportProject("Unsupported project option",
-                "bare targets require Environment=Freestanding and Runtime=None");
-        If (!This.IsFreestandingCore() && !IO.Text.IsEmpty(This.Profile.EntrySymbol))
-            This.ReportProject("Unsupported project option", "Build.EntrySymbol requires freestanding core");
-        If (!IO.Text.IsEmpty(This.Profile.LinkScript))
-            This.ReportProject("Unsupported project option", "Link.Script");
-        If (This.Profile.NoCRT && !This.IsFreestandingCore())
-            This.ReportProject("Unsupported project option", "Link.NoCRT=true");
+        // Explicit command-line inputs select the entry before source graph
+        // validation, including when the manifest's default entry is absent.
+        If (!IO.Text.IsEmpty(explicitEntry))
+            This.Profile.Entry = IO.Kinal.Compiler.Source.SourcePath.Canonical(explicitEntry);
+        If (IO.Text.IsEmpty(This.Profile.Entry))
+        {
+            This.ReportProject("No entry source", "project requires an entry or an explicit source input");
+            Return false;
+        }
+        If (This.Project.IsLegacy && This.Project.FirstSourceSet != null)
+        {
+            This.Project.FirstSourceSet.Roots = list.Create();
+            This.Project.FirstSourceSet.Roots.Add(IO.Path.Directory(This.Profile.Entry));
+        }
         int selectedSet = 0;
         While (selectedSet < This.Profile.Sets.Count())
         {
@@ -154,7 +145,87 @@ Class CompileSession
             This.ReportProject("Entry source not selected", entryPath);
             Return false;
         }
-        Return true;
+        // RequireUnit is a SourceSet contract, including files not reachable
+        // from the entry Unit. Keep unrelated body diagnostics isolated.
+        int sourceIndex = 0;
+        While (sourceIndex < This.SourcePaths.Count())
+        {
+            string path = [string](This.SourcePaths.Fetch(sourceIndex));
+            If (This.Project.SourceRequiresUnit(This.Profile.Name, path))
+            {
+                ProjectSourceProbe probe = This.ProbeProjectSource(path);
+                If (probe == null || IO.Text.IsEmpty(probe.Syntax.UnitName))
+                    This.ReportProject("Unit required",
+                        "project source files must declare Unit: " + path);
+            }
+            sourceIndex = sourceIndex + 1;
+        }
+        Return !This.HasErrors();
+    }
+
+    Public Safe Function bool ValidateProfile()
+    {
+        string mode = IO.Text.ToLower(This.Profile.Mode);
+        If (mode == "fileonly") This.Profile.Mode = "FileOnly";
+        ElseIf (mode == "entryunit") This.Profile.Mode = "EntryUnit";
+        ElseIf (mode == "reachableunits") This.Profile.Mode = "ReachableUnits";
+        ElseIf (mode == "allsources") This.Profile.Mode = "AllSources";
+        If (IO.Text.ToLower(This.Profile.Backend) == "native") This.Profile.Backend = "Native";
+        ElseIf (IO.Text.ToLower(This.Profile.Backend) == "vm") This.Profile.Backend = "VM";
+        string environment = IO.Text.ToLower(This.Profile.Environment);
+        string runtime = IO.Text.ToLower(This.Profile.Runtime);
+        string panic = IO.Text.ToLower(This.Profile.Panic);
+        This.Profile.Environment = (environment == "freestanding" || environment == "bare") ? "Freestanding" : (environment == "hosted" ? "Hosted" : This.Profile.Environment);
+        This.Profile.Runtime = (runtime == "none" || runtime == "core") ? "None" : (runtime == "alloc" ? "Alloc" : (runtime == "gc" ? "GC" : This.Profile.Runtime));
+        This.Profile.Panic = (panic == "loop" || panic == "halt") ? "Loop" : ((panic == "trap" || panic == "abort") ? "Trap" : This.Profile.Panic);
+        TargetInfo requested = IO.Kinal.Compiler.Core.TargetInfo.Resolve(IO.Text.IsEmpty(This.RequestedTarget) ? This.Profile.Target : This.RequestedTarget);
+        If (!This.Profile.EnvironmentExplicit && requested != null && requested.OS == 0)
+            This.Profile.Environment = "Freestanding";
+        If (This.IsFreestanding() && !This.Profile.RuntimeExplicit) This.Profile.Runtime = "None";
+        If (This.Profile.Mode != "FileOnly" &&
+            This.Profile.Mode != "EntryUnit" &&
+            This.Profile.Mode != "ReachableUnits" &&
+            This.Profile.Mode != "AllSources")
+            This.ReportProject("Unsupported project option",
+                "Source.Mode=" + This.Profile.Mode);
+        If (!This.Profile.BackendExplicit) This.Profile.Backend = This.RequestedBackend;
+        If (This.Profile.Backend != This.RequestedBackend)
+            This.ReportProject("Unsupported project option",
+                "Build.Backend=" + This.Profile.Backend + "; requested " + This.RequestedBackend);
+        If (This.Profile.Backend == "VM" && This.Profile.Environment != "Hosted")
+            This.ReportProject("Unsupported project option", "VM requires Environment=Hosted");
+        If (This.Profile.Environment != "Hosted" && !This.IsFreestanding())
+            This.ReportProject("Unsupported project option",
+                "Build.Environment=" + This.Profile.Environment);
+        If (This.Profile.Runtime != "GC" && This.Profile.Runtime != "Alloc" && This.Profile.Runtime != "None")
+            This.ReportProject("Unsupported project option",
+                "Build.Runtime=" + This.Profile.Runtime);
+        If (This.Profile.Panic != "Trap" &&
+            !(This.IsFreestanding() && This.Profile.Panic == "Loop"))
+            This.ReportProject("Unsupported project option",
+                "Build.Panic=" + This.Profile.Panic);
+        string targetName = IO.Text.IsEmpty(This.RequestedTarget) ?
+            This.Profile.Target : This.RequestedTarget;
+        This.Target = IO.Kinal.Compiler.Core.TargetInfo.Resolve(targetName);
+        If (This.Target == null)
+            This.ReportProject("Unsupported target", targetName +
+                "; supported targets are Windows x86/x64/arm64 and Linux/macOS/bare x64/arm64");
+        ElseIf (This.Target.OS == 0 && !This.IsFreestanding())
+            This.ReportProject("Unsupported project option",
+                "bare targets require Environment=Freestanding");
+        If (This.Target != null && This.Profile.Backend == "VM" && !This.Target.IsHost())
+            This.ReportProject("Unsupported target", "selfhost VM currently requires the host target");
+        If (!This.IsFreestanding() && (This.Profile.RuntimeExplicit || This.Profile.PanicExplicit || This.Profile.NoCRT || !IO.Text.IsEmpty(This.Profile.LinkScript)))
+            This.ReportProject("Invalid build options", "hosted builds do not accept freestanding-only options");
+        If (This.IsFreestanding() && This.Profile.CRTExplicit)
+            This.ReportProject("Invalid build options", "freestanding builds do not accept hosted CRT options");
+        If (This.IsFreestanding() && This.Profile.ArtifactKind == "shared")
+            This.ReportProject("Invalid build options", "freestanding does not support shared libraries");
+        If (!IO.Text.IsEmpty(This.Profile.Linker) && This.Profile.Linker != "lld" && This.Profile.Linker != "zig" && This.Profile.Linker != "msvc")
+            This.ReportProject("Invalid linker", This.Profile.Linker);
+        If (!IO.Text.IsEmpty(This.Profile.LinkerPath) && IO.Text.IsEmpty(This.Profile.Linker))
+            This.ReportProject("Invalid build options", "--linker-path requires --linker <lld|zig|msvc>");
+        Return !This.HasErrors();
     }
 
     Public Safe Function void AddUnit(CompilationUnit unit)
@@ -180,9 +251,10 @@ Class CompileSession
         }
         list tokens = IO.Kinal.Compiler.Lex.Lexer.Tokenize(source, This.Diagnostics);
         If (This.HasErrors()) Return null;
-        SyntaxTree syntax = IO.Kinal.Compiler.Syntax.Parser.Build(source, tokens, This.Diagnostics);
+        SyntaxTree syntax = This.FrontendMode == "build-tokens" ? New SyntaxTree(source, "") :
+            IO.Kinal.Compiler.Syntax.Parser.Build(source, tokens, This.Diagnostics);
         If (syntax == null) Return null;
-        If (This.Project != null && This.Profile != null &&
+        If (This.FrontendMode != "build-tokens" && This.Project != null && This.Profile != null &&
             This.Project.SourceRequiresUnit(This.Profile.Name, source.Path) &&
             IO.Text.IsEmpty(syntax.UnitName))
         {
@@ -199,19 +271,26 @@ Class CompileSession
 
     Public Safe Function ProjectSourceProbe ProbeProjectSource(string path)
     {
+        string canonical = IO.Kinal.Compiler.Source.SourcePath.Canonical(path);
+        If (This.ProjectProbeCache.Contains(canonical))
+            Return [ProjectSourceProbe](This.ProjectProbeCache.Fetch(canonical));
         SourceFile source = New SourceFile(
-            IO.Kinal.Compiler.Source.SourcePath.Canonical(path),
+            canonical,
             IO.File.ReadAllText(path));
         list diagnostics = list.Create();
         list tokens = IO.Kinal.Compiler.Lex.Lexer.Tokenize(source, diagnostics);
         SyntaxTree syntax = IO.Kinal.Compiler.Syntax.Parser.Build(
-            source, tokens, diagnostics);
+            source, tokens, diagnostics, true);
         // Probing is used only to discover Unit/import relationships. Parser
         // recovery can still provide that structure after an error; selected
         // sources are parsed again through ParseFile so their diagnostics are
         // reported exactly once, while unreachable files remain isolated.
         If (syntax == null) Return null;
-        Return New ProjectSourceProbe(source.Path, syntax);
+        ProjectSourceProbe probe = New ProjectSourceProbe(source.Path, syntax);
+        // A compilation session sees an immutable source snapshot. Reuse the
+        // same probe for validation, reachability, and dependency indexing.
+        This.ProjectProbeCache.Set(canonical, probe);
+        Return probe;
     }
 
     Public Safe Function ProjectSourceProbe BuildProjectProbes()

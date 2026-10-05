@@ -36,6 +36,12 @@ Current status:
 - `runtime none`
   works directly with compiler-emitted core helpers
 - `runtime alloc`
-  expects the target to provide allocator and string helpers
+  expects the target to provide allocator and string helpers, plus frame/root
+  hooks (which may be no-ops in a non-collecting runtime)
 - `runtime gc`
   expects the target to provide GC/runtime hooks
+
+Collection, exception and async operations require their corresponding `__kn_*`
+hooks when used. The compilers do not bundle a custom freestanding runtime.
+The selfhost profile regression harness supplies small test doubles to verify
+ABI calls and host execution; these are not production allocation or GC code.

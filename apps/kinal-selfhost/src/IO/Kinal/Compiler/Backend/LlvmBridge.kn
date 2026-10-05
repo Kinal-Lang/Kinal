@@ -24,6 +24,9 @@ Extern Function char* NativeModuleIr(byte* module) By C;
 [LinkName("kn_sh_llvm_emit_object")]
 Extern Function int NativeEmitObject(byte* module, string targetTriple, string outputPath) By C;
 
+[LinkName("kn_sh_llvm_emit_assembly")]
+Extern Function int NativeEmitAssembly(byte* module, string targetTriple, string outputPath) By C;
+
 [LinkName("kn_sh_llvm_last_error")]
 Extern Function char* NativeLastError() By C;
 
@@ -47,6 +50,15 @@ Extern Function byte* NativeTypeFunction(byte* returnType, byte* parameters, int
 Extern Function byte* NativeTypeArray(byte* elementType, int count) By C;
 [LinkName("kn_sh_llvm_type_of")]
 Extern Function byte* NativeTypeOf(byte* value) By C;
+
+[LinkName("kn_sh_llvm_prune_unused")]
+Extern Function int NativePruneUnused(byte* module) By C;
+
+[LinkName("kn_sh_llvm_set_dll_export")]
+Extern Function int NativeSetDllExport(byte* global) By C;
+
+[LinkName("kn_sh_llvm_link_ir")]
+Extern Function int NativeLinkIr(byte* module, string ir) By C;
 
 [LinkName("kn_sh_llvm_add_function")]
 Extern Function byte* NativeAddFunction(byte* module, string name, byte* functionType) By C;
@@ -86,6 +98,8 @@ Extern Function byte* NativeAddGlobal(byte* module, byte* type, string name) By 
 Extern Function int NativeSetInitializer(byte* global, byte* value) By C;
 [LinkName("kn_sh_llvm_set_private_linkage")]
 Extern Function int NativeSetPrivateLinkage(byte* global) By C;
+[LinkName("kn_sh_llvm_set_call_convention")]
+Extern Function int NativeSetCallConvention(byte* function, int convention) By C;
 [LinkName("kn_sh_llvm_set_alignment")]
 Extern Function int NativeSetAlignment(byte* value, int alignment) By C;
 [LinkName("kn_sh_llvm_set_volatile")]
@@ -152,6 +166,8 @@ Extern Function byte* NativeBuildArithmeticShiftRight(byte* module, byte* left, 
 Extern Function byte* NativeBuildLogicalShiftRight(byte* module, byte* left, byte* right, string name) By C;
 [LinkName("kn_sh_llvm_build_neg")]
 Extern Function byte* NativeBuildNegate(byte* module, byte* value, string name) By C;
+[LinkName("kn_sh_llvm_build_frem")]
+Extern Function byte* NativeBuildFloatRemainder(byte* module, byte* left, byte* right, string name) By C;
 [LinkName("kn_sh_llvm_build_fneg")]
 Extern Function byte* NativeBuildFloatNegate(byte* module, byte* value, string name) By C;
 [LinkName("kn_sh_llvm_build_not")]
@@ -261,11 +277,11 @@ Class LlvmHandles
     Public Trusted Function bool Add(byte* handle)
     {
         If (This.Items == null || handle == null) Return false;
-        usize* items = [usize*](This.Items);
+        byte** items = [byte**](This.Items);
         If (This.CountValue >= This.Capacity)
         {
             int nextCapacity = This.Capacity <= 0 ? 8 : This.Capacity * 2;
-            usize* next = [usize*](IO.Kinal.Runtime.AllocateRaw(
+            byte** next = [byte**](IO.Kinal.Runtime.AllocateRaw(
                 [usize](nextCapacity * (IO.Target.PointerBits / 8))));
             If (next == null) Return false;
             int index = 0;
@@ -278,7 +294,7 @@ Class LlvmHandles
             This.Items = [byte*](items);
             This.Capacity = nextCapacity;
         }
-        items[This.CountValue] = [usize](handle);
+        items[This.CountValue] = handle;
         This.CountValue = This.CountValue + 1;
         Return true;
     }
@@ -291,7 +307,7 @@ Class LlvmHandles
     Public Trusted Function byte* Fetch(int index)
     {
         If (This.Items == null || index < 0 || index >= This.CountValue) Return null;
-        Return [byte*](([usize*](This.Items))[index]);
+        Return ([byte**](This.Items))[index];
     }
 
     Public Safe Function byte* ItemsRaw()
@@ -338,6 +354,12 @@ Class LlvmModule
         Return NativeEmitObject(This.Handle, targetTriple, outputPath) != 0;
     }
 
+    Public Trusted Function bool EmitAssembly(string targetTriple, string outputPath)
+    {
+        If (This.Handle == null) Return false;
+        Return NativeEmitAssembly(This.Handle, targetTriple, outputPath) != 0;
+    }
+
     Public Trusted Function byte* VoidType() { Return NativeTypeVoid(This.Handle); }
     Public Trusted Function byte* IntType(int bits) { Return NativeTypeInt(This.Handle, bits); }
     Public Trusted Function byte* FloatType(int bits) { Return NativeTypeFloat(This.Handle, bits); }
@@ -356,7 +378,10 @@ Class LlvmModule
         Return NativeTypeFunction(returnType, parameters.ItemsRaw(), parameters.Count(), variadic ? 1 : 0);
     }
     Public Trusted Function byte* ArrayType(byte* elementType, int count) { Return NativeTypeArray(elementType, count); }
-    Public Trusted Function byte* TypeOf(byte* value) { Return NativeTypeOf(value); }
+    Public Trusted Function bool PruneUnused() { Return NativePruneUnused(This.Handle) != 0; }
+    Public Trusted Function bool SetDllExport(byte* global) { Return NativeSetDllExport(global) != 0; }
+    Public Trusted Function bool LinkIr(string ir) { Return NativeLinkIr(This.Handle, ir) != 0; }
+    Public Trusted Function byte* ValueType(byte* value) { Return NativeTypeOf(value); }
 
     Public Trusted Function byte* AddFunction(string name, byte* functionType)
     {
@@ -411,6 +436,10 @@ Class LlvmModule
     {
         Return NativeSetPrivateLinkage(global) != 0;
     }
+    Public Trusted Function bool SetCallConvention(byte* function, int convention)
+    {
+        Return NativeSetCallConvention(function, convention) != 0;
+    }
     Public Trusted Function bool SetAlignment(byte* value, int alignment)
     {
         Return NativeSetAlignment(value, alignment) != 0;
@@ -453,6 +482,7 @@ Class LlvmModule
     Public Trusted Function byte* FloatSubtract(byte* left, byte* right, string name) { Return NativeBuildFloatSubtract(This.Handle, left, right, name); }
     Public Trusted Function byte* FloatMultiply(byte* left, byte* right, string name) { Return NativeBuildFloatMultiply(This.Handle, left, right, name); }
     Public Trusted Function byte* FloatDivide(byte* left, byte* right, string name) { Return NativeBuildFloatDivide(This.Handle, left, right, name); }
+    Public Trusted Function byte* FloatRemainder(byte* left, byte* right, string name) { Return NativeBuildFloatRemainder(This.Handle, left, right, name); }
     Public Trusted Function byte* And(byte* left, byte* right, string name) { Return NativeBuildAnd(This.Handle, left, right, name); }
     Public Trusted Function byte* Or(byte* left, byte* right, string name) { Return NativeBuildOr(This.Handle, left, right, name); }
     Public Trusted Function byte* Xor(byte* left, byte* right, string name) { Return NativeBuildXor(This.Handle, left, right, name); }

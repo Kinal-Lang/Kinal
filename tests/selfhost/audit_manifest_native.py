@@ -2,14 +2,16 @@ from __future__ import annotations
 
 import argparse
 import json
+import platform
 import re
 import subprocess
 import sys
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 
-EXPECTED_WINDOWS_CASES = 171
+EXPECTED_HOST_CASES = {"windows": 190, "linux": 188, "macos": 184}
 UNIT_PATTERN = re.compile(r"^\s*Unit\s+([A-Za-z_][A-Za-z0-9_.]*)\s*;", re.MULTILINE)
 GET_PATTERN = re.compile(r"^\s*Get\s+([^;\r\n]+)\s*;", re.MULTILINE)
 MAIN_PATTERN = re.compile(r"\bFunction\b[^;{}]*\bMain\s*\(", re.MULTILINE)
@@ -105,9 +107,50 @@ def write_project(path: Path, name: str, entry: Path, sources: list[Path]) -> No
     path.write_text(content, encoding="utf-8")
 
 
-def supports_windows(case: dict[str, object]) -> bool:
+def host_platform() -> str:
+    return normalize_platform_name(platform.system())
+
+
+def normalize_platform_name(value: object) -> str:
+    name = str(value).strip().lower()
+    if name in {"win", "win32", "windows"}:
+        return "windows"
+    if name in {"darwin", "osx", "mac", "macos"}:
+        return "macos"
+    if name in {"gnu/linux", "linux"}:
+        return "linux"
+    return name
+
+
+def supports_host(case: dict[str, object], host: str) -> bool:
     platforms = case.get("platforms")
-    return platforms is None or "windows" in platforms
+    if platforms is not None and host not in {normalize_platform_name(p) for p in platforms}:
+        return False
+    return host not in {normalize_platform_name(p) for p in (case.get("skip_platforms") or [])}
+
+
+def exclusion_reason(case: dict[str, object], host: str, *, runtime: bool = False) -> str | None:
+    if "expect_error" in case:
+        return "negative diagnostic case"
+    if not supports_host(case, host):
+        return "not enabled for " + host
+    if not has_kinal_source(case):
+        return "no Kinal source"
+    if runtime and case.get("compile_only"):
+        return "compile-only case"
+    if runtime and "expected" not in case:
+        return "no runtime expectation"
+    return None
+
+
+def manifest_exclusions(manifest: list[dict[str, object]], host: str,
+                        *, runtime: bool = False) -> list[dict[str, str]]:
+    return [{"name": str(case["name"]), "reason": reason} for case in manifest
+            if (reason := exclusion_reason(case, host, runtime=runtime)) is not None]
+
+
+def positive_cases(manifest: list[dict[str, object]], host: str) -> list[dict[str, object]]:
+    return [case for case in manifest if exclusion_reason(case, host) is None]
 
 
 def has_kinal_source(case: dict[str, object]) -> bool:
@@ -133,16 +176,27 @@ def audit_case(
     case_dir.mkdir(parents=True, exist_ok=True)
     project = case_dir / "kinal.knproj"
     write_project(project, name, entry, sources)
-    output = case_dir / f"{name}.obj"
-    proc = subprocess.run(
-        [str(compiler), "build-object", str(project), str(output), "native"],
-        cwd=root,
-        text=True,
-        capture_output=True,
-        check=False,
-    )
-    detail = (proc.stdout or "") + (proc.stderr or "")
-    return name, proc.returncode == 0 and output.is_file(), detail
+    output = case_dir / (name + (".obj" if sys.platform == "win32" else ".o"))
+    output.unlink(missing_ok=True)
+    try:
+        proc = subprocess.run(
+            [str(compiler), "build-object", str(project), str(output), "native"],
+            cwd=root,
+            text=True,
+            capture_output=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+            timeout=120,
+        )
+        detail = (proc.stdout or "") + (proc.stderr or "")
+        ok = proc.returncode == 0 and output.is_file()
+        if not ok:
+            detail = f"exit={proc.returncode}; object_exists={output.is_file()}\n" + detail
+    except (subprocess.TimeoutExpired, OSError) as error:
+        ok, detail = False, str(error)
+    (case_dir / "build.log").write_text(detail, encoding="utf-8")
+    return name, ok, detail
 
 
 def main() -> int:
@@ -150,31 +204,31 @@ def main() -> int:
     parser.add_argument("--compiler", type=Path, required=True)
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument("--out-dir", type=Path, required=True)
+    parser.add_argument("--jobs", type=int, default=4)
+    parser.add_argument("--output", type=Path, help="write a JSON report, including failures")
     args = parser.parse_args()
-
-    if sys.platform != "win32":
-        print(json.dumps({"format": "kinal-selfhost-manifest-native-v1", "skipped": True}))
-        return 0
+    if args.jobs < 1:
+        parser.error("--jobs must be positive")
 
     compiler = args.compiler.resolve()
     root = args.root.resolve()
     out_dir = args.out_dir.resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
+    host = host_platform()
+    if host not in EXPECTED_HOST_CASES:
+        raise SystemExit(f"Unsupported manifest audit host: {host}")
+    if not compiler.is_file():
+        raise SystemExit(f"Compiler not found: {compiler}")
     manifest = json.loads((root / "tests" / "manifest.json").read_text(encoding="utf-8"))
-    cases = [
-        case for case in manifest
-        if "expect_error" not in case
-        and supports_windows(case)
-        and has_kinal_source(case)
-    ]
-    if len(cases) != EXPECTED_WINDOWS_CASES:
+    cases = positive_cases(manifest, host)
+    expected = EXPECTED_HOST_CASES[host]
+    if len(cases) != expected:
         raise SystemExit(
-            f"Windows positive manifest baseline changed: "
-            f"expected {EXPECTED_WINDOWS_CASES}, found {len(cases)}"
+            f"{host} positive manifest baseline changed: expected {expected}, found {len(cases)}"
         )
 
     failures: list[tuple[str, str]] = []
-    with ThreadPoolExecutor(max_workers=4) as executor:
+    with ThreadPoolExecutor(max_workers=args.jobs) as executor:
         futures = {
             executor.submit(audit_case, compiler, root, out_dir, case): str(case["name"])
             for case in cases
@@ -184,21 +238,25 @@ def main() -> int:
             if not ok:
                 failures.append((name, detail))
 
-    if failures:
-        for name, detail in sorted(failures):
-            print(f"[{name}]\n{detail}", file=sys.stderr)
-        return 1
-    print(
-        json.dumps(
-            {
-                "format": "kinal-selfhost-manifest-native-v1",
-                "positive_cases": len(cases),
-                "unsupported_cases": [],
-            },
-            sort_keys=True,
-        )
-    )
-    return 0
+    for name, detail in sorted(failures):
+        print(f"[{name}]\n{detail}", file=sys.stderr)
+    exclusions = manifest_exclusions(manifest, host)
+    report = {
+        "format": "kinal-selfhost-manifest-native-v1",
+        "host": host,
+        "positive_cases": len(cases),
+        "passed": len(cases) - len(failures),
+        "unsupported_cases": [],
+        "excluded_cases": exclusions,
+        "excluded_case_counts": dict(Counter(case["reason"] for case in exclusions)),
+        "failures": [{"name": name, "phase": "build", "detail": detail}
+                     for name, detail in sorted(failures)],
+    }
+    if args.output:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+    print(json.dumps(report, sort_keys=True))
+    return int(bool(failures))
 
 
 if __name__ == "__main__":

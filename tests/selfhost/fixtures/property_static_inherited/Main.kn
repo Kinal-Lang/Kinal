@@ -1,0 +1,49 @@
+Unit Tests.Selfhost.PropertyStaticInherited;
+Get IO.Console;
+
+Class Counter
+{
+    Public int Stored;
+    Public Static int Shared;
+    Public Property int Value
+    {
+        Get { Return Stored; }
+        Set { Stored = value; }
+    }
+    Public Static Property int Total
+    {
+        Get { Return Shared; }
+        Set { Shared = value; }
+    }
+}
+// Opposite-kind accessors do not hide the inherited static/instance accessor.
+Class MixedCounter By Counter
+{
+    Public Static Property int Value
+    {
+        Get { Return Shared; }
+        Set { Shared = value; }
+    }
+    Public Property int Total
+    {
+        Get { Return Stored; }
+        Set { Stored = value; }
+    }
+    Public Static Function int AddInheritedTotal(int amount) { Return Total += amount; }
+    Public Function int AddInheritedValue(int amount) { Return Value += amount; }
+    Public Static Function int AddOwnValue(int amount) { Return Value += amount; }
+    Public Function int AddOwnTotal(int amount) { Return Total += amount; }
+}
+Static Function int Main()
+{
+    MixedCounter mixed = New MixedCounter();
+    mixed.Total = 5;
+    Counter.Total = 30;
+    If (MixedCounter.AddInheritedTotal(3) != 33 ||
+        mixed.AddInheritedValue(2) != 7 || mixed.Stored != 7 ||
+        Counter.Shared != 33) Return 1;
+    If (MixedCounter.AddOwnValue(4) != 37 || mixed.AddOwnTotal(3) != 10 ||
+        mixed.Stored != 10 || Counter.Shared != 37) Return 2;
+    IO.Console.PrintLine("ok");
+    Return 0;
+}

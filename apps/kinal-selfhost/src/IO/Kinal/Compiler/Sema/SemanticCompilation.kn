@@ -1103,8 +1103,18 @@ Class SemanticCompilation
             If (global.Declaration.Initializer != null &&
                 (global.Declaration.Initializer.Kind == [int](ExpressionKind.FunctionLiteral) ||
                  global.Declaration.Initializer.Kind == [int](ExpressionKind.BlockLiteral)))
+            {
                 global.Value.CallableFunction = This.FindQualifiedFunction(global.UnitName +
                     ".__global_literal_" + global.Declaration.Name, 0);
+                If (global.Value.CallableFunction != null &&
+                    global.Declaration.Initializer.Kind == [int](ExpressionKind.BlockLiteral))
+                {
+                    global.Value.CallableFunction.IsBlockLiteral = true;
+                    StatementNode body = global.Declaration.Initializer.Body;
+                    global.Value.CallableFunction.BlockRecords = This.BlockRecordNames(
+                        body == null ? null : body.FirstChild);
+                }
+            }
             global = global.Next;
         }
     }
@@ -1316,6 +1326,28 @@ Class SemanticCompilation
         Return This.FindMethod(owner, "__get_" + name, 0);
     }
 
+    Public Safe Function FunctionSymbol FindImplicitPropertyGetter(TypeSymbol owner,
+                                                                    string name, bool isStatic)
+    {
+        // Static and instance accessors occupy separate lookup paths. A derived
+        // accessor of the other kind must not hide an inherited matching one.
+        string getterName = "__get_" + name;
+        TypeSymbol currentOwner = owner;
+        While (currentOwner != null)
+        {
+            FunctionSymbol current = This.FirstFunction;
+            While (current != null)
+            {
+                If (current.OwnerType == currentOwner && current.Name == getterName &&
+                    current.Declaration.IsStatic == isStatic &&
+                    current.AcceptsArgumentCount(0)) Return current;
+                current = current.Next;
+            }
+            currentOwner = currentOwner.BaseType;
+        }
+        Return null;
+    }
+
     Public Safe Function FunctionSymbol FindPropertySetter(TypeSymbol owner, string name)
     {
         Return This.FindMethod(owner, "__set_" + name, 1);
@@ -1462,8 +1494,11 @@ Class SemanticCompilation
         If (caller == null || target == null) Return;
         bool callerIsSafe = caller.Declaration.Safety == 0 ||
             caller.Declaration.Safety == 1;
+        // Extern defaults (including explicit Safe) are Unsafe in stage0,
+        // independently of C/System spelling. Trusted imports retain their
+        // deliberate safety boundary instead of being rejected as raw C calls.
         bool targetIsUnsafe = target.Declaration.Safety == 3 ||
-            (target.Declaration.IsExtern && target.Declaration.Abi == "C") ||
+            (target.Declaration.IsExtern && target.Declaration.Safety != 2) ||
             (target.Declaration.IsDelegate && target.Declaration.Abi == "C");
         If (callerIsSafe && targetIsUnsafe)
             This.Report(syntax, "Unsafe Call", "Safe function cannot call Unsafe",
@@ -2149,6 +2184,59 @@ Class SemanticCompilation
         Return false;
     }
 
+    Public Safe Function bool IsNumericType(TypeSymbol type)
+    {
+        Return type != null && (type.Kind == [int](TypeKind.IntegerType) ||
+            type.Kind == [int](TypeKind.FloatType));
+    }
+
+    Public Safe Function int NumericBits(TypeSymbol type)
+    {
+        string name = type.Name;
+        If (name == "byte" || name == "char" || name == "i8" || name == "u8") Return 8;
+        If (name == "i16" || name == "u16" || name == "f16") Return 16;
+        If (name == "i32" || name == "u32" || name == "f32") Return 32;
+        If (name == "f128") Return 128;
+        If (name == "isize" || name == "usize") Return This.Session.Target.PointerBits;
+        Return 64;
+    }
+
+    Public Safe Function TypeSymbol BinaryIntegerType(TypeSymbol type)
+    {
+        // Size values retain i64 storage, while binary operations use the
+        // output pointer width, matching stage0's resolved binary plan.
+        If (type != null && This.Session.Target.PointerBits == 32)
+        {
+            If (type.Name == "isize") Return This.Primitive("i32");
+            If (type.Name == "usize") Return This.Primitive("u32");
+        }
+        Return type;
+    }
+
+    Public Safe Function bool IsUnsignedNumericType(TypeSymbol type)
+    {
+        string name = type.Name;
+        Return name == "byte" || name == "char" || name == "u8" ||
+            name == "u16" || name == "u32" || name == "u64" || name == "usize";
+    }
+
+    Public Safe Function TypeSymbol CommonNumericType(TypeSymbol left, TypeSymbol right,
+                                                     bool bitwise)
+    {
+        bool leftFloat = left.Kind == [int](TypeKind.FloatType);
+        bool rightFloat = right.Kind == [int](TypeKind.FloatType);
+        If (leftFloat && rightFloat)
+            Return This.NumericBits(left) >= This.NumericBits(right) ? left : right;
+        If (leftFloat || rightFloat) Return leftFloat ? left : right;
+        int bits = This.NumericBits(left);
+        If (This.NumericBits(right) > bits) bits = This.NumericBits(right);
+        bool unsigned = This.IsUnsignedNumericType(left) || This.IsUnsignedNumericType(right);
+        If (bits <= 8) Return This.Primitive(unsigned ? "u8" : "i8");
+        If (bits <= 16) Return This.Primitive(unsigned ? "u16" : "i16");
+        If (bits <= 32) Return This.Primitive(unsigned ? "u32" : "i32");
+        Return This.Primitive(unsigned ? "u64" : (bitwise ? "int" : "i64"));
+    }
+
     Public Safe Function bool IsHirAssignable(TypeSymbol target, HirExpression source)
     {
         If (source == null) Return false;
@@ -2191,6 +2279,7 @@ Class SemanticCompilation
         If (This.IsAssignable(target, source.Type)) Return true;
         If ((target.Name == "IO.Type.Object.Function" || target.Name == "Object.Function") &&
             source.Kind == [int](HirExpressionKind.Namespace) &&
+            !This.IsStringBuiltinReferenceTarget(source.Target) &&
             This.RuntimeCallType(source.Target, null) != null)
         {
             source.Kind = [int](HirExpressionKind.FunctionReference);
@@ -2246,10 +2335,12 @@ Class SemanticCompilation
     Public Safe Function bool IsSupportedCAbiType(TypeSymbol type)
     {
         If (type == null) Return false;
+        If (This.IsEnumType(type)) Return This.IsSupportedCAbiType(type.UnderlyingType);
         Return type.Kind == [int](TypeKind.VoidType) ||
             type.Kind == [int](TypeKind.BoolType) ||
             type.Kind == [int](TypeKind.IntegerType) ||
-            type.Kind == [int](TypeKind.FloatType) ||
+            (type.Kind == [int](TypeKind.FloatType) &&
+             (type.Name == "float" || type.Name == "f32" || type.Name == "f64")) ||
             type.Kind == [int](TypeKind.StringType) ||
             type.Kind == [int](TypeKind.PointerType) ||
             type.Kind == [int](TypeKind.ArrayType);
@@ -2349,7 +2440,7 @@ Class SemanticCompilation
             If (!validVariadic) function.IsVariadic = false;
         }
 
-        If (declaration.IsExtern && declaration.Abi == "C")
+        If (declaration.IsExtern || (declaration.IsDelegate && declaration.Abi == "C"))
         {
             If (!This.IsSupportedCAbiType(function.ReturnType))
                 This.Report(syntax, "Unsupported Type", "C ABI return type is not supported",
@@ -2666,6 +2757,32 @@ Class SemanticCompilation
         Return null;
     }
 
+    Public Safe Function bool IsStringBuiltinReferenceTarget(string target)
+    {
+        Return target == "IO.Type.string.Length" || target == "IO.Type.string.Concat" ||
+            target == "IO.Type.string.Equals" || target == "IO.Type.string.ToChars";
+    }
+
+    Public Safe Function bool IsFunctionObjectType(TypeSymbol type)
+    {
+        Return type != null && (type.Name == "IO.Type.Object.Function" ||
+            type.Name == "Object.Function");
+    }
+
+    Public Safe Function string KnownBuiltinReferenceTarget(HirExpression expression)
+    {
+        If (expression == null || !This.IsFunctionObjectType(expression.Type)) Return "";
+        If (expression.Kind == [int](HirExpressionKind.FunctionReference) &&
+            expression.Function == null &&
+            expression.CallKind == [int](HirCallKind.RuntimeBuiltin) &&
+            This.IsStringBuiltinReferenceTarget(expression.Target)) Return expression.Target;
+        If (expression.Kind == [int](HirExpressionKind.Local) &&
+            expression.Symbol != null && !expression.Symbol.IsParameter &&
+            This.IsStringBuiltinReferenceTarget(expression.Symbol.BuiltinReferenceTarget))
+            Return expression.Symbol.BuiltinReferenceTarget;
+        Return "";
+    }
+
     Public Safe Function TypeSymbol RuntimeCallType(string target, TypeSymbol receiver)
     {
         string name = target;
@@ -2756,6 +2873,7 @@ Class SemanticCompilation
             If (target == "Add") Return This.MakeBoundArrayType(receiver.ElementType,
                 receiver.ArrayLength < 0 ? -1 : receiver.ArrayLength + 1);
         }
+        If (receiverKind == [int](TypeKind.AnyType) && target == "Tag") Return This.Primitive("int");
         If (receiver != null && (target == "TypeOf" || target == "ToString" ||
             target == "TypeName")) Return This.Primitive("string");
         If (receiver != null && (target == "Equals" || target == "IsNull" ||
@@ -3252,6 +3370,75 @@ Class SemanticCompilation
                 expression.Line, expression.Column);
     }
 
+    // TypeOf is a static query: use the bound type, not the runtime value.
+    // Recursion retains unit qualification inside arrays and pointer wrappers.
+    Public Safe Function string StaticTypeName(TypeSymbol type)
+    {
+        If (type == null) Return "unknown";
+        If (type.Kind == [int](TypeKind.PointerType))
+            Return This.StaticTypeName(type.ElementType) + "*";
+        If (type.Kind == [int](TypeKind.ArrayType))
+            Return This.StaticTypeName(type.ElementType) + "[" +
+                (type.ArrayLength < 0 ? "" : [string](type.ArrayLength)) + "]";
+        If (type.Kind == [int](TypeKind.PackageType))
+        {
+            string name = "<";
+            PackageElementType element = type.FirstPackageElement;
+            While (element != null)
+            {
+                If (element != type.FirstPackageElement) name = name + ",";
+                name = name + This.StaticTypeName(element.Type);
+                element = element.Next;
+            }
+            Return name + ">";
+        }
+        Return type.Kind == [int](TypeKind.NamedType) ? type.QualifiedName() : type.Name;
+    }
+
+    Public Safe Function HirExpression BindBuiltinReferenceCall(SyntaxTree syntax,
+                                                                  FunctionSymbol function,
+                                                                  BindingScope scope,
+                                                                  ExpressionNode expression,
+                                                                  string target)
+    {
+        If (expression.TypeArgumentCount() != 0)
+        {
+            This.Report(syntax, "Invalid generic call", target,
+                expression.Line, expression.Column);
+            Return This.FailedExpression(expression);
+        }
+        If (This.HasNamedArgument(expression))
+        {
+            This.Report(syntax, "Invalid Named Argument",
+                "Named arguments are not supported for this callable",
+                expression.Line, expression.Column);
+            Return This.FailedExpression(expression);
+        }
+        int expectedCount = target == "IO.Type.string.Concat" ||
+            target == "IO.Type.string.Equals" ? 2 : 1;
+        If (expression.ArgumentCount() != expectedCount)
+        {
+            This.Report(syntax, "Argument Count", target,
+                expression.Line, expression.Column);
+            Return This.FailedExpression(expression);
+        }
+        HirExpression bound = New HirExpression([int](HirExpressionKind.Call),
+            expression, This.RuntimeCallType(target, null));
+        bound.CallKind = [int](HirCallKind.RuntimeBuiltin);
+        bound.Target = target;
+        ExpressionNode argument = expression.FirstArgument;
+        While (argument != null)
+        {
+            HirExpression value = This.BindExpression(syntax, function, scope, argument);
+            If (!value.HasPrimaryError && !This.IsHirAssignable(This.Primitive("string"), value))
+                This.Report(syntax, "Type Mismatch", "Builtin argument must be string",
+                    argument.Line, argument.Column);
+            bound.AddArgument(value);
+            argument = argument.Next;
+        }
+        Return bound;
+    }
+
     Public Safe Function HirExpression BindCall(SyntaxTree syntax, FunctionSymbol function,
                                                  BindingScope scope, ExpressionNode expression)
     {
@@ -3399,6 +3586,11 @@ Class SemanticCompilation
             Else
             {
                 ValueSymbol dynamic = scope.Find(targetSyntax.Text);
+                If (dynamic != null && !dynamic.IsParameter &&
+                    This.IsFunctionObjectType(dynamic.Type) &&
+                    This.IsStringBuiltinReferenceTarget(dynamic.BuiltinReferenceTarget))
+                    Return This.BindBuiltinReferenceCall(syntax, function, scope, expression,
+                        dynamic.BuiltinReferenceTarget);
                 If (dynamic == null)
                 {
                     GlobalSymbol dynamicGlobal = This.FindVisibleGlobal(syntax, targetSyntax.Text);
@@ -3468,6 +3660,19 @@ Class SemanticCompilation
                 IO.Text.IsEmpty(path) ? targetSyntax.Text : path);
         }
 
+        If (callKind == [int](HirCallKind.RuntimeBuiltin) &&
+            targetName == "TypeOf" && receiver != null)
+        {
+            If (argumentCount != 0)
+                This.Report(syntax, "Argument Count", "TypeOf requires no arguments",
+                    expression.Line, expression.Column);
+            HirExpression constant = New HirExpression([int](HirExpressionKind.Constant),
+                expression, This.Primitive("string"));
+            constant.Name = This.StaticTypeName(receiver.Type);
+            constant.Target = "__target_string";
+            Return constant;
+        }
+
         HirExpression bound = New HirExpression([int](HirExpressionKind.Call), expression, returnType);
         bound.CallKind = callKind;
         bound.Target = targetName;
@@ -3516,6 +3721,15 @@ Class SemanticCompilation
                                                    BindingScope scope, ExpressionNode expression)
     {
         string fullPath = This.ExpressionPath(expression);
+        int targetBoolean = This.TargetBooleanConstant(fullPath);
+        If (targetBoolean >= 0)
+        {
+            HirExpression constant = New HirExpression([int](HirExpressionKind.Constant),
+                expression, This.Primitive("bool"));
+            constant.Target = "__target_integer";
+            constant.Name = [string](targetBoolean);
+            Return constant;
+        }
         string targetText = This.TargetStringConstant(fullPath);
         If (targetText != null)
         {
@@ -3629,6 +3843,28 @@ Class SemanticCompilation
                 result.Function = callable;
                 Return result;
             }
+            If (This.IsStringBuiltinReferenceTarget(combined))
+            {
+                // Check the original spelling, never the expanded alias target.
+                If (This.PathUsesHiddenAliasTarget(syntax, fullPath))
+                {
+                    This.Report(syntax, "Scoped Symbol Required", fullPath,
+                        expression.Line, expression.Column);
+                    Return This.FailedExpression(expression);
+                }
+                If (!This.QualifiedPathIsVisible(syntax, fullPath))
+                {
+                    This.Report(syntax, "Missing Get", fullPath,
+                        expression.Line, expression.Column);
+                    Return This.FailedExpression(expression);
+                }
+                HirExpression result = New HirExpression(
+                    [int](HirExpressionKind.FunctionReference), expression,
+                    This.FindExactType("IO.Type.Object.Function"));
+                result.CallKind = [int](HirCallKind.RuntimeBuiltin);
+                result.Target = combined;
+                Return result;
+            }
             TypeSymbol namespaceType = New TypeSymbol([int](TypeKind.NamespaceType), combined);
             HirExpression result = New HirExpression([int](HirExpressionKind.Namespace), expression, namespaceType);
             result.Target = combined;
@@ -3715,8 +3951,26 @@ Class SemanticCompilation
         Return characters;
     }
 
+    Public Safe Function bool RuntimeIsVm()
+    {
+        Return This.Session.Profile != null && This.Session.Profile.Backend == "VM";
+    }
+
+    Public Safe Function int TargetBooleanConstant(string path)
+    {
+        If (path == "IO.Runtime.IsNative") Return This.RuntimeIsVm() ? 0 : 1;
+        If (path == "IO.Runtime.IsVM") Return This.RuntimeIsVm() ? 1 : 0;
+        Return -1;
+    }
+
     Public Safe Function int TargetIntegerConstant(string path)
     {
+        If (path == "IO.Runtime" || path == "IO.Runtime.Current" ||
+            path == "IO.Runtime.Kind" || path == "IO.Runtime.Kind.Current")
+            Return This.RuntimeIsVm() ? 2 : 1;
+        If (path == "IO.Runtime.Unknown" || path == "IO.Runtime.Kind.Unknown") Return 0;
+        If (path == "IO.Runtime.Native" || path == "IO.Runtime.Kind.Native") Return 1;
+        If (path == "IO.Runtime.VM" || path == "IO.Runtime.Kind.VM") Return 2;
         If (path == "IO.Target" || path == "IO.Target.OS" ||
             path == "IO.Target.OS.Current") Return This.Session.Target.OS;
         If (path == "IO.Target.Windows" || path == "IO.Target.OS.Windows") Return 1;
@@ -3729,7 +3983,7 @@ Class SemanticCompilation
         If (path == "IO.Target.Arm64" || path == "IO.Target.Arch.Arm64") Return 3;
         If (path == "IO.Target.Arch.Unknown") Return 0;
         If (path == "IO.Target.Env" || path == "IO.Target.Env.Current")
-            Return This.Session.IsFreestandingCore() ? 2 : 1;
+            Return This.Session.IsFreestanding() ? 2 : 1;
         If (path == "IO.Target.Hosted" || path == "IO.Target.Env.Hosted") Return 1;
         If (path == "IO.Target.Freestanding" || path == "IO.Target.Env.Freestanding") Return 2;
         If (path == "IO.Target.Env.Unknown") Return 0;
@@ -3755,6 +4009,7 @@ Class SemanticCompilation
 
     Public Safe Function string TargetStringConstant(string path)
     {
+        If (path == "IO.Runtime.Name") Return This.RuntimeIsVm() ? "Kinal.VM" : "Kinal.Native";
         If (path == "IO.Target.PathSeparator") Return This.Session.Target.PathSeparator();
         If (path == "IO.Target.ExeSuffix") Return This.Session.Target.ExeSuffix();
         If (path == "IO.Target.ObjectSuffix") Return This.Session.Target.ObjectSuffix();
@@ -3779,13 +4034,55 @@ Class SemanticCompilation
         Return null;
     }
 
+    Public Safe Function int TargetConditionValue(ExpressionNode expression)
+    {
+        If (expression == null) Return -1;
+        int value = This.TargetIntegerConstant(This.ExpressionPath(expression));
+        If (value >= 0) Return value;
+        value = This.TargetBooleanConstant(This.ExpressionPath(expression));
+        If (value >= 0) Return value;
+        If (expression.Kind == [int](ExpressionKind.Boolean))
+            Return expression.Text == "true" || expression.Text == "True" ? 1 : 0;
+        Return -1;
+    }
+
     Public Safe Function int EvaluateTargetCondition(ExpressionNode expression)
     {
-        If (expression == null || expression.Kind != [int](ExpressionKind.Binary) ||
-            (expression.Operator != TokenKind.Equal &&
-             expression.Operator != TokenKind.NotEqual)) Return -1;
-        int left = This.TargetIntegerConstant(This.ExpressionPath(expression.Left));
-        int right = This.TargetIntegerConstant(This.ExpressionPath(expression.Right));
+        If (expression == null) Return -1;
+        int booleanValue = This.TargetBooleanConstant(This.ExpressionPath(expression));
+        If (booleanValue >= 0) Return booleanValue;
+        If (expression.Kind == [int](ExpressionKind.Unary) && expression.Operator == TokenKind.Not)
+        {
+            int operand = This.EvaluateTargetCondition(expression.Left);
+            Return operand < 0 ? -1 : (operand == 0 ? 1 : 0);
+        }
+        If (expression.Kind != [int](ExpressionKind.Binary)) Return -1;
+        If (expression.Operator == TokenKind.AndAnd || expression.Operator == TokenKind.OrOr)
+        {
+            int leftCondition = This.EvaluateTargetCondition(expression.Left);
+            int rightCondition = This.EvaluateTargetCondition(expression.Right);
+            If (expression.Operator == TokenKind.AndAnd)
+            {
+                If (leftCondition == 0) Return 0;
+                If (leftCondition == 1) Return rightCondition;
+            }
+            Else
+            {
+                If (leftCondition == 1) Return 1;
+                If (leftCondition == 0) Return rightCondition;
+            }
+            Return -1;
+        }
+        If (expression.Operator != TokenKind.Equal && expression.Operator != TokenKind.NotEqual) Return -1;
+        // Keep this pruning limited to platform/backend constants. An unknown
+        // left operand may have effects even when the right operand is known.
+        string leftPath = This.ExpressionPath(expression.Left);
+        string rightPath = This.ExpressionPath(expression.Right);
+        If (This.TargetIntegerConstant(leftPath) < 0 && This.TargetBooleanConstant(leftPath) < 0 &&
+            This.TargetIntegerConstant(rightPath) < 0 && This.TargetBooleanConstant(rightPath) < 0)
+            Return -1;
+        int left = This.TargetConditionValue(expression.Left);
+        int right = This.TargetConditionValue(expression.Right);
         If (left < 0 || right < 0) Return -1;
         bool equal = left == right;
         If (expression.Operator == TokenKind.NotEqual) equal = !equal;
@@ -3840,6 +4137,13 @@ Class SemanticCompilation
         SyntaxTree syntax, BindingScope scope, ExpressionNode expression, int depth)
     {
         If (expression == null || depth > 192) Return New ConstantIntegerValue(false, 0);
+        If (expression.Kind == [int](ExpressionKind.Member))
+        {
+            string path = This.ExpressionPath(expression);
+            int value = This.TargetIntegerConstant(path);
+            If (value < 0) value = This.TargetBooleanConstant(path);
+            If (value >= 0) Return New ConstantIntegerValue(true, value);
+        }
         If (expression.Kind == [int](ExpressionKind.Number))
         {
             If (This.NumberIsFloat(expression.Text))
@@ -3982,6 +4286,42 @@ Class SemanticCompilation
         }
     }
 
+    Public Safe Function bool IsDefaultBranch(HirExpression expression)
+    {
+        Return expression != null && expression.Syntax != null &&
+            expression.Syntax.Kind == [int](ExpressionKind.Null) && expression.Syntax.Text == "default";
+    }
+
+    // Preserve stage0's assignment-first branch join. In particular f32/f64
+    // joins keep the first assignable branch type, while int/float joins use
+    // a floating type. Backends must coerce selected branches to this HIR type
+    // before a surrounding assignment introduces another rounding boundary.
+    Public Safe Function TypeSymbol MergeBranchTypes(SyntaxTree syntax, ExpressionNode site,
+                                                       HirExpression left, HirExpression right)
+    {
+        bool leftDefault = This.IsDefaultBranch(left);
+        bool rightDefault = This.IsDefaultBranch(right);
+        If (leftDefault && !rightDefault) { left.Type = right.Type; Return right.Type; }
+        If (rightDefault && !leftDefault) { right.Type = left.Type; Return left.Type; }
+        If (leftDefault && rightDefault)
+        {
+            This.Report(syntax, "Default Literal", "Default literal requires a target type", site.Line, site.Column);
+            Return This.Primitive("any");
+        }
+        If (This.SameType(left.Type, right.Type) || This.IsAssignable(left.Type, right.Type)) Return left.Type;
+        If (This.IsAssignable(right.Type, left.Type)) Return right.Type;
+        TypeSymbol common = left.Type.BaseType;
+        While (common != null)
+        {
+            If (This.IsAssignable(common, right.Type)) Return common;
+            common = common.BaseType;
+        }
+        If (This.IsNumericType(left.Type) && This.IsNumericType(right.Type))
+            Return This.CommonNumericType(left.Type, right.Type, false);
+        This.Report(syntax, "Type Mismatch", "Expression branches must have compatible types", site.Line, site.Column);
+        Return left.Type;
+    }
+
     Public Safe Function HirExpression BindExpression(SyntaxTree syntax, FunctionSymbol function,
                                                        BindingScope scope, ExpressionNode expression)
     {
@@ -4045,8 +4385,12 @@ Class SemanticCompilation
                     staticValue.Function = global.Value.CallableFunction;
                     Return staticValue;
                 }
-                FunctionSymbol propertyGetter = This.FindPropertyGetter(
-                    function.OwnerType, expression.Text);
+                FunctionSymbol propertyGetter = This.FindImplicitPropertyGetter(
+                    function.OwnerType, expression.Text, function.Declaration.IsStatic);
+                If (propertyGetter != null && propertyGetter.Declaration.IsStatic &&
+                    function.Declaration.IsStatic)
+                    Return This.BindPropertyAccess(syntax, function, expression,
+                        null, propertyGetter);
                 If (propertyGetter != null && !propertyGetter.Declaration.IsStatic &&
                     function.Receiver != null)
                 {
@@ -4306,6 +4650,7 @@ Class SemanticCompilation
             HirExpression result = New HirExpression([int](HirExpressionKind.Switch),
                 expression, This.Primitive("any"));
             result.Left = This.BindExpression(syntax, function, scope, expression.Left);
+            bool hasTypedResult = false;
             ExpressionNode item = expression.FirstArgument;
             While (item != null)
             {
@@ -4317,10 +4662,33 @@ Class SemanticCompilation
                 If (boundCase.Right != null)
                 {
                     boundCase.Type = boundCase.Right.Type;
-                    If (result.FirstArgument == null) result.Type = boundCase.Right.Type;
+                    // Leading default bodies are pending until a typed case
+                    // supplies their context; do not merge default/default.
+                    If (!This.IsDefaultBranch(boundCase.Right))
+                    {
+                        If (!hasTypedResult) result.Type = boundCase.Right.Type;
+                        Else
+                        {
+                            HirExpression previous = New HirExpression([int](HirExpressionKind.Constant), null, result.Type);
+                            result.Type = This.MergeBranchTypes(syntax, expression, boundCase.Right, previous);
+                        }
+                        hasTypedResult = true;
+                    }
                 }
                 result.AddArgument(boundCase);
                 item = item.Next;
+            }
+            If (!hasTypedResult)
+                This.Report(syntax, "Default Literal", "Switch expression requires at least one typed case body", expression.Line, expression.Column);
+            HirExpression joinedCase = result.FirstArgument;
+            While (joinedCase != null)
+            {
+                If (This.IsDefaultBranch(joinedCase.Right))
+                {
+                    joinedCase.Right.Type = result.Type;
+                    joinedCase.Type = result.Type;
+                }
+                joinedCase = joinedCase.Next;
             }
             Return result;
         }
@@ -4521,10 +4889,52 @@ Class SemanticCompilation
                     expression.Line, expression.Column);
             }
             TypeSymbol type = comparison ? This.Primitive("bool") : left.Type;
+            // Addition is commutative for an integer offset and a pointer,
+            // but evaluation order remains the original left then right order.
+            If (!assignment && expression.Operator == TokenKind.Plus &&
+                left.Type.Kind == [int](TypeKind.IntegerType) &&
+                right.Type.Kind == [int](TypeKind.PointerType)) type = right.Type;
             If (!assignment && expression.Operator == TokenKind.Plus &&
                 (left.Type.Kind == [int](TypeKind.StringType) || right.Type.Kind == [int](TypeKind.StringType)))
                 type = This.Primitive("string");
+            TypeSymbol operandType = null;
+            bool bitwise = expression.Operator == TokenKind.Ampersand ||
+                expression.Operator == TokenKind.BitOr || expression.Operator == TokenKind.Xor ||
+                expression.Operator == TokenKind.ShiftLeft || expression.Operator == TokenKind.ShiftRight;
+            bool arithmetic = expression.Operator == TokenKind.Plus || expression.Operator == TokenKind.Minus ||
+                expression.Operator == TokenKind.Star || expression.Operator == TokenKind.Slash ||
+                expression.Operator == TokenKind.Percent;
+            bool numericComparison = expression.Operator == TokenKind.Equal || expression.Operator == TokenKind.NotEqual ||
+                expression.Operator == TokenKind.Less || expression.Operator == TokenKind.LessEqual ||
+                expression.Operator == TokenKind.Greater || expression.Operator == TokenKind.GreaterEqual;
+            If (!assignment && This.IsNumericType(left.Type) && This.IsNumericType(right.Type))
+            {
+                If (numericComparison || bitwise)
+                    operandType = This.CommonNumericType(left.Type, right.Type, bitwise);
+                ElseIf (arithmetic)
+                {
+                    // Arithmetic keeps stage0's left-integer rule, but any
+                    // floating operand promotes both sides to the wider float.
+                    operandType = left.Type.Kind == [int](TypeKind.FloatType) ||
+                        right.Type.Kind == [int](TypeKind.FloatType) ?
+                        This.CommonNumericType(left.Type, right.Type, false) : left.Type;
+                }
+                If (operandType != null && !numericComparison) type = operandType;
+                If (arithmetic) operandType = This.BinaryIntegerType(operandType);
+            }
+            ElseIf (assignment && expression.Operator != TokenKind.Assign &&
+                This.IsNumericType(left.Type) && This.IsNumericType(right.Type))
+            {
+                // Compound arithmetic promotes its operands before the one
+                // final conversion into the destination. Its expression result
+                // remains the destination type, unlike ordinary arithmetic.
+                operandType = left.Type.Kind == [int](TypeKind.FloatType) ||
+                    right.Type.Kind == [int](TypeKind.FloatType) ?
+                    This.CommonNumericType(left.Type, right.Type, false) : left.Type;
+                operandType = This.BinaryIntegerType(operandType);
+            }
             HirExpression result = New HirExpression([int](HirExpressionKind.Binary), expression, type);
+            result.OperandType = operandType;
             result.Left = left;
             result.Right = right;
             If (expression.Operator == TokenKind.Plus &&
@@ -4538,9 +4948,7 @@ Class SemanticCompilation
             HirExpression condition = This.BindExpression(syntax, function, scope, expression.Left);
             HirExpression whenTrue = This.BindExpression(syntax, function, scope, expression.Right);
             HirExpression whenFalse = This.BindExpression(syntax, function, scope, expression.Third);
-            TypeSymbol resultType = whenTrue.Type.Kind == [int](TypeKind.NullType) ?
-                whenFalse.Type : whenTrue.Type;
-            If (whenFalse.Type.Kind == [int](TypeKind.NullType)) resultType = whenTrue.Type;
+            TypeSymbol resultType = This.MergeBranchTypes(syntax, expression, whenTrue, whenFalse);
             HirExpression result = New HirExpression([int](HirExpressionKind.Conditional), expression, resultType);
             result.Left = condition;
             result.Right = whenTrue;
@@ -4795,6 +5203,9 @@ Class SemanticCompilation
             result.DeclaredSymbol.IsConst = statement.IsConst;
             result.DeclaredSymbol.ConstantOrigin = statement.Expression;
             result.DeclaredSymbol.PackageLabels = statement.PackageLabels;
+            If (This.IsFunctionObjectType(result.DeclaredType))
+                result.DeclaredSymbol.BuiltinReferenceTarget =
+                    This.KnownBuiltinReferenceTarget(result.Expression);
             This.ValidatePackageAliases(syntax, statement, result.DeclaredType);
             FunctionSymbol assignedCallable = null;
             If (result.Expression != null &&

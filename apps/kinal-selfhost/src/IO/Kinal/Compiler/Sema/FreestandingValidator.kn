@@ -11,8 +11,8 @@ Get IO.Kinal.Compiler.Lex.TokenKind;
 
 // This gate checks the bound program, not public library names. Runtime-free
 // output must never acquire hidden heap/exception dependencies during lowering.
-// Fixed-array struct fields and managed values remain explicit unsupported
-// boundaries until their freestanding lowering is implemented.
+// Core strings and primitive any values use compiler-emitted helpers. Heap
+// allocation, managed callables and runtime-only operations remain guarded.
 Class FreestandingValidator
 {
     Public SemanticCompilation Semantics;
@@ -39,7 +39,7 @@ Class FreestandingValidator
         If (kind == [int](TypeKind.NamedType) &&
             !This.Semantics.IsStructType(type) && !This.Semantics.IsEnumType(type))
             This.Reject("managed reference type requires a runtime: " + type.QualifiedName(), origin);
-        If (kind == [int](TypeKind.AnyType) || kind == [int](TypeKind.ListType) ||
+        If (kind == [int](TypeKind.ListType) ||
             kind == [int](TypeKind.DictType) || kind == [int](TypeKind.SetType) ||
             kind == [int](TypeKind.PackageType))
             This.Reject("managed value requires a runtime: " + type.QualifiedName(), origin);
@@ -54,9 +54,12 @@ Class FreestandingValidator
         int source = value.Type.Kind;
         int destination = target.Kind;
         If (source == destination || source == [int](TypeKind.NullType)) Return;
-        If ((source == [int](TypeKind.StringType) && destination != [int](TypeKind.PointerType)) ||
-            (destination == [int](TypeKind.StringType) && source != [int](TypeKind.PointerType)))
-            This.Reject("string conversion requires a runtime", value.Syntax);
+        If (source == [int](TypeKind.StringType) &&
+            destination != [int](TypeKind.PointerType) && destination != [int](TypeKind.AnyType))
+            This.Reject("parsing strings requires a runtime", value.Syntax);
+        If (destination == [int](TypeKind.AnyType) &&
+            (source == [int](TypeKind.ArrayType) || This.Semantics.IsStructType(value.Type)))
+            This.Reject("boxing an aggregate requires allocation", value.Syntax);
     }
 
     Public Safe Function void CheckExpressions(HirExpression expression)
@@ -77,19 +80,12 @@ Class FreestandingValidator
             If (kind == [int](HirExpressionKind.Binary))
             {
                 If (current.Left != null) This.CheckConversion(current.Left.Type, current.Right);
-                If (current.Operator != TokenKind.Assign &&
-                    ((current.Left != null && current.Left.Type.Kind == [int](TypeKind.StringType)) ||
-                     (current.Right != null && current.Right.Type.Kind == [int](TypeKind.StringType))))
-                    This.Reject("string operation requires a runtime", current.Syntax);
             }
             If (kind == [int](HirExpressionKind.Conditional))
             {
                 This.CheckConversion(current.Type, current.Right);
                 This.CheckConversion(current.Type, current.Third);
             }
-            If (kind == [int](HirExpressionKind.Switch) && current.Left != null &&
-                current.Left.Type.Kind == [int](TypeKind.StringType))
-                This.Reject("string Switch requires a runtime", current.Syntax);
             If (kind == [int](HirExpressionKind.Call))
             {
                 If (current.CallKind == [int](HirCallKind.RuntimeBuiltin))
@@ -101,7 +97,33 @@ Class FreestandingValidator
                         current.Target == "IO.Panic.Abort" ||
                         IO.Text.StartsWith(current.Target, "IO.Volatile.Read") ||
                         IO.Text.StartsWith(current.Target, "IO.Volatile.Write");
-                    If (!arrayAccess && !intrinsic)
+                    bool coreString = current.Target == "Length" || current.Target == "Index" ||
+                        current.Target == "ToString" || current.Target == "TypeOf" ||
+                        current.Target == "IO.Type.string.Length" ||
+                        current.Target == "IO.Type.string.Equals" ||
+                        current.Target == "IO.Type.string.Concat" ||
+                        current.Target == "IO.Type.string";
+                    string anyName = This.Semantics.AttributeShortName(current.Target);
+                    bool anyReceiver = (current.Left != null &&
+                        current.Left.Type.Kind == [int](TypeKind.AnyType)) ||
+                        IO.Text.StartsWith(current.Target, "IO.Type.any.");
+                    bool coreAny = anyReceiver && (anyName == "IsNull" || anyName == "ToString" ||
+                        anyName == "Equals" || anyName == "Tag" || anyName == "TypeName" ||
+                        anyName == "IsNumber" || anyName == "IsPointer" || anyName == "IsInt" ||
+                        anyName == "IsFloat" || anyName == "IsString" || anyName == "IsBool" ||
+                        anyName == "IsChar" || anyName == "IsObject");
+                    If (coreAny)
+                    {
+                        // These operators inspect primitive tags/payloads. Their
+                        // implicit arguments must not introduce aggregate boxing.
+                        HirExpression argument = current.FirstArgument;
+                        While (argument != null)
+                        {
+                            This.CheckConversion(This.Semantics.Primitive("any"), argument);
+                            argument = argument.Next;
+                        }
+                    }
+                    If (!arrayAccess && !intrinsic && !coreString && !coreAny)
                         This.Reject("operation requires a runtime: " + current.Target, current.Syntax);
                 }
                 If (current.CallKind == [int](HirCallKind.DynamicFunction))
@@ -140,10 +162,6 @@ Class FreestandingValidator
             }
             If (current.Kind == [int](StatementKind.Return))
                 This.CheckConversion(This.Function.ReturnType, current.Expression);
-            If ((current.Kind == [int](StatementKind.Switch) ||
-                 current.Kind == [int](StatementKind.Foreach)) && current.Expression != null &&
-                current.Expression.Type.Kind == [int](TypeKind.StringType))
-                This.Reject("string iteration/comparison requires a runtime", current.Expression.Syntax);
             This.CheckExpressions(current.Expression);
             This.CheckExpressions(current.SecondExpression);
             This.CheckExpressions(current.ThirdExpression);
@@ -152,14 +170,6 @@ Class FreestandingValidator
             This.CheckStatements(current.ElseBranch);
             current = current.Next;
         }
-    }
-
-    Public Safe Function void CheckStorageType(string typeName)
-    {
-        int open = IO.Text.IndexOf(typeName, "[");
-        int close = IO.Text.IndexOf(typeName, "]");
-        If (open >= 0 && close > open + 1)
-            This.Reject("fixed array storage is not yet supported without a runtime", null);
     }
 
     Public Safe Function void Validate()
@@ -174,7 +184,6 @@ Class FreestandingValidator
                 While (field != null)
                 {
                     This.CheckType(This.Semantics.ResolveFieldType(type.Syntax, field), field.Initializer);
-                    This.CheckStorageType(field.TypeName);
                     field = field.Next;
                 }
             }
@@ -185,11 +194,20 @@ Class FreestandingValidator
         {
             This.Syntax = global.Syntax;
             This.CheckType(global.Value.Type, global.Declaration.Initializer);
-            // A name initializer needs an executable initialization phase.
-            If (global.Declaration.Initializer != null &&
-                global.Declaration.Initializer.Kind == [int](ExpressionKind.Name))
-                This.Reject("global copy initialization is not yet supported without a runtime",
-                    global.Declaration.Initializer);
+            HirExpression initializer = null;
+            HirModule globalModule = This.Semantics.FirstHirModule;
+            While (globalModule != null)
+            {
+                HirGlobal bound = globalModule.FirstGlobal;
+                While (bound != null)
+                {
+                    If (bound.Symbol == global) initializer = bound.Initializer;
+                    bound = bound.Next;
+                }
+                globalModule = globalModule.Next;
+            }
+            This.CheckConversion(global.Value.Type, initializer);
+            This.CheckExpressions(initializer);
             global = global.Next;
         }
         FunctionSymbol function = This.Semantics.FirstFunction;

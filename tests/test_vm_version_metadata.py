@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from infra.scripts.x import runtime_build, vm_metadata
+from infra.scripts.x import runtime_build, selfhost_ops, vm_metadata
 from check_vm_version import check_vm_version
 
 
@@ -84,6 +84,16 @@ class VmVersionMetadataTests(unittest.TestCase):
         self.assertEqual(run.call_args.args[0][0], compiler)
         self.assertEqual(output.parent, bundle)
 
+    def test_selfhost_vm_build_refreshes_metadata_without_stage0_callback(self):
+        events = []
+        compiler = Path("/isolated/selfhost/kinal-selfhost")
+        with patch.object(selfhost_ops, "generate_kinalvm_build_info",
+                          side_effect=lambda: events.append("generate")), \
+             patch.object(selfhost_ops, "run", side_effect=lambda *a, **kw: events.append("build")) as run:
+            output = selfhost_ops.build_selfhost_vm_runner(compiler)
+        self.assertEqual(events, ["generate", "build"])
+        self.assertEqual(run.call_args.args[0][0], compiler)
+        self.assertEqual(output.parent, compiler.parent)
 
     def test_banner_checks_both_aliases_from_an_unrelated_directory(self):
         with tempfile.TemporaryDirectory() as directory:

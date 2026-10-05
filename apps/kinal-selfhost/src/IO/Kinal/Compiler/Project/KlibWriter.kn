@@ -1,0 +1,191 @@
+Unit IO.Kinal.Compiler.Project.KlibWriter;
+
+Get IO.Directory;
+Get IO.File;
+Get IO.Path;
+Get IO.Text;
+Get IO.Kinal.Runtime;
+Get IO.Kinal.Compiler.Source.SourcePath;
+Get IO.Kinal.Compiler.Project.PackageManifest;
+
+[LinkName("fopen")]
+Extern Unsafe Function byte* OpenFile(string path, string mode) By C;
+[LinkName("fclose")]
+Extern Unsafe Function i32 CloseFile(byte* file) By C;
+[LinkName("fread")]
+Extern Unsafe Function usize ReadBytes(byte[] buffer, usize size, usize count, byte* file) By C;
+[LinkName("fwrite")]
+Extern Unsafe Function usize WriteBytes(byte[] buffer, usize size, usize count, byte* file) By C;
+
+// KNKLIB1 policy, layout, byte counts and serialization are Kinal-owned.
+// The C ABI leaves provide only buffered file I/O, as for VM executable packs.
+Class KlibWriter
+{
+    Public string Error;
+    Public list Paths;
+    Public list Sizes;
+
+    Public Safe Constructor()
+    {
+        This.Error = "";
+        This.Paths = list.Create();
+        This.Sizes = list.Create();
+    }
+
+    Public Safe Function bool Fail(string message)
+    {
+        If (IO.Text.IsEmpty(This.Error)) This.Error = message;
+        Return false;
+    }
+
+    Public Safe Function bool IncludePayload(string relative)
+    {
+        string portable = IO.Text.Replace(relative, "\\", "/");
+        string framed = "/" + portable;
+        If (IO.Text.Contains(framed, "/.git/") ||
+            IO.Text.Contains(framed, "/.kinal-cache/")) Return false;
+        string name = IO.Text.ToLower(IO.Path.FileName(portable));
+        Return name != "package.knpkg.json" && name != "package.knpkg" &&
+            !IO.Text.EndsWith(name, ".klib");
+    }
+
+    Public Trusted Function bool Collect(PackageManifestConfig manifest, string output)
+    {
+        This.Paths = list.Create();
+        This.Sizes = list.Create();
+        string prefix = IO.Text.Replace(manifest.Directory, "\\", "/");
+        If (!IO.Text.EndsWith(prefix, "/")) prefix = prefix + "/";
+        string outputPath = IO.Kinal.Compiler.Source.SourcePath.Canonical(output);
+        If (outputPath == manifest.Path)
+            Return This.Fail("archive output must differ from its package manifest");
+        list files = IO.Directory.Files(manifest.Directory, true);
+        int index = 0;
+        While (index < files.Count())
+        {
+            string path = [string](files.Fetch(index));
+            string full = IO.Kinal.Compiler.Source.SourcePath.Canonical(path);
+            string portable = IO.Text.Replace(full, "\\", "/");
+            string relative = IO.Text.Slice(portable, IO.Text.Length(prefix),
+                IO.Text.Length(portable) - IO.Text.Length(prefix));
+            If (This.IncludePayload(relative))
+            {
+                If (full == outputPath)
+                    Return This.Fail("archive output must differ from its payload files");
+                If (This.Paths.Count() >= 256)
+                    Return This.Fail("package payload exceeds 256 files");
+                int size = IO.File.Size(full);
+                If (size < 0) Return This.Fail("cannot read package file size: " + full);
+                This.Paths.Add(relative);
+                This.Sizes.Add(size);
+            }
+            index = index + 1;
+        }
+        If (This.Paths.Count() == 0) Return This.Fail("package has no files to pack");
+        Return true;
+    }
+
+    Public Trusted Function bool WriteNumber(byte* output, u64 value, int count)
+    {
+        byte[8] bytes;
+        int index = 0;
+        While (index < count)
+        {
+            bytes[index] = [byte]((value >> (index * 8)) & [u64](255));
+            index = index + 1;
+        }
+        Return WriteBytes(bytes, [usize](1), [usize](count), output) == [usize](count);
+    }
+
+    Public Trusted Function bool WriteText(byte* output, string text)
+    {
+        char[] characters = text.ToChars();
+        byte[4096] buffer;
+        int offset = 0;
+        While (offset < characters.Length())
+        {
+            int count = characters.Length() - offset;
+            If (count > 4096) count = 4096;
+            int index = 0;
+            While (index < count)
+            {
+                buffer[index] = [byte](characters[offset + index]);
+                index = index + 1;
+            }
+            If (WriteBytes(buffer, [usize](1), [usize](count), output) != [usize](count))
+                Return false;
+            offset = offset + count;
+        }
+        Return true;
+    }
+
+    Public Trusted Function bool CopyFile(byte* output, string path, int expected)
+    {
+        byte* input = OpenFile(path, "rb");
+        If (input == null) Return This.Fail("cannot open package file: " + path);
+        byte[65536] buffer;
+        int total = 0;
+        bool ok = true;
+        While (total < expected && ok)
+        {
+            int count = expected - total;
+            If (count > 65536) count = 65536;
+            ok = ReadBytes(buffer, [usize](1), [usize](count), input) == [usize](count);
+            If (ok) ok = WriteBytes(buffer, [usize](1), [usize](count), output) == [usize](count);
+            total = total + count;
+        }
+        CloseFile(input);
+        If (!ok) Return This.Fail("failed to copy package file: " + path);
+        Return true;
+    }
+
+    Public Trusted Function bool Pack(PackageManifestConfig manifest, string outputPath)
+    {
+        If (!This.Collect(manifest, outputPath)) Return false;
+        string compiler = IO.Kinal.Runtime.ExecutablePath();
+        int compilerSize = compiler.ToChars().Length();
+        int manifestSize = IO.File.Size(manifest.Path);
+        If (manifestSize < 0) Return This.Fail("cannot read package manifest size");
+        u64 total = [u64](24) + [u64](compilerSize) + [u64](manifestSize);
+        int index = 0;
+        While (index < This.Paths.Count())
+        {
+            string path = [string](This.Paths.Fetch(index));
+            total = total + [u64](12) + [u64](path.ToChars().Length()) +
+                [u64]([int](This.Sizes.Fetch(index)));
+            index = index + 1;
+        }
+        If (total > [u64](2147483647))
+            Return This.Fail("archive exceeds the current 2 GiB compiler limit");
+        string parent = IO.Path.Directory(outputPath);
+        If (!IO.Text.IsEmpty(parent) && !IO.Directory.Ensure(parent))
+            Return This.Fail("cannot create archive output directory: " + parent);
+        byte* output = OpenFile(outputPath, "wb");
+        If (output == null) Return This.Fail("cannot create klib: " + outputPath);
+        bool ok = This.WriteText(output, "KNKLIB1") &&
+            This.WriteNumber(output, [u64](0), 1) &&
+            This.WriteNumber(output, [u64](1), 4) &&
+            This.WriteNumber(output, [u64](compilerSize), 4) &&
+            This.WriteNumber(output, [u64](manifestSize), 4) &&
+            This.WriteNumber(output, [u64](This.Paths.Count()), 4) &&
+            This.WriteText(output, compiler) &&
+            This.CopyFile(output, manifest.Path, manifestSize);
+        index = 0;
+        While (index < This.Paths.Count() && ok)
+        {
+            string path = [string](This.Paths.Fetch(index));
+            int size = [int](This.Sizes.Fetch(index));
+            ok = This.WriteNumber(output, [u64](path.ToChars().Length()), 4) &&
+                This.WriteNumber(output, [u64](size), 8) &&
+                This.WriteText(output, path) &&
+                This.CopyFile(output, IO.Path.Combine(manifest.Directory, path), size);
+            index = index + 1;
+        }
+        If (CloseFile(output) != 0) ok = false;
+        If (!ok)
+        {
+            IO.File.DeleteIfExists(outputPath);
+            Return This.Fail("failed to write klib: " + outputPath);
+        }
+        Return true;
+    }
+}

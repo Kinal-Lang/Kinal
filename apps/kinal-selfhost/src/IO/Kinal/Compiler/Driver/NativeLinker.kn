@@ -1,0 +1,553 @@
+Unit IO.Kinal.Compiler.Driver.NativeLinker;
+
+Get IO.Console;
+Get IO.Directory;
+Get IO.File;
+Get IO.Host;
+Get IO.Path;
+Get IO.Text;
+Get IO.Kinal.Runtime;
+Get IO.Kinal.Compiler.Core.CompileSession;
+Get IO.Kinal.Compiler.Core.TargetInfo;
+Get IO.Kinal.Compiler.Project.ProjectConfig;
+Get IO.Kinal.Compiler.Sema.SemanticCompilation;
+Get IO.Kinal.Compiler.Sema.Symbols;
+Get IO.Kinal.Compiler.Syntax.Nodes;
+Get IO.Kinal.Compiler.Syntax.SyntaxTree;
+
+[LinkName("getenv")]
+Extern Unsafe Function char* LinkEnvironment(string name) By C;
+
+// This module owns command construction and link policy. External tools receive
+// only LLVM IR, assembly, objects, archives, and the platform runtime's C ABI.
+Class NativeLinker
+{
+    Public CompileSession Session;
+    Public SemanticCompilation Semantics;
+    Public ProjectProfileConfig Profile;
+    Public TargetInfo Target;
+    Public string Root;
+    Public list TemporaryFiles;
+    Public bool KeepTemps;
+    Public string Error;
+
+    Public Trusted Constructor(CompileSession session, SemanticCompilation semantics, bool keepTemps)
+    {
+        This.Session = session;
+        This.Semantics = semantics;
+        This.Profile = session.Profile;
+        This.Target = session.Target;
+        This.Root = IO.Path.Directory(IO.Kinal.Runtime.ExecutablePath());
+        This.TemporaryFiles = list.Create();
+        This.KeepTemps = keepTemps;
+        This.Error = "";
+    }
+
+    Public Trusted Function string Tool(string name)
+    {
+        If (name == "zig")
+        {
+            string configured = IO.Kinal.Runtime.CopyNativeText(LinkEnvironment("KINAL_LINKER_ZIG"));
+            If (IO.Text.IsEmpty(configured)) configured = IO.Kinal.Runtime.CopyNativeText(LinkEnvironment("KINAL_ZIG"));
+            If (!IO.Text.IsEmpty(configured)) Return configured;
+        }
+        string executable = name + (IO.Host.OS == IO.Host.OS.Windows ? ".exe" : "");
+        string adjacent = IO.Path.Combine(This.Root, "linker/" + executable);
+        If (IO.File.Exists(adjacent)) Return adjacent;
+        string key = name == "clang" ? "KINAL_CLANG" :
+            (name == "llvm-lib" ? "KINAL_LLVM_LIB" :
+            (name == "link" ? "KINAL_LINKER_MSVC" :
+            ((name == "ld.lld" || name == "lld-link") ? "KINAL_LINKER_LLD" : "")));
+        If (!IO.Text.IsEmpty(key))
+        {
+            string configured = IO.Kinal.Runtime.CopyNativeText(LinkEnvironment(key));
+            If (!IO.Text.IsEmpty(configured)) Return configured;
+        }
+        string toolDirectory = IO.Kinal.Runtime.CopyNativeText(LinkEnvironment("KINAL_LINKER_DIR"));
+        If (!IO.Text.IsEmpty(toolDirectory))
+        {
+            adjacent = IO.Path.Combine(toolDirectory, executable);
+            If (IO.File.Exists(adjacent)) Return adjacent;
+        }
+        adjacent = IO.Path.Combine(This.Root, "llvm/bin/" + executable);
+        If (IO.File.Exists(adjacent)) Return adjacent;
+        adjacent = IO.Path.Combine(This.Root, "zig/" + executable);
+        If (name == "zig" && IO.File.Exists(adjacent)) Return adjacent;
+        toolDirectory = IO.Kinal.Runtime.CopyNativeText(LinkEnvironment("KN_LLVM_BIN"));
+        If (!IO.Text.IsEmpty(toolDirectory))
+        {
+            adjacent = IO.Path.Combine(toolDirectory, executable);
+            If (IO.File.Exists(adjacent)) Return adjacent;
+        }
+        string path = IO.Kinal.Runtime.CopyNativeText(LinkEnvironment("PATH"));
+        list paths = IO.Text.Split(path, IO.Host.OS == IO.Host.OS.Windows ? ";" : ":");
+        int pathIndex = 0;
+        While (pathIndex < paths.Count())
+        {
+            adjacent = IO.Path.Combine([string](paths.Fetch(pathIndex)), executable);
+            If (IO.File.Exists(adjacent)) Return adjacent;
+            pathIndex = pathIndex + 1;
+        }
+        Return executable;
+    }
+
+    Public Trusted Function string SelectedTool(string name)
+    {
+        If (!IO.Text.IsEmpty(This.Profile.LinkerPath))
+            Return This.Session.Project.ResolvePath(This.Profile.LinkerPath);
+        Return This.Tool(name);
+    }
+
+    Public Safe Function string ZigTarget()
+    {
+        string architecture = This.Target.Architecture == 3 ? "aarch64" :
+            (This.Target.Architecture == 1 ? "i386" : "x86_64");
+        If (This.Target.OS == 1) Return architecture + "-windows-msvc";
+        If (This.Target.OS == 2) Return architecture + "-linux-gnu";
+        If (This.Target.OS == 3) Return architecture + "-macos";
+        Return architecture + "-freestanding";
+    }
+
+    Public Trusted Function int Execute(string executable, list arguments)
+    {
+        string[] values = {};
+        string display = "[Trace] link cmd: \"" + executable + "\"";
+        int index = 0;
+        While (index < arguments.Count())
+        {
+            string value = [string](arguments.Fetch(index));
+            values = values.Add(value);
+            display = display + " \"" + IO.Text.Replace(value, "\"", "\\\"") + "\"";
+            index = index + 1;
+        }
+        If (This.Profile.ShowLink) IO.Console.PrintLine(display);
+        int result = IO.Kinal.Runtime.ProcessRun(executable, values);
+        If (result != 0)
+        {
+            This.Error = "tool failed: " + executable + " (exit " + [string](result) + ")";
+            IO.Console.PrintLine(This.Error);
+        }
+        Return result;
+    }
+
+    Public Safe Function void Cleanup()
+    {
+        If (This.KeepTemps) Return;
+        int index = 0;
+        While (index < This.TemporaryFiles.Count())
+        {
+            IO.File.DeleteIfExists([string](This.TemporaryFiles.Fetch(index)));
+            index = index + 1;
+        }
+    }
+
+    Public Trusted Function int CompileIntermediate(string input, string output, string mode)
+    {
+        string extension = IO.Text.ToLower(IO.Path.Extension(input));
+        If (mode == "build-ir" && extension == "ll")
+        {
+            If (IO.Path.Normalize(input) == IO.Path.Normalize(output)) Return 0;
+            Return IO.File.WriteAllText(output, IO.File.ReadAllText(input)) ? 0 : 1;
+        }
+        If ((extension == "o" || extension == "obj") && mode == "build-object")
+        {
+            If (IO.Path.Normalize(input) == IO.Path.Normalize(output)) Return 0;
+            Return IO.File.Copy(input, output) ? 0 : 1;
+        }
+        If (extension == "o" || extension == "obj" ||
+            (mode == "build-asm" && extension != "ll") || mode == "build-ir")
+        {
+            This.Error = "input cannot be compiled backward: " + input;
+            IO.Console.PrintLine(This.Error);
+            Return 1;
+        }
+        list arguments = list.Create();
+        arguments.Add("--target=" + This.Target.Triple);
+        arguments.Add("-Wno-override-module");
+        arguments.Add(mode == "build-asm" ? "-S" : "-c");
+        If (extension == "s" || extension == "asm") { arguments.Add("-x"); arguments.Add("assembler"); }
+        If (This.Profile.ArtifactKind == "shared" ||
+            (This.Profile.ArtifactKind == "static" && This.Session.IsFreestanding())) arguments.Add("-fPIC");
+        If (extension == "ll" && This.Profile.LTO != "off" && mode != "build-asm")
+            arguments.Add(This.Profile.LTO == "thin" ? "-flto=thin" : "-flto");
+        arguments.Add(input);
+        arguments.Add("-o");
+        arguments.Add(output);
+        Return This.Execute(This.Tool("clang"), arguments);
+    }
+
+    Public Safe Function bool TargetMatches(string selector)
+    {
+        // Attribute selectors are their own stage0 contract, not all CLI
+        // target aliases. Unknown selectors (including "host") are inactive.
+        string name = IO.Text.ToLower(selector);
+        If (IO.Text.IsEmpty(name)) Return false;
+        If (name == IO.Text.ToLower(This.Target.Triple)) Return true;
+        If (name == "windows") Return This.Target.OS == 1;
+        If (name == "linux") Return This.Target.OS == 2;
+        If (name == "macos" || name == "darwin") Return This.Target.OS == 3;
+        If (name == "bare" || name == "freestanding") Return This.Target.OS == 0;
+        If (name == "win64" || name == "win-x64") Return This.Target.OS == 1 && This.Target.Architecture == 2;
+        If (name == "win86" || name == "win-x86") Return This.Target.OS == 1 && This.Target.Architecture == 1;
+        If (name == "win-arm64") Return This.Target.OS == 1 && This.Target.Architecture == 3;
+        If (name == "linux64" || name == "linux-x64") Return This.Target.OS == 2 && This.Target.Architecture == 2;
+        If (name == "linux-arm64") Return This.Target.OS == 2 && This.Target.Architecture == 3;
+        If (name == "mac64" || name == "macos-x64" || name == "darwin-x64")
+            Return This.Target.OS == 3 && This.Target.Architecture == 2;
+        If (name == "macos-arm64" || name == "darwin-arm64") Return This.Target.OS == 3 && This.Target.Architecture == 3;
+        If (name == "bare64") Return This.Target.OS == 0 && This.Target.Architecture == 2;
+        If (name == "bare-arm64") Return This.Target.OS == 0 && This.Target.Architecture == 3;
+        If (name == "bare-x86") Return This.Target.OS == 0 && This.Target.Architecture == 1;
+        Return false;
+    }
+
+    Public Safe Function string AttributeString(ExpressionNode argument)
+    {
+        If (argument == null) Return "";
+        string raw = argument.Text;
+        int length = IO.Text.Length(raw);
+        If (length >= 2 && IO.Text.StartsWith(raw, "\"") && IO.Text.EndsWith(raw, "\""))
+            Return IO.Text.Slice(raw, 1, length - 2);
+        Return raw;
+    }
+
+    Public Safe Function void AddLibrary(list arguments, string name, bool windows)
+    {
+        If (windows) arguments.Add(IO.Text.IsEmpty(IO.Path.Extension(name)) ? name + ".lib" : name);
+        Else arguments.Add("-l" + name);
+    }
+
+    Public Safe Function void AddDirectory(list arguments, list seen, string path, bool windows)
+    {
+        string directory = IO.Path.Normalize(path);
+        If (seen.Contains(directory)) Return;
+        seen.Add(directory);
+        arguments.Add(windows ? "/libpath:" + directory : "-L" + directory);
+        If (This.Profile.ShowLinkSearch) IO.Console.PrintLine("  " + directory);
+    }
+
+    Public Safe Function bool IsInjectedBridge(string path)
+    {
+        string name = IO.Path.FileName(path);
+        Return (name == "kn_selfhost_llvm.o" && This.NeedsBridge("kn_sh_llvm_")) ||
+            (name == "kn_selfhost_runtime.o" && This.NeedsBridge("kn_sh_rt_"));
+    }
+
+    Public Safe Function void AppendLinkOption(list arguments, list directories,
+        string kind, string value, bool windows, bool driver, bool archive)
+    {
+        If (kind == "dir") This.AddDirectory(arguments, directories, value, windows);
+        ElseIf (kind == "lib") This.AddLibrary(arguments, value, windows);
+        ElseIf (kind == "file") { If (!This.IsInjectedBridge(value)) arguments.Add(value); }
+        ElseIf (kind == "arg")
+        {
+            If (driver && !windows && !archive) arguments.Add("-Xlinker");
+            arguments.Add(value);
+        }
+        ElseIf (kind == "root")
+        {
+            string library = IO.Path.Combine(value, "lib");
+            string[] candidates = {IO.Path.Combine(library, This.Target.Triple),
+                IO.Path.Combine(library, This.Target.Tag()), library, value};
+            int candidate = 0;
+            While (candidate < candidates.Length())
+            {
+                If (IO.Directory.Exists(candidates[candidate]))
+                    This.AddDirectory(arguments, directories, candidates[candidate], windows);
+                candidate = candidate + 1;
+            }
+        }
+    }
+
+    Public Safe Function void AppendSettingList(list arguments, list directories,
+        list values, string kind, bool windows, bool driver, bool archive)
+    {
+        int index = 0;
+        While (index < values.Count())
+        {
+            string value = [string](values.Fetch(index));
+            If (kind == "dir" || kind == "file" || kind == "root") value = This.Session.Project.ResolvePath(value);
+            This.AppendLinkOption(arguments, directories, kind, value, windows, driver, archive);
+            index = index + 1;
+        }
+    }
+
+    Public Safe Function void AppendSettings(list arguments, bool windows, bool driver, bool archive)
+    {
+        list directories = list.Create();
+        list files = list.Create();
+        list libraries = list.Create();
+        If (This.Profile.ShowLinkSearch) IO.Console.PrintLine("[LinkSearch]");
+        // Preserve CLI ordering, notably raw linker flags surrounding archives.
+        // Manifest lists follow CLI items in the same fixed order as stage0.
+        int index = 0;
+        While (index < This.Profile.OrderedLinkOptions.Count())
+        {
+            ProjectLinkOption option = [ProjectLinkOption](This.Profile.OrderedLinkOptions.Fetch(index));
+            This.AppendLinkOption(arguments, directories, option.Kind, option.Value, windows, driver, archive);
+            If (option.Kind == "file") files.Add(option.Value);
+            If (option.Kind == "lib") libraries.Add(option.Value);
+            index = index + 1;
+        }
+        This.AppendSettingList(arguments, directories, This.Profile.LibDirs, "dir", windows, driver, archive);
+        This.AppendSettingList(arguments, directories, This.Profile.Libs, "lib", windows, driver, archive);
+        This.AppendSettingList(arguments, directories, This.Profile.LinkFiles, "file", windows, driver, archive);
+        This.AppendSettingList(arguments, directories, This.Profile.LinkArgs, "arg", windows, driver, archive);
+        This.AppendSettingList(arguments, directories, This.Profile.LinkRoots, "root", windows, driver, archive);
+        index = 0;
+        While (index < This.Profile.LinkFiles.Count())
+        { files.Add(This.Session.Project.ResolvePath([string](This.Profile.LinkFiles.Fetch(index)))); index = index + 1; }
+        index = 0;
+        While (index < This.Profile.Libs.Count()) { libraries.Add(This.Profile.Libs.Fetch(index)); index = index + 1; }
+        FunctionSymbol function = This.Semantics == null ? null : This.Semantics.FirstFunction;
+        While (function != null)
+        {
+            If (function.Declaration.IsExtern)
+            {
+                SyntaxAttribute attribute = function.Declaration.FirstAttribute;
+                While (attribute != null)
+                {
+                    string name = This.Semantics.AttributeShortName(attribute.Name);
+                    bool library = name == "LinkLib" || name == "LinkLibTarget";
+                    bool file = name == "LinkFile" || name == "LinkFileTarget";
+                    ExpressionNode argument = attribute.FirstArgument;
+                    If ((name == "LinkLibTarget" || name == "LinkFileTarget") && argument != null)
+                    {
+                        If (!This.TargetMatches(This.AttributeString(argument))) { attribute = attribute.Next; Continue; }
+                        argument = argument.Next;
+                    }
+                    While ((library || file) && argument != null)
+                    {
+                        string value = This.AttributeString(argument);
+                        If (file && !IO.Path.IsAbsolute(value)) value = IO.Path.Combine(
+                            IO.Path.Directory(function.Syntax.Source.Path), value);
+                        list seen = file ? files : libraries;
+                        If (!seen.Contains(value))
+                        {
+                            seen.Add(value);
+                            This.AppendLinkOption(arguments, directories, file ? "file" : "lib", value, windows, driver, archive);
+                        }
+                        argument = argument.Next;
+                    }
+                    attribute = attribute.Next;
+                }
+            }
+            function = function.Next;
+        }
+    }
+
+    Public Safe Function bool NeedsBridge(string prefix)
+    {
+        FunctionSymbol function = This.Semantics == null ? null : This.Semantics.FirstFunction;
+        While (function != null)
+        {
+            If (function.Declaration.IsExtern && IO.Text.StartsWith(
+                This.Semantics.AttributeString(function.Declaration, "LinkName"), prefix)) Return true;
+            function = function.Next;
+        }
+        Return false;
+    }
+
+    Public Trusted Function string RuntimeObject(string name, string output)
+    {
+        string directory = IO.Path.Combine(This.Root, "runtime/" + This.Target.Tag());
+        string object = IO.Path.Combine(directory, name + This.Target.ObjectSuffix());
+        bool pic = This.Profile.ArtifactKind == "shared" && This.Target.OS != 1;
+        If (pic) object = IO.Path.Combine(directory, name + ".pic.o");
+        If (IO.File.Exists(object)) Return object;
+        string source = IO.Path.Combine(This.Root, "runtime/src/" + name + ".c");
+        string includes = IO.Path.Combine(This.Root, "runtime/include");
+        If (!IO.File.Exists(source))
+        {
+            This.Error = "runtime input missing for " + This.Target.Triple + ": " + object;
+            IO.Console.PrintLine(This.Error);
+            Return "";
+        }
+        object = output + "." + name + (pic ? ".pic" : "") + This.Target.ObjectSuffix();
+        This.TemporaryFiles.Add(object);
+        list arguments = list.Create();
+        bool zig = This.Profile.Linker == "zig";
+        If (zig) { arguments.Add("cc"); arguments.Add("-target"); arguments.Add(This.ZigTarget()); }
+        Else arguments.Add("--target=" + This.Target.Triple);
+        arguments.Add("-std=c11");
+        arguments.Add("-O2");
+        arguments.Add("-ffreestanding");
+        arguments.Add("-fno-builtin");
+        arguments.Add("-fno-stack-protector");
+        arguments.Add("-D_POSIX_C_SOURCE=200809L");
+        arguments.Add("-D_CRT_SECURE_NO_WARNINGS");
+        If (pic) arguments.Add("-fPIC");
+        arguments.Add("-I" + includes);
+        arguments.Add("-c");
+        arguments.Add(source);
+        arguments.Add("-o");
+        arguments.Add(object);
+        If (This.Execute(zig ? This.SelectedTool("zig") : This.Tool("clang"), arguments) != 0)
+        {
+            IO.Console.PrintLine("unable to prepare " + name + " for " + This.Target.Triple + "; install the target SDK/runtime");
+            Return "";
+        }
+        Return object;
+    }
+
+    Public Trusted Function void AppendWindowsSdk(list arguments, bool windows)
+    {
+        list directories = list.Create();
+        string[] keys = {"KINAL_MSVC_LIB", "KINAL_WINDOWS_SDK_UM_LIB", "KINAL_WINDOWS_SDK_UCRT_LIB"};
+        int index = 0;
+        While (index < keys.Length())
+        {
+            string directory = IO.Kinal.Runtime.CopyNativeText(LinkEnvironment(keys[index]));
+            If (!IO.Text.IsEmpty(directory) && IO.Directory.Exists(directory))
+                This.AddDirectory(arguments, directories, directory, windows);
+            index = index + 1;
+        }
+        string architecture = This.Target.Architecture == 3 ? "arm64" : (This.Target.Architecture == 1 ? "x86" : "x64");
+        string vc = IO.Kinal.Runtime.CopyNativeText(LinkEnvironment("VCToolsInstallDir"));
+        string vcLib = IO.Path.Combine(vc, "lib/" + architecture);
+        If (!IO.Text.IsEmpty(vc) && IO.Directory.Exists(vcLib)) This.AddDirectory(arguments, directories, vcLib, windows);
+        string sdk = IO.Kinal.Runtime.CopyNativeText(LinkEnvironment("WindowsSdkDir"));
+        string version = IO.Kinal.Runtime.CopyNativeText(LinkEnvironment("WindowsSDKLibVersion"));
+        If (IO.Text.IsEmpty(version)) version = IO.Kinal.Runtime.CopyNativeText(LinkEnvironment("WindowsSDKVersion"));
+        If (!IO.Text.IsEmpty(sdk) && !IO.Text.IsEmpty(version))
+        {
+            string base = IO.Path.Combine(IO.Path.Combine(sdk, "Lib"), version);
+            string um = IO.Path.Combine(base, "um/" + architecture);
+            string ucrt = IO.Path.Combine(base, "ucrt/" + architecture);
+            If (IO.Directory.Exists(um)) This.AddDirectory(arguments, directories, um, windows);
+            If (IO.Directory.Exists(ucrt)) This.AddDirectory(arguments, directories, ucrt, windows);
+        }
+        string ucrtSdk = IO.Kinal.Runtime.CopyNativeText(LinkEnvironment("UniversalCRTSdkDir"));
+        string ucrtVersion = IO.Kinal.Runtime.CopyNativeText(LinkEnvironment("UCRTVersion"));
+        If (!IO.Text.IsEmpty(ucrtSdk) && !IO.Text.IsEmpty(ucrtVersion))
+        {
+            string ucrt = IO.Path.Combine(IO.Path.Combine(IO.Path.Combine(ucrtSdk, "Lib"), ucrtVersion), "ucrt/" + architecture);
+            If (IO.Directory.Exists(ucrt)) This.AddDirectory(arguments, directories, ucrt, windows);
+        }
+    }
+
+    Public Trusted Function int Link(string output, list objects)
+    {
+        bool freestanding = This.Session.IsFreestanding();
+        // Stage0 prefers Zig's libc/sysroot for hosted POSIX targets when it
+        // is installed; explicit --linker selections always take precedence.
+        If (!freestanding && This.Target.OS != 1 && IO.Text.IsEmpty(This.Profile.Linker))
+        {
+            string zigTool = This.Tool("zig");
+            If (IO.File.Exists(zigTool)) This.Profile.Linker = "zig";
+        }
+        bool archive = This.Profile.ArtifactKind == "static";
+        bool windows = This.Target.OS == 1 && This.Profile.Linker != "zig" && !freestanding;
+        bool zig = This.Profile.Linker == "zig" && !freestanding;
+        bool shared = This.Profile.ArtifactKind == "shared";
+        If (This.Profile.Linker == "msvc" && (!windows || freestanding))
+        { IO.Console.PrintLine("msvc linker requires a hosted Windows target"); Return 1; }
+        string executable = "";
+        list arguments = list.Create();
+        If (archive)
+        {
+            executable = zig ? This.SelectedTool("zig") : This.Tool(windows ? "llvm-lib" : "llvm-ar");
+            If (zig) arguments.Add("ar");
+            If (windows) { arguments.Add("/nologo"); arguments.Add("/out:" + output); }
+            Else { arguments.Add("rcs"); arguments.Add(output); }
+        }
+        ElseIf (freestanding)
+        {
+            executable = This.SelectedTool("ld.lld");
+            arguments.Add("-m");
+            arguments.Add(This.Target.Architecture == 3 ? "aarch64elf" : (This.Target.Architecture == 1 ? "elf_i386" : "elf_x86_64"));
+            arguments.Add("-o"); arguments.Add(output);
+            arguments.Add("-e"); arguments.Add("__kn_entry");
+            If (!IO.Text.IsEmpty(This.Profile.LinkScript))
+            { arguments.Add("-T"); arguments.Add(This.Session.Project.ResolvePath(This.Profile.LinkScript)); }
+        }
+        ElseIf (windows)
+        {
+            executable = This.SelectedTool(This.Profile.Linker == "msvc" ? "link" : "lld-link");
+            arguments.Add("/nologo"); arguments.Add("/timestamp:0");
+            arguments.Add("/machine:" + (This.Target.Architecture == 3 ? "arm64" : (This.Target.Architecture == 1 ? "x86" : "x64")));
+            arguments.Add("/out:" + output);
+            If (This.Profile.LTO != "off") arguments.Add("/LTCG");
+            If (shared) { arguments.Add("/dll"); arguments.Add("/noentry"); arguments.Add("/implib:" + IO.Path.ChangeExtension(output, ".lib")); }
+            Else { arguments.Add("/subsystem:console"); arguments.Add("/stack:16777216"); arguments.Add("/entry:mainCRTStartup"); }
+        }
+        Else
+        {
+            executable = zig ? This.SelectedTool("zig") : This.Tool("clang");
+            If (zig) { arguments.Add("cc"); arguments.Add("-target"); arguments.Add(This.ZigTarget()); }
+            Else
+            {
+                arguments.Add("--target=" + This.Target.Triple);
+                If (This.Target.OS != 3 || IO.Host.OS != IO.Host.OS.MacOS || !IO.Text.IsEmpty(This.Profile.LinkerPath))
+                {
+                    arguments.Add("-fuse-ld=lld");
+                    arguments.Add("--ld-path=" + This.SelectedTool(This.Target.OS == 3 ? "ld64.lld" : "ld.lld"));
+                }
+            }
+            If (This.Target.OS == 1)
+            {
+                arguments.Add("-nostdlib");
+                If (shared)
+                {
+                    arguments.Add("-Xlinker"); arguments.Add("--out-implib");
+                    arguments.Add("-Xlinker"); arguments.Add(IO.Path.ChangeExtension(output, ".lib"));
+                }
+                Else { arguments.Add("-Wl,-e,mainCRTStartup"); arguments.Add("-Wl,--subsystem,console"); }
+            }
+            If (shared) arguments.Add(This.Target.OS == 3 ? "-dynamiclib" : "-shared");
+            ElseIf (This.Target.OS == 2) arguments.Add("-no-pie");
+            If (This.Profile.LTO != "off") arguments.Add(This.Profile.LTO == "thin" ? "-flto=thin" : "-flto");
+            If (This.Profile.CRT == "static") arguments.Add("-static");
+            arguments.Add("-o"); arguments.Add(output);
+        }
+        int index = 0;
+        While (index < objects.Count()) { arguments.Add(objects.Fetch(index)); index = index + 1; }
+        If (!freestanding)
+        {
+            string runtime = This.RuntimeObject("kn_runtime", output);
+            string math = This.RuntimeObject("kn_math", output);
+            If (IO.Text.IsEmpty(runtime) || IO.Text.IsEmpty(math)) Return 1;
+            arguments.Add(runtime); arguments.Add(math);
+            If (This.Target.OS == 1)
+            {
+                arguments.Add((windows ? "/libpath:" : "-L") + IO.Path.Combine(This.Root, "runtime/" + This.Target.Tag()));
+                If (!This.Profile.NoDefaultLibs) This.AppendWindowsSdk(arguments, windows);
+            }
+            If (This.NeedsBridge("kn_sh_rt_"))
+            {
+                string bridge = IO.Path.Combine(This.Root, "bridge/" + (This.Target.IsHost() ? "" : This.Target.Tag() + "/") + "kn_selfhost_runtime.o");
+                If (!IO.File.Exists(bridge)) { IO.Console.PrintLine("target runtime bridge missing: " + bridge); Return 1; }
+                arguments.Add(bridge);
+            }
+            If (This.NeedsBridge("kn_sh_llvm_"))
+            {
+                string bridge = IO.Path.Combine(This.Root, "bridge/" + (This.Target.IsHost() ? "" : This.Target.Tag() + "/") + "kn_selfhost_llvm.o");
+                If (!IO.File.Exists(bridge)) { IO.Console.PrintLine("target LLVM bridge missing: " + bridge); Return 1; }
+                arguments.Add(bridge);
+                arguments.Add((windows ? "/libpath:" : "-L") + IO.Path.Combine(This.Root, "llvm/lib"));
+                This.AddLibrary(arguments, windows ? "LLVM-C" : "LLVM", windows);
+                If (!windows && !archive) arguments.Add(This.Target.OS == 3 ? "-Wl,-rpath,@loader_path/llvm/lib" : "-Wl,-rpath,$ORIGIN/llvm/lib");
+            }
+        }
+        This.AppendSettings(arguments, windows, !freestanding && !windows, archive);
+        If (!freestanding && !archive && !This.Profile.NoDefaultLibs)
+        {
+            If (This.Target.OS == 1)
+            {
+                string[] names = {"kernel32", "user32", "gdi32", "oldnames",
+                    This.Profile.CRT == "static" ? "libcmt" : "msvcrt",
+                    This.Profile.CRT == "static" ? "libvcruntime" : "vcruntime",
+                    This.Profile.CRT == "static" ? "libucrt" : "ucrt"};
+                index = 0;
+                While (index < names.Length()) { This.AddLibrary(arguments, names[index], windows); index = index + 1; }
+            }
+            Else
+            {
+                arguments.Add("-pthread");
+                If (This.Target.OS != 3 && This.Target.OS != 1) arguments.Add("-ldl");
+                arguments.Add("-lm");
+            }
+        }
+        Return This.Execute(executable, arguments);
+    }
+}

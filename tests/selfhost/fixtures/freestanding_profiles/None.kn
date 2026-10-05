@@ -1,0 +1,47 @@
+Unit Tests.FreestandingProfiles;
+Get IO.Type.any;
+Struct Storage { int[4] Values; }
+int InitCalls = 0;
+Safe Function int Initialize() { InitCalls++; Return 7; }
+int First = Initialize();
+int Second = First;
+int Third = Second;
+int[3] Values = {Third, Second + 1};
+int[] Copied = Values;
+int Runs = 0;
+string LongText = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+Trusted Static Function void KMain(int* result)
+{
+    Storage storage;
+    bool zeroField = storage.Values.Length() == 0;
+    storage.Values = Values;
+    string text = "core " + [string](42) + " " + [string]('x');
+    string address = [string]([byte*](4660));
+    any number = 19;
+    string boxed = [string](number);
+    any textValue = "value";
+    any sameText = "value";
+    any nullValue = null;
+    any pointerValue = [byte*](4660);
+    any floatValue = 2.5;
+    any boolValue = true;
+    any charValue = 'q';
+    bool anyOk = number.IsInt() && number.IsNumber() && !number.IsNull() &&
+        number.Tag() == 1 && IO.Type.any.Tag(number) == 1 && number.TypeName() == "int" && number.Equals(19);
+    anyOk = anyOk && textValue.IsString() && textValue.Equals(sameText);
+    anyOk = anyOk && nullValue.IsNull() && pointerValue.IsPointer() && pointerValue.IsObject() &&
+        floatValue.IsFloat() && boolValue.IsBool() && charValue.IsChar();
+    string negative = [string](-9223372036854775808);
+    bool ok = InitCalls == 1 && Third == 7 && Copied.Length() == 3 &&
+        Copied[0] == 7 && Copied[1] == 8 && Copied[2] == 0 &&
+        zeroField && storage.Values.Length() == 3 &&
+        text == "core 42 x" && address == "0x1234" && boxed == "19" &&
+        negative == "-9223372036854775808" && [string](12.75) == "12";
+    int total = 0;
+    Foreach (char ch In "abc") { total += [int](ch); }
+    Switch ("alpha") { Case ("alpha") { total += 1; } }
+    string truncated = LongText + "z";
+    bool bounded = truncated.Length() == 511 && truncated[510] == 'a';
+    Runs++;
+    *result = ok && anyOk && bounded && total == 295 ? 41 + Runs : -1;
+}

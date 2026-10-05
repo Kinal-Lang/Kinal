@@ -5,6 +5,7 @@ Get IO.Path;
 Get IO.Text;
 Get IO.Kinal.Runtime;
 Get IO.Kinal.Runtime.Collections;
+Get IO.Kinal.Runtime.Metadata;
 Get IO.Kinal.Runtime.Exception;
 Get IO.Kinal.Runtime.Async;
 Get IO.Kinal.Runtime.GarbageCollector;
@@ -17,6 +18,7 @@ Get IO.Kinal.Compiler.Sema.SemanticCompilation;
 Get IO.Kinal.Compiler.Hir.HirModel;
 Get IO.Kinal.Compiler.Backend.LlvmBridge;
 Get IO.Kinal.Compiler.Backend.LlvmModel;
+Get IO.Kinal.Compiler.Backend.FreestandingRuntime;
 
 Class NativeBackend
 {
@@ -30,6 +32,10 @@ Class NativeBackend
     Public byte* AnyType;
     Public string Error;
     Private int NameSequence;
+    Private byte* GlobalInitializer;
+    Private byte* GlobalInitializerType;
+    Private bool InitializingGlobals;
+    Private bool HasFreestandingErrors;
 
     Public Trusted Constructor(SemanticCompilation semantics)
     {
@@ -43,6 +49,10 @@ Class NativeBackend
         This.AnyType = null;
         This.Error = "";
         This.NameSequence = 0;
+        This.GlobalInitializer = null;
+        This.GlobalInitializerType = null;
+        This.InitializingGlobals = false;
+        This.HasFreestandingErrors = false;
     }
 
     Public Safe Function string Unique(string prefix)
@@ -127,6 +137,15 @@ Class NativeBackend
     {
         string directory = IO.Path.Directory(
             IO.Kinal.Runtime.ExecutablePath());
+        string packaged = IO.File.ReadAllText(IO.Path.Combine(directory, "VERSION"));
+        If (packaged != null && IO.Text.StartsWith(packaged, "kinal="))
+        {
+            int packagedEnd = IO.Text.IndexOf(packaged, "\n");
+            If (packagedEnd < 0) packagedEnd = IO.Text.Length(packaged);
+            Return IO.Text.Trim(IO.Text.Slice(packaged, 6, packagedEnd - 6));
+        }
+        // Older development bundles placed VERSION three directories above
+        // the executable. Keep that bootstrap layout as a compatibility path.
         int level = 0;
         While (level < 3)
         {
@@ -288,8 +307,11 @@ Class NativeBackend
 
     Public Trusted Function byte* AbiTypeHandle(TypeSymbol type)
     {
+        If (This.IsEnum(type)) Return This.AbiTypeHandle(type.UnderlyingType);
         If (type != null && (type.Name == "int" || type.Name == "bool"))
             Return This.Module.IntType(32);
+        If (type != null && (type.Name == "isize" || type.Name == "usize"))
+            Return This.Module.IntType(This.Semantics.Session.Target.PointerBits);
         If (type != null && type.Kind == [int](TypeKind.ArrayType))
             Return This.Module.PointerType(This.TypeHandle(type.ElementType));
         Return This.TypeHandle(type);
@@ -414,6 +436,8 @@ Class NativeBackend
     Public Safe Function string ConstantStringValue(ExpressionNode expression)
     {
         If (expression == null) Return null;
+        string targetText = This.Semantics.TargetStringConstant(This.Semantics.ExpressionPath(expression));
+        If (targetText != null) Return targetText;
         If (expression.Kind == [int](ExpressionKind.String))
             Return expression.IsRawString ? This.Unquote(expression.Text) :
                 This.DecodeString(expression.Text);
@@ -498,6 +522,31 @@ Class NativeBackend
         Return length;
     }
 
+    Public Safe Function HirExpression BoundGlobalInitializer(GlobalSymbol symbol)
+    {
+        HirModule module = This.Semantics.FirstHirModule;
+        While (module != null)
+        {
+            HirGlobal global = module.FirstGlobal;
+            While (global != null)
+            {
+                If (global.Symbol == symbol) Return global.Initializer;
+                global = global.Next;
+            }
+            module = module.Next;
+        }
+        Return null;
+    }
+
+    Public Trusted Function byte* FoldedStringInitializer(TypeSymbol type, HirExpression expression)
+    {
+        If (type.Kind == [int](TypeKind.StringType) && expression != null &&
+            expression.Kind == [int](HirExpressionKind.Constant) &&
+            expression.Target == "__target_string")
+            Return This.Module.GlobalString(expression.Name, This.Unique("global_text"));
+        Return null;
+    }
+
     Public Trusted Function byte* ConstantArrayContent(GlobalSymbol symbol, int length)
     {
         TypeSymbol element = symbol.Value.Type.ElementType;
@@ -507,13 +556,18 @@ Class NativeBackend
         If (initializer.Kind != [int](ExpressionKind.ArrayLiteral)) Return null;
         LlvmHandles values = This.Types0();
         ExpressionNode item = initializer.FirstArgument;
+        HirExpression bound = This.BoundGlobalInitializer(symbol);
+        HirExpression boundItem = bound != null &&
+            bound.Kind == [int](HirExpressionKind.ArrayLiteral) ? bound.FirstArgument : null;
         int index = 0;
         While (index < length)
         {
-            byte* value = This.ConstantInitializer(symbol.Syntax, element, item);
+            byte* value = This.FoldedStringInitializer(element, boundItem);
+            If (value == null) value = This.ConstantInitializer(symbol.Syntax, element, item);
             If (value == null) { This.Fail("global array requires constant elements"); Return null; }
             values.Add(value);
             If (item != null) item = item.Next;
+            If (boundItem != null) boundItem = boundItem.Next;
             index = index + 1;
         }
         If (item != null) { This.Fail("global array initializer has too many elements"); Return null; }
@@ -522,34 +576,15 @@ Class NativeBackend
 
     Public Trusted Function byte* ConstantGlobalInitializer(GlobalSymbol symbol)
     {
-        TypeSymbol type = symbol.Value.Type;
-        ExpressionNode initializer = symbol.Declaration.Initializer;
-        // Existing hosted startup resolves global copies in declaration order.
-        // Array elements must never use this placeholder: an unsupported value
-        // there is an error, not an implicit zero.
-        If (initializer != null && initializer.Kind == [int](ExpressionKind.Name))
-            Return This.Module.ConstNull(This.TypeHandle(type));
-        If (type.Kind != [int](TypeKind.ArrayType))
-            Return This.ConstantInitializer(symbol.Syntax, type, initializer);
-        int length = This.GlobalArrayLength(symbol);
-        If (initializer != null && initializer.Kind != [int](ExpressionKind.ArrayLiteral))
-        {
-            This.Fail("global array initializer must be a constant array literal");
-            Return null;
-        }
-        If (length <= 0) Return This.Module.ConstNull(This.TypeHandle(type));
-        If (!This.Semantics.Session.IsFreestandingCore())
-            Return This.Module.ConstNull(This.TypeHandle(type));
-        byte* elementType = This.TypeHandle(type.ElementType);
-        byte* storageType = This.Module.ArrayType(elementType, length);
-        byte* storage = This.Module.AddGlobal(storageType, This.Unique("__kn_sh_array_storage"));
-        If (!This.Module.SetPrivateLinkage(storage)) Return null;
-        byte* content = This.ConstantArrayContent(symbol, length);
-        If (!This.Module.SetInitializer(storage, content)) Return null;
-        byte* zero = This.Module.ConstInt(This.Module.IntType(64), 0);
-        byte* data = This.Module.ConstGep(storageType, storage, This.Types2(zero, zero));
-        Return This.Module.ConstStruct(This.TypeHandle(type),
-            This.Types2(data, This.Module.ConstInt(This.Module.IntType(64), length)));
+        // Runtime state must exist before the collector can register globals.
+        // Replaying its zero initializers after PushFrame/AddGlobalRoot would
+        // erase the collector's newly initialized metadata.
+        If (symbol.UnitName == "IO.Kinal.Runtime" ||
+            IO.Text.StartsWith(symbol.UnitName, "IO.Kinal.Runtime."))
+            Return This.ConstantInitializer(symbol.Syntax, symbol.Value.Type, symbol.Declaration.Initializer);
+        // User globals start zeroed and execute in declaration order, matching
+        // forward references and recursive calls through library startup.
+        Return This.Module.ConstNull(This.TypeHandle(symbol.Value.Type));
     }
 
     Public Trusted Function void DeclareGlobals()
@@ -565,7 +600,13 @@ Class NativeBackend
                 This.Fail("unsupported global initializer: " + symbol.QualifiedName());
             ElseIf (address == null || !This.Module.SetInitializer(address, initializer))
                 This.Fail("failed to declare global: " + symbol.QualifiedName());
-            Else This.AddGlobalBinding(New LlvmGlobalBinding(symbol, address));
+            Else
+            {
+                If (This.IsLibrary() && (symbol.UnitName == "IO.Kinal.Runtime" ||
+                    IO.Text.StartsWith(symbol.UnitName, "IO.Kinal.Runtime.")))
+                    This.Module.SetPrivateLinkage(address);
+                This.AddGlobalBinding(New LlvmGlobalBinding(symbol, address));
+            }
             symbol = symbol.Next;
         }
     }
@@ -949,6 +990,12 @@ Class NativeBackend
         Return null;
     }
 
+    Public Safe Function bool IsLibrary()
+    {
+        Return This.Semantics.Session.Profile != null &&
+            This.Semantics.Session.Profile.ArtifactKind != "exe";
+    }
+
     Public Safe Function string FunctionName(FunctionSymbol symbol)
     {
         If (symbol.Declaration.IsExtern)
@@ -962,6 +1009,19 @@ Class NativeBackend
             identity = symbol.OwnerType == null ?
                 symbol.UnitName + "." + overloadName :
                 symbol.OwnerType.QualifiedName() + "." + overloadName;
+        If (This.IsLibrary() && !This.IsRuntimeInfrastructureFunction(symbol))
+        {
+            If (symbol.OwnerType == null) Return identity;
+            int index = 0;
+            FunctionDecl method = symbol.OwnerType.Declaration.FirstMethod;
+            While (method != null && method != symbol.Declaration)
+            {
+                index = index + 1;
+                method = method.Next;
+            }
+            Return symbol.OwnerType.QualifiedName() + "$" +
+                (symbol.Declaration.IsConstructor ? "ctor" : symbol.Name) + "$" + [string](index);
+        }
         Return "__kn_sh_" + This.Sanitize(identity) + "_" +
             [string](symbol.ParameterCount());
     }
@@ -1025,7 +1085,20 @@ Class NativeBackend
                 Continue;
             }
             byte* function = This.Module.AddFunction(This.FunctionName(symbol), functionType);
+            // System imports use stdcall only on 32-bit Windows. The bridge
+            // carries a direct callee's convention onto every call instruction.
+            If (symbol.Declaration.IsExtern && symbol.Declaration.Abi == "System" &&
+                This.Semantics.Session.Target.OS == 1 &&
+                This.Semantics.Session.Target.Architecture == 1 &&
+                !This.Module.SetCallConvention(function, 64))
+                This.Fail("failed to set System calling convention: " + symbol.QualifiedName());
             If (function == null) This.Fail("failed to declare function: " + symbol.QualifiedName());
+            If (This.IsLibrary() && !symbol.Declaration.IsExtern)
+            {
+                If (This.IsRuntimeInfrastructureFunction(symbol)) This.Module.SetPrivateLinkage(function);
+                ElseIf (This.Semantics.Session.Profile.ArtifactKind == "shared" &&
+                    This.Semantics.Session.Target.OS == 1) This.Module.SetDllExport(function);
+            }
             LlvmFunctionBinding binding = New LlvmFunctionBinding(
                 symbol, functionType, function, cAbi);
             If (isAsync)
@@ -1078,11 +1151,216 @@ Class NativeBackend
         LlvmHandles values = New LlvmHandles(); values.Add(a); values.Add(b); values.Add(c); values.Add(d); Return values;
     }
 
+    Public Trusted Function void PrepareFreestandingRuntime()
+    {
+        If (!This.Semantics.Session.IsFreestanding()) Return;
+        string ir = IO.Kinal.Compiler.Backend.FreestandingRuntime.CoreIR();
+        If (This.Semantics.Session.IsFreestandingCore())
+            ir = ir + IO.Kinal.Compiler.Backend.FreestandingRuntime.ScratchIR();
+        If (!This.Module.LinkIr(ir))
+        {
+            This.Fail("freestanding helper import failed: " + IO.Kinal.Compiler.Backend.LlvmBridge.LastError());
+            Return;
+        }
+        // Helpers are private to an object, so separately compiled libraries
+        // never export or collide on compiler-generated core routines.
+        string[] helpers = {"__kn_strlen", "__kn_str_eq", "__kn_fs_memory_zero",
+            "__kn_fs_scratch_acquire", "__kn_str_concat", "__kn_i64_to_string",
+            "__kn_char_to_string", "__kn_ptr_to_string", "__kn_f64_to_string",
+            "__kn_fs_any_to_string"};
+        int index = 0;
+        While (index < helpers.Length())
+        {
+            byte* helper = This.Module.GetFunction(helpers[index]);
+            If (helper != null) This.Module.SetPrivateLinkage(helper);
+            index = index + 1;
+        }
+    }
+
+    Public Trusted Function byte* CallFreestandingRuntime(string target,
+                                                            LlvmHandles arguments,
+                                                            string resultName)
+    {
+        byte* pointer = This.Module.PointerType(This.Module.IntType(8));
+        byte* resultType = pointer;
+        string name = "";
+        If (target == "IO.Kinal.Runtime.GarbageCollector.Allocate")
+            { name = "__kn_gc_alloc"; resultType = pointer; }
+        ElseIf (target == "IO.Kinal.Runtime.GarbageCollector.Collect")
+            { name = "__kn_gc_collect"; resultType = This.Module.VoidType(); }
+        ElseIf (target == "IO.Kinal.Runtime.GarbageCollector.PushFrame")
+            { name = "__kn_gc_push_frame"; resultType = pointer; }
+        ElseIf (target == "IO.Kinal.Runtime.GarbageCollector.PopFrame")
+            { name = "__kn_gc_pop_frame"; resultType = This.Module.VoidType(); }
+        ElseIf (target == "IO.Kinal.Runtime.GarbageCollector.AddRoot")
+            { name = "__kn_gc_add_root"; resultType = This.Module.VoidType(); }
+        ElseIf (target == "IO.Kinal.Runtime.GarbageCollector.AddGlobalRoot")
+            { name = "__kn_gc_add_global_root"; resultType = This.Module.VoidType(); }
+        ElseIf (target == "IO.Kinal.Runtime.GarbageCollector.Initialize")
+            { name = "__kn_gc_init"; resultType = This.Module.VoidType(); }
+        ElseIf (target == "IO.Kinal.Runtime.StringLength")
+            { name = "__kn_strlen"; resultType = This.Module.IntType(64); }
+        ElseIf (target == "IO.Kinal.Runtime.StringEqual")
+            { name = "__kn_str_eq"; resultType = This.Module.IntType(1); }
+        ElseIf (target == "IO.Kinal.Runtime.StringConcat")
+            { name = "__kn_str_concat"; resultType = pointer; }
+        ElseIf (target == "IO.Kinal.Runtime.MemoryZero")
+            { name = "__kn_fs_memory_zero"; resultType = This.Module.VoidType(); }
+        ElseIf (target == "IO.Kinal.Runtime.Int64ToString")
+            { name = "__kn_i64_to_string"; resultType = pointer; }
+        ElseIf (target == "IO.Kinal.Runtime.CharToString")
+            { name = "__kn_char_to_string"; resultType = pointer; }
+        ElseIf (target == "IO.Kinal.Runtime.PointerToString")
+            { name = "__kn_ptr_to_string"; resultType = pointer; }
+        ElseIf (target == "IO.Kinal.Runtime.Float64ToString")
+            { name = "__kn_f64_to_string"; resultType = pointer; }
+        ElseIf (target == "IO.Kinal.Runtime.AnyToString")
+            { name = "__kn_any_to_string"; resultType = pointer; }
+        ElseIf (target == "IO.Kinal.Runtime.StringToChars")
+            { name = "__kn_string_to_chars"; resultType = pointer; }
+        ElseIf (target == "IO.Kinal.Runtime.Exception.SetCurrent")
+            { name = "__kn_exc_set"; resultType = This.Module.VoidType(); }
+        ElseIf (target == "IO.Kinal.Runtime.Exception.Current")
+            { name = "__kn_exc_get"; resultType = pointer; }
+        ElseIf (target == "IO.Kinal.Runtime.Exception.Has")
+            { name = "__kn_exc_has"; resultType = This.Module.IntType(1); }
+        ElseIf (target == "IO.Kinal.Runtime.Exception.Last")
+            { name = "__kn_exc_last"; resultType = pointer; }
+        ElseIf (target == "IO.Kinal.Runtime.Exception.Clear")
+            { name = "__kn_exc_clear"; resultType = This.Module.VoidType(); }
+        ElseIf (target == "IO.Kinal.Runtime.Exception.Push")
+            { name = "__kn_exc_push"; resultType = This.Module.VoidType(); }
+        ElseIf (target == "IO.Kinal.Runtime.Exception.Trace")
+            { name = "__kn_exc_trace"; resultType = pointer; }
+        ElseIf (target == "IO.Kinal.Runtime.Exception.Reset")
+            { name = "__kn_exc_clear"; resultType = This.Module.VoidType(); }
+        ElseIf (target == "IO.Kinal.Runtime.Async.TaskSpawn")
+            { name = "__kn_async_task_spawn"; resultType = pointer; }
+        ElseIf (target == "IO.Kinal.Runtime.Async.TaskRun")
+            { name = "__kn_async_task_run"; resultType = This.Module.VoidType(); }
+        ElseIf (target == "IO.Kinal.Runtime.Async.TaskComplete")
+            { name = "__kn_async_task_complete"; resultType = This.Module.VoidType(); }
+        ElseIf (target == "IO.Kinal.Runtime.Async.TaskFail")
+            { name = "__kn_async_task_fail"; resultType = This.Module.VoidType(); }
+        ElseIf (target == "IO.Kinal.Runtime.Async.TaskSleep")
+            { name = "__kn_async_task_sleep"; resultType = pointer; }
+        ElseIf (target == "IO.Kinal.Runtime.Async.TaskYield")
+            { name = "__kn_async_task_yield"; resultType = pointer; }
+        ElseIf (target == "IO.Kinal.Runtime.Collections.DictionaryNew")
+            { name = "__kn_dict_new"; resultType = pointer; }
+        ElseIf (target == "IO.Kinal.Runtime.Collections.DictionarySet")
+            { name = "__kn_dict_set"; resultType = This.Module.VoidType(); }
+        ElseIf (target == "IO.Kinal.Runtime.Collections.DictionaryGet")
+            { name = "__kn_dict_get"; resultType = This.Module.VoidType(); }
+        ElseIf (target == "IO.Kinal.Runtime.Collections.DictionaryContains")
+            { name = "__kn_dict_contains"; resultType = This.Module.IntType(1); }
+        ElseIf (target == "IO.Kinal.Runtime.Collections.DictionaryCount")
+            { name = "__kn_dict_count"; resultType = This.Module.IntType(64); }
+        ElseIf (target == "IO.Kinal.Runtime.Collections.DictionaryRemove")
+            { name = "__kn_dict_remove"; resultType = This.Module.IntType(1); }
+        ElseIf (target == "IO.Kinal.Runtime.Collections.DictionaryIsEmpty")
+            { name = "__kn_dict_is_empty"; resultType = This.Module.IntType(1); }
+        ElseIf (target == "IO.Kinal.Runtime.Collections.DictionaryKeys")
+            { name = "__kn_dict_keys"; resultType = pointer; }
+        ElseIf (target == "IO.Kinal.Runtime.Collections.DictionaryValues")
+            { name = "__kn_dict_values"; resultType = pointer; }
+        ElseIf (target == "IO.Kinal.Runtime.Collections.ListNew")
+            { name = "__kn_list_new"; resultType = pointer; }
+        ElseIf (target == "IO.Kinal.Runtime.Collections.ListAdd")
+            { name = "__kn_list_add"; resultType = This.Module.VoidType(); }
+        ElseIf (target == "IO.Kinal.Runtime.Collections.ListGet")
+            { name = "__kn_list_get"; resultType = This.Module.VoidType(); }
+        ElseIf (target == "IO.Kinal.Runtime.Collections.ListSet")
+            { name = "__kn_list_set"; resultType = This.Module.VoidType(); }
+        ElseIf (target == "IO.Kinal.Runtime.Collections.ListInsert")
+            { name = "__kn_list_insert"; resultType = This.Module.VoidType(); }
+        ElseIf (target == "IO.Kinal.Runtime.Collections.ListCount")
+            { name = "__kn_list_count"; resultType = This.Module.IntType(64); }
+        ElseIf (target == "IO.Kinal.Runtime.Collections.ListClear")
+            { name = "__kn_list_clear"; resultType = This.Module.VoidType(); }
+        ElseIf (target == "IO.Kinal.Runtime.Collections.ListRemoveAt")
+            { name = "__kn_list_remove_at"; resultType = This.Module.VoidType(); }
+        ElseIf (target == "IO.Kinal.Runtime.Collections.ListContains")
+            { name = "__kn_list_contains"; resultType = This.Module.IntType(1); }
+        ElseIf (target == "IO.Kinal.Runtime.Collections.ListPop")
+            { name = "__kn_list_pop"; resultType = This.Module.VoidType(); }
+        ElseIf (target == "IO.Kinal.Runtime.Collections.ListIndexOf")
+            { name = "__kn_list_index_of"; resultType = This.Module.IntType(64); }
+        ElseIf (target == "IO.Kinal.Runtime.Collections.ListIsEmpty")
+            { name = "__kn_list_is_empty"; resultType = This.Module.IntType(1); }
+        ElseIf (target == "IO.Kinal.Runtime.Collections.SetNew")
+            { name = "__kn_set_new"; resultType = pointer; }
+        ElseIf (target == "IO.Kinal.Runtime.Collections.SetAdd")
+            { name = "__kn_set_add"; resultType = This.Module.VoidType(); }
+        ElseIf (target == "IO.Kinal.Runtime.Collections.SetContains")
+            { name = "__kn_set_contains"; resultType = This.Module.IntType(1); }
+        ElseIf (target == "IO.Kinal.Runtime.Collections.SetCount")
+            { name = "__kn_set_count"; resultType = This.Module.IntType(64); }
+        ElseIf (target == "IO.Kinal.Runtime.Collections.SetClear")
+            { name = "__kn_set_clear"; resultType = This.Module.VoidType(); }
+        ElseIf (target == "IO.Kinal.Runtime.Collections.SetIsEmpty")
+            { name = "__kn_set_is_empty"; resultType = This.Module.IntType(1); }
+        ElseIf (target == "IO.Kinal.Runtime.Collections.SetValues")
+            { name = "__kn_set_values"; resultType = pointer; }
+        ElseIf (target == "IO.Kinal.Runtime.Collections.SetRemove")
+            { name = "__kn_set_remove"; resultType = This.Module.IntType(1); }
+        If (IO.Text.StartsWith(target, "IO.Kinal.Runtime.Error"))
+        {
+            If (!This.HasFreestandingErrors)
+            {
+                If (!This.Module.LinkIr(IO.Kinal.Compiler.Backend.FreestandingRuntime.ErrorIR()))
+                {
+                    This.Fail("freestanding error helper import failed: " + IO.Kinal.Compiler.Backend.LlvmBridge.LastError());
+                    Return null;
+                }
+                This.HasFreestandingErrors = true;
+                string[] helpers = {"new", "title", "message", "trace", "inner", "set_trace", "link_inner"};
+                int helperIndex = 0;
+                While (helperIndex < helpers.Length())
+                {
+                    This.Module.SetPrivateLinkage(This.Module.GetFunction("__kn_fs_error_" + helpers[helperIndex]));
+                    helperIndex = helperIndex + 1;
+                }
+            }
+            If (target == "IO.Kinal.Runtime.ErrorNew") { name = "__kn_fs_error_new"; resultType = pointer; }
+            If (target == "IO.Kinal.Runtime.ErrorTitle") { name = "__kn_fs_error_title"; resultType = pointer; }
+            If (target == "IO.Kinal.Runtime.ErrorMessage") { name = "__kn_fs_error_message"; resultType = pointer; }
+            If (target == "IO.Kinal.Runtime.ErrorTrace") { name = "__kn_fs_error_trace"; resultType = pointer; }
+            If (target == "IO.Kinal.Runtime.ErrorInner") { name = "__kn_fs_error_inner"; resultType = pointer; }
+            If (target == "IO.Kinal.Runtime.ErrorSetTrace") { name = "__kn_fs_error_set_trace"; resultType = This.Module.VoidType(); }
+            If (target == "IO.Kinal.Runtime.ErrorLinkInner") { name = "__kn_fs_error_link_inner"; resultType = This.Module.VoidType(); }
+        }
+        If (target == "IO.Kinal.Runtime.AnyToString" && This.Semantics.Session.IsFreestandingCore())
+        {
+            byte* value = arguments.Fetch(0);
+            arguments = This.Types2(This.Module.ExtractValue(value, 0, This.Unique("any_tag")),
+                This.Module.ExtractValue(value, 1, This.Unique("any_payload")));
+            name = "__kn_fs_any_to_string";
+        }
+        If (IO.Text.IsEmpty(name))
+        {
+            This.Fail("freestanding runtime operation is unavailable: " + target);
+            Return null;
+        }
+        LlvmHandles parameters = This.Types0();
+        int index = 0;
+        While (index < arguments.Count())
+        {
+            parameters.Add(This.Module.ValueType(arguments.Fetch(index)));
+            index = index + 1;
+        }
+        byte* type = This.Module.FunctionType(resultType, parameters, false);
+        byte* function = This.Module.AddFunction(name, type);
+        Return This.Module.Call(type, function, arguments, resultName);
+    }
+
     Public Trusted Function byte* CallKinalRuntime(string target,
                                                     int parameterCount,
                                                     LlvmHandles arguments,
                                                     string resultName)
     {
+        If (This.Semantics.Session.IsFreestanding())
+            Return This.CallFreestandingRuntime(target, arguments, resultName);
         LlvmFunctionBinding implementation = This.FindFunctionByTarget(
             target, parameterCount);
         If (implementation == null)
@@ -1097,7 +1375,7 @@ Class NativeBackend
     Public Trusted Function byte* RuntimeBool(byte* cValue)
     {
         Return This.Module.Compare([int](LlvmIntPredicate.NotEqual), cValue,
-            This.Module.ConstInt(This.Module.IntType(32), 0), This.Unique("bool"));
+            This.Module.ConstInt(This.Module.ValueType(cValue), 0), This.Unique("bool"));
     }
 
     Public Safe Function bool SameType(TypeSymbol left, TypeSymbol right)
@@ -1529,6 +1807,17 @@ Class NativeBackend
 
         If (target.Kind == [int](TypeKind.StringType))
         {
+            If (This.Semantics.Session.IsFreestanding())
+            {
+                If (value.Type.Kind == [int](TypeKind.PointerType) && value.Type.ElementType.Name == "char")
+                    Return New LlvmValue(This.Module.BitCast(value.Handle, This.TypeHandle(target),
+                        This.Unique("cstring")), target);
+                If (!This.Semantics.Session.IsFreestandingCore())
+                    Return This.AnyToString(This.BoxAny(value), target);
+                If (value.Type.Kind == [int](TypeKind.PointerType))
+                    Return New LlvmValue(This.CallKinalRuntime("IO.Kinal.Runtime.PointerToString", 1,
+                        This.Types1(value.Handle), This.Unique("pointer_text")), target);
+            }
             If (value.Type.Name == "char")
                 Return New LlvmValue(This.CallKinalRuntime("IO.Kinal.Runtime.CharToString", 1,
                     This.Types1(value.Handle), This.Unique("char_text")), target);
@@ -1575,6 +1864,16 @@ Class NativeBackend
         If (target.Kind == [int](TypeKind.BoolType) && This.IsIntegerLike(value.Type))
             Return New LlvmValue(This.Module.Compare([int](LlvmIntPredicate.NotEqual), value.Handle,
                 This.Module.ConstInt(This.TypeHandle(value.Type), 0), This.Unique("to_bool")), target);
+        If (target.Kind == [int](TypeKind.BoolType) &&
+            value.Type.Kind == [int](TypeKind.FloatType))
+            Return New LlvmValue(This.Module.FloatCompare(
+                [int](LlvmFloatPredicate.OrderedNotEqual), value.Handle,
+                This.Module.ConstFloat(This.TypeHandle(value.Type), 0.0),
+                This.Unique("float_to_bool")), target);
+        If (value.Type.Kind == [int](TypeKind.BoolType) &&
+            target.Kind == [int](TypeKind.FloatType))
+            Return New LlvmValue(This.Module.UnsignedIntToFloat(value.Handle,
+                This.TypeHandle(target), This.Unique("bool_to_float")), target);
         If (value.Type.Kind == [int](TypeKind.BoolType) && This.IsIntegerLike(target))
         {
             byte* extended = This.Module.ZeroExtend(value.Handle, This.TypeHandle(target), This.Unique("bool_int"));
@@ -1647,11 +1946,23 @@ Class NativeBackend
 
     Public Trusted Function LlvmValue FromCAbi(byte* value, TypeSymbol type)
     {
+        If (This.IsEnum(type))
+            Return New LlvmValue(This.FromCAbi(value, type.UnderlyingType).Handle, type);
         If (type.Kind == [int](TypeKind.VoidType)) Return New LlvmValue(null, type);
         If (type.Name == "int")
             Return New LlvmValue(This.Module.SignExtend(value, This.Module.IntType(64), This.Unique("c_int")), type);
         If (type.Name == "bool")
             Return New LlvmValue(This.RuntimeBool(value), type);
+        // Kinal size integers remain i64; only the C boundary is pointer-sized.
+        If (This.Semantics.Session.Target.PointerBits == 32)
+        {
+            If (type.Name == "isize")
+                Return New LlvmValue(This.Module.SignExtend(value, This.Module.IntType(64),
+                    This.Unique("c_isize")), type);
+            If (type.Name == "usize")
+                Return New LlvmValue(This.Module.ZeroExtend(value, This.Module.IntType(64),
+                    This.Unique("c_usize")), type);
+        }
         If (type.Kind == [int](TypeKind.ArrayType))
         {
             byte* array = This.Module.ConstUndef(This.TypeHandle(type));
@@ -1667,6 +1978,7 @@ Class NativeBackend
 
     Public Trusted Function byte* ToCAbi(LlvmValue value, TypeSymbol type)
     {
+        If (This.IsEnum(type)) Return This.ToCAbi(value, type.UnderlyingType);
         If (value.Type.Kind == [int](TypeKind.ArrayType) &&
             type.Kind == [int](TypeKind.PointerType))
             Return This.Module.ExtractValue(value.Handle, 0,
@@ -1679,6 +1991,10 @@ Class NativeBackend
             Return This.Module.Truncate(converted.Handle, This.Module.IntType(32), This.Unique("ffi_int"));
         If (type.Name == "bool")
             Return This.Module.ZeroExtend(converted.Handle, This.Module.IntType(32), This.Unique("ffi_bool"));
+        If ((type.Name == "isize" || type.Name == "usize") &&
+            This.Semantics.Session.Target.PointerBits == 32)
+            Return This.Module.Truncate(converted.Handle, This.Module.IntType(32),
+                This.Unique("ffi_size"));
         Return converted.Handle;
     }
 
@@ -2365,8 +2681,31 @@ Class NativeBackend
         arguments.Add(environment);
         arguments.Add(argumentPointer);
         arguments.Add(This.Module.ConstInt(This.Module.IntType(64), argumentCount));
-        byte* result = This.Module.Call(wrapperType, wrapper, arguments,
+        // Builtin reference objects have no dynamic wrapper, matching stage0.
+        byte* nullBlock = This.Module.AppendBlock(context.Binding.Function,
+            This.Unique("dynamic_null"));
+        byte* callBlock = This.Module.AppendBlock(context.Binding.Function,
+            This.Unique("dynamic_invoke"));
+        byte* mergeBlock = This.Module.AppendBlock(context.Binding.Function,
+            This.Unique("dynamic_merge"));
+        byte* isNull = This.Module.Compare([int](LlvmIntPredicate.Equal), wrapper,
+            This.Module.ConstNull(This.Module.PointerType(wrapperType)),
+            This.Unique("dynamic_wrapper_null"));
+        This.Module.ConditionalBranch(isNull, nullBlock, callBlock);
+
+        This.Module.PositionAtEnd(nullBlock);
+        LlvmValue nullResult = This.DefaultValue(This.Semantics.Primitive("any"));
+        This.Module.Branch(mergeBlock);
+
+        This.Module.PositionAtEnd(callBlock);
+        byte* callResult = This.Module.Call(wrapperType, wrapper, arguments,
             This.Unique("dynamic_call"));
+        This.Module.Branch(mergeBlock);
+
+        This.Module.PositionAtEnd(mergeBlock);
+        byte* result = This.Module.Phi(This.AnyType, This.Unique("dynamic_result"));
+        This.Module.AddIncoming(result, nullResult.Handle, nullBlock);
+        This.Module.AddIncoming(result, callResult, callBlock);
         This.MaybePropagateException(context);
         LlvmValue boxedResult = New LlvmValue(result, This.Semantics.Primitive("any"));
         If (expression.Type.Kind == [int](TypeKind.AnyType)) Return boxedResult;
@@ -2386,13 +2725,22 @@ Class NativeBackend
         wrapperParameters.Add(This.Module.IntType(64));
         byte* wrapperType = This.Module.FunctionType(This.AnyType, wrapperParameters, false);
         byte* wrapper = This.Module.AddFunction("__kn_selfhost_callable_" +
-            This.Sanitize(binding.Symbol.QualifiedName()), wrapperType);
+            This.Sanitize(This.FunctionName(binding.Symbol)), wrapperType);
         binding.CallableWrapperType = wrapperType;
         binding.CallableWrapper = wrapper;
 
         byte* savedBlock = This.Module.CurrentBlock();
         byte* entry = This.Module.AppendBlock(wrapper, "entry");
         This.Module.PositionAtEnd(entry);
+        byte* valid = This.Module.AppendBlock(wrapper, "arity_valid");
+        byte* invalid = This.Module.AppendBlock(wrapper, "arity_invalid");
+        byte* sufficient = This.Module.Compare([int](LlvmIntPredicate.UnsignedGreaterEqual),
+            This.Module.Parameter(wrapper, 2),
+            This.Module.ConstInt(This.Module.IntType(64), binding.Symbol.ParameterCount()), "arity_ok");
+        This.Module.ConditionalBranch(sufficient, valid, invalid);
+        This.Module.PositionAtEnd(invalid);
+        This.Module.ReturnValue(This.DefaultValue(This.Semantics.Primitive("any")).Handle);
+        This.Module.PositionAtEnd(valid);
 
         LlvmHandles arguments = New LlvmHandles();
         If (binding.Symbol.FirstCapture != null)
@@ -2438,6 +2786,297 @@ Class NativeBackend
 
         If (savedBlock != null) This.Module.PositionAtEnd(savedBlock);
         Return wrapper;
+    }
+
+    // The exported records use the same target-laid-out ABI as stage0's
+    // KnMetaExportModule. Runtime retention is independent of local reflection.
+    Public Trusted Function byte* MetaExportArray(byte* elementType, LlvmHandles values)
+    {
+        If (values.Count() == 0) Return This.Module.ConstNull(This.Module.PointerType(elementType));
+        byte* type = This.Module.ArrayType(elementType, values.Count());
+        byte* global = This.Module.AddGlobal(type, This.Unique("__kn_meta_array"));
+        This.Module.SetPrivateLinkage(global);
+        This.Module.SetInitializer(global, This.Module.ConstArray(elementType, values));
+        byte* zero = This.Module.ConstInt(This.Module.IntType(64), 0);
+        Return This.Module.ConstGep(type, global, This.Types2(zero, zero));
+    }
+
+    Public Trusted Function byte* MetaExportArgument(byte* argumentType, string name,
+                                                       SyntaxTree syntax, ExpressionNode value)
+    {
+        byte* integer = This.Module.IntType(64);
+        int tag = 0;
+        byte* payload = This.Module.ConstInt(integer, 0);
+        If (value != null)
+        {
+            If (value.Kind == [int](ExpressionKind.String))
+            {
+                tag = 5;
+                payload = This.Module.PointerToInt(This.Module.GlobalString(
+                    This.DecodeString(value.Text), This.Unique("meta_argument_string")), integer, "");
+            }
+            ElseIf (value.Kind == [int](ExpressionKind.Boolean))
+            {
+                tag = 3;
+                payload = This.Module.ConstInt(integer, value.Text == "true" || value.Text == "True" ? 1 : 0);
+            }
+            ElseIf (value.Kind == [int](ExpressionKind.Character))
+            {
+                tag = 4;
+                payload = This.Module.ConstInt(integer, This.DecodeCharacter(value.Text));
+            }
+            Else
+            {
+                ConstantIntegerValue constant = This.Semantics.ConstantInteger(syntax, null, value);
+                If (constant.IsValid)
+                {
+                    tag = 1;
+                    payload = This.Module.ConstI64(integer, constant.Value, true);
+                }
+                Else
+                {
+                    string path = This.Semantics.ExpandImportPath(syntax,
+                        This.Semantics.ExpressionPath(value));
+                    TypeSymbol enumeration = This.Semantics.FindEnumMemberType(path);
+                    If (enumeration == null)
+                    {
+                        int separator = IO.Text.LastIndexOf(path, ".");
+                        If (separator > 0)
+                        {
+                            TypeSymbol candidate = This.Semantics.ResolveType(syntax,
+                                IO.Text.Slice(path, 0, separator));
+                            If (This.Semantics.IsEnumType(candidate))
+                                enumeration = This.Semantics.FindEnumMemberType(candidate.QualifiedName() +
+                                    IO.Text.Slice(path, separator, IO.Text.Length(path) - separator));
+                        }
+                    }
+                    If (enumeration != null)
+                    {
+                        tag = 1;
+                        payload = This.Module.ConstInt(integer, This.EnumValue(enumeration, path));
+                    }
+                    ElseIf (value.Kind == [int](ExpressionKind.Number) ||
+                        (value.Kind == [int](ExpressionKind.Unary) && value.Left != null &&
+                         value.Left.Kind == [int](ExpressionKind.Number)))
+                    {
+                        tag = 2;
+                        byte* number = This.ConstantInitializer(syntax, This.Semantics.Primitive("float"), value);
+                        payload = This.Module.BitCast(number, integer, "");
+                    }
+                }
+            }
+        }
+        Return This.Module.ConstStruct(argumentType, This.Types3(
+            This.Module.GlobalString(name, This.Unique("meta_parameter_name")),
+            This.Module.ConstInt(integer, tag), payload));
+    }
+
+    Public Safe Function MetaDecl ExportRuntimeMeta(SyntaxTree syntax, string name)
+    {
+        MetaDecl meta = This.Semantics.FindMeta(syntax, name);
+        If (meta != null) Return meta;
+        string shortName = This.Semantics.AttributeShortName(name);
+        If (shortName != "Docs" && shortName != "Deprecated" && shortName != "Since" &&
+            shortName != "Example" && shortName != "Experimental") Return null;
+        meta = New MetaDecl(shortName, 1, 1);
+        meta.TargetMask = 511;
+        meta.KeepKind = 3;
+        meta.AddParameter(New ParameterDecl(This.BuiltinMetaParameterName(shortName, 0), "string"));
+        Return meta;
+    }
+
+    Public Safe Function SyntaxTree ExportMetaSyntax(MetaDecl declaration, SyntaxTree fallback)
+    {
+        UnitSymbol unit = This.Semantics.FirstUnit;
+        While (unit != null)
+        {
+            MetaDecl meta = unit.Syntax.FirstMeta;
+            While (meta != null)
+            {
+                If (meta == declaration) Return unit.Syntax;
+                meta = meta.Next;
+            }
+            unit = unit.Next;
+        }
+        Return fallback;
+    }
+
+    Public Trusted Function void AppendMetaExportAttributes(LlvmHandles instances,
+                                                              byte* instanceType, byte* argumentType,
+                                                              SyntaxTree syntax, SyntaxAttribute first,
+                                                              string owner, int ownerKind,
+                                                              FunctionSymbol callable)
+    {
+        byte* pointer = This.Module.PointerType(This.Module.IntType(8));
+        byte* integer = This.Module.IntType(64);
+        SyntaxAttribute attribute = first;
+        While (attribute != null)
+        {
+            MetaDecl meta = This.ExportRuntimeMeta(syntax, attribute.Name);
+            If (meta != null && meta.KeepKind == 3)
+            {
+                LlvmHandles arguments = This.Types0();
+                ParameterDecl parameter = meta.FirstParameter;
+                SyntaxTree declarationSyntax = This.ExportMetaSyntax(meta, syntax);
+                ExpressionNode supplied = attribute.FirstArgument;
+                While (parameter != null)
+                {
+                    ExpressionNode value = supplied == null ? parameter.DefaultValue : supplied;
+                    arguments.Add(This.MetaExportArgument(argumentType, parameter.Name,
+                        supplied == null ? declarationSyntax : syntax, value));
+                    If (supplied != null) supplied = supplied.Next;
+                    parameter = parameter.Next;
+                }
+                byte* ownerPointer = This.Module.ConstNull(pointer);
+                int parameterCount = 0;
+                If (callable != null)
+                {
+                    parameterCount = callable.ParameterCount();
+                    LlvmFunctionBinding binding = This.FindFunctionBinding(callable);
+                    If (binding != null && !callable.Declaration.IsDelegate)
+                        ownerPointer = This.EnsureCallableWrapper(binding);
+                }
+                LlvmHandles fields = This.Types0();
+                fields.Add(This.Module.GlobalString(owner, This.Unique("meta_owner")));
+                fields.Add(This.Module.ConstInt(integer, ownerKind));
+                fields.Add(This.Module.ConstInt(integer, parameterCount));
+                fields.Add(ownerPointer);
+                fields.Add(This.Module.GlobalString(This.ResolvedAttributeName(syntax, attribute),
+                    This.Unique("meta_qualified_name")));
+                fields.Add(This.Module.GlobalString(meta.Name, This.Unique("meta_name")));
+                fields.Add(This.MetaExportArray(argumentType, arguments));
+                fields.Add(This.Module.ConstInt(integer, arguments.Count()));
+                instances.Add(This.Module.ConstStruct(instanceType, fields));
+            }
+            attribute = attribute.Next;
+        }
+    }
+
+    Public Trusted Function void EmitMetaModuleExport()
+    {
+        // Stage0's freestanding profiles do not expose the hosted module registry.
+        If (This.Semantics.Session.IsFreestanding()) Return;
+        byte* pointer = This.Module.PointerType(This.Module.IntType(8));
+        byte* integer = This.Module.IntType(64);
+        byte* argumentType = This.Module.LiteralStructType(This.Types3(pointer, integer, integer), false);
+        LlvmHandles fields = This.Types4(pointer, integer, integer, pointer);
+        fields.Add(pointer); fields.Add(pointer); fields.Add(pointer); fields.Add(integer);
+        byte* instanceType = This.Module.LiteralStructType(fields, false);
+        fields = This.Types4(pointer, pointer, integer, integer);
+        fields.Add(integer); fields.Add(pointer); fields.Add(integer);
+        byte* metaType = This.Module.LiteralStructType(fields, false);
+        fields = This.Types4(pointer, pointer, integer, pointer);
+        fields.Add(integer);
+        byte* moduleType = This.Module.LiteralStructType(fields, false);
+        LlvmHandles types = This.Types0();
+        LlvmHandles instances = This.Types0();
+        UnitSymbol unit = This.Semantics.FirstUnit;
+        While (unit != null)
+        {
+            MetaDecl meta = unit.Syntax.FirstMeta;
+            While (meta != null)
+            {
+                If (meta.KeepKind == 3)
+                {
+                    LlvmHandles names = This.Types0();
+                    ParameterDecl parameter = meta.FirstParameter;
+                    While (parameter != null)
+                    {
+                        names.Add(This.Module.GlobalString(parameter.Name, This.Unique("meta_parameter")));
+                        parameter = parameter.Next;
+                    }
+                    fields = This.Types0();
+                    fields.Add(This.Module.GlobalString(unit.Name + "." + meta.Name,
+                        This.Unique("meta_qualified_name")));
+                    fields.Add(This.Module.GlobalString(meta.Name, This.Unique("meta_name")));
+                    fields.Add(This.Module.ConstInt(integer, meta.TargetMask));
+                    fields.Add(This.Module.ConstInt(integer, meta.KeepKind));
+                    fields.Add(This.Module.ConstInt(integer, meta.IsRepeatable ? 1 : 0));
+                    fields.Add(This.MetaExportArray(pointer, names));
+                    fields.Add(This.Module.ConstInt(integer, names.Count()));
+                    types.Add(This.Module.ConstStruct(metaType, fields));
+                }
+                meta = meta.Next;
+            }
+            unit = unit.Next;
+        }
+        string[] builtinNames = {"Docs", "Deprecated", "Since", "Example", "Experimental"};
+        int builtinIndex = 0;
+        While (builtinIndex < builtinNames.Length())
+        {
+            string name = builtinNames[builtinIndex];
+            If (This.Semantics.FindMeta(null, name) == null)
+            {
+                LlvmHandles names = This.Types1(This.Module.GlobalString(
+                    This.BuiltinMetaParameterName(name, 0), This.Unique("meta_parameter")));
+                fields = This.Types0();
+                fields.Add(This.Module.GlobalString(name, This.Unique("meta_qualified_name")));
+                fields.Add(This.Module.GlobalString(name, This.Unique("meta_name")));
+                fields.Add(This.Module.ConstInt(integer, 511));
+                fields.Add(This.Module.ConstInt(integer, 3));
+                fields.Add(This.Module.ConstInt(integer, 0));
+                fields.Add(This.MetaExportArray(pointer, names));
+                fields.Add(This.Module.ConstInt(integer, 1));
+                types.Add(This.Module.ConstStruct(metaType, fields));
+            }
+            builtinIndex = builtinIndex + 1;
+        }
+        FunctionSymbol function = This.Semantics.FirstFunction;
+        While (function != null)
+        {
+            int ownerKind = function.OwnerType == null ? 1 : 6;
+            FunctionSymbol callable = function;
+            If (function.OwnerType != null &&
+                (!function.Declaration.IsStatic || function.Declaration.IsConstructor)) callable = null;
+            string owner = function.QualifiedName();
+            string overloadName = This.AttributeString(function.Declaration, "SymbolName");
+            If (function.OwnerType == null && !IO.Text.IsEmpty(overloadName))
+                owner = function.UnitName + "." + overloadName;
+            This.AppendMetaExportAttributes(instances, instanceType, argumentType, function.Syntax,
+                function.Declaration.FirstAttribute, owner, ownerKind, callable);
+            function = function.Next;
+        }
+        TypeSymbol type = This.Semantics.FirstType;
+        While (type != null)
+        {
+            If (type.Declaration != null)
+            {
+                int ownerKind = This.Semantics.IsStructType(type) ? 3 :
+                    (This.Semantics.IsEnumType(type) ? 4 :
+                     (type.Declaration.Kind == TokenKind.KwInterface ? 5 : 2));
+                This.AppendMetaExportAttributes(instances, instanceType, argumentType, type.Syntax,
+                    type.Declaration.FirstAttribute, type.QualifiedName(), ownerKind, null);
+                FieldDecl field = type.Declaration.FirstField;
+                While (field != null)
+                {
+                    This.AppendMetaExportAttributes(instances, instanceType, argumentType, type.Syntax,
+                        field.FirstAttribute, type.QualifiedName() + "." + field.Name, 7, null);
+                    field = field.Next;
+                }
+            }
+            type = type.Next;
+        }
+        byte* exportType = This.Module.FunctionType(pointer, This.Types0(), false);
+        byte* exportFunction = This.Module.AddFunction("__kn_meta_get_module", exportType);
+        If (This.IsLibrary() && This.Semantics.Session.Profile.ArtifactKind == "shared" &&
+            This.Semantics.Session.Target.OS == 1) This.Module.SetDllExport(exportFunction);
+        This.Module.PositionAtEnd(This.Module.AppendBlock(exportFunction, "entry"));
+        If (types.Count() == 0 && instances.Count() == 0)
+        {
+            This.Module.ReturnValue(This.Module.ConstNull(pointer));
+            Return;
+        }
+        fields = This.Types0();
+        fields.Add(This.Module.GlobalString(This.Semantics.Session.EntryUnitName,
+            This.Unique("meta_module_name")));
+        fields.Add(This.MetaExportArray(metaType, types));
+        fields.Add(This.Module.ConstInt(integer, types.Count()));
+        fields.Add(This.MetaExportArray(instanceType, instances));
+        fields.Add(This.Module.ConstInt(integer, instances.Count()));
+        byte* data = This.Module.AddGlobal(moduleType, "__kn_meta_module_data");
+        This.Module.SetPrivateLinkage(data);
+        This.Module.SetInitializer(data, This.Module.ConstStruct(moduleType, fields));
+        This.Module.ReturnValue(data);
     }
 
     Public Trusted Function void EmitMetaDictString(byte* dictionary, string key, string value)
@@ -2521,7 +3160,165 @@ Class NativeBackend
         Return dictionary;
     }
 
-    Public Trusted Function LlvmValue EmitMetaQuery(LlvmFunctionContext context, HirExpression expression)
+    Public Trusted Function LlvmValue EmitRuntimeMetaOwnerName(LlvmFunctionContext context,
+                                                               HirExpression expression)
+    {
+        If (expression != null && expression.Kind == [int](HirExpressionKind.FunctionReference) &&
+            expression.Function != null)
+        {
+            FunctionSymbol symbol = expression.Function;
+            string owner = symbol.QualifiedName();
+            string overloadName = This.AttributeString(symbol.Declaration, "SymbolName");
+            If (symbol.OwnerType == null && !IO.Text.IsEmpty(overloadName))
+                owner = symbol.UnitName + "." + overloadName;
+            Return New LlvmValue(This.Module.GlobalString(owner, This.Unique("meta_owner_name")),
+                This.Semantics.Primitive("string"));
+        }
+        Return This.CastValue(This.EmitExpression(context, expression),
+            This.Semantics.Primitive("string"));
+    }
+
+    Public Trusted Function void RegisterMetaMain()
+    {
+        byte* pointer = This.Module.PointerType(This.Module.IntType(8));
+        byte* signature = This.Module.FunctionType(pointer, This.Types0(), false);
+        byte* getter = This.Module.AddFunction("__kn_meta_get_module", signature);
+        byte* descriptor = This.Module.Call(signature, getter, This.Types0(),
+            This.Unique("meta_main_descriptor"));
+        This.CallKinalRuntime("IO.Kinal.Runtime.Metadata.RegisterMain", 1,
+            This.Types1(descriptor), "");
+    }
+
+    Public Trusted Function byte* UnloadedMetaWrapper()
+    {
+        byte* wrapper = This.Module.GetFunction("__kn_selfhost_meta_unloaded");
+        If (wrapper != null) Return wrapper;
+        byte* pointer = This.Module.PointerType(This.Module.IntType(8));
+        byte* signature = This.Module.FunctionType(This.AnyType,
+            This.Types3(pointer, This.Module.PointerType(This.AnyType),
+                This.Module.IntType(64)), false);
+        wrapper = This.Module.AddFunction("__kn_selfhost_meta_unloaded", signature);
+        This.Module.SetPrivateLinkage(wrapper);
+        byte* saved = This.Module.CurrentBlock();
+        This.Module.PositionAtEnd(This.Module.AppendBlock(wrapper, "entry"));
+        This.Module.ReturnValue(This.DefaultValue(This.Semantics.Primitive("any")).Handle);
+        If (saved != null) This.Module.PositionAtEnd(saved);
+        Return wrapper;
+    }
+
+    Public Trusted Function LlvmValue EmitMetaQuery(LlvmFunctionContext context,
+                                                   HirExpression expression)
+    {
+        If (This.Semantics.Session.IsFreestanding())
+            Return This.EmitStaticMetaQuery(context, expression);
+        LlvmValue requested = This.CastValue(This.EmitExpression(context, expression.FirstArgument),
+            This.Semantics.Primitive("string"));
+        This.RegisterMetaMain();
+        Return New LlvmValue(This.CallKinalRuntime("IO.Kinal.Runtime.Metadata.Query", 1,
+            This.Types1(requested.Handle), This.Unique("meta_owners")),
+            This.Semantics.Primitive("list"));
+    }
+
+    Public Trusted Function LlvmValue EmitMetaOf(LlvmFunctionContext context,
+                                                HirExpression expression)
+    {
+        If (This.Semantics.Session.IsFreestanding())
+            Return This.EmitStaticMetaOf(context, expression);
+        LlvmValue owner = This.EmitRuntimeMetaOwnerName(context, expression.FirstArgument);
+        This.RegisterMetaMain();
+        Return New LlvmValue(This.CallKinalRuntime("IO.Kinal.Runtime.Metadata.Of", 1,
+            This.Types1(owner.Handle), This.Unique("meta_attributes")),
+            This.Semantics.Primitive("list"));
+    }
+
+    Public Trusted Function LlvmValue EmitMetaFind(LlvmFunctionContext context,
+                                                  HirExpression expression)
+    {
+        If (This.Semantics.Session.IsFreestanding())
+            Return This.EmitStaticMetaFind(context, expression);
+        HirExpression first = expression.FirstArgument;
+        LlvmValue owner = This.EmitRuntimeMetaOwnerName(context, first);
+        LlvmValue meta = This.CastValue(This.EmitExpression(context, first.Next),
+            This.Semantics.Primitive("string"));
+        This.RegisterMetaMain();
+        LlvmTypeBinding functionType = This.FindTypeBinding(
+            This.Semantics.FindExactType("IO.Type.Object.Function"));
+        If (functionType == null)
+        {
+            This.Fail("callable runtime type binding is missing for metadata");
+            Return This.DefaultValue(This.Semantics.Primitive("dict"));
+        }
+        byte* item = This.CallKinalRuntime("IO.Kinal.Runtime.Metadata.Find", 4,
+            This.Types4(owner.Handle, meta.Handle,
+                This.Module.ConstInt(This.Module.IntType(64), functionType.RuntimeTypeId),
+                This.UnloadedMetaWrapper()), This.Unique("meta_dictionary"));
+        // IO.Web's native server consumes its local dispatcher's direct entry
+        // address. Other metadata owners retain generic callable object layout.
+        FunctionSymbol symbol = This.Semantics.FirstFunction;
+        While (symbol != null)
+        {
+            SyntaxAttribute attribute = symbol.Declaration.FirstAttribute;
+            While (attribute != null)
+            {
+                string name = This.ResolvedAttributeName(symbol.Syntax, attribute);
+                LlvmFunctionBinding binding = This.FindFunctionBinding(symbol);
+                If (name == "IO.Web.__Dispatcher" && binding != null)
+                {
+                    byte* ownerMatches = This.RuntimeBool(This.CallKinalRuntime(
+                        "IO.Kinal.Runtime.StringEqual", 2,
+                        This.Types2(owner.Handle, This.Module.GlobalString(symbol.QualifiedName(),
+                            This.Unique("dispatcher_owner"))), This.Unique("dispatcher_owner_match")));
+                    byte* qualifiedMatches = This.RuntimeBool(This.CallKinalRuntime(
+                        "IO.Kinal.Runtime.StringEqual", 2,
+                        This.Types2(meta.Handle, This.Module.GlobalString(name,
+                            This.Unique("dispatcher_meta"))), This.Unique("dispatcher_meta_match")));
+                    byte* shortMatches = This.RuntimeBool(This.CallKinalRuntime(
+                        "IO.Kinal.Runtime.StringEqual", 2,
+                        This.Types2(meta.Handle, This.Module.GlobalString("__Dispatcher",
+                            This.Unique("dispatcher_short"))), This.Unique("dispatcher_short_match")));
+                    byte* present = This.Module.Compare([int](LlvmIntPredicate.NotEqual), item,
+                        This.Module.ConstNull(This.Module.PointerType(This.Module.IntType(8))),
+                        This.Unique("dispatcher_item_present"));
+                    byte* matches = This.Module.And(present, This.Module.And(ownerMatches,
+                        This.Module.Or(qualifiedMatches, shortMatches, This.Unique("dispatcher_name_match")),
+                        This.Unique("dispatcher_match")), This.Unique("dispatcher_found"));
+                    byte* patch = This.Module.AppendBlock(context.Binding.Function,
+                        This.Unique("dispatcher_patch"));
+                    byte* next = This.Module.AppendBlock(context.Binding.Function,
+                        This.Unique("dispatcher_next"));
+                    This.Module.ConditionalBranch(matches, patch, next);
+                    This.Module.PositionAtEnd(patch);
+                    This.CallKinalRuntime("IO.Kinal.Runtime.Collections.DictionarySet", 4,
+                        This.Types4(item, This.Module.GlobalString("owner_ptr", This.Unique("meta_key")),
+                            This.Module.ConstInt(This.Module.IntType(64), 6),
+                            This.Module.PointerToInt(binding.Function, This.Module.IntType(64),
+                                This.Unique("dispatcher_pointer"))), "");
+                    This.Module.Branch(next);
+                    This.Module.PositionAtEnd(next);
+                }
+                attribute = attribute.Next;
+            }
+            symbol = symbol.Next;
+        }
+        Return New LlvmValue(item, This.Semantics.Primitive("dict"));
+    }
+
+    Public Trusted Function LlvmValue EmitMetaHas(LlvmFunctionContext context,
+                                                 HirExpression expression)
+    {
+        If (This.Semantics.Session.IsFreestanding())
+            Return This.EmitStaticMetaHas(context, expression);
+        HirExpression first = expression.FirstArgument;
+        LlvmValue owner = This.EmitRuntimeMetaOwnerName(context, first);
+        LlvmValue meta = This.CastValue(This.EmitExpression(context, first.Next),
+            This.Semantics.Primitive("string"));
+        This.RegisterMetaMain();
+        Return New LlvmValue(This.CallKinalRuntime("IO.Kinal.Runtime.Metadata.Has", 2,
+            This.Types2(owner.Handle, meta.Handle), This.Unique("meta_has")),
+            This.Semantics.Primitive("bool"));
+    }
+
+    Public Trusted Function LlvmValue EmitStaticMetaQuery(LlvmFunctionContext context, HirExpression expression)
     {
         LlvmValue requested = This.CastValue(This.EmitExpression(context, expression.FirstArgument),
             This.Semantics.Primitive("string"));
@@ -2564,7 +3361,7 @@ Class NativeBackend
         Return New LlvmValue(owners, This.Semantics.Primitive("list"));
     }
 
-    Public Trusted Function LlvmValue EmitMetaOf(LlvmFunctionContext context,
+    Public Trusted Function LlvmValue EmitStaticMetaOf(LlvmFunctionContext context,
                                                   HirExpression expression)
     {
         LlvmValue ownerName = This.EmitMetaOwnerName(context, expression.FirstArgument);
@@ -2668,7 +3465,7 @@ Class NativeBackend
         This.EmitMetaDictInteger(dictionary, "arg_count", count);
     }
 
-    Public Trusted Function LlvmValue EmitMetaFind(LlvmFunctionContext context, HirExpression expression)
+    Public Trusted Function LlvmValue EmitStaticMetaFind(LlvmFunctionContext context, HirExpression expression)
     {
         HirExpression first = expression.FirstArgument;
         LlvmValue ownerName = first != null &&
@@ -2755,10 +3552,10 @@ Class NativeBackend
             This.Unique("meta_result_value")), This.Semantics.Primitive("dict"));
     }
 
-    Public Trusted Function LlvmValue EmitMetaHas(LlvmFunctionContext context,
+    Public Trusted Function LlvmValue EmitStaticMetaHas(LlvmFunctionContext context,
                                                    HirExpression expression)
     {
-        LlvmValue found = This.EmitMetaFind(context, expression);
+        LlvmValue found = This.EmitStaticMetaFind(context, expression);
         byte* pointer = This.Module.BitCast(found.Handle,
             This.Module.PointerType(This.Module.IntType(8)), This.Unique("meta_has_pointer"));
         Return New LlvmValue(This.Module.Compare([int](LlvmIntPredicate.NotEqual), pointer,
@@ -2824,14 +3621,23 @@ Class NativeBackend
         byte* bytes = This.Module.Multiply(length, This.Module.SizeOf(elementHandle),
             This.Unique("array_bytes"));
         byte* memory = null;
-        If (This.Semantics.Session.IsFreestandingCore())
+        If (This.Semantics.Session.IsFreestanding())
         {
             If (fixedLength == 0) memory = This.Module.ConstNull(This.Module.PointerType(elementHandle));
             Else
             {
                 byte* storageType = This.Module.ArrayType(elementHandle, fixedLength);
-                memory = This.Module.Alloca(storageType, This.Unique("array_storage"));
-                This.ZeroStorage(context, memory, bytes);
+                If (This.InitializingGlobals)
+                {
+                    memory = This.Module.AddGlobal(storageType, This.Unique("__kn_array_storage"));
+                    This.Module.SetPrivateLinkage(memory);
+                    This.Module.SetInitializer(memory, This.Module.ConstNull(storageType));
+                }
+                Else
+                {
+                    memory = This.Module.Alloca(storageType, This.Unique("array_storage"));
+                    This.ZeroStorage(context, memory, bytes);
+                }
             }
         }
         Else
@@ -3076,8 +3882,12 @@ Class NativeBackend
                 otherTag, This.Unique("any_same_tag"));
             byte* samePayload = This.Module.Compare([int](LlvmIntPredicate.Equal), payload,
                 otherPayload, This.Unique("any_same_payload"));
-            byte* isString = This.Module.Compare([int](LlvmIntPredicate.Equal), tag,
-                This.Module.ConstInt(int64Type, 5), This.Unique("any_is_string"));
+            // Never reinterpret a non-string payload as a C string merely
+            // because the other operand has a string tag.
+            byte* isString = This.Module.And(sameTag,
+                This.Module.Compare([int](LlvmIntPredicate.Equal), tag,
+                    This.Module.ConstInt(int64Type, 5), This.Unique("any_is_string")),
+                This.Unique("any_both_strings"));
             byte* bytePointer = This.Module.PointerType(This.Module.IntType(8));
             byte* nullPointer = This.Module.ConstNull(bytePointer);
             byte* leftString = This.Module.Select(isString,
@@ -4179,6 +4989,10 @@ Class NativeBackend
             operatorKind == TokenKind.PercentAssign;
         If (assignment)
         {
+            // Compute in the resolved arithmetic type; convert to the lvalue
+            // type only after compound evaluation, immediately before storage.
+            TypeSymbol operationType = operatorKind == TokenKind.Assign || expression.OperandType == null ?
+                expression.Left.Type : expression.OperandType;
             If (expression.Left.Kind == [int](HirExpressionKind.Field) &&
                 expression.Left.Function != null)
             {
@@ -4191,12 +5005,23 @@ Class NativeBackend
                 }
                 LlvmValue receiver = expression.Left.Left == null ? null :
                     This.EmitExpression(context, expression.Left.Left);
-                LlvmValue right = This.CastValue(
-                    This.EmitExpression(context, expression.Right), expression.Left.Type);
+                // Bind the receiver and read the old property value before RHS
+                // evaluation. Keep getter results live across RHS safe points.
+                LlvmValue left = null;
+                bool qualifiedBase = expression.Left.Left != null &&
+                    expression.Left.Left.Name == "Base";
                 If (operatorKind != TokenKind.Assign)
                 {
-                    LlvmValue left = This.EmitFunctionCall(context, getter,
-                        expression.Left, receiver);
+                    left = This.IsVirtualMethod(getter.Symbol) && !qualifiedBase ?
+                        This.EmitVirtualFunctionCall(context, getter, expression.Left, receiver) :
+                        This.EmitFunctionCall(context, getter, expression.Left, receiver);
+                    left = This.StoreExpressionRoot(context, expression.Left, left);
+                }
+                LlvmValue right = This.CastValue(
+                    This.EmitExpression(context, expression.Right), operationType);
+                If (operatorKind != TokenKind.Assign)
+                {
+                    left = This.CastValue(left, operationType);
                     If (operatorKind == TokenKind.PlusAssign &&
                         left.Type.Kind == [int](TypeKind.StringType))
                         right = New LlvmValue(This.CallKinalRuntime(
@@ -4220,6 +5045,10 @@ Class NativeBackend
                         operatorKind == TokenKind.SlashAssign)
                         right = New LlvmValue(This.Module.FloatDivide(left.Handle, right.Handle,
                             This.Unique("property_float_div")), left.Type);
+                    ElseIf (left.Type.Kind == [int](TypeKind.FloatType) &&
+                        operatorKind == TokenKind.PercentAssign)
+                        right = New LlvmValue(This.Module.FloatRemainder(left.Handle, right.Handle,
+                            This.Unique("property_float_rem")), left.Type);
                     ElseIf (operatorKind == TokenKind.PlusAssign)
                         right = New LlvmValue(This.Module.Add(left.Handle, right.Handle,
                             This.Unique("property_add")), left.Type);
@@ -4242,6 +5071,7 @@ Class NativeBackend
                             This.Module.SignedRemainder(left.Handle, right.Handle,
                                 This.Unique("property_rem")), left.Type);
                 }
+                right = This.CastValue(right, expression.Left.Type);
                 LlvmHandles arguments = New LlvmHandles();
                 bool hasReceiver = setter.Symbol.OwnerType != null &&
                     !setter.Symbol.Declaration.IsStatic;
@@ -4256,7 +5086,26 @@ Class NativeBackend
                         setter.Symbol.OwnerType).Handle);
                 }
                 arguments.Add(right.Handle);
-                This.Module.Call(setter.FunctionType, setter.Function, arguments, "");
+                byte* callable = setter.Function;
+                If (hasReceiver && This.IsVirtualMethod(setter.Symbol) && !qualifiedBase)
+                {
+                    int slot = This.DispatchSlot(setter.Symbol.OwnerType, setter.Symbol);
+                    If (slot < 0)
+                    {
+                        This.Fail("virtual property setter slot is missing: " + expression.Left.Target);
+                        Return right;
+                    }
+                    byte* bytePointer = This.Module.PointerType(This.Module.IntType(8));
+                    byte* rawReceiver = This.Module.BitCast(receiver.Handle, bytePointer,
+                        This.Unique("property_receiver"));
+                    byte* vtable = This.LoadObjectVtable(rawReceiver);
+                    byte* methodAddress = This.Module.Gep(bytePointer, vtable,
+                        This.Types1(This.Module.ConstInt(This.Module.IntType(64), slot)), true,
+                        This.Unique("property_setter_slot"));
+                    callable = This.Module.Load(This.Module.PointerType(setter.FunctionType),
+                        methodAddress, This.Unique("property_setter"));
+                }
+                This.Module.Call(setter.FunctionType, callable, arguments, "");
                 This.MaybePropagateException(context);
                 Return right;
             }
@@ -4282,7 +5131,7 @@ Class NativeBackend
                     right = New LlvmValue(callable, expression.Left.Type);
                 }
             }
-            Else right = This.CastValue(This.EmitExpression(context, expression.Right), expression.Left.Type);
+            Else right = This.CastValue(This.EmitExpression(context, expression.Right), operationType);
             If (operatorKind != TokenKind.Assign)
             {
                 LlvmValue left = null;
@@ -4295,6 +5144,7 @@ Class NativeBackend
                 }
                 Else left = New LlvmValue(This.Module.Load(This.TypeHandle(expression.Left.Type), address,
                     This.Unique("assignment_left")), expression.Left.Type);
+                left = This.CastValue(left, operationType);
                 If (operatorKind == TokenKind.PlusAssign && left.Type.Kind == [int](TypeKind.StringType))
                     right = New LlvmValue(This.CallKinalRuntime(
                         "IO.Kinal.Runtime.StringConcat", 2,
@@ -4307,6 +5157,8 @@ Class NativeBackend
                     right = New LlvmValue(This.Module.FloatMultiply(left.Handle, right.Handle, This.Unique("float_mul")), left.Type);
                 ElseIf (left.Type.Kind == [int](TypeKind.FloatType) && operatorKind == TokenKind.SlashAssign)
                     right = New LlvmValue(This.Module.FloatDivide(left.Handle, right.Handle, This.Unique("float_div")), left.Type);
+                ElseIf (left.Type.Kind == [int](TypeKind.FloatType) && operatorKind == TokenKind.PercentAssign)
+                    right = New LlvmValue(This.Module.FloatRemainder(left.Handle, right.Handle, This.Unique("float_rem")), left.Type);
                 ElseIf (operatorKind == TokenKind.PlusAssign)
                     right = New LlvmValue(This.Module.Add(left.Handle, right.Handle, This.Unique("add")), left.Type);
                 ElseIf (operatorKind == TokenKind.MinusAssign)
@@ -4328,6 +5180,7 @@ Class NativeBackend
                     right = New LlvmValue(remainder, left.Type);
                 }
             }
+            right = This.CastValue(right, expression.Left.Type);
             If (address == null)
                 This.Fail("assignment target has no address: " + expression.Left.Target +
                     " kind=" + [string](expression.Left.Kind) + " in " +
@@ -4380,7 +5233,19 @@ Class NativeBackend
                 This.Types1(offset), true, This.Unique("pointer_offset")), left.Type);
         }
 
-        TypeSymbol operandType = left.Type;
+        // Both operands have already been evaluated in source order. For
+        // integer + pointer, scale the saved integer by the pointer element.
+        If (operatorKind == TokenKind.Plus &&
+            left.Type.Kind == [int](TypeKind.IntegerType) &&
+            right.Type.Kind == [int](TypeKind.PointerType))
+        {
+            LlvmValue offset = This.CastValue(left, This.Semantics.Primitive("isize"));
+            Return New LlvmValue(This.Module.Gep(This.TypeHandle(right.Type.ElementType), right.Handle,
+                This.Types1(offset.Handle), true, This.Unique("pointer_right_offset")), right.Type);
+        }
+
+        TypeSymbol operandType = expression.OperandType == null ? left.Type : expression.OperandType;
+        left = This.CastValue(left, operandType);
         right = This.CastValue(right, operandType);
         If (operandType.Kind == [int](TypeKind.FloatType))
         {
@@ -4392,6 +5257,8 @@ Class NativeBackend
                 Return New LlvmValue(This.Module.FloatMultiply(left.Handle, right.Handle, This.Unique("float_mul")), expression.Type);
             If (operatorKind == TokenKind.Slash)
                 Return New LlvmValue(This.Module.FloatDivide(left.Handle, right.Handle, This.Unique("float_div")), expression.Type);
+            If (operatorKind == TokenKind.Percent)
+                Return New LlvmValue(This.Module.FloatRemainder(left.Handle, right.Handle, This.Unique("float_rem")), expression.Type);
             int floatPredicate = [int](LlvmFloatPredicate.OrderedEqual);
             If (operatorKind == TokenKind.NotEqual)
                 floatPredicate = [int](LlvmFloatPredicate.OrderedNotEqual);
@@ -4407,24 +5274,27 @@ Class NativeBackend
                 This.Unique("float_compare")), This.Semantics.Primitive("bool"));
         }
         If (operatorKind == TokenKind.Plus)
-            Return New LlvmValue(This.Module.Add(left.Handle, right.Handle, This.Unique("add")), expression.Type);
+            Return This.CastValue(New LlvmValue(This.Module.Add(left.Handle, right.Handle,
+                This.Unique("add")), operandType), expression.Type);
         If (operatorKind == TokenKind.Minus)
-            Return New LlvmValue(This.Module.Subtract(left.Handle, right.Handle, This.Unique("sub")), expression.Type);
+            Return This.CastValue(New LlvmValue(This.Module.Subtract(left.Handle, right.Handle,
+                This.Unique("sub")), operandType), expression.Type);
         If (operatorKind == TokenKind.Star)
-            Return New LlvmValue(This.Module.Multiply(left.Handle, right.Handle, This.Unique("mul")), expression.Type);
+            Return This.CastValue(New LlvmValue(This.Module.Multiply(left.Handle, right.Handle,
+                This.Unique("mul")), operandType), expression.Type);
         If (operatorKind == TokenKind.Slash)
         {
             byte* quotient = This.IsUnsignedInteger(operandType) ?
                 This.Module.UnsignedDivide(left.Handle, right.Handle, This.Unique("udiv")) :
                 This.Module.SignedDivide(left.Handle, right.Handle, This.Unique("div"));
-            Return New LlvmValue(quotient, expression.Type);
+            Return This.CastValue(New LlvmValue(quotient, operandType), expression.Type);
         }
         If (operatorKind == TokenKind.Percent)
         {
             byte* remainder = This.IsUnsignedInteger(operandType) ?
                 This.Module.UnsignedRemainder(left.Handle, right.Handle, This.Unique("urem")) :
                 This.Module.SignedRemainder(left.Handle, right.Handle, This.Unique("rem"));
-            Return New LlvmValue(remainder, expression.Type);
+            Return This.CastValue(New LlvmValue(remainder, operandType), expression.Type);
         }
         If (operatorKind == TokenKind.Ampersand)
             Return New LlvmValue(This.Module.And(left.Handle, right.Handle, This.Unique("and")), expression.Type);
@@ -4749,6 +5619,14 @@ Class NativeBackend
         }
         If (expression.Kind == [int](HirExpressionKind.FunctionReference))
         {
+            If (expression.Function == null &&
+                expression.CallKind == [int](HirCallKind.RuntimeBuiltin) &&
+                This.Semantics.IsStringBuiltinReferenceTarget(expression.Target))
+            {
+                byte* bytePointer = This.Module.PointerType(This.Module.IntType(8));
+                Return New LlvmValue(This.CreateCallableObject(false,
+                    This.Module.ConstNull(bytePointer), null), expression.Type);
+            }
             LlvmFunctionBinding function = This.FindFunctionBinding(expression.Function);
             If (function == null)
             {
@@ -5090,7 +5968,10 @@ Class NativeBackend
         byte* bytePointer = This.Module.PointerType(This.Module.IntType(8));
         byte* pointerInteger = This.Module.IntType(This.Semantics.Session.Target.PointerBits);
         byte* padding = This.Module.ConstInt(pointerInteger, alignment - 1);
-        byte* allocationSize = This.Module.Add(This.Module.SizeOf(valueType), padding,
+        // Allocation/root sizes use the runtime's i64 contract, independently
+        // of the narrower pointer integer used for address alignment.
+        byte* allocationSize = This.Module.Add(This.Module.SizeOf(valueType),
+            This.Module.ConstInt(This.Module.IntType(64), alignment - 1),
             This.Unique("captured_size"));
         byte* storage = This.CallKinalRuntime(
             "IO.Kinal.Runtime.GarbageCollector.Allocate", 1,
@@ -5215,7 +6096,7 @@ Class NativeBackend
 
     Public Trusted Function void EmitGcSafePoint(LlvmFunctionContext context)
     {
-        If (This.Semantics.Session.IsFreestandingCore()) Return;
+        If (This.Semantics.Session.IsFreestanding()) Return;
         If (This.IsRuntimeInfrastructureFunction(context.Binding.Symbol)) Return;
         This.CallKinalRuntime(
             "IO.Kinal.Runtime.GarbageCollector.MaybeCollect", 0,
@@ -5457,8 +6338,7 @@ Class NativeBackend
         LlvmValue selector = This.EmitExpression(context, statement.Expression);
         byte* function = context.Binding.Function;
         byte* endBlock = This.Module.AppendBlock(function, This.Unique("switch_end"));
-        byte* previousBreak = context.BreakTarget;
-        context.BreakTarget = endBlock;
+        // Cases do not fall through; Break and Continue retain their enclosing loop targets.
         HirStatement defaultCase = null;
         HirStatement item = statement.FirstChild;
         While (item != null)
@@ -5488,7 +6368,6 @@ Class NativeBackend
             context.FirstVariable = savedVariables;
         }
         If (!This.Module.IsTerminated(This.Module.CurrentBlock())) This.Module.Branch(endBlock);
-        context.BreakTarget = previousBreak;
         This.Module.PositionAtEnd(endBlock);
     }
 
@@ -5711,6 +6590,7 @@ Class NativeBackend
             }
         }
 
+        If (!This.IsRuntimeInfrastructureFunction(binding.Symbol)) This.CallGlobalInitializer();
         This.EmitGcSafePoint(context);
 
         LlvmBlockBinding block = This.RegisterUnsafeBlock(context, hirFunction.Body);
@@ -5841,6 +6721,7 @@ Class NativeBackend
             parameter = parameter.Next;
         }
 
+        If (!This.IsRuntimeInfrastructureFunction(binding.Symbol)) This.CallGlobalInitializer();
         This.EmitGcSafePoint(context);
         This.EmitStatementList(context, hirFunction.Body);
         If (!This.Module.IsTerminated(This.Module.CurrentBlock())) This.EmitReturn(context, null);
@@ -5999,14 +6880,100 @@ Class NativeBackend
 
     Public Safe Function LlvmFunctionBinding FindEntryFunction()
     {
+        string name = This.Semantics.Session.Profile == null ? "Main" :
+            This.Semantics.Session.Profile.EntrySymbol;
+        If (IO.Text.IsEmpty(name)) name = "Main";
         LlvmFunctionBinding binding = This.FirstFunction;
         While (binding != null)
         {
-            If (binding.Symbol.OwnerType == null && binding.Symbol.Name == "Main" &&
-                binding.Symbol.UnitName == This.Semantics.Session.EntryUnitName) Return binding;
+            If (binding.Symbol.OwnerType == null &&
+                (binding.Symbol.QualifiedName() == name ||
+                 (binding.Symbol.Name == name && binding.Symbol.UnitName == This.Semantics.Session.EntryUnitName))) Return binding;
             binding = binding.Next;
         }
         Return null;
+    }
+
+    Public Trusted Function void CallGlobalInitializer()
+    {
+        If (This.GlobalInitializer != null)
+            This.Module.Call(This.GlobalInitializerType, This.GlobalInitializer, This.Types0(), "");
+    }
+
+    Public Trusted Function void EmitGlobalInitializer()
+    {
+        If (This.Semantics.FirstGlobal == null) Return;
+        This.GlobalInitializerType = This.Module.FunctionType(This.Module.VoidType(), This.Types0(), false);
+        This.GlobalInitializer = This.Module.AddFunction("__kn_sh_global_init", This.GlobalInitializerType);
+        This.Module.SetPrivateLinkage(This.GlobalInitializer);
+        byte* initialized = This.Module.AddGlobal(This.Module.IntType(1), "__kn_sh_globals_initialized");
+        This.Module.SetPrivateLinkage(initialized);
+        This.Module.SetInitializer(initialized, This.Module.ConstInt(This.Module.IntType(1), 0));
+        byte* entry = This.Module.AppendBlock(This.GlobalInitializer, "entry");
+        byte* initialize = This.Module.AppendBlock(This.GlobalInitializer, "initialize");
+        byte* done = This.Module.AppendBlock(This.GlobalInitializer, "done");
+        This.Module.PositionAtEnd(entry);
+        byte* ready = This.Module.Load(This.Module.IntType(1), initialized, "initialized");
+        This.Module.ConditionalBranch(ready, done, initialize);
+        This.Module.PositionAtEnd(initialize);
+        // Guard before evaluation allows a global initializer to call user code.
+        This.Module.Store(This.Module.ConstInt(This.Module.IntType(1), 1), initialized);
+        FunctionDecl declaration = New FunctionDecl("GlobalInitialize", "void", 1, 1);
+        FunctionSymbol symbol = New FunctionSymbol("IO.Kinal.Runtime", null, declaration);
+        symbol.ReturnType = This.Semantics.Primitive("void");
+        LlvmFunctionContext context = New LlvmFunctionContext(New LlvmFunctionBinding(
+            symbol, This.GlobalInitializerType, This.GlobalInitializer, false));
+        If (!This.Semantics.Session.IsFreestandingCore())
+        {
+            If (!This.Semantics.Session.IsFreestanding() &&
+                This.Semantics.Session.Profile != null && This.Semantics.Session.Profile.ArtifactKind != "exe")
+                This.CallKinalRuntime("IO.Kinal.Runtime.GarbageCollector.Initialize", 0, This.Types0(), "");
+            context.GcFrame = This.CallKinalRuntime("IO.Kinal.Runtime.GarbageCollector.PushFrame", 0,
+                This.Types0(), This.Unique("global_gc_frame"));
+            This.InitializeGlobalRoots();
+        }
+        This.InitializingGlobals = true;
+        GlobalSymbol global = This.Semantics.FirstGlobal;
+        While (global != null)
+        {
+            LlvmGlobalBinding binding = This.FindGlobalBinding(global.Value);
+            HirExpression expression = This.BoundGlobalInitializer(global);
+            If (binding != null && global.UnitName != "IO.Kinal.Runtime" &&
+                !IO.Text.StartsWith(global.UnitName, "IO.Kinal.Runtime."))
+            {
+                If (expression != null) This.PrepareExpressionRoots(context, expression);
+                TypeSymbol type = global.Value.Type;
+                int lengthValue = This.GlobalArrayLength(global);
+                // Global function/block literals are indexed as callable functions,
+                // rather than bound HIR expressions. Materialize them in declaration
+                // order before later global copies or calls can observe the value.
+                If (global.Value.CallableFunction != null)
+                {
+                    LlvmFunctionBinding callable = This.FindFunctionBinding(global.Value.CallableFunction);
+                    If (callable == null) This.Fail("global callable binding is missing: " + global.QualifiedName());
+                    Else This.Module.Store(This.EmitCallableObject(context, callable), binding.Address);
+                }
+                ElseIf (type.Kind == [int](TypeKind.ArrayType) && lengthValue >= 0 &&
+                    (expression == null || expression.Kind == [int](HirExpressionKind.ArrayLiteral)))
+                {
+                    LlvmValue array = This.EmitArrayValue(context, type,
+                        expression == null ? null : expression.FirstArgument,
+                        This.Module.ConstInt(This.Module.IntType(64), lengthValue), binding.Address, lengthValue);
+                    This.Module.Store(array.Handle, binding.Address);
+                }
+                ElseIf (expression != null)
+                {
+                    LlvmValue value = This.CastValue(This.EmitExpression(context, expression), type);
+                    This.Module.Store(value.Handle, binding.Address);
+                }
+            }
+            global = global.Next;
+        }
+        This.InitializingGlobals = false;
+        This.PopGcFrame(context);
+        This.Module.Branch(done);
+        This.Module.PositionAtEnd(done);
+        This.Module.ReturnVoid();
     }
 
     Public Trusted Function void EmitEntryPoint()
@@ -6027,10 +6994,10 @@ Class NativeBackend
         This.Module.PositionAtEnd(block);
         This.CallKinalRuntime("IO.Kinal.Runtime.GarbageCollector.Initialize", 0,
             This.Types0(), "");
-        This.InitializeGlobalRoots();
-        This.InitializeGlobalArrayStorage();
-        This.InitializeGlobalCallables();
-        This.InitializeGlobalCopies();
+        This.CallKinalRuntime("IO.Kinal.Runtime.InitializeProcessArguments", 2,
+            This.Types2(This.Module.Parameter(mainFunction, 0),
+                This.Module.Parameter(mainFunction, 1)), "");
+        This.CallGlobalInitializer();
 
         LlvmHandles arguments = New LlvmHandles();
         int count = entryBinding.Symbol.ParameterCount();
@@ -6158,6 +7125,7 @@ Class NativeBackend
             "__TEXT,__kn_entry" : ".text.kn.entry";
         If (!This.Module.SetSection(wrapper, section)) This.Fail("failed to set entry section");
         This.Module.PositionAtEnd(This.Module.AppendBlock(wrapper, "entry"));
+        This.CallGlobalInitializer();
         LlvmHandles arguments = This.Types0();
         If (count == 1) arguments.Add(This.Module.Parameter(wrapper, 0));
         This.Module.Call(entry.FunctionType, entry.Function, arguments,
@@ -6179,13 +7147,27 @@ Class NativeBackend
             This.Fail("LLVM target configuration failed: " + IO.Kinal.Compiler.Backend.LlvmBridge.LastError());
             Return false;
         }
+        This.PrepareFreestandingRuntime();
+        If (This.Failed()) Return false;
         This.PrepareTypes();
         This.DeclareFunctions();
         This.DeclareGlobals();
+        This.EmitGlobalInitializer();
         This.EmitFunctions();
-        If (This.Semantics.Session.IsFreestandingCore()) This.EmitFreestandingEntry();
-        Else This.EmitEntryPoint();
+        This.EmitMetaModuleExport();
+        bool library = This.Semantics.Session.Profile != null &&
+            This.Semantics.Session.Profile.ArtifactKind != "exe";
+        If (!library)
+        {
+            If (This.Semantics.Session.IsFreestanding()) This.EmitFreestandingEntry();
+            Else This.EmitEntryPoint();
+        }
         If (This.Failed()) Return false;
+        If (This.Semantics.Session.IsFreestanding() && !This.Module.PruneUnused())
+        {
+            This.Fail("freestanding helper pruning failed: " + IO.Kinal.Compiler.Backend.LlvmBridge.LastError());
+            Return false;
+        }
         If (!This.Module.Verify())
         {
             This.Fail("LLVM verification failed: " + IO.Kinal.Compiler.Backend.LlvmBridge.LastError());
@@ -6200,6 +7182,17 @@ Class NativeBackend
         If (!This.Module.EmitObject(This.Semantics.Session.Target.Triple, outputPath))
         {
             This.Fail("object emission failed: " + IO.Kinal.Compiler.Backend.LlvmBridge.LastError());
+            Return false;
+        }
+        Return true;
+    }
+
+    Public Trusted Function bool EmitAssembly(string outputPath)
+    {
+        If (!This.GenerateModule()) Return false;
+        If (!This.Module.EmitAssembly(This.Semantics.Session.Target.Triple, outputPath))
+        {
+            This.Fail("assembly emission failed: " + IO.Kinal.Compiler.Backend.LlvmBridge.LastError());
             Return false;
         }
         Return true;

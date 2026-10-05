@@ -1,0 +1,357 @@
+Unit IO.Kinal.Runtime.Metadata;
+
+Get IO.Kinal.Runtime;
+Get IO.Kinal.Runtime.Collections;
+Get IO.Kinal.Runtime.Native;
+
+// These naturally aligned records are the shared-library KnMetaExport ABI.
+// Pointer fields must remain pointer-sized; counts and Any words remain u64.
+Struct ExportArgument
+{
+    string Name;
+    u64 Tag;
+    u64 Payload;
+}
+
+Struct ExportInstance
+{
+    string OwnerName;
+    u64 OwnerKind;
+    u64 OwnerParameterCount;
+    byte* OwnerPointer;
+    string MetaQualifiedName;
+    string MetaName;
+    ExportArgument* Arguments;
+    u64 ArgumentCount;
+}
+
+Struct ExportType
+{
+    string QualifiedName;
+    string Name;
+    u64 TargetMask;
+    u64 KeepKind;
+    u64 Repeatable;
+    string* ParameterNames;
+    u64 ParameterCount;
+}
+
+Struct ExportModule
+{
+    string Name;
+    ExportType* Types;
+    u64 TypeCount;
+    ExportInstance* Instances;
+    u64 InstanceCount;
+}
+
+Struct CallableStorage
+{
+    byte* Vtable;
+    i64 RuntimeTypeId;
+    byte* Wrapper;
+    byte* Environment;
+}
+
+Class CallableRegistration
+{
+    Public byte* Storage;
+    Public byte* UnloadedWrapper;
+    Public CallableRegistration Next;
+}
+
+Class ModuleRegistration
+{
+    Public byte* Handle;
+    Public ExportModule* Module;
+    Public CallableRegistration Callables;
+    Public ModuleRegistration Next;
+}
+
+ModuleRegistration FirstModule = null;
+
+Delegate Function byte* GetModuleDescriptor() By C;
+
+Trusted Function bool ValidModule(ExportModule* module)
+{
+    If (module == null) Return false;
+    If (module[0].TypeCount != [u64](0) && module[0].Types == null) Return false;
+    If (module[0].InstanceCount != [u64](0) && module[0].Instances == null) Return false;
+    Return true;
+}
+
+Trusted Function void Register(byte* handle, byte* descriptor)
+{
+    ExportModule* module = [ExportModule*](descriptor);
+    If (!ValidModule(module)) Return;
+    ModuleRegistration current = FirstModule;
+    ModuleRegistration last = null;
+    While (current != null)
+    {
+        If (current.Handle == handle)
+        {
+            current.Module = module;
+            Return;
+        }
+        If (current.Module == module) Return;
+        last = current;
+        current = current.Next;
+    }
+    ModuleRegistration registration = New ModuleRegistration();
+    registration.Handle = handle;
+    registration.Module = module;
+    // Main is always oldest, even when first queried after a library load.
+    If (handle == null && last != null) last.Next = registration;
+    Else
+    {
+        registration.Next = FirstModule;
+        FirstModule = registration;
+    }
+}
+
+Trusted Function void RegisterMain(byte* descriptor)
+{
+    Register(null, descriptor);
+}
+
+Trusted Function void RegisterLoaded(byte* handle)
+{
+    If (handle == null) Return;
+    byte* getter = IO.Kinal.Runtime.Native.ResolveOptionalSymbol(handle, "__kn_meta_get_module");
+    If (getter == null) Return;
+    GetModuleDescriptor = getter;
+    Register(handle, GetModuleDescriptor());
+}
+
+Trusted Function void Unregister(byte* handle)
+{
+    If (handle == null) Return;
+    ModuleRegistration previous = null;
+    ModuleRegistration current = FirstModule;
+    While (current != null)
+    {
+        ModuleRegistration next = current.Next;
+        If (current.Handle == handle)
+        {
+            // Existing reflection dictionaries may outlive the library. Their
+            // callable objects must never jump into unmapped library code.
+            CallableRegistration callable = current.Callables;
+            While (callable != null)
+            {
+                ([CallableStorage*](callable.Storage))[0].Wrapper = callable.UnloadedWrapper;
+                callable = callable.Next;
+            }
+            current.Module = null;
+            current.Callables = null;
+            If (previous == null) FirstModule = next;
+            Else previous.Next = next;
+        }
+        Else previous = current;
+        current = next;
+    }
+}
+
+Trusted Function bool NameMatches(string wanted, string qualified, string shortName)
+{
+    If (wanted == null || wanted == "") Return false;
+    Return IO.Kinal.Runtime.StringEqual(wanted, qualified) != [i32](0) ||
+        IO.Kinal.Runtime.StringEqual(wanted, shortName) != [i32](0);
+}
+
+Trusted Function bool ValidInstance(ExportInstance* instance)
+{
+    Return instance != null && instance[0].OwnerName != null &&
+        instance[0].MetaQualifiedName != null &&
+        (instance[0].ArgumentCount == [u64](0) || instance[0].Arguments != null);
+}
+
+Trusted Function string CopyText(string text)
+{
+    Return IO.Kinal.Runtime.CopyNativeText([char*](text));
+}
+
+Trusted Function void AddString(byte* list, string text)
+{
+    string copy = CopyText(text);
+    IO.Kinal.Runtime.Collections.ListAdd(list, [u64](5), [u64]([usize]([byte*](copy))));
+}
+
+Trusted Function byte* Query(string metaName)
+{
+    byte* result = IO.Kinal.Runtime.Collections.ListNew();
+    If (metaName == null || metaName == "") Return result;
+    ModuleRegistration registration = FirstModule;
+    While (registration != null)
+    {
+        ExportModule* module = registration.Module;
+        If (module != null)
+        {
+            u64 index = [u64](0);
+            While (index < module[0].InstanceCount)
+            {
+                ExportInstance* instance = module[0].Instances + index;
+                If (ValidInstance(instance) && NameMatches(metaName,
+                    instance[0].MetaQualifiedName, instance[0].MetaName))
+                    AddString(result, instance[0].OwnerName);
+                index = index + [u64](1);
+            }
+        }
+        registration = registration.Next;
+    }
+    Return result;
+}
+
+Trusted Function byte* Of(string ownerName)
+{
+    byte* result = IO.Kinal.Runtime.Collections.ListNew();
+    If (ownerName == null || ownerName == "") Return result;
+    ModuleRegistration registration = FirstModule;
+    While (registration != null)
+    {
+        ExportModule* module = registration.Module;
+        If (module != null)
+        {
+            u64 index = [u64](0);
+            While (index < module[0].InstanceCount)
+            {
+                ExportInstance* instance = module[0].Instances + index;
+                If (ValidInstance(instance) && instance[0].OwnerName == ownerName)
+                    AddString(result, instance[0].MetaQualifiedName);
+                index = index + [u64](1);
+            }
+        }
+        registration = registration.Next;
+    }
+    Return result;
+}
+
+Trusted Function bool Has(string ownerName, string metaName)
+{
+    If (ownerName == null || ownerName == "" || metaName == null || metaName == "") Return false;
+    ModuleRegistration registration = FirstModule;
+    While (registration != null)
+    {
+        ExportModule* module = registration.Module;
+        If (module != null)
+        {
+            u64 index = [u64](0);
+            While (index < module[0].InstanceCount)
+            {
+                ExportInstance* instance = module[0].Instances + index;
+                If (ValidInstance(instance) && instance[0].OwnerName == ownerName &&
+                    NameMatches(metaName, instance[0].MetaQualifiedName, instance[0].MetaName))
+                    Return true;
+                index = index + [u64](1);
+            }
+        }
+        registration = registration.Next;
+    }
+    Return false;
+}
+
+Trusted Function void SetString(byte* dictionary, string key, string value)
+{
+    string copy = CopyText(value);
+    IO.Kinal.Runtime.Collections.DictionarySet(dictionary, key, [u64](5), [u64]([usize]([byte*](copy))));
+}
+
+Trusted Function void SetInteger(byte* dictionary, string key, u64 value)
+{
+    IO.Kinal.Runtime.Collections.DictionarySet(dictionary, key, [u64](1), value);
+}
+
+Trusted Function byte* BuildDictionary(ModuleRegistration registration,
+                                      ExportInstance* instance, i64 functionTypeId,
+                                      byte* unloadedWrapper)
+{
+    byte* dictionary = IO.Kinal.Runtime.Collections.DictionaryNew();
+    If (dictionary == null) Return null;
+    SetString(dictionary, "owner", instance[0].OwnerName);
+    SetInteger(dictionary, "owner_kind", instance[0].OwnerKind);
+    SetInteger(dictionary, "owner_param_count", instance[0].OwnerParameterCount);
+    SetString(dictionary, "module", registration.Module[0].Name);
+    SetString(dictionary, "meta", instance[0].MetaQualifiedName);
+    SetString(dictionary, "name", instance[0].MetaName);
+    SetInteger(dictionary, "arg_count", instance[0].ArgumentCount);
+    byte* owner = null;
+    If (instance[0].OwnerPointer != null)
+    {
+        // Repeated Find calls share a tracked owner object rather than keeping
+        // every temporary dictionary's callable alive until the module closes.
+        CallableRegistration cached = registration.Callables;
+        While (cached != null)
+        {
+            CallableStorage* storage = [CallableStorage*](cached.Storage);
+            If (storage[0].Wrapper == instance[0].OwnerPointer &&
+                storage[0].RuntimeTypeId == functionTypeId)
+            {
+                owner = cached.Storage;
+                Break;
+            }
+            cached = cached.Next;
+        }
+        If (owner == null)
+        {
+            CallableStorage layout;
+            usize bytes = [usize]((&layout) + 1) - [usize](&layout);
+            owner = IO.Kinal.Runtime.AllocateRaw(bytes);
+            If (owner != null)
+            {
+                CallableStorage* callable = [CallableStorage*](owner);
+                callable[0].Vtable = null;
+                callable[0].RuntimeTypeId = functionTypeId;
+                callable[0].Wrapper = instance[0].OwnerPointer;
+                callable[0].Environment = null;
+                If (registration.Handle != null)
+                {
+                    CallableRegistration tracked = New CallableRegistration();
+                    tracked.Storage = owner;
+                    tracked.UnloadedWrapper = unloadedWrapper;
+                    tracked.Next = registration.Callables;
+                    registration.Callables = tracked;
+                }
+            }
+        }
+    }
+    IO.Kinal.Runtime.Collections.DictionarySet(dictionary, "owner_ptr", [u64](6), [u64]([usize](owner)));
+    u64 index = [u64](0);
+    While (index < instance[0].ArgumentCount)
+    {
+        ExportArgument* argument = instance[0].Arguments + index;
+        string key = IO.Kinal.Runtime.StringConcat("arg.", CopyText(argument[0].Name));
+        u64 payload = argument[0].Payload;
+        If (argument[0].Tag == [u64](5))
+        {
+            string text = CopyText([string]([char*]([usize](payload))));
+            payload = [u64]([usize]([byte*](text)));
+        }
+        IO.Kinal.Runtime.Collections.DictionarySet(dictionary, key, argument[0].Tag, payload);
+        index = index + [u64](1);
+    }
+    Return dictionary;
+}
+
+Trusted Function byte* Find(string ownerName, string metaName, i64 functionTypeId,
+                           byte* unloadedWrapper)
+{
+    If (ownerName == null || ownerName == "" || metaName == null || metaName == "") Return null;
+    ModuleRegistration registration = FirstModule;
+    While (registration != null)
+    {
+        ExportModule* module = registration.Module;
+        If (module != null)
+        {
+            u64 index = [u64](0);
+            While (index < module[0].InstanceCount)
+            {
+                ExportInstance* instance = module[0].Instances + index;
+                If (ValidInstance(instance) && instance[0].OwnerName == ownerName &&
+                    NameMatches(metaName, instance[0].MetaQualifiedName, instance[0].MetaName))
+                    Return BuildDictionary(registration, instance, functionTypeId, unloadedWrapper);
+                index = index + [u64](1);
+            }
+        }
+        registration = registration.Next;
+    }
+    Return null;
+}

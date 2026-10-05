@@ -1,0 +1,10 @@
+Project StaticPropertyInheritance
+{
+    DefaultProfile = "native";
+    SourceSet "source" { Files = ["Main.kn"]; RequireUnit = true; }
+    Profile "native"
+    {
+        Source { Entry = "Main.kn"; Sets = ["source"]; Mode = FileOnly; }
+        Build { Backend = Native; }
+    }
+}

@@ -1,0 +1,95 @@
+Unit IO.Kinal.Compiler.Core.ConsoleIO;
+
+Get IO.Host;
+Get IO.Text;
+Get IO.Kinal.Runtime;
+
+// These are raw C-library I/O leaves. Formatting, buffering and diagnostic
+// policy are implemented in Kinal; no stage0 compiler entry point is used.
+[LinkName("_setmode")]
+Extern Unsafe Function i32 WindowsSetMode(i32 descriptor, i32 mode) By C;
+[LinkName("read")]
+Extern Unsafe Function isize PosixRead(i32 descriptor, byte[] buffer, usize count) By C;
+[LinkName("_read")]
+Extern Unsafe Function i32 WindowsRead(i32 descriptor, byte[] buffer, u32 count) By C;
+[LinkName("write")]
+Extern Unsafe Function isize PosixWrite(i32 descriptor, string text, usize count) By C;
+[LinkName("_write")]
+Extern Unsafe Function i32 WindowsWrite(i32 descriptor, string text, u32 count) By C;
+[LinkName("isatty")]
+Extern Unsafe Function i32 PosixIsTerminal(i32 descriptor) By C;
+[LinkName("_isatty")]
+Extern Unsafe Function i32 WindowsIsTerminal(i32 descriptor) By C;
+
+Trusted Function bool IsTerminal(int descriptor)
+{
+    If (IO.Host.OS == IO.Host.OS.Windows)
+        Return WindowsIsTerminal([i32](descriptor)) != 0;
+    Else Return PosixIsTerminal([i32](descriptor)) != 0;
+}
+
+Trusted Function bool WriteCore(int descriptor, string text)
+{
+    int offset = 0;
+    int length = IO.Text.Length(text);
+    While (offset < length)
+    {
+        string remaining = IO.Text.Slice(text, offset, length - offset);
+        int written = 0;
+        If (IO.Host.OS == IO.Host.OS.Windows)
+            written = [int](WindowsWrite([i32](descriptor), remaining, [u32](length - offset)));
+        Else written = [int](PosixWrite([i32](descriptor), remaining, [usize](length - offset)));
+        If (written <= 0) Return false;
+        offset = offset + written;
+    }
+    Return true;
+}
+
+Trusted Function string ReadInputCore()
+{
+    list chunks = list.Create();
+    byte[4096] buffer;
+    While (true)
+    {
+        int count = 0;
+        If (IO.Host.OS == IO.Host.OS.Windows)
+            count = [int](WindowsRead([i32](0), buffer, [u32](4096)));
+        Else count = [int](PosixRead([i32](0), buffer, [usize](4096)));
+        If (count < 0) Return null;
+        If (count == 0) Break;
+        int index = 0;
+        While (index < count)
+        {
+            // Kinal source is text; never silently truncate a NUL-containing
+            // editor buffer when crossing the native string boundary.
+            If (buffer[index] == [byte](0)) Return null;
+            index = index + 1;
+        }
+        chunks.Add(IO.Kinal.Runtime.CopyNativeTextLength([char*](buffer), count));
+    }
+    Return IO.Text.Join(chunks, "");
+}
+
+Trusted Function bool Write(int descriptor, string text)
+{
+    // CRT text mode rewrites LF on Windows. The formatter has already chosen
+    // the source newline convention and must send the exact bytes requested.
+    i32 previous = [i32](-1);
+    If (IO.Host.OS == IO.Host.OS.Windows)
+        previous = WindowsSetMode([i32](descriptor), [i32](32768));
+    bool result = WriteCore(descriptor, text);
+    If (IO.Host.OS == IO.Host.OS.Windows)
+        If (previous != [i32](-1)) WindowsSetMode([i32](descriptor), previous);
+    Return result;
+}
+
+Trusted Function string ReadInput()
+{
+    i32 previous = [i32](-1);
+    If (IO.Host.OS == IO.Host.OS.Windows)
+        previous = WindowsSetMode([i32](0), [i32](32768));
+    string result = ReadInputCore();
+    If (IO.Host.OS == IO.Host.OS.Windows)
+        If (previous != [i32](-1)) WindowsSetMode([i32](0), previous);
+    Return result;
+}

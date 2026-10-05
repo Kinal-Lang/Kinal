@@ -1,0 +1,222 @@
+Unit IO.Kinal.Compiler.Driver.PackageCommands;
+
+Get IO.Console;
+Get IO.Directory;
+Get IO.File;
+Get IO.Path;
+Get IO.Text;
+Get IO.Kinal.Compiler.Source.SourcePath;
+Get IO.Kinal.Compiler.Project.PackageManifest;
+Get IO.Kinal.Compiler.Project.KlibArchive;
+Get IO.Kinal.Compiler.Project.KlibWriter;
+
+Safe Function void Help(string command)
+{
+    If (command == "build")
+    {
+        IO.Console.PrintLine("Usage: kinal-selfhost pkg build --manifest <file|dir> [-o <output.klib>]");
+        IO.Console.PrintLine("       kinal-selfhost pkg build --manifest <file|dir> --layout <dir>");
+    }
+    ElseIf (command == "info") IO.Console.PrintLine("Usage: kinal-selfhost pkg info <file.klib>");
+    ElseIf (command == "unpack") IO.Console.PrintLine("Usage: kinal-selfhost pkg unpack <file.klib> [-o <dir>]");
+    Else
+    {
+        IO.Console.PrintLine("Usage: kinal-selfhost pkg <subcommand> [options] [args...]");
+        IO.Console.PrintLine("  build   Build a .klib from a package manifest");
+        IO.Console.PrintLine("  info    Show .klib metadata");
+        IO.Console.PrintLine("  unpack  Extract a .klib into a directory");
+    }
+}
+
+Safe Function int Failure(string message)
+{
+    IO.Console.PrintLine("[Package] " + message);
+    Return 1;
+}
+
+Safe Function string ManifestPath(string input)
+{
+    If (!IO.Directory.Exists(input)) Return IO.File.Exists(input) ? input : "";
+    string path = IO.Path.Combine(input, "package.knpkg.json");
+    If (IO.File.Exists(path)) Return path;
+    path = IO.Path.Combine(input, "package.knpkg");
+    Return IO.File.Exists(path) ? path : "";
+}
+
+Safe Function string JsonString(string value)
+{
+    string text = "\"";
+    char[] chars = value.ToChars();
+    string hex = "0123456789abcdef";
+    char[] digits = hex.ToChars();
+    int index = 0;
+    While (index < chars.Length())
+    {
+        char current = chars[index];
+        int byteValue = [int]([byte](current));
+        If (current == '\\') text = text + "\\\\";
+        ElseIf (current == '\"') text = text + "\\\"";
+        ElseIf (current == '\n') text = text + "\\n";
+        ElseIf (current == '\r') text = text + "\\r";
+        ElseIf (current == '\t') text = text + "\\t";
+        ElseIf (byteValue < 32)
+            text = text + "\\u00" + [string](digits[byteValue / 16]) +
+                [string](digits[byteValue % 16]);
+        Else text = text + [string](current);
+        index = index + 1;
+    }
+    Return text + "\"";
+}
+
+Safe Function string JsonList(list values)
+{
+    string text = "[";
+    int index = 0;
+    While (index < values.Count())
+    {
+        If (index > 0) text = text + ", ";
+        text = text + JsonString([string](values.Fetch(index)));
+        index = index + 1;
+    }
+    Return text + "]";
+}
+
+Safe Function string LayoutManifest(PackageManifestConfig manifest, string version)
+{
+    string text = "{\n  \"kind\": \"package\",\n  \"name\": " + JsonString(manifest.Name) +
+        ",\n  \"version\": " + JsonString(version);
+    If (!IO.Text.IsEmpty(manifest.Summary)) text = text + ",\n  \"summary\": " + JsonString(manifest.Summary);
+    If (!IO.Text.IsEmpty(manifest.Url)) text = text + ",\n  \"url\": " + JsonString(manifest.Url);
+    If (!IO.Text.IsEmpty(manifest.Entry)) text = text + ",\n  \"entry\": " + JsonString(manifest.Entry);
+    text = text + ",\n  \"klib\": " + JsonString("lib/" + manifest.Name + ".klib");
+    If (manifest.Modules.Count() > 0) text = text + ",\n  \"modules\": " + JsonList(manifest.Modules);
+    If (manifest.Dependencies.Count() > 0) text = text + ",\n  \"dependencies\": " + JsonList(manifest.Dependencies);
+    Return text + "\n}\n";
+}
+
+Trusted Function int Build(string manifestInput, string output, string layout)
+{
+    If (IO.Text.IsEmpty(manifestInput)) Return Failure("--manifest is required");
+    If (!IO.Text.IsEmpty(output) && !IO.Text.IsEmpty(layout))
+        Return Failure("-o and --layout cannot be used together");
+    string path = ManifestPath(manifestInput);
+    If (IO.Text.IsEmpty(path)) Return Failure("invalid manifest path: " + manifestInput);
+    PackageManifestConfig manifest = IO.Kinal.Compiler.Project.PackageManifest.ReadPackageManifest(path);
+    If (!manifest.IsValid()) Return Failure("invalid package manifest: " + manifest.Error);
+    If (IO.Text.ToLower(manifest.Kind) == "project")
+        Return Failure("expected a package manifest, got project manifest");
+    string version = IO.Text.IsEmpty(manifest.Version) ? "0.0.0" : manifest.Version;
+    string packageDirectory = "";
+    If (!IO.Text.IsEmpty(layout))
+    {
+        packageDirectory = IO.Kinal.Compiler.Source.SourcePath.Canonical(
+            IO.Path.Join3(layout, manifest.Name, version));
+        output = IO.Path.Join3(packageDirectory, "lib", manifest.Name + ".klib");
+    }
+    ElseIf (IO.Text.IsEmpty(output))
+    {
+        output = manifest.Name;
+        If (!IO.Text.IsEmpty(manifest.Version)) output = output + "-" + manifest.Version;
+        output = output + ".klib";
+    }
+    KlibWriter writer = New KlibWriter();
+    If (!writer.Pack(manifest, output)) Return Failure(writer.Error);
+    If (!IO.Text.IsEmpty(packageDirectory))
+    {
+        string wrapper = IO.Path.Combine(packageDirectory, "package.knpkg.json");
+        If (!IO.File.WriteAllText(wrapper, LayoutManifest(manifest, version)))
+            Return Failure("failed to write emitted package manifest: " + wrapper);
+        IO.Console.PrintLine("[Package] emitted local package: " + packageDirectory);
+    }
+    Return 0;
+}
+
+Trusted Function int Info(string input)
+{
+    If (IO.Text.IsEmpty(input)) Return Failure("no input file");
+    KlibArchive archive = New KlibArchive(input);
+    bool ok = archive.ReadInfo();
+    If (ok)
+    {
+        IO.Console.PrintLine("[Klib]");
+        IO.Console.PrintLine("  File: " + input);
+        IO.Console.PrintLine("  Compiler: " +
+            (IO.Text.IsEmpty(archive.CompilerPath) ? "<unknown>" : archive.CompilerPath));
+        IO.Console.PrintLine("  Sources: " + [string](archive.SourceCount));
+        IO.Console.PrintLine("  SourceBytes: " + [string](archive.SourceBytes));
+    }
+    archive.Dispose();
+    Return ok ? 0 : Failure("invalid klib: " + input + ": " + archive.Error);
+}
+
+Trusted Function int Unpack(string input, string output)
+{
+    If (IO.Text.IsEmpty(input)) Return Failure("no input file");
+    If (IO.Text.IsEmpty(output))
+    {
+        string base = IO.Path.FileName(input);
+        int dot = IO.Text.IndexOf(base, ".");
+        output = dot < 0 ? base : IO.Text.Slice(base, 0, dot);
+        If (IO.Text.IsEmpty(output)) output = "klib-extract";
+    }
+    KlibArchive archive = New KlibArchive(input);
+    If (!archive.ExtractTo(output)) Return Failure("failed to extract klib: " + archive.Error);
+    Return 0;
+}
+
+Trusted Function int Run(string[] args)
+{
+    If (args.Length() < 2) { Help(""); Return 1; }
+    string command = args[1];
+    If (command == "--help" || command == "-h") { Help(""); Return 0; }
+    If (command != "build" && command != "info" && command != "unpack")
+    {
+        IO.Console.PrintLine("unknown pkg subcommand: " + command);
+        Help("");
+        Return 2;
+    }
+    string manifest = "";
+    string input = "";
+    string output = "";
+    string layout = "";
+    int index = 2;
+    While (index < args.Length())
+    {
+        string arg = args[index];
+        If (arg == "--help" || arg == "-h") { Help(command); Return 0; }
+        bool valueOption = (command == "build" && (arg == "--manifest" || arg == "--layout")) ||
+            (command != "info" && (arg == "-o" || arg == "--output"));
+        If (valueOption)
+        {
+            If (index + 1 >= args.Length())
+            {
+                IO.Console.PrintLine("missing value for " + arg);
+                Return 2;
+            }
+            index = index + 1;
+            If (arg == "--manifest") manifest = args[index];
+            ElseIf (arg == "--layout") layout = args[index];
+            Else output = args[index];
+        }
+        ElseIf (IO.Text.StartsWith(arg, "-") && arg != "-")
+        {
+            IO.Console.PrintLine("unknown option: " + arg);
+            Return 2;
+        }
+        ElseIf (command == "build")
+        {
+            IO.Console.PrintLine("unexpected argument: " + arg);
+            Return 2;
+        }
+        ElseIf (!IO.Text.IsEmpty(input))
+        {
+            IO.Console.PrintLine("expected exactly one .klib file");
+            Return 2;
+        }
+        Else input = arg;
+        index = index + 1;
+    }
+    If (command == "build") Return Build(manifest, output, layout);
+    If (command == "info") Return Info(input);
+    Return Unpack(input, output);
+}

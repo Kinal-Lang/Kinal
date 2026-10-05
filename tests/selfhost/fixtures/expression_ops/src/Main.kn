@@ -52,6 +52,14 @@ Static Function int Main()
     {
         IO.Console.PrintLine("windows");
     }
+    ElseIf (IO.Target.OS == IO.Target.OS.Linux)
+    {
+        IO.Console.PrintLine("linux");
+    }
+    ElseIf (IO.Target.OS == IO.Target.OS.MacOS)
+    {
+        IO.Console.PrintLine("macos");
+    }
     Else
     {
         UnsupportedTargetBranch();

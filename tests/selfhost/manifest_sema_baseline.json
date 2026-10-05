@@ -1,5 +1,10 @@
 {
   "platform": "windows",
-  "positive_cases": 171,
-  "unsupported_cases": []
+  "positive_cases": 190,
+  "unsupported_cases": [],
+  "positive_cases_by_platform": {
+    "windows": 190,
+    "linux": 188,
+    "macos": 184
+  }
 }

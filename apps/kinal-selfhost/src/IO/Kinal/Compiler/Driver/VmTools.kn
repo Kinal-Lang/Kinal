@@ -1,0 +1,92 @@
+Unit IO.Kinal.Compiler.Driver.VmTools;
+
+Get IO.File;
+Get IO.Path;
+Get IO.Kinal.Compiler.Source.SourcePath;
+
+[LinkName("fopen")]
+Extern Unsafe Function byte* NativeOpen(string path, string mode) By C;
+[LinkName("fclose")]
+Extern Unsafe Function i32 NativeClose(byte* file) By C;
+[LinkName("fread")]
+Extern Unsafe Function usize NativeRead(byte[] buffer, usize size, usize count, byte* file) By C;
+[LinkName("fwrite")]
+Extern Unsafe Function usize NativeWrite(byte[] buffer, usize size, usize count, byte* file) By C;
+
+// Byte ownership and the established KNCE container format stay in Kinal.
+// C supplies only buffered file I/O; no host compiler or C KNC emitter is used.
+Class VmPacker
+{
+    Public string Error;
+
+    Public Safe Constructor() { This.Error = ""; }
+
+    Public Trusted Function bool CopyBytes(byte* input, byte* output, int expected)
+    {
+        byte[65536] buffer;
+        int total = 0;
+        While (total < expected)
+        {
+            int amount = expected - total;
+            If (amount > 65536) amount = 65536;
+            usize count = NativeRead(buffer, [usize](1), [usize](amount), input);
+            If (count != [usize](amount)) Return false;
+            If (NativeWrite(buffer, [usize](1), count, output) != count) Return false;
+            total = total + amount;
+        }
+        Return true;
+    }
+
+    Public Trusted Function bool Pack(string executable, string bytecode, string output)
+    {
+        This.Error = "";
+        string outputPath = IO.Kinal.Compiler.Source.SourcePath.Canonical(output);
+        If (outputPath == IO.Kinal.Compiler.Source.SourcePath.Canonical(executable) ||
+            outputPath == IO.Kinal.Compiler.Source.SourcePath.Canonical(bytecode))
+        {
+            This.Error = "packed output must differ from its inputs";
+            Return false;
+        }
+        int executableSize = IO.File.Size(executable);
+        int bytecodeSize = IO.File.Size(bytecode);
+        If (executableSize <= 0 || bytecodeSize <= 0 || bytecodeSize > 4294967295)
+        {
+            This.Error = "cannot read VM executable or bytecode size";
+            Return false;
+        }
+        byte* executableFile = NativeOpen(executable, "rb");
+        If (executableFile == null) { This.Error = "cannot open VM executable"; Return false; }
+        byte* bytecodeFile = NativeOpen(bytecode, "rb");
+        If (bytecodeFile == null)
+        {
+            NativeClose(executableFile);
+            This.Error = "cannot open bytecode";
+            Return false;
+        }
+        byte* outputFile = NativeOpen(output, "wb");
+        If (outputFile == null)
+        {
+            NativeClose(bytecodeFile);
+            NativeClose(executableFile);
+            This.Error = "cannot create packed output";
+            Return false;
+        }
+        bool ok = This.CopyBytes(executableFile, outputFile, executableSize) &&
+            This.CopyBytes(bytecodeFile, outputFile, bytecodeSize);
+        byte[8] footer = {
+            [byte](bytecodeSize & 255), [byte]((bytecodeSize >> 8) & 255),
+            [byte]((bytecodeSize >> 16) & 255), [byte]((bytecodeSize >> 24) & 255),
+            [byte]('K'), [byte]('N'), [byte]('C'), [byte]('E')
+        };
+        If (ok) ok = NativeWrite(footer, [usize](1), [usize](8), outputFile) == [usize](8);
+        If (NativeClose(outputFile) != 0) ok = false;
+        NativeClose(bytecodeFile);
+        NativeClose(executableFile);
+        If (!ok)
+        {
+            IO.File.DeleteIfExists(output);
+            This.Error = "failed to copy VM or bytecode into packed output";
+        }
+        Return ok;
+    }
+}

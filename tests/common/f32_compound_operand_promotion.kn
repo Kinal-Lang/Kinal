@@ -1,0 +1,178 @@
+Unit Tests.F32CompoundPromotion;
+Get Console By IO.Console;
+
+int ReceiverCalls = 0;
+int GetterCalls = 0;
+int SetterCalls = 0;
+int RightCalls = 0;
+int IndexCalls = 0;
+int Trace = 0;
+
+Class Box
+{
+    Public f32 Stored;
+    Public Property f32 Value
+    {
+        Get { GetterCalls = GetterCalls + 1; Trace = Trace * 10 + 2; Return Stored; }
+        Set { SetterCalls = SetterCalls + 1; Trace = Trace * 10 + 4; Stored = value; }
+    }
+}
+
+Function void Reset()
+{
+    ReceiverCalls = 0; GetterCalls = 0; SetterCalls = 0;
+    RightCalls = 0; IndexCalls = 0; Trace = 0;
+}
+Function Box Receive(Box first, Box second)
+{
+    ReceiverCalls = ReceiverCalls + 1;
+    Trace = Trace * 10 + 1;
+    Return ReceiverCalls == 1 ? first : second;
+}
+Function float Right(float value)
+{
+    RightCalls = RightCalls + 1;
+    Trace = Trace * 10 + 3;
+    Return value;
+}
+Function int Index()
+{
+    IndexCalls = IndexCalls + 1;
+    Return 0;
+}
+
+Function bool OrdinaryAdd()
+{
+    f32 value = 16777216.0;
+    Reset();
+    f32 result = value += Right(-16777215.5);
+    Return RightCalls == 1 && [float](value) == 0.5 && [float](result) == 0.5;
+}
+
+Function bool IndexedAdd()
+{
+    f32[] values = {16777216.0};
+    Reset();
+    f32 result = values[Index()] += Right(-16777215.5);
+    Return IndexCalls == 1 && RightCalls == 1 &&
+        [float](values[0]) == 0.5 && [float](result) == 0.5;
+}
+
+Function bool PropertyAdd()
+{
+    Box first = New Box();
+    Box second = New Box();
+    first.Stored = 16777216.0;
+    second.Stored = 99.0;
+    Reset();
+    f32 result = Receive(first, second).Value += Right(-16777215.5);
+    Return ReceiverCalls == 1 && GetterCalls == 1 && SetterCalls == 1 && RightCalls == 1 &&
+        Trace == 1234 && [float](first.Stored) == 0.5 &&
+        [float](second.Stored) == 99.0 && [float](result) == 0.5;
+}
+
+Function bool OrdinarySubtract()
+{
+    f32 value = 16777216.0;
+    Reset();
+    f32 result = value -= Right(16777215.5);
+    Return RightCalls == 1 && [float](value) == 0.5 && [float](result) == 0.5;
+}
+
+Function bool IndexedSubtract()
+{
+    f32[] values = {16777216.0};
+    Reset();
+    f32 result = values[Index()] -= Right(16777215.5);
+    Return IndexCalls == 1 && RightCalls == 1 &&
+        [float](values[0]) == 0.5 && [float](result) == 0.5;
+}
+
+Function bool PropertySubtract()
+{
+    Box first = New Box();
+    Box second = New Box();
+    first.Stored = 16777216.0;
+    second.Stored = 99.0;
+    Reset();
+    f32 result = Receive(first, second).Value -= Right(16777215.5);
+    Return ReceiverCalls == 1 && GetterCalls == 1 && SetterCalls == 1 && RightCalls == 1 &&
+        Trace == 1234 && [float](first.Stored) == 0.5 &&
+        [float](second.Stored) == 99.0 && [float](result) == 0.5;
+}
+
+Function bool OrdinaryMultiply()
+{
+    f32 value = 1.00000011920928955078125;
+    Reset();
+    f32 result = value *= Right(1.000000059604644775390625);
+    Return RightCalls == 1 && [float](value) == 1.0000002384185791015625 && [float](result) == 1.0000002384185791015625;
+}
+
+Function bool IndexedMultiply()
+{
+    f32[] values = {1.00000011920928955078125};
+    Reset();
+    f32 result = values[Index()] *= Right(1.000000059604644775390625);
+    Return IndexCalls == 1 && RightCalls == 1 &&
+        [float](values[0]) == 1.0000002384185791015625 && [float](result) == 1.0000002384185791015625;
+}
+
+Function bool PropertyMultiply()
+{
+    Box first = New Box();
+    Box second = New Box();
+    first.Stored = 1.00000011920928955078125;
+    second.Stored = 99.0;
+    Reset();
+    f32 result = Receive(first, second).Value *= Right(1.000000059604644775390625);
+    Return ReceiverCalls == 1 && GetterCalls == 1 && SetterCalls == 1 && RightCalls == 1 &&
+        Trace == 1234 && [float](first.Stored) == 1.0000002384185791015625 &&
+        [float](second.Stored) == 99.0 && [float](result) == 1.0000002384185791015625;
+}
+
+Function bool OrdinaryDivide()
+{
+    f32 value = 1.00000011920928955078125;
+    Reset();
+    f32 result = value /= Right(1.000000059604644775390625);
+    Return RightCalls == 1 && [float](value) == 1.0 && [float](result) == 1.0;
+}
+
+Function bool IndexedDivide()
+{
+    f32[] values = {1.00000011920928955078125};
+    Reset();
+    f32 result = values[Index()] /= Right(1.000000059604644775390625);
+    Return IndexCalls == 1 && RightCalls == 1 &&
+        [float](values[0]) == 1.0 && [float](result) == 1.0;
+}
+
+Function bool PropertyDivide()
+{
+    Box first = New Box();
+    Box second = New Box();
+    first.Stored = 1.00000011920928955078125;
+    second.Stored = 99.0;
+    Reset();
+    f32 result = Receive(first, second).Value /= Right(1.000000059604644775390625);
+    Return ReceiverCalls == 1 && GetterCalls == 1 && SetterCalls == 1 && RightCalls == 1 &&
+        Trace == 1234 && [float](first.Stored) == 1.0 &&
+        [float](second.Stored) == 99.0 && [float](result) == 1.0;
+}
+Static Function int Main()
+{
+    If (!OrdinaryAdd()) Return 1;
+    If (!IndexedAdd()) Return 5;
+    If (!PropertyAdd()) Return 9;
+    If (!OrdinarySubtract()) Return 2;
+    If (!IndexedSubtract()) Return 6;
+    If (!PropertySubtract()) Return 10;
+    If (!OrdinaryMultiply()) Return 3;
+    If (!IndexedMultiply()) Return 7;
+    If (!PropertyMultiply()) Return 11;
+    If (!OrdinaryDivide()) Return 4;
+    If (!IndexedDivide()) Return 8;
+    If (!PropertyDivide()) Return 12;
+    Return 0;
+}

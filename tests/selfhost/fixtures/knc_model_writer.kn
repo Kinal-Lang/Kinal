@@ -1,0 +1,189 @@
+Unit Tests.Selfhost.KncModelWriter;
+
+Get IO.Console;
+Get IO.Kinal.Compiler.Backend.KncModel;
+
+Trusted Static Function int Main(string[] args)
+{
+    If (args.Length() != 1) Return 1;
+    KncByteBuffer bytes = New KncByteBuffer();
+    bytes.WriteU8(171);
+    bytes.WriteU16(4660);
+    bytes.WriteI32(-1);
+    bytes.WriteI64([i64](-9223372036854775807) - [i64](1));
+    bytes.WriteF64(-0.0);
+    bytes.WriteString("é雪");
+    bytes.PatchU16(1, 48879);
+    bytes.PatchI32(3, -2147483648);
+    If (!bytes.Emit(args[0] + ".bytes")) { IO.Console.PrintLine(bytes.Error); Return 2; }
+
+    KncByteBuffer bad = New KncByteBuffer();
+    bad.WriteU8(256);
+    bad.WriteU8(1);
+    If (bad.IsValid() || bad.Count != 0) Return 3;
+    bad = New KncByteBuffer();
+    bad.WriteU16(65536);
+    If (bad.IsValid() || bad.Count != 0) Return 4;
+    bad = New KncByteBuffer();
+    bad.WriteI32(2147483648);
+    If (bad.IsValid() || bad.Count != 0) Return 5;
+    bad = New KncByteBuffer();
+    bad.WriteI32(0);
+    bad.PatchU16(3, 1);
+    If (bad.IsValid() || bad.Count != 4) Return 6;
+    bad = New KncByteBuffer();
+    bad.WriteI32(0);
+    bad.PatchI32(-1, 1);
+    If (bad.IsValid()) Return 7;
+
+    KncProgram program = New KncProgram();
+    program.EntryFunction = 0;
+    program.GlobalCount = 2;
+    If (program.InternInt([i64](-9223372036854775807) - [i64](1)) != 0) Return 8;
+    If (program.InternInt([i64](9223372036854775807)) != 1) Return 9;
+    If (program.InternInt([i64](-1)) != 2 || program.InternInt([i64](-1)) != 2) Return 10;
+    If (program.InternFloat(1.5) != 0 || program.InternFloat(1.5) != 0) Return 11;
+    If (program.InternFloat(0.0) != 1 || program.InternFloat(-0.0) != 2) Return 12;
+    u64 nanBits = [u64](0x7ff8000000000042);
+    float* nanValue = [float*](&nanBits);
+    If (program.InternFloat(nanValue[0]) != 3 || program.InternFloat(nanValue[0]) != 3) Return 21;
+    u64 infinityBits = [u64](0x7ff0000000000000);
+    float* infinity = [float*](&infinityBits);
+    If (program.InternFloat(infinity[0]) != 4 || program.InternFloat(-infinity[0]) != 5) Return 22;
+    If (program.InternString("é雪") != 0 || program.InternString("é雪") != 0) Return 13;
+    If (program.InternString("") != 1) Return 14;
+
+    KncTypeRecord iface = New KncTypeRecord();
+    iface.Kind = [int](KncTypeKind.InterfaceType);
+    iface.Name = "Tests.Marker";
+    program.AddType(iface);
+    KncTypeRecord object = New KncTypeRecord();
+    object.Name = "Tests.Model";
+    object.FieldCount = 2;
+    object.VTable = {0, -1};
+    object.InterfaceTypes = {0};
+    program.AddType(object);
+
+    KncFunctionRecord function = New KncFunctionRecord();
+    function.Name = "Main";
+    function.RegisterCount = 1;
+    function.Code.WriteU8([int](KncOpCode.LoadInt));
+    function.Code.WriteU8(0);
+    function.Code.WriteU16(0);
+    function.Code.WriteU8([int](KncOpCode.CallBuiltin));
+    function.Code.WriteU8(255);
+    function.Code.WriteU16(0);
+    function.Code.WriteU8(1);
+    function.Code.WriteU8(0);
+    function.Code.WriteU8(255);
+    function.Code.WriteU8(255);
+    function.Code.WriteU8(255);
+    function.Code.WriteU8([int](KncOpCode.LoadString));
+    function.Code.WriteU8(0);
+    function.Code.WriteU16(0);
+    function.Code.WriteU8([int](KncOpCode.CallBuiltin));
+    function.Code.WriteU8(255);
+    function.Code.WriteU16(0);
+    function.Code.WriteU8(1);
+    function.Code.WriteU8(0);
+    function.Code.WriteU8(255);
+    function.Code.WriteU8(255);
+    function.Code.WriteU8(255);
+    function.Code.WriteU8([int](KncOpCode.Halt));
+    program.AddFunction(function);
+    If (!program.Emit(args[0] + ".knc")) { IO.Console.PrintLine(program.Error); Return 15; }
+    If (!program.Emit(args[0] + ".repeat.knc")) Return 23;
+    function.SetRegisterName(0, "result");
+    function.SetRegisterName(-1, "ignored");
+    function.SetRegisterName(255, "ignored sentinel");
+    function.AddComment(0, "source line 7\ncontinued");
+    function.AddComment(-1, "ignored comment");
+    function.AddComment(function.Code.Count, "function end");
+    If (!program.EmitListing(args[0] + ".listing/nested/program.knasm"))
+    { IO.Console.PrintLine(program.Error); Return 28; }
+    If (!program.Emit(args[0] + ".annotated.knc")) Return 29;
+    If (!program.EmitListing(args[0] + ".listing/nested/repeat.knasm")) Return 30;
+
+    KncProgram coverage = New KncProgram();
+    coverage.EntryFunction = 0;
+    KncFunctionRecord all = New KncFunctionRecord();
+    all.Name = "AllOpcodes";
+    all.RegisterCount = 4;
+    all.SetRegisterName(1, "operand");
+    int instruction = 0;
+    While (instruction <= 138)
+    {
+        all.Code.WriteU8(instruction);
+        int width = KncProgram.InstructionSize(instruction);
+        int operand = 1;
+        While (operand < width)
+        {
+            int value = 1;
+            If (instruction >= 130 && instruction <= 136 && operand == 4) value = 64;
+            If ((instruction == 44 || instruction == 45) && operand == 4) value = 4;
+            If (instruction == 54 && operand == 5) value = 3;
+            If (instruction == 61 && operand == 3) value = 4;
+            all.Code.WriteU8(value);
+            operand++;
+        }
+        instruction++;
+    }
+    // Bogus optional table indices and call counts must be printable safely.
+    all.Code.WriteU8([int](KncOpCode.CallBuiltin));
+    all.Code.WriteU8(255);
+    all.Code.WriteU16(65535);
+    all.Code.WriteU8(255);
+    all.Code.WriteU8(0);
+    all.Code.WriteU8(1);
+    all.Code.WriteU8(2);
+    all.Code.WriteU8(3);
+    coverage.AddFunction(all);
+    If (!coverage.EmitListing(args[0] + ".listing/nested/all.knasm"))
+    { IO.Console.PrintLine(coverage.Error); Return 31; }
+
+    KncByteBuffer sizes = New KncByteBuffer();
+    int opcode = 0;
+    While (opcode <= 138)
+    {
+        sizes.WriteU8(KncProgram.InstructionSize(opcode));
+        opcode = opcode + 1;
+    }
+    If (KncProgram.InstructionSize(-1) != 0 || KncProgram.InstructionSize(139) != 0) Return 16;
+    If (!sizes.Emit(args[0] + ".sizes")) Return 17;
+
+    KncProgram malformed = New KncProgram();
+    malformed.EntryFunction = 0;
+    KncFunctionRecord truncated = New KncFunctionRecord();
+    truncated.Code.WriteU8([int](KncOpCode.UDivInt));
+    malformed.AddFunction(truncated);
+    If (malformed.Serialize().IsValid()) Return 18;
+    If (malformed.Emit(args[0] + ".invalid")) Return 19;
+    If (malformed.EmitListing(args[0] + ".invalid.knasm")) Return 32;
+    KncProgram missingEntry = New KncProgram();
+    If (missingEntry.Validate()) Return 20;
+    KncProgram invalidType = New KncProgram();
+    invalidType.EntryFunction = 0;
+    invalidType.AddFunction(function);
+    KncTypeRecord invalidRecord = New KncTypeRecord();
+    invalidRecord.BaseTypeIndex = 0;
+    invalidType.AddType(invalidRecord);
+    If (invalidType.Validate()) Return 24;
+    KncProgram invalidRegisters = New KncProgram();
+    invalidRegisters.EntryFunction = 0;
+    KncFunctionRecord overflowing = New KncFunctionRecord();
+    overflowing.RegisterCount = 256;
+    invalidRegisters.AddFunction(overflowing);
+    If (invalidRegisters.Validate()) Return 25;
+    KncByteBuffer outOfRange = New KncByteBuffer();
+    outOfRange.WriteI32(0);
+    outOfRange.PatchU16(0, 65536);
+    If (outOfRange.IsValid()) Return 26;
+    KncByteBuffer failingFile = New KncByteBuffer();
+    If (failingFile.Emit("") || failingFile.IsValid()) Return 27;
+    // Existing directories are real file-I/O failure targets on every host.
+    KncByteBuffer failedWrite = New KncByteBuffer();
+    failedWrite.WriteU8(1);
+    If (failedWrite.Emit(args[0] + ".listing") || failedWrite.IsValid()) Return 33;
+    If (coverage.EmitListing(args[0] + ".listing") || coverage.IsValid()) Return 34;
+    Return 0;
+}

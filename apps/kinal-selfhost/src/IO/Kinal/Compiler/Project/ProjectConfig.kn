@@ -56,6 +56,13 @@ Class SourceSetConfig
     }
 }
 
+Class ProjectLinkOption
+{
+    Public string Kind;
+    Public string Value;
+    Public Safe Constructor(string kind, string value) { This.Kind = kind; This.Value = value; }
+}
+
 Class ProjectProfileConfig
 {
     Public string Name;
@@ -64,12 +71,27 @@ Class ProjectProfileConfig
     Public string Mode;
     Public bool AutoDiscovery;
     Public string Backend;
+    Public bool BackendExplicit;
     Public string Environment;
     Public string Runtime;
     Public string Panic;
     Public string Target;
     Public string Output;
     Public string EntrySymbol;
+    Public string ArtifactKind;
+    Public string Linker;
+    Public string LinkerPath;
+    Public string CRT;
+    Public bool CRTExplicit;
+    Public list OrderedLinkOptions;
+    Public string LTO;
+    Public bool ShowLink;
+    Public bool ShowLinkSearch;
+    Public bool Superloop;
+    Public bool SuperloopExplicit;
+    Public bool EnvironmentExplicit;
+    Public bool RuntimeExplicit;
+    Public bool PanicExplicit;
     Public string LinkScript;
     Public bool NoCRT;
     Public bool NoDefaultLibs;
@@ -90,12 +112,27 @@ Class ProjectProfileConfig
         This.Mode = "ReachableUnits";
         This.AutoDiscovery = true;
         This.Backend = "Native";
+        This.BackendExplicit = false;
         This.Environment = "Hosted";
         This.Runtime = "GC";
         This.Panic = "Trap";
         This.Target = "";
         This.Output = "";
         This.EntrySymbol = "";
+        This.ArtifactKind = "exe";
+        This.Linker = "";
+        This.LinkerPath = "";
+        This.CRT = "auto";
+        This.CRTExplicit = false;
+        This.OrderedLinkOptions = list.Create();
+        This.LTO = "off";
+        This.ShowLink = false;
+        This.ShowLinkSearch = false;
+        This.Superloop = true;
+        This.SuperloopExplicit = false;
+        This.EnvironmentExplicit = false;
+        This.RuntimeExplicit = false;
+        This.PanicExplicit = false;
         This.LinkScript = "";
         This.NoCRT = false;
         This.NoDefaultLibs = false;
@@ -114,6 +151,7 @@ Class ProjectConfig
 {
     Public string Name;
     Public string ManifestPath;
+    Public bool IsLegacy;
     Public string RootDirectory;
     Public string DefaultProfile;
     Public list PackageRoots;
@@ -126,6 +164,7 @@ Class ProjectConfig
     {
         This.Name = "";
         This.ManifestPath = IO.Kinal.Compiler.Source.SourcePath.Canonical(manifestPath);
+        This.IsLegacy = false;
         This.RootDirectory = IO.Path.Directory(This.ManifestPath);
         If (IO.Text.IsEmpty(This.RootDirectory)) This.RootDirectory = ".";
         This.DefaultProfile = "";
@@ -165,7 +204,7 @@ Class ProjectConfig
         SourceSetConfig current = This.FirstSourceSet;
         While (current != null)
         {
-            If (current.Name == name) Return current;
+            If (IO.Text.ToLower(current.Name) == IO.Text.ToLower(name)) Return current;
             current = current.Next;
         }
         Return null;
@@ -177,7 +216,7 @@ Class ProjectConfig
         ProjectProfileConfig current = This.FirstProfile;
         While (current != null)
         {
-            If (current.Name == selected) Return current;
+            If (IO.Text.ToLower(current.Name) == IO.Text.ToLower(selected)) Return current;
             current = current.Next;
         }
         Return null;
@@ -239,7 +278,8 @@ Class ProjectConfig
             {
                 string file = IO.Kinal.Compiler.Source.SourcePath.Canonical(
                     [string](discovered.Fetch(fileIndex)));
-                If (IO.Path.Extension(file) == "kn")
+                string extension = IO.Text.ToLower(IO.Path.Extension(file));
+                If (extension == "kn" || extension == "kinal" || extension == "fx")
                 {
                     string relative = file;
                     If (IO.Text.StartsWith(file, rootPrefix))

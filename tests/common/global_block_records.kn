@@ -1,0 +1,15 @@
+Unit Tests.GlobalBlockMetadata;
+Get Console By IO.Console;
+
+Object.Block Flow = Block</
+    Console.PrintLine("start");
+    Record A Console.PrintLine("a");
+    Record B Console.PrintLine("b");
+/>;
+
+Static Function int Main()
+{
+    Flow.Jump(Flow.B);
+    Flow.JumpAndRunUntil(Flow.A, Flow.B);
+    Return 0;
+}

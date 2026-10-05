@@ -1,0 +1,35 @@
+Unit Tests.PointerRhsAddition;
+Get IO.Console;
+
+int Trace = 0;
+int Offsets = 0;
+int Pointers = 0;
+Static Function int Offset()
+{
+    Trace = Trace * 10 + 1;
+    Offsets = Offsets + 1;
+    Return 1;
+}
+Trusted Static Function int* Pointer(int[] values)
+{
+    Trace = Trace * 10 + 2;
+    Pointers = Pointers + 1;
+    Return &values[0];
+}
+Trusted Static Function int Main()
+{
+    int[] values = {4, 9, 16};
+    int* right = Offset() + Pointer(values);
+    If (Trace != 12 || Offsets != 1 || Pointers != 1) Return 1;
+    If (*right != 9) Return 2;
+    Trace = 0;
+    int* left = Pointer(values) + Offset();
+    If (Trace != 21 || Offsets != 2 || Pointers != 2) Return 3;
+    If (*left != 9) Return 4;
+    int* back = -1 + right;
+    If (*back != 4) Return 5;
+    int* last = 2 + (&values[0]);
+    If (*last != 16) Return 6;
+    IO.Console.PrintLine("ok");
+    Return 0;
+}

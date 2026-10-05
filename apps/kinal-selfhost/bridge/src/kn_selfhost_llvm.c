@@ -7,6 +7,10 @@
 
 #include "llvm-c/Core.h"
 #include "llvm-c/Analysis.h"
+#include "llvm-c/IRReader.h"
+#include "llvm-c/Linker.h"
+#include "llvm-c/Error.h"
+#include "llvm-c/Transforms/PassBuilder.h"
 #include "llvm-c/Target.h"
 #include "llvm-c/TargetMachine.h"
 
@@ -266,8 +270,8 @@ cleanup:
     return ok;
 }
 
-int kn_sh_llvm_emit_object(void *module_handle, const char *target_triple,
-                           const char *output_path)
+static int emit_machine_file(void *module_handle, const char *target_triple,
+                             const char *output_path, LLVMCodeGenFileType kind)
 {
     KnShLlvmModule *state = (KnShLlvmModule *)module_handle;
     char *message = 0;
@@ -279,7 +283,7 @@ int kn_sh_llvm_emit_object(void *module_handle, const char *target_triple,
     }
     if (!output_path || !output_path[0])
     {
-        set_error("object output path is empty");
+        set_error("machine output path is empty");
         return 0;
     }
     if (!state->target_machine || (target_triple && target_triple[0] &&
@@ -289,12 +293,24 @@ int kn_sh_llvm_emit_object(void *module_handle, const char *target_triple,
             return 0;
     }
     int failed = LLVMTargetMachineEmitToFile(state->target_machine, state->module,
-                                             (char *)output_path, LLVMObjectFile, &message);
+                                             (char *)output_path, kind, &message);
     if (failed)
         set_error(message ? message : "LLVMTargetMachineEmitToFile failed");
     if (message)
         LLVMDisposeMessage(message);
     return !failed;
+}
+
+int kn_sh_llvm_emit_object(void *module_handle, const char *target_triple,
+                           const char *output_path)
+{
+    return emit_machine_file(module_handle, target_triple, output_path, LLVMObjectFile);
+}
+
+int kn_sh_llvm_emit_assembly(void *module_handle, const char *target_triple,
+                             const char *output_path)
+{
+    return emit_machine_file(module_handle, target_triple, output_path, LLVMAssemblyFile);
 }
 
 const char *kn_sh_llvm_last_error(void)
@@ -387,6 +403,66 @@ void *kn_sh_llvm_type_array(void *element_type, int count)
 void *kn_sh_llvm_type_of(void *value)
 {
     return value ? LLVMTypeOf((LLVMValueRef)value) : 0;
+}
+
+/* Import backend-authored target-independent IR. This is a generic LLVM
+ * bridge primitive; language/runtime selection remains entirely in Kinal. */
+int kn_sh_llvm_prune_unused(void *module_handle)
+{
+    KnShLlvmModule *state = module_state(module_handle);
+    if (!state) return 0;
+    LLVMPassBuilderOptionsRef options = LLVMCreatePassBuilderOptions();
+    LLVMErrorRef error = LLVMRunPasses(state->module, "globaldce",
+        state->target_machine, options);
+    LLVMDisposePassBuilderOptions(options);
+    if (error)
+    {
+        char *message = LLVMGetErrorMessage(error);
+        set_error(message);
+        LLVMDisposeErrorMessage(message);
+        return 0;
+    }
+    return 1;
+}
+
+int kn_sh_llvm_set_dll_export(void *global)
+{
+    if (!global) return 0;
+    LLVMSetDLLStorageClass((LLVMValueRef)global, LLVMDLLExportStorageClass);
+    return 1;
+}
+
+int kn_sh_llvm_link_ir(void *module_handle, const char *ir)
+{
+    KnShLlvmModule *state = module_state(module_handle);
+    LLVMModuleRef source = 0;
+    char *message = 0;
+    if (!state || !ir) return 0;
+    clear_error();
+    LLVMMemoryBufferRef buffer = LLVMCreateMemoryBufferWithMemoryRangeCopy(
+        ir, strlen(ir), "kinal.selfhost.helpers");
+    if (LLVMParseIRInContext(state->context, buffer, &source, &message))
+    {
+        set_error(message);
+        LLVMDisposeMessage(message);
+        return 0;
+    }
+    LLVMSetTarget(source, LLVMGetTarget(state->module));
+    LLVMSetDataLayout(source, LLVMGetDataLayoutStr(state->module));
+    if (LLVMVerifyModule(source, LLVMReturnStatusAction, &message))
+    {
+        set_error(message);
+        LLVMDisposeMessage(message);
+        LLVMDisposeModule(source);
+        return 0;
+    }
+    LLVMDisposeMessage(message);
+    if (LLVMLinkModules2(state->module, source))
+    {
+        set_error("LLVM IR import failed");
+        return 0;
+    }
+    return 1;
 }
 
 void *kn_sh_llvm_add_function(void *module_handle, const char *name, void *function_type)
@@ -533,6 +609,14 @@ int kn_sh_llvm_set_initializer(void *global, void *value)
 {
     if (!global || !value) return 0;
     LLVMSetInitializer((LLVMValueRef)global, (LLVMValueRef)value);
+    return 1;
+}
+
+int kn_sh_llvm_set_call_convention(void *function, int convention)
+{
+    if (!function || !LLVMIsAFunction((LLVMValueRef)function) || convention < 0)
+        return 0;
+    LLVMSetFunctionCallConv((LLVMValueRef)function, (unsigned)convention);
     return 1;
 }
 
@@ -703,6 +787,7 @@ KN_SH_BUILD_BINARY(kn_sh_llvm_build_fadd, LLVMBuildFAdd)
 KN_SH_BUILD_BINARY(kn_sh_llvm_build_fsub, LLVMBuildFSub)
 KN_SH_BUILD_BINARY(kn_sh_llvm_build_fmul, LLVMBuildFMul)
 KN_SH_BUILD_BINARY(kn_sh_llvm_build_fdiv, LLVMBuildFDiv)
+KN_SH_BUILD_BINARY(kn_sh_llvm_build_frem, LLVMBuildFRem)
 KN_SH_BUILD_BINARY(kn_sh_llvm_build_and, LLVMBuildAnd)
 KN_SH_BUILD_BINARY(kn_sh_llvm_build_or, LLVMBuildOr)
 KN_SH_BUILD_BINARY(kn_sh_llvm_build_xor, LLVMBuildXor)
@@ -784,9 +869,12 @@ void *kn_sh_llvm_build_call(void *module_handle, void *function_type,
     if (!state || !function_type || !function || argument_count < 0 ||
         (argument_count > 0 && !arguments))
         return 0;
-    return LLVMBuildCall2(state->builder, (LLVMTypeRef)function_type,
+    LLVMValueRef call = LLVMBuildCall2(state->builder, (LLVMTypeRef)function_type,
                           (LLVMValueRef)function, (LLVMValueRef *)arguments,
                           (unsigned)argument_count, safe_name(name));
+    if (LLVMIsAFunction((LLVMValueRef)function))
+        LLVMSetInstructionCallConv(call, LLVMGetFunctionCallConv((LLVMValueRef)function));
+    return call;
 }
 
 void *kn_sh_llvm_build_return(void *module_handle, void *value)

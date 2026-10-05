@@ -1,0 +1,13 @@
+// Generated from VERSION:kinal and VERSION:kinalvm. Do not edit by hand.
+// Regenerate: python -m infra.scripts.x.compiler_metadata
+Unit IO.Kinal.Compiler.Core.BuildInfo;
+
+Safe Function string Version()
+{
+    Return "0.9.0";
+}
+
+Safe Function string VMVersion()
+{
+    Return "0.8.0";
+}

@@ -7,10 +7,12 @@ import platform
 import re
 import struct
 import subprocess
+import sys
 from pathlib import Path
 
 
 TARGETS = (
+    ("win86", "i686-pc-windows-msvc", 1, 1),
     ("win64", "x86_64-pc-windows-msvc", 1, 2),
     ("win-arm64", "aarch64-pc-windows-msvc", 1, 3),
     ("linux64", "x86_64-pc-linux-gnu", 2, 2),
@@ -77,7 +79,7 @@ def check_ir(path: Path, triple: str, os_id: int, arch: int, *, legacy_stage0: b
     assert 'target datalayout = "' in ir, path
     host_os = {"Windows": 1, "Linux": 2, "Darwin": 3}[platform.system()]
     host_arch = 3 if platform.machine().lower() in {"arm64", "aarch64"} else 2
-    values = {"target_os": os_id, "target_arch": arch, "target_bits": 64,
+    values = {"target_os": os_id, "target_arch": arch, "target_bits": 32 if arch == 1 else 64,
               "target_env": 1, "target_branch": os_id * 11,
               "host_os": host_os, "host_arch": host_arch, "host_bits": 64}
     for name, value in values.items():
@@ -115,7 +117,7 @@ def check_ir(path: Path, triple: str, os_id: int, arch: int, *, legacy_stage0: b
 def check_object(path: Path, os_id: int, arch: int) -> None:
     data = path.read_bytes()
     if os_id == 1:
-        assert struct.unpack_from("<H", data)[0] == (0xAA64 if arch == 3 else 0x8664), path
+        assert struct.unpack_from("<H", data)[0] == {1: 0x14C, 2: 0x8664, 3: 0xAA64}[arch], path
     elif os_id == 2:
         assert data[:5] == b"\x7fELF\x02", path
         assert struct.unpack_from("<H", data, 18)[0] == (183 if arch == 3 else 62), path
@@ -154,31 +156,52 @@ def check_targets(compiler: Path, stage0: Path, root: Path, out: Path,
             check_object(obj, os_id, arch)
         print(f"[OK] cross-target {alias}: constants, IR, object headers", flush=True)
 
+    # Every advertised stage0 x86 alias, plus the exact triple, selects the
+    # same ABI even when a different project profile was selected.
+    for alias in ("win32", "x86", "i686-pc-windows-msvc"):
+        for role, exe in (("self", compiler), ("stage0", stage0)):
+            path = out / f"{role}-alias-{alias}.ll"
+            invoke([str(exe), "build", "--project", str(manifest), "--profile", "win64",
+                    "--target", alias, "--emit", "ir", "-o", str(path)], root)
+            check_ir(path, "i686-pc-windows-msvc", 1, 1, check_path=role == "self")
+
     # CLI takes precedence over the profile, and exact triples work too.
     override = out / "override.ll"
     command = [str(compiler), "build", "--project", str(manifest), "--profile", "win64"]
     invoke(command + ["--target", "aarch64-unknown-linux-gnu", "--emit", "ir", "-o", str(override)], root)
     check_ir(override, "aarch64-unknown-linux-gnu", 2, 3, check_path=True)
-    invoke(command + ["--target", "host", "--emit", "obj"], root)
-    assert (out / ("CrossTarget.obj" if platform.system() == "Windows" else "CrossTarget.o")).is_file()
+    invoke(command + ["--target", "host", "--emit", "obj"], out)
+    assert (out / ("Main.obj" if platform.system() == "Windows" else "Main.o")).is_file()
     executable = out / ("host.exe" if platform.system() == "Windows" else "host")
     invoke(command + ["--target", "host", "-o", str(executable)], root)
     invoke([str(executable)], root)
-    invoke(command + ["--target", "linux64", "--emit", "obj"], root)
-    check_object(out / "CrossTarget.o", 2, 2)
-    for target in ("not-a-target", "i686-pc-windows-msvc"):
+    invoke(command + ["--target", "linux64", "--emit", "obj"], out)
+    check_object(out / "Main.o", 2, 2)
+    for target in ("not-a-target", "riscv64-unknown-linux-gnu"):
         invoke(command + ["--target", target, "--emit", "ir"], root, error="Unsupported target")
-    invoke(command + ["--target", "bare64", "--emit", "ir"], root,
-           error="bare targets require Environment=Freestanding and Runtime=None")
+    invoke(command + ["--target", "bare64", "--env", "hosted", "--emit", "ir"], root,
+           error="bare targets require Environment=Freestanding")
     invoke([str(compiler), "build", "--project", str(manifest), "--profile", "invalid"],
            root, error="Unsupported target")
-    foreign = "linux64" if platform.system() == "Windows" else "win64"
     rejected = out / "must-not-be-written.exe"
-    invoke(command + ["--target", foreign, "-o", str(rejected)], root,
-           error="Cross-target linking is not supported")
+    invoke(command + ["--target", "not-a-target", "-o", str(rejected)], root,
+           error="Unsupported target")
     assert not rejected.exists()
     assert not rejected.with_suffix(".obj").exists()
     assert not rejected.with_suffix(".o").exists()
+    from check_target_abi import check_target_abi
+    check_target_abi(compiler, stage0, root, out / "abi")
+    sys.path.insert(0, str(root / "tests"))
+    from check_target_spellings import check_target_spellings
+    spelling_self = check_target_spellings(compiler, root, out / "spellings-self")
+    spelling_reference = check_target_spellings(stage0, root, out / "spellings-stage0",
+                                                bare_only=not stage0_reference)
+    # Published stage0 releases may contain the vendorless-Windows ELF bug.
+    # Selfhost always meets the corrected contract; differential comparison of
+    # those three cases requires a current-source C reference.
+    self_cases = spelling_self["cases"] if stage0_reference else [
+        case for case in spelling_self["cases"] if case["os"] == 0]
+    assert self_cases == spelling_reference["cases"], "target spelling/layout facts differ from stage0"
     return {"name": "cross_target_ir_objects", "ok": True, "targets": len(TARGETS)}
 
 

@@ -155,8 +155,8 @@ Static Function int probe_arch() { Return IO.Target.Arch; }
 Trusted Static Function void KMain() {}
 ''', encoding="utf-8")
     project = out / "kinal.knproj"
-    targets = TARGETS + (("bare64", "x86_64-unknown-none", 0, 2),
-                         ("bare-arm64", "aarch64-unknown-none", 0, 3))
+    targets = TARGETS + (("bare64", "x86_64-unknown-none-elf", 0, 2),
+                         ("bare-arm64", "aarch64-unknown-none-elf", 0, 3))
     for alias, triple, os_id, arch in targets:
         manifest(project, target=alias)
         command = [str(compiler), "build", "--project", str(project)]
@@ -240,13 +240,12 @@ Trusted Static Function int Main() {
         check_runtime_free(output.read_text(encoding="utf-8"), wrapper=True, panic=panic)
 
     negatives = {
+        "string-parse": 'Static Function void KMain() { int value = [int]("42"); }',
+        "aggregate-any": "Struct Pair { int Value; } Static Function void KMain() { Pair pair; any value = pair; }",
+        "aggregate-any-equals": "Struct Pair { int Value; } Static Function void KMain() { any value = 1; Pair pair; bool same = value.Equals(pair); }",
         "allocation": "Class Item {} Static Function void KMain() { Item item = New Item(); }",
         "async": "Async Static Function int KMain() { Return 0; }",
         "exception": 'Static Function void KMain() { Throw "error"; }',
-        "any": "Static Function void KMain() { any value = 1; }",
-        "fixed-field": "Struct Item { int[4] Values; } Static Function void KMain() {}",
-        "string-op": 'Static Function string KMain(string value) { Return value + "x"; }',
-        "string-convert": "Static Function string KMain() { Return [string](42); }",
         "implicit-string": "Static Function string KMain() { Return 42; }",
         "closure": "Static Function void KMain() { Var f = Function int() { Return 1; }; }",
         "collection": "Static Function void KMain() { list values = list.Create(); }",
@@ -257,7 +256,6 @@ Trusted Static Function int Main() {
         "length-global-runtime": "int n = 3; int[n] values; Static Function void KMain() {}",
         "unsafe-global-pointer": "byte* address = [byte*](4096); Static Function void KMain() {}",
         "unsafe-global-call": "Unsafe Function int Read() { Return 1; } int value = Read(); Static Function void KMain() {}",
-        "dynamic-global-element": "int n = 7; int[] values = {n}; Static Function void KMain() {}",
     }
     for name, source in negatives.items():
         (out / "Negative.kn").write_text("Unit Tests.Negative;\n" + source, encoding="utf-8")
@@ -267,7 +265,6 @@ Trusted Static Function int Main() {
                root, error="Return Type" if name == "implicit-string" else
                "Unsafe Pointer" if name == "unsafe-global-pointer" else
                "Unsafe Call" if name == "unsafe-global-call" else
-               "global array requires constant elements" if name == "dynamic-global-element" else
                "Array Length" if name.startswith("length-") else "Freestanding Core")
         assert not output.exists(), output
         if stage0_reference and name.startswith("unsafe-global-"):
@@ -280,11 +277,18 @@ Trusted Static Function int Main() {
         manifest(project, entry=entry)
         invoke([str(compiler), "build", "--project", str(project), "--emit", "ir", "-o", str(out / "bad-entry.ll")],
                root, error=error)
-    manifest(project)
-    invoke([str(compiler), "build", "--project", str(project), "-o", str(out / "unsupported-bin")],
-           root, error="Freestanding linking is not supported")
-    assert not (out / "unsupported-bin").exists()
-    assert not (out / "unsupported-bin.obj").exists()
+    manifest(project, target="bare64")
+    # A freestanding ELF is a valid link product, not a hosted application.
+    # Validate both compilers' artifacts without attempting to execute firmware.
+    for role, tool in (("selfhost", compiler), ("stage0", stage0)):
+        linked = out / f"freestanding-{role}.elf"
+        invoke([str(tool), "build", "--project", str(project), "-o", str(linked)], root)
+        check_object(linked, 2, 2)
+        image = linked.read_bytes()
+        assert int.from_bytes(image[16:18], "little") == 2, "expected executable ELF"
+        assert int.from_bytes(image[24:32], "little") != 0, "missing freestanding entry"
+        symbols = invoke([str(nm), "--undefined-only", "--format=posix", str(linked)], root)
+        assert not symbols.strip(), (role, symbols)
     print("[OK] freestanding host consumer, entry/Panic contracts and rejection gates", flush=True)
     return {"name": "freestanding_core", "ok": True, "targets": len(targets),
             "negative_programs": len(negatives), "host_consumer": True,
