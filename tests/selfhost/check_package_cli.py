@@ -111,6 +111,21 @@ def check_package_cli(compiler: Path, stage0: Path, root: Path, out: Path,
             assert before == (alias_manifest.read_bytes(), alias_source.read_bytes()), (label, kind)
             assert target.is_file(), (label, kind, "input alias was deleted")
             alias_checks += 1
+        if os.name != "nt":
+            before = alias_source.read_bytes()
+            permissions = alias_source.stat().st_mode & 0o777
+            try:
+                # stat-based identity must also protect a write-only input;
+                # opening it for read is not a valid identity-query substitute.
+                alias_source.chmod(0o200)
+                proc = subprocess.run([str(producer), "pkg", "build", "--manifest", str(alias_manifest),
+                                       "-o", str(alias_source)], cwd=out, text=True,
+                                      capture_output=True, timeout=180)
+                assert proc.returncode != 0 and "archive output must differ" in proc.stdout + proc.stderr
+            finally:
+                alias_source.chmod(permissions)
+            assert alias_source.read_bytes() == before, (label, "write-only payload was damaged")
+            alias_checks += 1
 
     package = out / "package source"
     package.mkdir(exist_ok=True)
