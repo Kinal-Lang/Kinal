@@ -1412,19 +1412,26 @@ static bool knproj_collect_root_sources_recursive(const KnProjectConfig *cfg, co
         return false;
     h = FindFirstFileA(pattern, &data);
     if (h == KN_INVALID_HANDLE_VALUE)
-        return false;
+        return GetLastError() == KN_ERROR_FILE_NOT_FOUND;
     do
     {
         char full[KN_MAX_PATH];
         if (!path_join(full, sizeof(full), dir_abs, data.cFileName))
-            continue;
+        {
+            FindClose(h);
+            return false;
+        }
         if (data.dwFileAttributes & KN_FILE_ATTRIBUTE_DIRECTORY)
         {
             if (kn_strcmp(data.cFileName, ".") == 0 || kn_strcmp(data.cFileName, "..") == 0)
                 continue;
             if (kn_strcmp(data.cFileName, ".git") == 0 || kn_strcmp(data.cFileName, ".github") == 0 || kn_strcmp(data.cFileName, ".kinal-cache") == 0)
                 continue;
-            (void)knproj_collect_root_sources_recursive(cfg, set, root_abs, full, out);
+            if (!knproj_collect_root_sources_recursive(cfg, set, root_abs, full, out))
+            {
+                FindClose(h);
+                return false;
+            }
             continue;
         }
         if (!has_source_extension(data.cFileName))
@@ -1448,8 +1455,11 @@ static bool knproj_collect_root_sources_recursive(const KnProjectConfig *cfg, co
             return false;
         }
     } while (FindNextFileA(h, &data));
-    FindClose(h);
-    return true;
+    {
+        bool complete = GetLastError() == KN_ERROR_NO_MORE_FILES;
+        FindClose(h);
+        return complete;
+    }
 }
 
 static bool collect_project_local_sources(const KnProjectConfig *cfg, const KnProjProfile *profile, StrList *out)

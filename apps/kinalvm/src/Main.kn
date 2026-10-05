@@ -6,6 +6,7 @@ Get Loader By IO.Kinal.VM.Loader;
 Get VM By IO.Kinal.VM.VM;
 Get Stdlib By IO.Kinal.VM.Stdlib;
 Get Binary By IO.Kinal.VM.Binary;
+Get BuildInfo By IO.Kinal.VM.BuildInfo;
 Get IO.Kinal.VM.Disassembler;
 
 Trusted Static Function int Main(string[] args)
@@ -51,7 +52,7 @@ Unsafe Static Function int Run(string[] args)
 {
     If (args.Length() >= 1 && (args[0] == "--version" || args[0] == "-V"))
     {
-        Console.PrintLine([f]"KinalVM {IO.Version}");
+        Console.PrintLine("KinalVM " + BuildInfo.Version());
         Return 0;
     }
     If (args.Length() >= 1 && args[0] == "--disasm")

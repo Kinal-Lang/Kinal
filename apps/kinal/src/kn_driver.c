@@ -1,6 +1,8 @@
 #include "kn/util.h"
 #if !defined(_WIN32) && !defined(_WIN64)
 #include <unistd.h>
+#include <dirent.h>
+#include <fcntl.h>
 #include <stdlib.h>
 #include <sys/stat.h>
 #endif

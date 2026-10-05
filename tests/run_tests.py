@@ -17,6 +17,7 @@ import sys
 import tempfile
 import threading
 import time
+from collections.abc import Iterator
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -24,54 +25,6 @@ DEFAULT_OUT = ROOT / "out" / "test"
 DEFAULT_MANIFEST = ROOT / "tests" / "manifest.json"
 REQUEST_HTTPS_PORT = 18443
 WEB_GC_ROOTS_PORT = 18084
-REQUEST_HTTPS_CERT_PEM = """-----BEGIN CERTIFICATE-----
-MIIDGjCCAgKgAwIBAgIUWzerGOS0nvJv+eW5KGWmzk6fs2MwDQYJKoZIhvcNAQEL
-BQAwNzELMAkGA1UEBhMCVVMxFDASBgNVBAoMC0tpbmFsIFRlc3RzMRIwEAYDVQQD
-DAkxMjcuMC4wLjEwHhcNMjYwNTA2MDAwNTMyWhcNMzYwNTA0MDAwNTMyWjA3MQsw
-CQYDVQQGEwJVUzEUMBIGA1UECgwLS2luYWwgVGVzdHMxEjAQBgNVBAMMCTEyNy4w
-LjAuMTCCASIwDQYJKoZIhvcNAQEBBQADggEPADCCAQoCggEBAKzie4X2hS6Znzhv
-wjptzKP38VpngioW6p/G10YrXWTnTArHTSJdClyExyQMaoYsc5KouBM+kUAJGrGW
-cz4wvPTNhB/lyNREIZBLjkXjTrh/NaroLiYPFVeljW51nMnejq8DqYOzduCTKJsu
-rZBqErObD13+1UN2aKMOCT7EkGna5HJY5wyP+CjtfdRAAOer40hay3F0lb6YuX4J
-gAkHv4hGF0xHqYziTegIzTNOgZCfy42dT8GGS4S7wtSbbnGSNvyLRFb8kUM2Hw5s
-3nS7pb/ryx0TeEpHwzroZ/kkXp6UV6Y0gRyvmOkcgQwz1j2rqKcQo2hV7YvA7ElZ
-OhCHYKUCAwEAAaMeMBwwGgYDVR0RBBMwEYIJbG9jYWxob3N0hwR/AAABMA0GCSqG
-SIb3DQEBCwUAA4IBAQAWcqMBcOIIj+WjR2NVPULm0Iuyi+RgrCATsUcJLbMFsjis
-/NhB3jwz30NkJWDgjdKue2L/wODu7hMj/126qeIdee3GhNGp56X0fnKOW7KG+1OQ
-9L+3/OsmmHZyIieG6juQDsF2kVTw/wwrKQ3oYAFm/BnrqD2uxX7Fo5+wZvhkbFfZ
-GHTDScRXq3MtGTotuotlcF8KNMe6mcwIUaatSzzXJzNxCW7p2k8k3zQXlzutfmLZ
-p+jNvcHotZQcJGoAFMBJe2jwx19lXN288Wx43R+1Z5yZi3QUKZoOoc+lUMquBJ6c
-gZlWoM2KCyruMiWAJ78lSTT3hOxuPfkUlWb3P4Gs
------END CERTIFICATE-----
-"""
-REQUEST_HTTPS_KEY_PEM = """-----BEGIN RSA PRIVATE KEY-----
-MIIEowIBAAKCAQEArOJ7hfaFLpmfOG/COm3Mo/fxWmeCKhbqn8bXRitdZOdMCsdN
-Il0KXITHJAxqhixzkqi4Ez6RQAkasZZzPjC89M2EH+XI1EQhkEuOReNOuH81qugu
-Jg8VV6WNbnWcyd6OrwOpg7N24JMomy6tkGoSs5sPXf7VQ3Zoow4JPsSQadrkcljn
-DI/4KO191EAA56vjSFrLcXSVvpi5fgmACQe/iEYXTEepjOJN6AjNM06BkJ/LjZ1P
-wYZLhLvC1JtucZI2/ItEVvyRQzYfDmzedLulv+vLHRN4SkfDOuhn+SRenpRXpjSB
-HK+Y6RyBDDPWPauopxCjaFXti8DsSVk6EIdgpQIDAQABAoIBAAwn4IeKzdJ4+rj9
-Iqr5DWp6BH5WyNAszFJvqLNGWUq++JnJaaMA57mZnGbseJD2jynAszCnNY9LFJVn
-/rJguuh7is6zWWuTXsjGhzpiwSY3y444xQXoCZggC9G4c02+WEn19/VKqREhR7mh
-jpKY4re+L1ZslJIpwTG1yvCe4YiPvdgxfvC+9EaK7sqWFyKBJmAQPuQvt6zgXc1F
-ZvE967qpoXBuM4E+/tWO4+QbRKbW847oxIV8DX1r/9CYWlEEaLasbrY7+UkXCpgm
-4JzPZu/uKOz/OauTmbGDTqhhieB0Z7e7sN8ppsLwP6YpYAGhks08u1AyJivU/KT4
-ClqqwAECgYEA4Z5Pk8VVhwnPW/HbaHBDxhOUhghTKxIkSxbOneyKKcyd/wrpGyY+
-ecmqp+RYxc0iYTG9IyEIp83u1zMKAvFpbqzrL9mLoE+qrkzd6bQdwqq0Qb4W2tde
-uhZIk+DDMjZvS4gPOr2+OGOxApjGUblkZ/BDNy8ULeRLFA61svEGMUkCgYEAxCpL
-mHytt+1iR8zJ1VKAgnjZ4n9uF06suhcNUNpxTwixM0CAHYryC92a9EDIzWyfgST3
-+9XKzr5F9nyrevrlk0A6cpBnMKuGypQksP3zAx62J9zBk/W6hU2uCo6XRS9Z7Tif
-dqgi02CWBFEmEFmGHh0M8p3Xnf0QCle2O2rG0H0CgYBfDAtoLFTYm7hgeqY8/DaB
-BpSmVnF7Dpx9ibEndJPMAih5XkZPqq/dLKkZK6h+Q+n82jBc0TjNQIMi45yPGtaY
-yn4V3Wbl9UnpPfaq0rdK4BEqNQN51AtTB7oxmhmBWM9QGZSY4YB2TwEuH+BEY366
-DsyyPcIZhzhdzcicBs/eCQKBgEOGy78SLDrEXLCarl/gppxDPb3aX+tmCc+FX/AV
-QiwSse0SpweEbQ3omw65vmX4nm+2aicm0UmZ9juDbwRGmgC2e2g0jVETurLBjF/h
-C2ZnjAzs0TY9wJdixiacLzaBtlMSytHtzw80kG+r/45hQuna1jouW6rnEj59Mx4B
-A6+BAoGBAKFHVdYUTrqtJveuSTdIBqklxQFk45cSbPZxYLeouiEj8v/lJOnXLzpZ
-GXwGuZTwOtwC9qU8Y2jInqvVL1FqLxENvXd/VoiWXAKwkgFzD7B+PU06SzAxy5MX
-pT+RfEK8vO020K1LbB//cspl8BDal9NfAe/xU8Ej1telWbZa1gNq
------END RSA PRIVATE KEY-----
-"""
 
 
 class RequestHttpsTestServer(http.server.ThreadingHTTPServer):
@@ -122,26 +75,160 @@ class RequestHttpsHandler(http.server.BaseHTTPRequestHandler):
         self._reply(404, b"not-found")
 
 
-@contextlib.contextmanager
-def request_https_fixture() -> object:
+def request_https_contexts() -> tuple[ssl.SSLContext, ssl.SSLContext]:
+    """Create one-use localhost TLS contexts without retaining credentials.
+
+    The client context checks this fixture independently of IO.Request, whose
+    current CivetWeb bridge does not expose peer-certificate verification.
+    """
+    openssl = shutil.which("openssl")
+    if not openssl:
+        raise OSError("HTTPS regression fixture requires the OpenSSL command-line tool on PATH")
     with tempfile.TemporaryDirectory(prefix="kinal_request_https_") as temp_dir:
         temp_root = Path(temp_dir)
         cert_path = temp_root / "cert.pem"
         key_path = temp_root / "key.pem"
-        cert_path.write_text(REQUEST_HTTPS_CERT_PEM, encoding="utf-8")
-        key_path.write_text(REQUEST_HTTPS_KEY_PEM, encoding="utf-8")
+        config_path = temp_root / "openssl.cnf"
+        # Explicit config works with OpenSSL 1.1.1 and 3.x without depending on
+        # a machine's request config, CA files, or random-state file.
+        config_path.write_text(
+            "[req]\n"
+            "prompt = no\n"
+            "encrypt_key = no\n"
+            "distinguished_name = subject\n"
+            "x509_extensions = server\n"
+            "[subject]\n"
+            "CN = localhost\n"
+            "[server]\n"
+            "subjectAltName = DNS:localhost,IP:127.0.0.1\n"
+            "basicConstraints = critical,CA:FALSE\n"
+            "keyUsage = critical,digitalSignature,keyEncipherment\n"
+            "extendedKeyUsage = serverAuth\n"
+            "subjectKeyIdentifier = hash\n"
+            "authorityKeyIdentifier = keyid:always\n",
+            encoding="ascii",
+        )
+        # OpenSSL truncates this existing file, preserving its POSIX mode.
+        # TemporaryDirectory additionally restricts directory access.
+        descriptor = os.open(key_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        os.close(descriptor)
+        command = [openssl, "req", "-x509", "-newkey", "rsa:2048", "-sha256",
+                   "-days", "1", "-batch", "-config", str(config_path),
+                   "-keyout", str(key_path), "-out", str(cert_path)]
+        try:
+            result = subprocess.run(command, stdin=subprocess.DEVNULL,
+                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                    timeout=30, check=False)
+        except subprocess.TimeoutExpired:
+            raise OSError("HTTPS fixture certificate generation timed out after 30 seconds") from None
+        except OSError:
+            raise OSError("HTTPS fixture could not run OpenSSL; check its installation and PATH") from None
+        if result.returncode:
+            raise OSError(f"HTTPS fixture certificate generation failed (OpenSSL exit {result.returncode})")
+        server_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        server_context.minimum_version = ssl.TLSVersion.TLSv1_2
+        # Explicit TLS_CLIENT avoids create_default_context's SSLKEYLOGFILE
+        # behavior. Trust is scoped to this context, never the OS trust store.
+        client_context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        client_context.minimum_version = ssl.TLSVersion.TLSv1_2
+        client_context.verify_flags |= ssl.VERIFY_X509_STRICT
+        client_context.hostname_checks_common_name = False
+        try:
+            server_context.load_cert_chain(str(cert_path), str(key_path))
+            client_context.load_verify_locations(cafile=str(cert_path))
+        except (OSError, ValueError):
+            raise OSError("HTTPS fixture generated an unusable certificate or private key") from None
+        # Both contexts retain in-memory state. TemporaryDirectory removes all
+        # generated files before this function returns, including on failure.
+        return server_context, client_context
 
-        server = RequestHttpsTestServer(("127.0.0.1", REQUEST_HTTPS_PORT), RequestHttpsHandler)
-        context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-        context.load_cert_chain(str(cert_path), str(key_path))
-        server.socket = context.wrap_socket(server.socket, server_side=True)
 
-        thread = threading.Thread(target=server.serve_forever, daemon=True)
+def verify_request_https_fixture(port: int, context: ssl.SSLContext) -> None:
+    """Require a verified TLS handshake and the expected health response."""
+    connection = http.client.HTTPSConnection("127.0.0.1", port, timeout=5, context=context)
+    try:
+        connection.request("GET", "/health")
+        response = connection.getresponse()
+        if response.status != 200 or response.read() != b"ok":
+            raise OSError("HTTPS regression fixture returned an unexpected health response")
+    finally:
+        connection.close()
+
+
+class RequestHttpsBoundedHandler(RequestHttpsHandler):
+    # Applies before the first TLS/HTTP read in the request-handling thread.
+    timeout = 2.0
+
+    def handle(self) -> None:
+        try:
+            self.connection.do_handshake()
+        except (ssl.SSLError, ConnectionError, TimeoutError):
+            # Untrusted/wrong-host probes and idle peers can reject or abandon
+            # a handshake. The verified health probe still fails on TLS errors.
+            return
+        super().handle()
+
+
+class RequestHttpsBoundedServer(RequestHttpsTestServer):
+    # Join request threads after interrupting their sockets during cleanup.
+    # Do not abandon a stalled handshake in a daemon thread.
+    daemon_threads = False
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        self._connections: set[socket.socket] = set()
+        self._connections_lock = threading.Lock()
+        self._closing = False
+        super().__init__(*args, **kwargs)
+
+    def get_request(self) -> tuple[socket.socket, object]:
+        connection, address = super().get_request()
+        with self._connections_lock:
+            self._connections.add(connection)
+        return connection, address
+
+    def shutdown_request(self, request: socket.socket) -> None:
+        try:
+            super().shutdown_request(request)
+        finally:
+            with self._connections_lock:
+                self._connections.discard(request)
+
+    def handle_error(self, request: socket.socket, client_address: object) -> None:
+        if not self._closing:
+            super().handle_error(request, client_address)
+
+    def server_close(self) -> None:
+        self._closing = True
+        with self._connections_lock:
+            connections = list(self._connections)
+        # shutdown interrupts TLS handshakes and HTTP reads even when a peer
+        # keeps a socket open or dribbles data often enough to avoid timeouts.
+        for connection in connections:
+            with contextlib.suppress(OSError):
+                connection.shutdown(socket.SHUT_RDWR)
+            connection.close()
+        super().server_close()
+
+
+@contextlib.contextmanager
+def request_https_fixture(*, port: int = REQUEST_HTTPS_PORT) -> Iterator[
+    tuple[RequestHttpsTestServer, ssl.SSLContext]
+]:
+    server_context, client_context = request_https_contexts()
+    # Also close the socket if TLS wrapping or thread startup fails before the
+    # normal shutdown path becomes available.
+    with RequestHttpsBoundedServer(("127.0.0.1", port), RequestHttpsBoundedHandler) as server:
+        # Deferring handshakes prevents an idle TCP peer from blocking accept
+        # in the serving thread, which would otherwise deadlock shutdown().
+        server.socket = server_context.wrap_socket(
+            server.socket, server_side=True, do_handshake_on_connect=False
+        )
+        thread = threading.Thread(target=server.serve_forever,
+                                  kwargs={"poll_interval": 0.05}, daemon=True)
         thread.start()
         try:
-            with socket.create_connection(("127.0.0.1", REQUEST_HTTPS_PORT), timeout=1):
-                pass
-            yield
+            verify_request_https_fixture(server.server_port, client_context)
+            yield server, client_context
         finally:
             server.shutdown()
             server.server_close()

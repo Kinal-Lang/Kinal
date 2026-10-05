@@ -4193,6 +4193,17 @@ int kn_native_directory_delete(const char *path)
     return __kn_dir_delete(path);
 }
 
+/* Seed hosted argv independently of whether the user Main takes an args array. */
+void kn_native_process_initialize_arguments(int32_t argc, const char **argv)
+{
+#if defined(_WIN32) || defined(_WIN64)
+    (void)argc;
+    (void)argv;
+#else
+    rt_cache_process_argv((int)argc, argv);
+#endif
+}
+
 const char *kn_native_system_command_line(void)
 {
     return __kn_sys_command_line();

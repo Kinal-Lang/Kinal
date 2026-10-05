@@ -34,6 +34,7 @@ from .runtime_build import (
     write_linux_compiler_launcher,
 )
 from .util import copy_tree, find_artifact, read_json, run, write_text
+from .vm_metadata import generate_kinalvm_build_info
 
 
 def _rmtree(path: Path) -> None:
@@ -118,6 +119,7 @@ def create_kinalvm_stdpkg(compiler: Path, bundle_stdpkg: Path, *, include_source
     """
     import json as _json
 
+    generate_kinalvm_build_info()
     vm_lib_src = ROOT / "apps" / "kinalvm" / "src" / "IO" / "Kinal" / "VM"
     ver_dir = bundle_stdpkg / "IO.Kinal.VM" / "1.0.0"
     ver_dir.mkdir(parents=True, exist_ok=True)
@@ -184,6 +186,7 @@ def stage_bundle(build_type: str, dest: Path) -> Path:
     if dest.exists():
         _rmtree(dest)
     dest.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(ROOT / "VERSION", dest / "VERSION")
     shutil.copy2(compiler, dest / compiler.name)
     if hostlib:
         shutil.copy2(hostlib, dest / hostlib.name)
