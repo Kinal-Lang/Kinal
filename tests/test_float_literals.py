@@ -33,8 +33,10 @@ def fixed(value: decimal.Decimal) -> str:
 
 
 def library_build_command(compiler: str, source: Path, library: Path, windows_gnu: bool = False) -> list[str]:
+    # This harness calls hosted CRT fenv/memcpy APIs. In freestanding mode,
+    # Clang's float.h omits SDK definitions required by Windows UCRT fenv.h.
     command = [compiler, "-std=c11", "-O2", "-Wall", "-Wextra", "-Werror",
-               "-shared", "-ffreestanding", "-fno-builtin"]
+               "-shared", "-fhosted", "-fno-builtin"]
     if sys.platform == "win32" and not windows_gnu:
         # Match the Python process, not a possibly emulated compiler or the OS.
         # Generic cc on Windows ARM64 runners can be an x64 MinGW installation.
@@ -79,7 +81,10 @@ class FloatLiteralTests(unittest.TestCase):
         cls.temp = tempfile.TemporaryDirectory()
         cls.addClassCleanup(cls.temp.cleanup)
         source = Path(cls.temp.name) / "float_literals.c"
-        source.write_text('''#include <stddef.h>
+        source.write_text('''#if !__STDC_HOSTED__
+#error "the float test harness requires hosted CRT headers"
+#endif
+#include <stddef.h>
 #include <stdint.h>
 #include <string.h>
 #include <fenv.h>
@@ -222,6 +227,16 @@ TEST_EXPORT int rounding_mode(int mode) {
 
 
 class FloatLibraryFixtureTests(unittest.TestCase):
+    def test_fixture_uses_hosted_headers_without_builtin_substitution(self) -> None:
+        for system, windows_gnu in (("win32", False), ("win32", True), ("linux", False), ("darwin", False)):
+            with self.subTest(system=system, windows_gnu=windows_gnu), \
+                 mock.patch.object(sys, "platform", system), \
+                 mock.patch.object(sysconfig, "get_platform", return_value="win-arm64"):
+                command = library_build_command("cc", Path("input.c"), Path("output"), windows_gnu)
+                self.assertIn("-fhosted", command)
+                self.assertIn("-fno-builtin", command)
+                self.assertNotIn("-ffreestanding", command)
+
     def test_windows_target_matches_python_architecture(self) -> None:
         for python_platform, target in (("win-arm64", "aarch64"), ("win-amd64", "x86_64"),
                                         ("win32", "i686")):
