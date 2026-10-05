@@ -138,7 +138,9 @@ Enum OpCode By u8
     ULeInt = 133,
     UGtInt = 134,
     UGeInt = 135,
-    LShrInt = 136
+    LShrInt = 136,
+    FloatToF32 = 137,
+    IntToF32 = 138
 }
 
 Enum ValueKind By u8
@@ -439,6 +441,8 @@ Public Class Program
             Case([int](OpCode.UGtInt)) { Return 5; }
             Case([int](OpCode.UGeInt)) { Return 5; }
             Case([int](OpCode.LShrInt)) { Return 5; }
+            Case([int](OpCode.FloatToF32)) { Return 3; }
+            Case([int](OpCode.IntToF32)) { Return 4; }
             Case(default)                    { Throw "Unknown KNC opcode: " + [string](op); }
         }
 

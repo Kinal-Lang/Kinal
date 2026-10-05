@@ -1407,7 +1407,30 @@ static CGValue gen_resolved_function_call(Codegen *g, Expr *site, ExprList *call
     return out;
 }
 
-static CGValue gen_resolved_method_call(Codegen *g, Expr *site)
+static CGValue gen_resolved_method_call(Codegen *g, Expr *site, const CGValue *loaded_recv);
+
+static LLVMValueRef gen_method_call_arg(Codegen *g, LLVMValueRef frame, Expr *site,
+                                        int index, Type param_type, const CGValue *recv)
+{
+    Expr *arg = site->v.member_call.args.items[index];
+    if (!site->v.member_call.is_property_compound)
+        return gen_rooted_call_arg(g, frame, arg, param_type);
+
+    if (index != 0 || arg->kind != EXPR_BINARY ||
+        arg->v.binary.left->kind != EXPR_MEMBER_CALL || !recv)
+        kn_die("invalid compound property lowering plan");
+    CGValue previous = gen_resolved_method_call(g, arg->v.binary.left, recv);
+    previous = gc_root_temp_value(g, frame, previous, "gc.property.previous");
+    CGValue value = gen_binary(g, arg, &previous);
+    value = gc_root_temp_value(g, frame, value, "gc.property.value");
+    CGValue converted;
+    converted.type = param_type;
+    converted.value = cast_value(g, value, param_type);
+    converted = gc_root_temp_value(g, frame, converted, "gc.property.cast");
+    return converted.value;
+}
+
+static CGValue gen_resolved_method_call(Codegen *g, Expr *site, const CGValue *loaded_recv)
 {
     CGValue out;
     ClassSymbol *owner = classtable_find(&g->classes, site->resolved_call.owner);
@@ -1421,9 +1444,10 @@ static CGValue gen_resolved_method_call(Codegen *g, Expr *site)
         LLVMValueRef *args = (LLVMValueRef *)kn_malloc(sizeof(LLVMValueRef) * (size_t)argc);
         int arg_index = 0;
         LLVMValueRef temp_frame = gc_push_temp_frame(g, "gc.mcall.frame");
+        CGValue recv = {0};
         if (!method->is_static)
         {
-            CGValue recv = gen_expr(g, site->v.member_call.recv);
+            recv = loaded_recv ? *loaded_recv : gen_expr(g, site->v.member_call.recv);
             recv = gc_root_temp_value(g, temp_frame, recv, "gc.mcall.recv");
             args[arg_index++] = LLVMBuildBitCast(g->builder, recv.value, g->i8ptr, "this");
             if (site->resolved_call.kind == KN_CALL_TARGET_VIRTUAL_METHOD && owner->method_vslots)
@@ -1442,9 +1466,8 @@ static CGValue gen_resolved_method_call(Codegen *g, Expr *site)
                     LLVMValueRef fn_ptr = LLVMBuildBitCast(g->builder, raw_fn,
                                                            LLVMPointerType(fn_type, 0), "vfnc");
                     for (int i = 0; i < site->v.member_call.args.count; i++)
-                        args[arg_index++] = gen_rooted_call_arg(g, temp_frame,
-                                                               site->v.member_call.args.items[i],
-                                                               method->params.items[i].type);
+                        args[arg_index++] = gen_method_call_arg(g, temp_frame, site, i,
+                                                               method->params.items[i].type, &recv);
                     const char *call_name = method->ret_type.kind == TY_VOID ? "" : "vcall";
                     out.value = LLVMBuildCall2(g->builder, fn_type, fn_ptr, args, (unsigned)argc, call_name);
                     gc_pop_temp_frame(g, temp_frame);
@@ -1455,9 +1478,8 @@ static CGValue gen_resolved_method_call(Codegen *g, Expr *site)
             }
         }
         for (int i = 0; i < site->v.member_call.args.count; i++)
-            args[arg_index++] = gen_rooted_call_arg(g, temp_frame,
-                                                   site->v.member_call.args.items[i],
-                                                   method->params.items[i].type);
+            args[arg_index++] = gen_method_call_arg(g, temp_frame, site, i,
+                                                   method->params.items[i].type, &recv);
         const char *call_name = method->ret_type.kind == TY_VOID ? "" : "call";
         out.value = LLVMBuildCall2(g->builder, fn_type, fn, args, (unsigned)argc, call_name);
         gc_pop_temp_frame(g, temp_frame);
@@ -1475,12 +1497,12 @@ static CGValue gen_resolved_method_call(Codegen *g, Expr *site)
     int argc = site->v.member_call.args.count + 1;
     LLVMValueRef *args = (LLVMValueRef *)kn_malloc(sizeof(LLVMValueRef) * (size_t)argc);
     LLVMValueRef temp_frame = gc_push_temp_frame(g, "gc.icall.frame");
-    CGValue recv = gen_expr(g, site->v.member_call.recv);
+    CGValue recv = loaded_recv ? *loaded_recv : gen_expr(g, site->v.member_call.recv);
     recv = gc_root_temp_value(g, temp_frame, recv, "gc.icall.recv");
     args[0] = LLVMBuildBitCast(g->builder, recv.value, g->i8ptr, "this");
     for (int i = 0; i < site->v.member_call.args.count; i++)
-        args[i + 1] = gen_rooted_call_arg(g, temp_frame, site->v.member_call.args.items[i],
-                                         method->params.items[i].type);
+        args[i + 1] = gen_method_call_arg(g, temp_frame, site, i,
+                                         method->params.items[i].type, &recv);
     int slot = vslot_find_method(&g->vslots, method);
     if (slot < 0) kn_die("missing interface slot");
     ClassSymbol *recv_symbol = classtable_find(&g->classes, recv.type.name);
@@ -1854,7 +1876,7 @@ static CGValue gen_expr(Codegen *g, Expr *e)
             e->resolved_call.kind == KN_CALL_TARGET_DELEGATE_KINAL ||
             e->resolved_call.kind == KN_CALL_TARGET_DELEGATE_C)
             return gen_resolved_function_call(g, e, &e->v.member_call.args, "qcall");
-        return gen_resolved_method_call(g, e);
+        return gen_resolved_method_call(g, e, 0);
     case EXPR_BINARY:
         return gen_binary(g, e, 0);
     case EXPR_IF:
@@ -4507,7 +4529,11 @@ static CGValue gen_dynamic_any(Codegen *g, KnBuiltinKind kind, ExprList *args, E
         LLVMValueRef bp = LLVMBuildExtractValue(g->builder, bv, 1, "any.eq.bp");
         LLVMValueRef same_tag = LLVMBuildICmp(g->builder, LLVMIntEQ, at, bt, "any.eq.sametag");
         LLVMValueRef same_payload = LLVMBuildICmp(g->builder, LLVMIntEQ, ap, bp, "any.eq.samepayload");
-        LLVMValueRef is_str = LLVMBuildICmp(g->builder, LLVMIntEQ, at, LLVMConstInt(g->i64, KN_ANY_TAG_STRING, 0), "any.eq.isstr");
+        /* Do not reinterpret a non-string payload as an address just because
+         * the other operand is a string. Both operands must have string tags
+         * before either payload reaches the string comparison helper. */
+        LLVMValueRef a_is_str = LLVMBuildICmp(g->builder, LLVMIntEQ, at, LLVMConstInt(g->i64, KN_ANY_TAG_STRING, 0), "any.eq.isstr");
+        LLVMValueRef is_str = LLVMBuildAnd(g->builder, same_tag, a_is_str, "any.eq.bothstr");
         LLVMValueRef asp = LLVMBuildIntToPtr(g->builder, ap, g->i8ptr, "any.eq.as");
         LLVMValueRef bsp = LLVMBuildIntToPtr(g->builder, bp, g->i8ptr, "any.eq.bs");
         LLVMValueRef nullp = LLVMConstNull(g->i8ptr);
@@ -6297,4 +6323,3 @@ static void gen_stmt(Codegen *g, Stmt *s)
     default: break;
     }
 }
-

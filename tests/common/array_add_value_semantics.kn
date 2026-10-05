@@ -1,0 +1,190 @@
+Unit Tests.ArrayAddValueSemantics;
+
+Get Console By IO.Console;
+
+Struct Pair
+{
+    int X;
+    int Y;
+}
+
+Class Box
+{
+    Public int Value;
+}
+
+Struct Item
+{
+    Pair Value;
+    int[] Row;
+    Box Reference;
+}
+
+Function bool CheckIntegers()
+{
+    int[] empty = {};
+    int[] first = empty.Add(3);
+    int[] second = first.Add(4);
+    int[] alias = first;
+    second[0] = 9;
+    first.Add(100);
+    int[] chain = first.Add(5).Add(6);
+    alias[0] = 7;
+    Return empty.Length() == 0 && first.Length() == 1 && first[0] == 7 &&
+        second.Length() == 2 && second[0] == 9 && second[1] == 4 &&
+        chain.Length() == 3 && chain[0] == 3 && chain[1] == 5 && chain[2] == 6;
+}
+
+Function bool CheckChars()
+{
+    char[] empty = {};
+    char[] first = empty.Add('a');
+    char[] second = first.Add('b');
+    second[0] = 'c';
+    Return empty.Length() == 0 && first.Length() == 1 && first[0] == 'a' &&
+        second.Length() == 2 && second[0] == 'c' && second[1] == 'b';
+}
+
+Function bool CheckFloats()
+{
+    float[] empty = {};
+    float[] first = empty.Add(1.25);
+    float[] second = first.Add(2.5);
+    second[0] = 3.75;
+    Return empty.Length() == 0 && first.Length() == 1 && first[0] == 1.25 &&
+        second.Length() == 2 && second[0] == 3.75 && second[1] == 2.5;
+}
+
+Function bool CheckBools()
+{
+    bool[] empty = {};
+    bool[] first = empty.Add(true);
+    bool[] second = first.Add(true);
+    second[0] = false;
+    Return empty.Length() == 0 && first.Length() == 1 && first[0] &&
+        second.Length() == 2 && !second[0] && second[1];
+}
+
+Function bool CheckStrings()
+{
+    string[] empty = {};
+    string[] first = empty.Add("first");
+    string[] second = first.Add("second");
+    second[0] = "changed";
+    Return empty.Length() == 0 && first.Length() == 1 && first[0] == "first" &&
+        second.Length() == 2 && second[0] == "changed" && second[1] == "second";
+}
+
+Function bool CheckAny()
+{
+    any[] empty = {};
+    any[] first = empty.Add(3);
+    any[] second = first.Add("second");
+    second[0] = 9;
+    Return empty.Length() == 0 && first.Length() == 1 && first[0].ToString() == "3" &&
+        second.Length() == 2 && second[0].ToString() == "9" && second[1].ToString() == "second";
+}
+
+Function bool CheckAnyReferences()
+{
+    Box box = New Box();
+    box.Value = 3;
+    any[] empty = {};
+    any[] first = empty.Add(box);
+    any[] second = first.Add(box);
+    Box reference = [Box](second[0]);
+    reference.Value = 9;
+    second[0] = null;
+    Box original = [Box](first[0]);
+    Box appended = [Box](second[1]);
+    Return empty.Length() == 0 && first.Length() == 1 && original.Value == 9 &&
+        box.Value == 9 && second.Length() == 2 && second[0].IsNull() && appended.Value == 9;
+}
+
+Function bool CheckNestedArrays()
+{
+    int[] row = {3};
+    int[][] empty = {};
+    int[][] first = empty.Add(row);
+    int[][] second = first.Add(row);
+    second[0][0] = 9;
+    second[0] = {11};
+    Return empty.Length() == 0 && first.Length() == 1 && first[0][0] == 9 &&
+        row[0] == 9 && second.Length() == 2 && second[0][0] == 11 && second[1][0] == 9;
+}
+
+Function bool CheckClasses()
+{
+    Box box = New Box();
+    box.Value = 3;
+    Box[] empty = {};
+    Box[] first = empty.Add(box);
+    Box[] second = first.Add(box);
+    second[0].Value = 9;
+    second[0] = New Box();
+    second[0].Value = 11;
+    Return empty.Length() == 0 && first.Length() == 1 && first[0].Value == 9 &&
+        box.Value == 9 && second.Length() == 2 && second[0].Value == 11 && second[1].Value == 9;
+}
+
+Function bool CheckStructs()
+{
+    Item item;
+    item.Value.X = 3;
+    item.Value.Y = 4;
+    item.Row = {5};
+    item.Reference = New Box();
+    item.Reference.Value = 6;
+    Item[] empty = {};
+    Item[] first = empty.Add(item);
+    Item[] second = first.Add(item);
+    second[0].Value.X = 9;
+    second[1].Value.Y = 10;
+    second[0].Row[0] = 11;
+    second[0].Reference.Value = 12;
+    second[0].Row = {13};
+    second[0].Reference = New Box();
+    second[0].Reference.Value = 14;
+    Item[] third = second.Add(item);
+    third[0].Value.Y = 15;
+    third[1].Value.X = 16;
+    Return empty.Length() == 0 && first.Length() == 1 && second.Length() == 2 && third.Length() == 3 &&
+        item.Value.X == 3 && item.Value.Y == 4 && first[0].Value.X == 3 && first[0].Value.Y == 4 &&
+        second[0].Value.X == 9 && second[0].Value.Y == 4 && second[1].Value.X == 3 && second[1].Value.Y == 10 &&
+        third[0].Value.Y == 15 && third[1].Value.X == 16 && third[2].Value.X == 3 &&
+        item.Row[0] == 11 && first[0].Row[0] == 11 && second[0].Row[0] == 13 &&
+        item.Reference.Value == 12 && first[0].Reference.Value == 12 && second[0].Reference.Value == 14;
+}
+
+Trusted Function bool CheckPointers()
+{
+    int value = 3;
+    int other = 4;
+    int*[] empty = {};
+    int*[] first = empty.Add(&value);
+    int*[] second = first.Add(&other);
+    int* shared = second[0];
+    *shared = 9;
+    second[0] = &other;
+    int* original = first[0];
+    int* replaced = second[0];
+    Return empty.Length() == 0 && first.Length() == 1 && *original == 9 && value == 9 &&
+        second.Length() == 2 && *replaced == 4;
+}
+
+Static Function int Main()
+{
+    If (!CheckIntegers()) { Return 1; }
+    If (!CheckChars()) { Return 2; }
+    If (!CheckFloats()) { Return 3; }
+    If (!CheckBools()) { Return 4; }
+    If (!CheckStrings()) { Return 5; }
+    If (!CheckAny()) { Return 6; }
+    If (!CheckNestedArrays()) { Return 7; }
+    If (!CheckClasses()) { Return 8; }
+    If (!CheckStructs()) { Return 9; }
+    If (!CheckAnyReferences()) { Return 10; }
+    If (!CheckPointers()) { Return 11; }
+    Console.PrintLine("ok");
+    Return 0;
+}

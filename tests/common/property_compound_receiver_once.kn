@@ -1,0 +1,226 @@
+Unit Tests.PropertyCompoundReceiverOnce;
+Get IO.Console;
+
+int calls = 0;
+int trace = 0;
+int chainCalls = 0;
+
+Class Box
+{
+    Public int Stored;
+    Public Property int Value
+    {
+        Get { trace = trace * 10 + 2; Return Stored; }
+        Set { trace = trace * 10 + 4; Stored = value; }
+    }
+    Public Function void AddImplicit(int amount) { Value += amount; }
+    Public Function void AddExplicit(int amount) { This.Value += amount; }
+}
+
+Class TextBox
+{
+    Public string Stored;
+    Public Property string Value
+    {
+        Get { Return Stored; }
+        Set { Stored = value; }
+    }
+}
+
+Class Holder
+{
+    Public Box Item;
+    Public Property Box Current
+    {
+        Get { chainCalls += 1; Return Item; }
+    }
+}
+
+Class BaseBox
+{
+    Public int Stored;
+    Public Virtual Property int Value
+    {
+        Get { Return Stored; }
+        Set { Stored = value; }
+    }
+}
+
+Class DerivedBox By BaseBox
+{
+    Public Override Property int Value
+    {
+        Get { trace = trace * 10 + 2; Return Stored; }
+        Set { trace = trace * 10 + 4; Stored = value; }
+    }
+}
+
+Static Function Box Receive(Box first, Box second)
+{
+    calls += 1;
+    trace = trace * 10 + 1;
+    Return calls == 1 ? first : second;
+}
+Static Function BaseBox ReceiveBase(BaseBox first, BaseBox second)
+{
+    calls += 1;
+    trace = trace * 10 + 1;
+    Return calls == 1 ? first : second;
+}
+Static Function TextBox ReceiveText(TextBox value) { calls += 1; Return value; }
+Static Function int Index() { calls += 1; Return 0; }
+Static Function int Right(int amount) { trace = trace * 10 + 3; Return amount; }
+Static Function void Reset(Box first, Box second)
+{
+    first.Stored = 20;
+    second.Stored = 99;
+    calls = 0;
+    trace = 0;
+}
+Static Function bool Check(Box first, Box second, int result, int expected)
+{
+    Return calls == 1 && trace == 1234 && first.Stored == expected &&
+        second.Stored == 99 && result == expected;
+}
+Static Function void AddGeneric<T>(Box first, Box second, T amount)
+{
+    Receive(first, second).Value += amount;
+}
+Static Function bool TestAdd()
+{
+    Box first = New Box();
+    Box second = New Box();
+    Reset(first, second);
+    int result = Receive(first, second).Value += Right(4);
+    Return Check(first, second, result, 24);
+}
+Static Function bool TestSubtract()
+{
+    Box first = New Box();
+    Box second = New Box();
+    Reset(first, second);
+    int result = Receive(first, second).Value -= Right(4);
+    Return Check(first, second, result, 16);
+}
+Static Function bool TestMultiply()
+{
+    Box first = New Box();
+    Box second = New Box();
+    Reset(first, second);
+    int result = Receive(first, second).Value *= Right(4);
+    Return Check(first, second, result, 80);
+}
+Static Function bool TestDivide()
+{
+    Box first = New Box();
+    Box second = New Box();
+    Reset(first, second);
+    int result = Receive(first, second).Value /= Right(4);
+    Return Check(first, second, result, 5);
+}
+Static Function bool TestRemainder()
+{
+    Box first = New Box();
+    Box second = New Box();
+    Reset(first, second);
+    int result = Receive(first, second).Value %= Right(6);
+    Return Check(first, second, result, 2);
+}
+Static Function bool TestOrdinary()
+{
+    bool ok = true;
+    Box first = New Box();
+    Box second = New Box();
+    // Ordinary read/write and implicit/explicit This.
+    Reset(first, second);
+    int result = Receive(first, second).Value = Right(8);
+    ok = calls == 1 && trace == 134 && result == 8 && first.Stored == 8 && ok;
+    trace = 0;
+    result = first.Value;
+    ok = result == 8 && trace == 2 && ok;
+    trace = 0;
+    first.AddImplicit(2);
+    ok = first.Stored == 10 && trace == 24 && ok;
+    trace = 0;
+    first.AddExplicit(3);
+    ok = first.Stored == 13 && trace == 24 && ok;
+
+    Return ok;
+}
+Static Function bool TestReceivers()
+{
+    bool ok = true;
+    Box first = New Box();
+    Box second = New Box();
+    // The receiver can itself contain a getter or appear inside a generic function.
+    Reset(first, second);
+    Holder holder = New Holder();
+    holder.Item = first;
+    holder.Current.Value += 4;
+    ok = chainCalls == 1 && first.Stored == 24 && trace == 24 && ok;
+    Reset(first, second);
+    AddGeneric<int>(first, second, 4);
+    ok = calls == 1 && first.Stored == 24 && second.Stored == 99 && trace == 124 && ok;
+
+    Reset(first, second);
+    Box[] boxes = {first, second};
+    boxes[Index()].Value += 4;
+    ok = calls == 1 && first.Stored == 24 && second.Stored == 99 && trace == 24 && ok;
+
+    Return ok;
+}
+Static Function bool TestReassignment()
+{
+    bool ok = true;
+    Box first = New Box();
+    Box second = New Box();
+    // RHS assignment cannot change the object already bound for the setter.
+    Reset(first, second);
+    Box selected = first;
+    int result = selected.Value += (selected = second).Stored;
+    ok = selected == second && first.Stored == 119 && second.Stored == 99 &&
+        result == 119 && trace == 24 && ok;
+
+    Return ok;
+}
+Static Function bool TestString()
+{
+    bool ok = true;
+    TextBox text = New TextBox();
+    text.Stored = "a";
+    calls = 0;
+    string combined = ReceiveText(text).Value += "b";
+    ok = calls == 1 && text.Stored == "ab" && combined == "ab" && ok;
+
+    Return ok;
+}
+Static Function bool TestVirtual()
+{
+    bool ok = true;
+    // Both accessors retain virtual dispatch with the captured base receiver.
+    BaseBox baseFirst = New DerivedBox();
+    BaseBox baseSecond = New DerivedBox();
+    baseFirst.Stored = 3;
+    baseSecond.Stored = 20;
+    calls = 0;
+    trace = 0;
+    int result = ReceiveBase(baseFirst, baseSecond).Value += Right(4);
+    ok = calls == 1 && trace == 1234 && result == 7 &&
+        baseFirst.Stored == 7 && baseSecond.Stored == 20 && ok;
+    Return ok;
+}
+Static Function int Main()
+{
+    bool ok = TestAdd();
+    ok = TestSubtract() && ok;
+    ok = TestMultiply() && ok;
+    ok = TestDivide() && ok;
+    ok = TestRemainder() && ok;
+    ok = TestOrdinary() && ok;
+    ok = TestReceivers() && ok;
+    ok = TestReassignment() && ok;
+    ok = TestString() && ok;
+    ok = TestVirtual() && ok;
+    IO.Console.PrintLine(ok ? "ok" : "bad");
+    Return ok ? 0 : 1;
+}

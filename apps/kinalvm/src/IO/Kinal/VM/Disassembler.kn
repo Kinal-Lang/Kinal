@@ -30,7 +30,7 @@ Static Function string[] OpcodeNames()
             "LoopArraySumIntLeInc", "LoopSumIntLtInc", "LoopSumIntLeInc", "AddIntImm", "SubIntImm",
             "MulIntImm", "DivIntImm", "LtIntImm", "LeIntImm", "GtIntImm", "GeIntImm",
             "BitAndIntImm", "BitOrIntImm", "BitXorIntImm", "ShlIntImm", "ShrIntImm", "UDivInt",
-            "URemInt", "ULtInt", "ULeInt", "UGtInt", "UGeInt", "LShrInt"
+            "URemInt", "ULtInt", "ULeInt", "UGtInt", "UGeInt", "LShrInt", "FloatToF32", "IntToF32"
         };
     }
 
@@ -127,8 +127,12 @@ Static Function string Instruction(IO.Kinal.VM.Bytecode.Program program,
                 (op >= [int](IO.Kinal.VM.Bytecode.OpCode.MakePtrCell) &&
                  op <= [int](IO.Kinal.VM.Bytecode.OpCode.StorePtr)) ||
                 (op >= [int](IO.Kinal.VM.Bytecode.OpCode.IntToFloat) &&
-                 op <= [int](IO.Kinal.VM.Bytecode.OpCode.FloatToBool)))
+                 op <= [int](IO.Kinal.VM.Bytecode.OpCode.FloatToBool)) ||
+                op == [int](IO.Kinal.VM.Bytecode.OpCode.FloatToF32))
             operands = Register([int](code[pc + 1])) + ", " + Register([int](code[pc + 2]));
+        ElseIf (op == [int](IO.Kinal.VM.Bytecode.OpCode.IntToF32))
+            operands = Register([int](code[pc + 1])) + ", " + Register([int](code[pc + 2])) +
+                ", " + ([int](code[pc + 3]) == 0 ? "signed" : "unsigned");
         ElseIf (op == [int](IO.Kinal.VM.Bytecode.OpCode.JumpOp))
             operands = "@" + [string](IO.Kinal.VM.Bytecode.Program.ReadU16(code, pc + 1));
         ElseIf (op == [int](IO.Kinal.VM.Bytecode.OpCode.JumpIfFalse) ||

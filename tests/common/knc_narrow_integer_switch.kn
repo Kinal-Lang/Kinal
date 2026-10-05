@@ -1,0 +1,51 @@
+Unit Tests.KncNarrowIntegerSwitch;
+
+Function bool CheckShifts()
+{
+    u8 value = 255;
+    u8 shift = 1;
+    Switch (value << shift) { Case (254) { } Case (default) { Return false; } }
+    Switch (value << 1) { Case (510) { } Case (default) { Return false; } }
+    int result = Switch (value << shift) { Case (254) { 7; } Case (default) { 9; } };
+    If (result != 7) Return false;
+    u16 wide = 65535;
+    u16 shift16 = 1;
+    Switch (wide << shift16) { Case (65534) { } Case (default) { Return false; } }
+    u32 wider = 4294967295;
+    u32 shift32 = 1;
+    Switch (wider << shift32) { Case ([u32](4294967294)) { } Case (default) { Return false; } }
+    Return true;
+}
+
+Function bool CheckUpdates()
+{
+    u8 value = 255;
+    Switch (++value) { Case (0) { } Case (default) { Return false; } }
+    Switch (value) { Case (0) { } Case (default) { Return false; } }
+    Switch (value--) { Case (0) { } Case (default) { Return false; } }
+    Switch (value) { Case (255) { } Case (default) { Return false; } }
+    Switch (--value) { Case (254) { } Case (default) { Return false; } }
+    Switch (value++) { Case (254) { } Case (default) { Return false; } }
+    Return value == 255;
+}
+
+Function bool CheckUnaryAndMatches()
+{
+    u8 one = 1;
+    Switch (~one) { Case (254) { } Case (default) { Return false; } }
+    Switch (-one) { Case (255) { } Case (default) { Return false; } }
+    u8 max = 255;
+    Switch (max) { Case (~[u8](0)) { } Case (default) { Return false; } }
+    i8 negative = -1;
+    Switch (negative) { Case ([u8](255)) { } Case (default) { Return false; } }
+    int result = Switch (negative) { Case ([u8](255)) { 1; } Case (default) { 0; } };
+    Return result == 1;
+}
+
+Static Function int Main()
+{
+    If (!CheckShifts()) Return 1;
+    If (!CheckUpdates()) Return 2;
+    If (!CheckUnaryAndMatches()) Return 3;
+    Return 0;
+}

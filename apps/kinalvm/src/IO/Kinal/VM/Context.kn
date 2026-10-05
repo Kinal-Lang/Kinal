@@ -1130,59 +1130,44 @@ Public Class ExecutionContext
             Throw "Array handle out of range";
         }
         HeapArray arr = This.Arrays[handle];
+        HeapArray result = New HeapArray();
+        result.ElementKind = arr.ElementKind;
 
         Switch(arr.ElementKind)
         {
             Case([int](Bytecode.ValueKind.Int))
             {
-                This.EnsureRawIntCapacity(arr, arr.RawLength + 1);
-                ([int*](arr.RawBuffer))[arr.RawLength] = value.IntValue;
-                arr.RawLength = arr.RawLength + 1;
+                This.EnsureRawIntCapacity(result, arr.RawLength + 1);
+                If (arr.RawLength > 0)
+                {
+                    Memory.Copy(result.RawBuffer, arr.RawBuffer, [usize](arr.RawLength * 8));
+                }
+                ([int*](result.RawBuffer))[arr.RawLength] = value.IntValue;
+                result.RawLength = arr.RawLength + 1;
             }
             Case([int](Bytecode.ValueKind.Char))
             {
-                This.EnsureRawIntCapacity(arr, arr.RawLength + 1);
-                ([int*](arr.RawBuffer))[arr.RawLength] = value.IntValue;
-                arr.RawLength = arr.RawLength + 1;
+                This.EnsureRawIntCapacity(result, arr.RawLength + 1);
+                If (arr.RawLength > 0)
+                {
+                    Memory.Copy(result.RawBuffer, arr.RawBuffer, [usize](arr.RawLength * 8));
+                }
+                ([int*](result.RawBuffer))[arr.RawLength] = value.IntValue;
+                result.RawLength = arr.RawLength + 1;
             }
-            Case([int](Bytecode.ValueKind.Float))  { arr.FloatItems = arr.FloatItems.Add(value.FloatValue); }
-            Case([int](Bytecode.ValueKind.Bool))   { arr.BoolItems = arr.BoolItems.Add(value.BoolValue); }
-            Case([int](Bytecode.ValueKind.String)) { arr.StringItems = arr.StringItems.Add(value.StringValue); }
-            Case(default)                          { arr.Items = arr.Items.Add(value); }
+            Case([int](Bytecode.ValueKind.Float))  { result.FloatItems = arr.FloatItems.Add(value.FloatValue); }
+            Case([int](Bytecode.ValueKind.Bool))   { result.BoolItems = arr.BoolItems.Add(value.BoolValue); }
+            Case([int](Bytecode.ValueKind.String)) { result.StringItems = arr.StringItems.Add(value.StringValue); }
+            Case(default)                          { result.Items = arr.Items.Add(value); }
         }
 
-        Return handle;
+        This.Arrays = This.Arrays.Add(result);
+        Return This.Arrays.Length() - 1;
     }
 
     Public Unsafe Function int ArrayAddFromFrame(int handle, FunctionFrame frame, int src)
     {
-        If (handle < 0 || handle >= This.Arrays.Length())
-        {
-            Throw "Array handle out of range";
-        }
-        HeapArray arr = This.Arrays[handle];
-
-        Switch(arr.ElementKind)
-        {
-            Case([int](Bytecode.ValueKind.Int))
-            {
-                This.EnsureRawIntCapacity(arr, arr.RawLength + 1);
-                ([int*](arr.RawBuffer))[arr.RawLength] = frame.GetInt(src);
-                arr.RawLength = arr.RawLength + 1;
-            }
-            Case([int](Bytecode.ValueKind.Char))
-            {
-                This.EnsureRawIntCapacity(arr, arr.RawLength + 1);
-                ([int*](arr.RawBuffer))[arr.RawLength] = [int](frame.GetChar(src));
-                arr.RawLength = arr.RawLength + 1;
-            }
-            Case([int](Bytecode.ValueKind.Float))  { arr.FloatItems = arr.FloatItems.Add(frame.GetFloat(src)); }
-            Case([int](Bytecode.ValueKind.Bool))   { arr.BoolItems = arr.BoolItems.Add(frame.GetBool(src)); }
-            Case([int](Bytecode.ValueKind.String)) { arr.StringItems = arr.StringItems.Add(frame.GetString(src)); }
-            Case(default)                          { arr.Items = arr.Items.Add(frame.ExportValue(src)); }
-        }
-
-        Return handle;
+        Return This.ArrayAddValue(handle, frame.ExportValue(src));
     }
 
     Public Function VMValue ObjectGetValue(int handle, int fieldIndex)

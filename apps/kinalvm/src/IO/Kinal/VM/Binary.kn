@@ -197,6 +197,13 @@ Public Class BlobReader
         Return value;
     }
 
+    Public Function int ReadI64()
+    {
+        u64 low = [u64](This.ReadU32());
+        u64 high = [u64](This.ReadU32());
+        Return [int](low | (high << 32));
+    }
+
     Public Unsafe Function float ReadF64()
     {
         float value = 0.0;

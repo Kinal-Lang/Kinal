@@ -1,0 +1,41 @@
+Unit Tests.KncWideIntegerLiterals;
+
+Enum WideCode By i64 { High = 4294967296 }
+
+Function bool CheckConstants()
+{
+    int boundary = 2147483648;
+    int high = 4294967296;
+    int top = 9223372036854775807;
+    int bottom = -9223372036854775808;
+    u64 allBits = 18446744073709551615;
+    Return [string](boundary) == "2147483648" &&
+           [string](high) == "4294967296" &&
+           [string](top) == "9223372036854775807" &&
+           [string](bottom) == "-9223372036854775808" &&
+           [i64](allBits) == -1 &&
+           [string]([int](WideCode.High)) == "4294967296";
+}
+
+Function bool CheckImmediateOperations()
+{
+    int value = 1;
+    int high = 4294967296;
+    int top = 9223372036854775807;
+    Return value + 4294967296 == 4294967297 &&
+           high - 4294967295 == 1 &&
+           value * 4294967296 == high &&
+           high / 4294967296 == 1 &&
+           value < 4294967296 && value <= 4294967296 &&
+           top > 4294967296 && top >= 4294967296 &&
+           (top & 4294967296) == high &&
+           (value | 4294967296) == 4294967297 &&
+           (high ^ 4294967296) == 0;
+}
+
+Static Function int Main()
+{
+    If (!CheckConstants()) Return 1;
+    If (!CheckImmediateOperations()) Return 2;
+    Return 0;
+}

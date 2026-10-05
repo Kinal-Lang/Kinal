@@ -863,6 +863,20 @@ def run_driver_integration_tests(compiler: Path, out_dir: Path) -> int:
         return 1
     print("[OK] knc_vm_bitwise")
 
+    if run_knc_case("knc_vm_struct_value_semantics", "struct_value_semantics.kn", "ok\n") != 0:
+        return 1
+    if run_knc_case("knc_vm_wide_integer_literals", "knc_wide_integer_literals.kn", "") != 0:
+        return 1
+    if run_knc_case("knc_vm_narrow_integer_switch", "knc_narrow_integer_switch.kn", "") != 0:
+        return 1
+    if run_knc_case("knc_vm_f32_rounding", "knc_f32_rounding.kn", "") != 0:
+        return 1
+    if run_knc_case("knc_vm_property_compound_receiver_once", "property_compound_receiver_once.kn", "ok\n") != 0:
+        return 1
+    if run_knc_case("knc_vm_array_add_value_semantics", "array_add_value_semantics.kn", "ok\n") != 0:
+        return 1
+    if run_knc_case("knc_vm_integer_widening", "knc_integer_widening.kn", "ok\n") != 0:
+        return 1
     if run_knc_case("knc_vm_unsigned_ops", "knc_unsigned_ops.kn", "ok\n") != 0:
         return 1
     knc_unsigned_src = ROOT / "tests" / "common" / "knc_unsigned_ops.kn"

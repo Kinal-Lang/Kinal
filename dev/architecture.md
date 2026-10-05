@@ -95,6 +95,30 @@ signed-only. An unsigned comparison skips those shortcuts, emits the matching
 unsigned opcode, and uses the general expression-plus-branch path. This keeps
 optimization from changing unsigned ordering semantics.
 
+## KNC Numeric Storage and Rounding
+
+KNC format version 3 retains the `KNC2` magic and all existing table layouts,
+except that integer constant entries are now eight-byte little-endian signed
+integers instead of four-byte entries. Table counts, indices, metadata, and
+existing opcode IDs are unchanged. Both VM loaders accept version 2 (signed
+32-bit entries) and version 3 (signed 64-bit entries), and reject other versions.
+The compiler emits only version 3. Upgrade compiler and VM together; old VMs
+reject the new version rather than reading a misaligned constant table.
+
+Float registers remain binary64 containers. `FloatToF32` (137) is three bytes:
+`[opcode, dst, src]`; it rounds a Float value to IEEE binary32 and widens the
+rounded value back to the register container. `IntToF32` (138) is four bytes:
+`[opcode, dst, src, unsigned]`; the final byte is 0 for signed and 1 for unsigned.
+This direct integer conversion avoids double rounding through binary64.
+Typed f32 transfers and numeric operands are rounded before use, and f32
+arithmetic is rounded after each operation. Function-object calls normalize
+f32 parameters at entry because argument type information is erased there.
+
+`tests/test_knc_numeric_format.py` checks the reader independently with hand-built
+v2/v3 files and packed payloads, IEEE boundary cases, and exact-rational f32
+arithmetic oracles. Set `KINAL_V2_VM_PATH` to an old VM executable to include
+its explicit version-3 rejection check.
+
 ## Builtin Registry Boundary
 
 `KnBuiltinKind` is the stable compiler-wide builtin identity space and ends in

@@ -1,0 +1,89 @@
+Unit Tests.PropertyStaticAccessorsNativeKnc;
+Get IO.Console;
+
+int trace = 0;
+int rhsCalls = 0;
+Static Class Registry
+{
+    Public int Stored;
+    Public Property int Value
+    {
+        Get { trace = trace * 10 + 1; Return Stored; }
+        Set { trace = trace * 10 + 3; Stored = value; }
+    }
+    Public Function int Right(int amount)
+    {
+        rhsCalls += 1;
+        trace = trace * 10 + 2;
+        Stored = 99;
+        Return amount;
+    }
+    Public Function int Write(int amount) { Return Value = Right(amount); }
+    Public Function int Add(int amount) { Return Value += Right(amount); }
+    Public Function int Subtract(int amount) { Return Value -= Right(amount); }
+    Public Function int Multiply(int amount) { Return Value *= Right(amount); }
+    Public Function int Divide(int amount) { Return Value /= Right(amount); }
+    Public Function int Remainder(int amount) { Return Value %= Right(amount); }
+    Public Function int Read() { Return Value; }
+    Public Function int ParameterShadow(int Value) { Value += 2; Return Value; }
+    Public Function int LocalShadow() { int Value = 7; Value *= 3; Return Value; }
+}
+Class Counter
+{
+    Public int Stored;
+    Public Static int Shared;
+    Public Property int Value
+    {
+        Get { Return Stored; }
+        Set { Stored = value; }
+    }
+    Public Static Property int Total
+    {
+        Get { Return Shared; }
+        Set { Shared = value; }
+    }
+    Public Function int Add(int amount) { Return Value += amount; }
+    Public Static Function int AddTotal(int amount) { Return Total += amount; }
+    Public Static Function int ReadTotal() { Return Total; }
+}
+Static Function void Reset()
+{
+    Registry.Stored = 20;
+    trace = 0;
+    rhsCalls = 0;
+}
+Static Function bool Check(int result, int expected, int expectedTrace)
+{
+    Return result == expected && Registry.Stored == expected &&
+        trace == expectedTrace && rhsCalls == 1;
+}
+Static Function int Main()
+{
+    Reset();
+    If (!Check(Registry.Write(7), 7, 23)) Return 1;
+    trace = 0;
+    If (Registry.Read() != 7 || trace != 1) Return 2;
+    Reset();
+    If (!Check(Registry.Add(4), 24, 123)) Return 3;
+    Reset();
+    If (!Check(Registry.Subtract(4), 16, 123)) Return 4;
+    Reset();
+    If (!Check(Registry.Multiply(4), 80, 123)) Return 5;
+    Reset();
+    If (!Check(Registry.Divide(4), 5, 123)) Return 6;
+    Reset();
+    If (!Check(Registry.Remainder(6), 2, 123)) Return 7;
+    Reset();
+    If (Registry.ParameterShadow(4) != 6 || Registry.LocalShadow() != 21 ||
+        Registry.Stored != 20 || trace != 0 || rhsCalls != 0) Return 8;
+    Registry.Value = 5;
+    trace = 0;
+    If (Registry.Read() != 5 || trace != 1) Return 9;
+    Counter instance = New Counter();
+    instance.Value = 5;
+    Counter.Total = 30;
+    If (instance.Add(2) != 7 || Counter.AddTotal(3) != 33 ||
+        instance.Value != 7 || Counter.ReadTotal() != 33) Return 10;
+    IO.Console.PrintLine("ok");
+    Return 0;
+}

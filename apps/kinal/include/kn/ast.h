@@ -444,7 +444,7 @@ struct Expr
         struct { const char *ptr; int len; } str_val;
         struct { const char *name; } var;
         struct { const char *name; ExprList args; NameList arg_names; int builtin_id; TypeList type_args; } call;
-        struct { Expr *recv; const char *name; ExprList args; NameList arg_names; int builtin_id; TypeList type_args; int is_static; const char *static_type; int method_index; const char *method_owner; int is_qual_call; const char *qual_name; } member_call;
+        struct { Expr *recv; const char *name; ExprList args; NameList arg_names; int builtin_id; TypeList type_args; int is_static; const char *static_type; int method_index; const char *method_owner; int is_qual_call; const char *qual_name; int is_property_compound; } member_call;
         struct { Expr *callee; ExprList args; NameList arg_names; } invoke;
         struct { int op; Expr *left; Expr *right; } binary;
         struct { int op; Expr *expr; int is_postfix; } unary;
