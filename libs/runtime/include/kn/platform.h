@@ -205,6 +205,7 @@ KN_DLLIMPORT int KN_STDCALL GetWindowTextW(KN_HANDLE hWnd, uint16_t *lpString, i
 /* Raw filesystem identity, not lexical/case-folded path equality. This also
  * recognizes hard links, symlinks and Windows short/case aliases. Missing
  * files are distinct; an identity-query failure is reported separately. */
+#if defined(_WIN32) || defined(_WIN64)
 static inline int kn_paths_same_file(const char *left, const char *right)
 {
     KN_BY_HANDLE_FILE_INFORMATION a, b;
@@ -224,3 +225,7 @@ static inline int kn_paths_same_file(const char *left, const char *right)
     return a.dwVolumeSerialNumber == b.dwVolumeSerialNumber &&
            a.nFileIndexHigh == b.nFileIndexHigh && a.nFileIndexLow == b.nFileIndexLow;
 }
+#else
+/* POSIX identity lookup must not require read permission on the payload. */
+int kn_paths_same_file(const char *left, const char *right);
+#endif

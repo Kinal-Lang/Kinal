@@ -131,6 +131,16 @@ static int kn_host_norm_path(const char *src, char *dst, size_t cap)
     return dst[0] != 0;
 }
 
+int kn_paths_same_file(const char *left, const char *right)
+{
+    char a_path[PATH_MAX], b_path[PATH_MAX];
+    struct stat a, b;
+    if (!kn_host_norm_path(left, a_path, sizeof(a_path)) ||
+        !kn_host_norm_path(right, b_path, sizeof(b_path))) return 0;
+    if (stat(a_path, &a) != 0 || stat(b_path, &b) != 0) return 0;
+    return a.st_dev == b.st_dev && a.st_ino == b.st_ino;
+}
+
 static int kn_host_make_abs(const char *path, char *out, size_t cap)
 {
     char cwd[PATH_MAX];
