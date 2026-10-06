@@ -1421,11 +1421,16 @@ Class SemanticCompilation
         ImportDecl import = syntax.FirstImport;
         While (import != null)
         {
-            current = This.FirstFunction;
-            While (current != null)
+            // A nonmatching import cannot bind this name. Avoid scanning all
+            // functions and allocating their qualified names on that path.
+            If (import.Name == name)
             {
-                If (current.QualifiedName() == import.Target && import.Name == name) Return current;
-                current = current.Next;
+                current = This.FirstFunction;
+                While (current != null)
+                {
+                    If (current.QualifiedName() == import.Target) Return current;
+                    current = current.Next;
+                }
             }
             import = import.Next;
         }

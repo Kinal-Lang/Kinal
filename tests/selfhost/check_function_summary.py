@@ -34,9 +34,15 @@ def check_function_summary(compiler: Path, stage0: Path, root: Path, out: Path,
                                     text=True, timeout=120)
             assert result.returncode == 0 and result.stdout == expected and not result.stderr, \
                 (label, repeat, result.returncode, result.stdout[:1000], result.stderr)
+        lookup = subprocess.run([str(executable), "lookup"], cwd=root, capture_output=True,
+                                text=True, timeout=120)
+        assert lookup.returncode == 0 and lookup.stdout == "symbol-lookup-ok\n" and not lookup.stderr, \
+            (label, lookup.returncode, lookup.stdout, lookup.stderr)
         print(f"[OK] {label} function summary: 5000 exact ordered records", flush=True)
+        print(f"[OK] {label} symbol lookup: owner/local/import priority and unrelated imports", flush=True)
     return {"name": "function_summary", "ok": True, "compilers": len(tools),
-            "records": 5000, "repeats": 2, "stage0_reference": stage0_reference}
+            "records": 5000, "repeats": 2, "unrelated_imports": 32, "missing_lookups": 64,
+            "stage0_reference": stage0_reference}
 
 
 if __name__ == "__main__":

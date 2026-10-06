@@ -6,7 +6,45 @@ Get IO.Kinal.Compiler.Sema.Symbols;
 Get IO.Kinal.Compiler.Syntax.SyntaxTree;
 Get IO.Kinal.Compiler.Types.TypeSymbol;
 
-Static Function int Main()
+Static Function int CheckLookup(SemanticCompilation semantics, TypeSymbol owner)
+{
+    SyntaxTree syntax = New SyntaxTree(null, "Tests.Consumer");
+    int index = 0;
+    While (index < 32)
+    {
+        syntax.AddImport(New ImportDecl("Unrelated" + [string](index),
+            "Tests.Summary.Function2", 1, 1));
+        index = index + 1;
+    }
+    // Matching imports retain source order; owner/local symbols take priority.
+    syntax.AddImport(New ImportDecl("Imported", "Tests.Summary.Owner.Function4999", 1, 1));
+    syntax.AddImport(New ImportDecl("Imported", "Tests.Summary.Function0$int", 1, 1));
+    FunctionSymbol imported = semantics.FindVisibleCallable(syntax, null, "Imported");
+    If (imported == null || imported.QualifiedName() != "Tests.Summary.Owner.Function4999") Return 10;
+    If (semantics.FindVisibleCallable(syntax, owner, "Function1").OwnerType != owner) Return 11;
+    syntax.UnitName = "Tests.Summary";
+    If (semantics.FindVisibleCallable(syntax, null, "Function2").Name != "Function2") Return 12;
+    syntax.UnitName = "Tests.Consumer";
+    FunctionSymbol local = New FunctionSymbol(syntax.UnitName, null,
+        New FunctionDecl("Imported", "int", 1, 1));
+    local.Next = semantics.FirstFunction;
+    semantics.FirstFunction = local;
+    If (semantics.FindVisibleCallable(syntax, null, "Imported") != local) Return 13;
+    semantics.FirstFunction = local.Next;
+
+    syntax.AddImport(New ImportDecl("Generic", "Tests.Summary.Function0$int", 1, 1));
+    If (semantics.FindVisibleCallable(syntax, null, "Generic") != semantics.FirstFunction) Return 14;
+    index = 0;
+    While (index < 64)
+    {
+        If (semantics.FindVisibleCallable(syntax, null, "Missing") != null) Return 15;
+        index = index + 1;
+    }
+    IO.Console.PrintLine("symbol-lookup-ok");
+    Return 0;
+}
+
+Static Function int Main(string[] arguments)
 {
     SemanticCompilation semantics = New SemanticCompilation(null);
     If (semantics.FunctionSummary() != "format=kinal-selfhost-functions-v1") Return 1;
@@ -35,6 +73,7 @@ Static Function int Main()
         previous = symbol;
         index = index + 1;
     }
+    If (arguments.Length() == 1 && arguments[0] == "lookup") Return CheckLookup(semantics, owner);
     IO.Console.PrintLine(semantics.FunctionSummary());
     Return 0;
 }
