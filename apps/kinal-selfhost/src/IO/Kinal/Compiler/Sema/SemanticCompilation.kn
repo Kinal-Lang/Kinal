@@ -2991,6 +2991,22 @@ Class SemanticCompilation
         Return null;
     }
 
+    // Preserve the parameter conversion in typed HIR. In particular, boxing
+    // an aggregate allocates storage that must remain rooted while subsequent
+    // arguments are evaluated; rooting only the unconverted source is not enough.
+    Public Safe Function HirExpression ConvertCallArgument(TypeSymbol type,
+                                                            HirExpression argument)
+    {
+        If (argument == null || argument.Type == null || type == null ||
+            argument.Kind == [int](HirExpressionKind.Invalid) ||
+            This.SameType(type, argument.Type)) Return argument;
+        HirExpression converted = New HirExpression([int](HirExpressionKind.Cast),
+            argument.Syntax, type);
+        converted.Left = argument;
+        converted.AsyncResultType = argument.AsyncResultType;
+        Return converted;
+    }
+
     Public Safe Function void BindVariadicFunctionArguments(SyntaxTree syntax,
                                                               FunctionSymbol caller,
                                                               BindingScope scope,
@@ -3022,7 +3038,7 @@ Class SemanticCompilation
                     This.Report(syntax, "Type Mismatch",
                         "Argument type does not match parameter",
                         selected.Line, selected.Column);
-                bound.AddArgument(argument);
+                bound.AddArgument(This.ConvertCallArgument(parameter.Type, argument));
             }
             positionalOrdinal = positionalOrdinal + 1;
             parameter = parameter.Next;
@@ -3040,7 +3056,7 @@ Class SemanticCompilation
                 This.Report(syntax, "Type Mismatch",
                     "Variadic argument type does not match the array element type",
                     selected.Line, selected.Column);
-            packed.AddArgument(argument);
+            packed.AddArgument(This.ConvertCallArgument(parameter.Type.ElementType, argument));
             positionalOrdinal = positionalOrdinal + 1;
             selected = This.VariadicArgument(call, positionalOrdinal);
         }
@@ -3118,7 +3134,7 @@ Class SemanticCompilation
                     If (defaultArgument != null && !This.IsHirAssignable(parameter.Type, defaultArgument))
                         This.Report(syntax, "Type Mismatch", "Default argument type does not match parameter",
                             call.Line, call.Column);
-                    bound.AddArgument(defaultArgument);
+                    bound.AddArgument(This.ConvertCallArgument(parameter.Type, defaultArgument));
                 }
             }
             Else
@@ -3127,7 +3143,7 @@ Class SemanticCompilation
                 If (argument != null && !This.IsHirAssignable(parameter.Type, argument))
                     This.Report(syntax, "Type Mismatch", "Argument type does not match parameter",
                         selected.Line, selected.Column);
-                bound.AddArgument(argument);
+                bound.AddArgument(This.ConvertCallArgument(parameter.Type, argument));
             }
             parameter = parameter.Next;
         }
@@ -3679,6 +3695,20 @@ Class SemanticCompilation
             {
                 bound.AddArgument(This.BindExpression(syntax, function, scope, argument));
                 argument = argument.Next;
+            }
+        }
+        If (callKind == [int](HirCallKind.DynamicFunction))
+        {
+            // Dynamic wrappers receive an any vector even when the source
+            // signature is known. Retain that final boxing in HIR as well.
+            HirExpression argument = bound.FirstArgument;
+            bound.FirstArgument = null;
+            While (argument != null)
+            {
+                HirExpression next = argument.Next;
+                argument.Next = null;
+                bound.AddArgument(This.ConvertCallArgument(This.Primitive("any"), argument));
+                argument = next;
             }
         }
         If (callKind == [int](HirCallKind.RuntimeBuiltin))

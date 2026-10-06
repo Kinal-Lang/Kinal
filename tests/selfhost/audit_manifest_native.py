@@ -11,7 +11,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 
-EXPECTED_HOST_CASES = {"windows": 191, "linux": 189, "macos": 185}
+EXPECTED_HOST_CASES = {"windows": 192, "linux": 190, "macos": 186}
 UNIT_PATTERN = re.compile(r"^\s*Unit\s+([A-Za-z_][A-Za-z0-9_.]*)\s*;", re.MULTILINE)
 GET_PATTERN = re.compile(r"^\s*Get\s+([^;\r\n]+)\s*;", re.MULTILINE)
 MAIN_PATTERN = re.compile(r"\bFunction\b[^;{}]*\bMain\s*\(", re.MULTILINE)

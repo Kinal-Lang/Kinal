@@ -71,6 +71,7 @@ Trusted Static Function int Main()
 {
     If (!CheckNativeMemoryLeaves()) Return 10;
     If (!CheckLoopRoots()) Return 9;
+    If (!CheckConvertedArguments()) Return 11;
     usize pointerBytes = [usize](IO.Target.PointerBits / 8);
     int count = 257;
     char** slots = [char**](IO.Kinal.Runtime.Native.HeapAllocate(

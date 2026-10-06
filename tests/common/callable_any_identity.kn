@@ -1,0 +1,20 @@
+Unit Tests.CallableAnyIdentity;
+
+Get IO.Console;
+
+Safe Function any Identity(any value) { Return value; }
+Delegate Function any Forward(any value) By Kinal;
+
+Trusted Static Function int Main()
+{
+    Object.Function callable = Identity;
+    IO.Console.PrintLine([int](callable(42)));
+    IO.Console.PrintLine([string](callable("hello")));
+    Forward = Identity;
+    int[] values = {19, 23};
+    int[] result = [int[]](Forward(values));
+    IO.Console.PrintLine(result[0]);
+    IO.Console.PrintLine(result[1]);
+    IO.Console.PrintLine([bool](Forward(true)));
+    Return 0;
+}

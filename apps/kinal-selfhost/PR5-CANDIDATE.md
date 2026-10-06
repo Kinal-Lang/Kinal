@@ -57,6 +57,13 @@ Do not interpret the stage0-only extended-profile tests as selfhost support.
 - Runtime native allocation/copy/fill/compare leaves use fixed `u64` counts to match
   their C contracts on x86 as well as 64-bit targets. Kinal GC/Core policy keeps its
   internal `usize` interface and converts explicitly at the raw boundary.
+- Implicit call-argument conversions remain in typed HIR, so newly allocated
+  aggregate boxes and character-to-string results are rooted before later arguments
+  run. This covers ordinary/named/default/variadic calls, delegates, constructors,
+  virtual methods and the physical `any` vector of dynamic Function calls.
+- Native callable adapters preserve `any -> any` unchanged in both C stage0 and
+  selfhost. The former zero fallback lost the incoming tag/payload and could crash
+  dynamic calls with array arguments.
 
 ## Local evidence (Windows x64, LLVM 21.1.8)
 
@@ -90,11 +97,24 @@ Do not interpret the stage0-only extended-profile tests as selfhost support.
 - Function dump: 5,000 exact ordered records, two runs of each C-/stage1-built test.
   The same model checks 32 unrelated imports and 64 missing-name lookups, plus
   owner/local/import priority and generic qualified targets.
-- Selfhost Python harness: 30 unit tests; fake POSIX paths/path separators are independent
+- Selfhost Python harness: 36 unit tests; fake POSIX paths/path separators are independent
   of the OS running the unit tests. Linux/macOS/Windows x86/ARM64 native lock
   object compilation does not establish execution on those hosts.
-- Current C stage0: all 286 enabled main-manifest cases, driver/package checks,
-  complete stage/HIR checks, and seven-target capture-storage checks pass.
+- Current C stage0: all 287 enabled main-manifest cases pass after the Any adapter
+  fix. Driver/package, complete stage/HIR and seven-target capture-storage checks
+  passed on the preceding C snapshot.
+- Converted-argument GC regression: C-/stage1-/stage3-built executables each pass
+  three runs; seven-target selfhost IR checks all eight aggregate boxes and the
+  allocated character string. The old compiler deterministically produces an ASan
+  use-after-free on this fixture; the repaired output passes the same ASan check.
+  Only the fixture temporarily clears/restores conservative stack retention; no
+  production collector workaround or allocation-threshold change was introduced.
+- Current argument-root/Any-identity snapshot: stage2 Native objects 192/192;
+  stage3 Native objects 191/192 (`package_contextual_default`, compiler
+  `0xC0000374`); stage3 executable/runtime 187/188 (`stdlib_file_text_roundtrip`,
+  compiler `0xC0000005` before linking). Current stage3 diagnostics remain exact
+  95/95; C-built stage1 registered KNC remains 55/55. These are failed overall
+  stage3 batches, not unsupported/skipped cases.
 - After the lexical-root repair, stage3 Native objects pass 191/191 and executable
   runtime checks pass 187/187. A separate stage2 object audit passes 190/191,
   with `multidim_arrays` failing inside the compiler with `0xC0000374`.
@@ -103,7 +123,15 @@ Do not interpret the stage0-only extended-profile tests as selfhost support.
 
 ## Not a release gate
 
-Full PR acceptance is not claimed. The fresh post-root-repair bootstrap passes
+Full PR acceptance is not claimed. The current argument-root/Any-identity snapshot
+builds stage2 and stage3 with identical executable SHA-256
+`218e7d3d18997fd7b0c978dd46cc8d8a215ad41db32ae7db7be8ad29fd3dc4ad`.
+Both pass the large parser input and the stage1/2/3 project-AST comparisons.
+However, stage2 exits with `0xC0000005` while checking the compiler project itself,
+so this bootstrap run fails before symbol/IR comparisons. Do not substitute the
+matching executables or the earlier green bootstrap for that failed gate.
+
+The preceding lexical-root snapshot's bootstrap passed
 large parser input, frontend/project summaries, check/symbol summaries and
 stage1/2/3 LLVM-IR comparisons. Stage2/stage3 executable SHA-256 is
 `4c6bba0dab691b20143efc7d4271d34854a44ad9c2ba32616589eef9d336d67e`;
@@ -121,6 +149,9 @@ root-cause fix. The archive cache race and repeated loop-root registration are i
 fixed and tested, not explanations for every historical heap failure. Repeatable
 batch stability remains a release/main-promotion gate. Bootstrap `100%` means
 stage convergence, not complete language/backend/platform behavior parity.
+The converted-argument use-after-free now has a deterministic regression and
+verified repair; the later compiler-project check failure confirms that it was
+not the only remaining defect.
 Diagnostic-only O1 heap-ASan with a reduced GC threshold also passes
 `multidim_arrays`, `binary_hir_native_semantics`, `any_object_casts`,
 `capture_control_flow`, `global_fixed_gc` and `stdlib_request_compile` object

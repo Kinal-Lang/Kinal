@@ -1056,6 +1056,11 @@ static LLVMValueRef box_any_value(Codegen *g, CGValue v)
 
 static LLVMValueRef any_to_type(Codegen *g, LLVMValueRef anyv, Type dst)
 {
+    // Callable adapters unpack their argument vector through this helper,
+    // including parameters already typed as any. Preserve both words instead
+    // of falling through to the default zero value.
+    if (dst.kind == TY_ANY)
+        return anyv;
     if (dst.kind == TY_STRING)
         return LLVMBuildCall2(g->builder, g->fn_any_to_string_ty, g->fn_any_to_string, &anyv, 1, "any2s");
     if (is_float_kind(dst.kind))

@@ -1,0 +1,82 @@
+Unit Tests.GcFrames;
+
+Get IO.Kinal.Runtime.GarbageCollector;
+
+Safe Function int[] MakeGcPair()
+{
+    Return {19, 23};
+}
+
+Trusted Function int CollectCallArgument()
+{
+    // Exercise the explicit-root contract without accidental native stack
+    // retention. Restore the original collector state before returning.
+    usize stackBase = IO.Kinal.Runtime.GarbageCollector.StackBase();
+    IO.Kinal.Runtime.GarbageCollector.SetStackBase([usize](0));
+    IO.Kinal.Runtime.GarbageCollector.Collect();
+    IO.Kinal.Runtime.GarbageCollector.SetStackBase(stackBase);
+    Return 0;
+}
+
+Safe Function int ReadGcPair(any value, int ignored)
+{
+    int[] pair = [int[]](value);
+    Return pair[0] + pair[1];
+}
+
+Safe Function bool ReadConvertedCharacter(string value, int ignored)
+{
+    Return value == "x";
+}
+
+Trusted Function int ReadDefaultGcPair(any value = MakeGcPair(),
+                                      int ignored = CollectCallArgument())
+{
+    Return ReadGcPair(value, ignored);
+}
+
+[Variadic]
+Safe Function int ReadVariadicGcPair(any value, int[] ignored)
+{
+    Return ReadGcPair(value, 0);
+}
+
+Delegate Function int ReadGcPairDelegate(any value, int ignored) By Kinal;
+
+Class GcPairReader
+{
+    Public int Result;
+
+    Public Safe Constructor(any value, int ignored)
+    {
+        This.Result = ReadGcPair(value, ignored);
+    }
+
+    Public Virtual Safe Function int Read(any value, int ignored)
+    {
+        Return ReadGcPair(value, ignored);
+    }
+}
+
+Trusted Function bool CheckDynamicConvertedArguments(Object.Function callable, int[] pair)
+{
+    Return [int](callable(pair, CollectCallArgument())) == 42;
+}
+
+Trusted Function bool CheckConvertedArguments()
+{
+    int[] pair = MakeGcPair();
+    If (ReadGcPair(pair, CollectCallArgument()) != 42) Return false;
+    If (ReadGcPair(ignored = CollectCallArgument(), value = pair) != 42) Return false;
+    If (ReadDefaultGcPair() != 42) Return false;
+    If (ReadVariadicGcPair(pair, CollectCallArgument()) != 42) Return false;
+    ReadGcPairDelegate = ReadGcPair;
+    If (ReadGcPairDelegate(pair, CollectCallArgument()) != 42) Return false;
+    GcPairReader reader = New GcPairReader(pair, CollectCallArgument());
+    If (reader.Result != 42) Return false;
+    If (reader.Read(pair, CollectCallArgument()) != 42) Return false;
+    Object.Function callable = ReadGcPair;
+    If (!CheckDynamicConvertedArguments(callable, pair)) Return false;
+    If (!ReadConvertedCharacter('x', CollectCallArgument())) Return false;
+    Return true;
+}

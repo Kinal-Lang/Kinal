@@ -1618,6 +1618,11 @@
     "output_ext": "obj"
   },
   {
+    "name": "callable_any_identity",
+    "file": "tests/common/callable_any_identity.kn",
+    "expected": "42\nhello\n19\n23\ntrue\n"
+  },
+  {
     "name": "stdlib_error_state",
     "file": "tests/common/stdlib_error_state.kn",
     "expected": "false\ntrue\ntrue\nfalse\nfalse\nfalse\n"

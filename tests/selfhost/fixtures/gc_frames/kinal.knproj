@@ -1,6 +1,6 @@
 Project GcFrames
 {
     DefaultProfile = "test";
-    SourceSet "app" { Files = ["Main.kn"]; RequireUnit = true; }
-    Profile "test" { Source { Entry = "Main.kn"; Sets = ["app"]; Mode = FileOnly; } }
+    SourceSet "app" { Files = ["Main.kn", "ConvertedArguments.kn"]; RequireUnit = true; }
+    Profile "test" { Source { Entry = "Main.kn"; Sets = ["app"]; Mode = AllSources; } }
 }

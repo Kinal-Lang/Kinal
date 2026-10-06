@@ -1453,6 +1453,10 @@ Class NativeBackend
 
     Public Trusted Function LlvmValue UnboxAny(LlvmValue value, TypeSymbol target)
     {
+        // Dynamic callable parameters can themselves be any. This is an
+        // identity conversion, not an unsupported destination/default value.
+        If (target.Kind == [int](TypeKind.AnyType))
+            Return New LlvmValue(value.Handle, target);
         byte* tag = This.Module.ExtractValue(value.Handle, 0, This.Unique("any_tag"));
         byte* payload = This.Module.ExtractValue(value.Handle, 1, This.Unique("any_payload"));
         byte* int64Type = This.Module.IntType(64);
