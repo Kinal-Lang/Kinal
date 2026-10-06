@@ -7,7 +7,7 @@ import os
 import subprocess
 import tempfile
 import unittest
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from unittest.mock import Mock, patch
 
 import audit_manifest_native as native
@@ -60,7 +60,9 @@ class ManifestAuditTests(unittest.TestCase):
             self.assertNotIn(name, reasons)
 
     def test_ffi_commands_keep_host_formats_and_distinct_link_modes(self) -> None:
-        root, assets, llvm = Path("/repo"), Path("/repo/out/test"), Path("/llvm/bin")
+        # This command-construction test models POSIX paths even on Windows;
+        # Path() would select the machine running the test, not the fake host.
+        root, assets, llvm = PurePosixPath("/repo"), PurePosixPath("/repo/out/test"), PurePosixPath("/llvm/bin")
         linux = runtime.native_ffi_commands(root, assets, "linux", llvm)
         self.assertIn("-fPIC", linux[0])
         self.assertIn("/repo/out/test/native_ffi.obj", linux[0])
@@ -75,13 +77,32 @@ class ManifestAuditTests(unittest.TestCase):
             runtime.native_ffi_commands(root, assets, "windows", llvm)
 
     def test_dynamic_ffi_loader_environment_is_scoped(self) -> None:
-        with patch.object(runtime.sys, "platform", "linux"), patch.dict(os.environ, {"LD_LIBRARY_PATH": "/existing"}):
-            self.assertEqual(runtime.runtime_environment(Path("/audit/case/program"), {})["LD_LIBRARY_PATH"], "/existing")
-            env = runtime.runtime_environment(Path("/audit/case/program"), {"runtime_files": ["native_ffi.dll"]})
+        with patch.object(runtime.sys, "platform", "linux"), \
+             patch.object(runtime.os, "pathsep", ":"), \
+             patch.dict(os.environ, {"LD_LIBRARY_PATH": "/existing"}):
+            self.assertEqual(runtime.runtime_environment(PurePosixPath("/audit/case/program"), {})["LD_LIBRARY_PATH"], "/existing")
+            env = runtime.runtime_environment(PurePosixPath("/audit/case/program"), {"runtime_files": ["native_ffi.dll"]})
             self.assertEqual(env["LD_LIBRARY_PATH"], "/audit/case:/existing")
             self.assertEqual(os.environ["LD_LIBRARY_PATH"], "/existing")
-            unrelated = runtime.runtime_environment(Path("/audit/program"), {"runtime_files": ["fixture.txt"]})
+            unrelated = runtime.runtime_environment(PurePosixPath("/audit/program"), {"runtime_files": ["fixture.txt"]})
             self.assertEqual(unrelated["LD_LIBRARY_PATH"], "/existing")
+
+    def test_macos_loader_environment_is_scoped(self) -> None:
+        with patch.object(runtime.sys, "platform", "darwin"), \
+             patch.object(runtime.os, "pathsep", ":"), \
+             patch.dict(os.environ, {"DYLD_LIBRARY_PATH": "/existing"}):
+            env = runtime.runtime_environment(PurePosixPath("/audit/case/program"),
+                                              {"runtime_files": ["native_ffi.dll"]})
+            self.assertEqual(env["DYLD_LIBRARY_PATH"], "/audit/case:/existing")
+            self.assertEqual(os.environ["DYLD_LIBRARY_PATH"], "/existing")
+
+    def test_windows_loader_environment_is_unchanged(self) -> None:
+        with patch.object(runtime.sys, "platform", "win32"), \
+             patch.dict(os.environ, {"PATH": r"C:\\existing"}):
+            expected = os.environ.copy()
+            env = runtime.runtime_environment(PureWindowsPath(r"C:\\audit\\program.exe"),
+                                              {"runtime_files": ["native_ffi.dll"]})
+            self.assertEqual(env, expected)
 
     def test_stale_object_cannot_make_failed_compilation_pass(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
