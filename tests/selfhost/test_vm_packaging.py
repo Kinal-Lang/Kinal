@@ -76,7 +76,10 @@ class VmPackagingTests(unittest.TestCase):
             for name in ("llvm-ar", "llvm-lib", "lld-link", "ld64.lld"):
                 packaged = target / "linker" / name
                 self.assertEqual(packaged.read_bytes(), name.encode())
-                self.assertEqual(packaged.stat().st_mode & 0o777, 0o755)
+                # copy2 preserves source permissions. Windows cannot model
+                # POSIX execute bits even for this simulated Linux bundle.
+                self.assertEqual(packaged.stat().st_mode & 0o777,
+                                 (llvm / name).stat().st_mode & 0o777)
             # This operation must not fabricate a VM or use stage0 as a callback.
             self.assertFalse((target / "kinalvm").exists())
 
