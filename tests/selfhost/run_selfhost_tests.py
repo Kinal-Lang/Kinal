@@ -32,6 +32,7 @@ from check_knc_model import check_knc_model
 from check_global_initialization import check_global_initialization
 from check_gc_frames import check_gc_frames
 from check_archive_cache import check_archive_cache
+from check_function_summary import check_function_summary
 from run_bootstrap import copy_stage_support
 
 
@@ -355,6 +356,8 @@ def main() -> int:
                                   stage0_reference=args.stage0_role == "reference"))
     results.append(check_archive_cache(compiler, stage0, root, out_dir / "archive-cache",
                                       stage0_reference=args.stage0_role == "reference"))
+    results.append(check_function_summary(compiler, stage0, root, out_dir / "function-summary",
+                                         stage0_reference=args.stage0_role == "reference"))
     results.append(check_switch_loop_control(compiler, stage0, root, out_dir / "switch-loop-control",
                                              stage0_reference=args.stage0_role == "reference"))
     results.append(check_scalar_types(compiler, stage0, root, out_dir / "scalar-types",

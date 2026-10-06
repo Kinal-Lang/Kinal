@@ -5453,19 +5453,22 @@ Class SemanticCompilation
 
     Public Safe Function string FunctionSummary()
     {
-        string result = "format=kinal-selfhost-functions-v1";
+        // Build each record once. Growing the complete dump in this loop
+        // copies all preceding records again and creates quadratic GC traffic.
+        list records = list.Create();
+        records.Add("format=kinal-selfhost-functions-v1");
         FunctionSymbol function = This.FirstFunction;
         While (function != null)
         {
-            result = result + "\nfunction=" + function.QualifiedName() +
+            records.Add("function=" + function.QualifiedName() +
                 "|parameters=" + [string](function.ParameterCount()) +
                 "|static=" + [string](function.Declaration.IsStatic ? 1 : 0) +
                 "|constructor=" + [string](function.Declaration.IsConstructor ? 1 : 0) +
                 "|generic_template=" + [string](function.IsGenericTemplate() ? 1 : 0) +
-                "|generic_instance=" + [string](function.IsGenericInstance ? 1 : 0);
+                "|generic_instance=" + [string](function.IsGenericInstance ? 1 : 0));
             function = function.Next;
         }
-        Return result;
+        Return IO.Text.Join(records, "\n");
     }
 
     Public Safe Function int NamedTypeCount()

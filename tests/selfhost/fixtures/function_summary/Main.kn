@@ -1,0 +1,40 @@
+Unit Tests.FunctionSummary;
+
+Get IO.Console;
+Get IO.Kinal.Compiler.Sema.SemanticCompilation;
+Get IO.Kinal.Compiler.Sema.Symbols;
+Get IO.Kinal.Compiler.Syntax.SyntaxTree;
+Get IO.Kinal.Compiler.Types.TypeSymbol;
+
+Static Function int Main()
+{
+    SemanticCompilation semantics = New SemanticCompilation(null);
+    If (semantics.FunctionSummary() != "format=kinal-selfhost-functions-v1") Return 1;
+    TypeSymbol owner = New TypeSymbol([int](TypeKind.NamedType), "Owner");
+    owner.UnitName = "Tests.Summary";
+    FunctionSymbol previous = null;
+    int index = 0;
+    While (index < 5000)
+    {
+        FunctionDecl declaration = New FunctionDecl("Function" + [string](index), "int", 1, 1);
+        declaration.IsStatic = index % 2 == 0;
+        declaration.IsConstructor = index % 5 == 0;
+        If (index % 7 == 0) declaration.AddTypeParameter(New TypeParameterDecl("T", 1, 1));
+        FunctionSymbol symbol = New FunctionSymbol("Tests.Summary",
+            index % 3 == 1 ? owner : null, declaration);
+        symbol.IsGenericInstance = index % 11 == 0;
+        symbol.GenericKey = "int";
+        int parameter = 0;
+        While (parameter < index % 4)
+        {
+            symbol.AddParameter(New ParameterSymbol("p" + [string](parameter), semantics.Primitive("int")));
+            parameter = parameter + 1;
+        }
+        If (previous == null) semantics.FirstFunction = symbol;
+        Else previous.Next = symbol;
+        previous = symbol;
+        index = index + 1;
+    }
+    IO.Console.PrintLine(semantics.FunctionSummary());
+    Return 0;
+}

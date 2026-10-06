@@ -1,15 +1,18 @@
-# PR #5 local candidate
+# PR #3–5 local integration
 
-Base: PR #5 head `d38f2880f6bc190f493f478fc6e7a5658003007f`.
-Local branch: `codex/pr5-usable`. This is not merged into main or published.
+PR heads: #3 `e88543f`, #4 `9fa05d8`, #5 `9e20e95`.
+Local branch: `codex/selfhost-integration`, incorporating main's ordered global
+initialization and complete global/fixed-array root registration. Main and the
+GitHub PRs have not been changed or published by this integration.
 
 ## Supported use
 
 The candidate retains the hosted Native compiler, HIR-to-KNC backend, VM CLI,
 formatter, package CLI and shared-library metadata from the PR. Use the
 C-stage0-built **stage1** for targeted trials with ASCII Windows filesystem
-paths and process arguments. Stage2/stage3 are not recommended: their large
-symbol-summary and batch Native checks expose an unresolved memory defect.
+paths and process arguments. Stage2/stage3 remain gated on full bootstrap and
+batch execution: earlier candidate checks exposed a memory defect, and isolated
+successful retries do not establish that its cause is fixed.
 Use the matching KinalVM and adjacent toolchain/stdlib bundle, not an arbitrary
 older released VM. Standard-library/runtime policy stays in Kinal `.klib`.
 
@@ -34,14 +37,23 @@ Do not interpret the stage0-only extended-profile tests as selfhost support.
   for a process, with no shell or argument policy.
 - Test-only freestanding Any hooks use an explicit aggregate-to-scalar ABI
   adapter; a C by-value struct is not the internal Kinal/LLVM aggregate ABI.
+- KNC distinguishes a captured lexical `This` from a physical method receiver;
+  callable parameter counts, bindings and call arguments use one shared rule.
+- Kinal owns the full archive-cache check/extract/publish transaction under a
+  native OS file lock. Cold parallel extraction, failed extraction/retry and
+  interrupted-owner recovery are tested; the OS leaf does not own cache policy.
+- Function symbol dumps collect ordered records and join them once instead of
+  repeatedly copying the complete accumulated dump. A 5,000-record exact-output
+  test covers empty output, owners, parameters and generic flags.
 
 ## Local evidence (Windows x64, LLVM 21.1.8)
 
 - Fresh C stage0 and stage1 built; stage1 compiled the matching KinalVM.
-- Stage1 manifest Native object compilation: 190/190 positive cases.
-- Stage1 manifest executable/runtime checks: 186/186 cases, including hosted
+- Integrated stage1 manifest Native object compilation: 191/191 positive cases.
+- Integrated stage1 manifest executable/runtime checks: 187/187 cases, including hosted
   standard-library and native FFI fixtures. Negative diagnostics and other
   host platforms are separate gates.
+- Complete stage0/stage1 negative diagnostic differential: 95/95 cases.
 - Formatter: 61 fixtures (including 41 compiler sources), 282 invocations,
   13 before/after lexer-stream comparisons and executable semantic checks.
 - Package CLI: 27 cases/40 commands, cross-compiler package consumption, and
@@ -50,24 +62,38 @@ Do not interpret the stage0-only extended-profile tests as selfhost support.
   repeated-load lifetime, final-close invalidation, enum metadata.
 - Runtime-free subset: nine target object/IR inspections, host consumer,
   16 negative cases. Foreign target binaries were not executed.
-- KNC: 37 scalar-suite cases, including three intentional rejections.
+- Integrated KNC CLI + matching VM: 55/55 registered differential cases. The
+  broader 65-case suite passes 64 and fails `any_object_casts`: `list.Create`
+  has no C/selfhost VM mapping. The failing expectation remains intact.
 - KNC workflow: listings, superloop toggle, 19 loop-semantic checks,
   eight fused opcodes, writer/listing failure handling.
 - Process argument regression: spaces in executable/output paths, empty args,
   quotes, tabs, backslashes and shell metacharacters, without a shell.
+- Kinal GC frame growth: 257 native-owned root slots, nested frames, explicit
+  collection and restoration, three executions each of C-/stage3-built tests.
+- Cache transaction: four competing processes on one cold cache, a warm retry,
+  extraction failure/recovery and owner termination, on C-/stage1-built tests.
+- Function dump: 5,000 exact ordered records, two runs of each C-/stage1-built test.
+- Audit harness: 14 unit tests; fake POSIX paths/path separators are independent
+  of the OS running the unit tests. Linux/macOS/Windows x86/ARM64 native lock
+  object compilation does not establish execution on those hosts.
 
 ## Not a release gate
 
-Full PR acceptance is not claimed. Stage1 builds stage2, and stage2 builds
-stage3. Stage2/stage3 executables have identical SHA-256
-`1db883f94f01fcbbc1538dec457a07204c2f525305cc49eb55f19791d39cfe8e`;
-project-AST and check summaries also match across stages. However, stage2's
-large `symbols` command repeatedly exits with `0xC0000005`. The bootstrap
-runner stops there and does not reach the IR comparison. Stage3's Native
-object audit passes 164/190 and its executable/runtime audit passes 155/186;
-the failures are compiler memory exceptions, not declared unsupported cases.
-The precise cause remains unresolved. Binary equality alone is not a passing
-bootstrap gate.
+Full PR acceptance is not claimed. Integrated snapshot `138293e` builds stage2
+and stage3 with identical executable SHA-256
+`eca8f7448b86c7543e0ebae048e27a8acae7bc6f8e944be9a1a985eec3a84866`.
+The complete frontend/symbol/LLVM-IR comparison is a separate gate and is not
+yet recorded as passed for this snapshot.
+
+Before main's global initialization fixes were integrated, stage2's large
+`symbols` command repeatedly exited with `0xC0000005`; stage3's object and
+runtime audits passed only 164/190 and 155/186. The first integrated pre-lock
+object audit improved to 189/191 but failed one cold-cache transaction and one
+compiler invocation with `0xC0000374`. The cache race is fixed and tested; the
+heap fault did not recur in eight warm retries or an ASan-instrumented retry,
+which does not prove its cause. Fresh complete stage3 audits are still required.
+Binary equality alone is not a passing bootstrap gate.
 
 Windows CRT argv is currently ANSI/system
 code-page text, while Kinal strings/literals are UTF-8. A direct stage0 probe
@@ -75,7 +101,7 @@ with `雪` receives bytes `D1 A9` on CP936, not UTF-8 `E9 9B AA`. The Unicode CL
 argument and diagnostic-path checks remain failing. This needs an end-to-end
 UTF-8 CLI/filesystem boundary repair, not a change to test expectations.
 
-Linux/macOS host execution, full negative-diagnostic parity and the aggregate
-KNC regressions have not been run for this candidate. Existing uncommitted
-main-branch work is not incorporated. Passing stage1 hosted regressions does
+Linux/macOS host execution and unrestricted KNC collection support remain
+unverified/unsupported respectively. Main's global initialization work is
+incorporated. Passing stage1 hosted regressions does
 not establish complete C-stage0 behavior parity or unrestricted project support.
