@@ -181,6 +181,11 @@ static void hir_lower_stmt(const KnHirContext *ctx, Stmt *stmt)
     case ST_EXPR: hir_lower_expr(ctx, stmt->v.expr.expr); break;
     case ST_IF:
         hir_lower_expr(ctx, stmt->v.ifs.cond);
+        if (stmt->v.ifs.is_const)
+        {
+            hir_lower_stmt(ctx, stmt->v.ifs.const_value ? stmt->v.ifs.then_s : stmt->v.ifs.else_s);
+            break;
+        }
         hir_lower_stmt(ctx, stmt->v.ifs.then_s);
         hir_lower_stmt(ctx, stmt->v.ifs.else_s);
         break;
@@ -396,6 +401,13 @@ static void hir_stats_stmt(const Stmt *stmt, KnHirStats *stats)
     case ST_EXPR: hir_stats_expr(stmt->v.expr.expr, stats); break;
     case ST_IF:
         hir_stats_expr(stmt->v.ifs.cond, stats);
+        if (stmt->v.ifs.is_const)
+        {
+            // Sema intentionally does not bind the inactive platform branch.
+            // Its untyped syntax is not part of the selected target's HIR.
+            hir_stats_stmt(stmt->v.ifs.const_value ? stmt->v.ifs.then_s : stmt->v.ifs.else_s, stats);
+            break;
+        }
         hir_stats_stmt(stmt->v.ifs.then_s, stats);
         hir_stats_stmt(stmt->v.ifs.else_s, stats);
         break;

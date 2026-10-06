@@ -227,6 +227,17 @@ def main() -> int:
         raise AssertionError(f"unresolved binary plan escaped sema: {summary}")
     print("[OK] stage_sema_summary")
 
+    dead_branch = ROOT / "tests" / "common" / "hir_const_branches.kn"
+    dead_output = out_dir / "hir-const-branches.kcheck"
+    dead_result = run(compiler, dead_branch, dead_output)
+    if dead_result.returncode != 0:
+        raise AssertionError(f"inactive branch was bound:\n{dead_result.stdout}{dead_result.stderr}")
+    dead_summary = read_summary(dead_output)
+    if dead_summary.get("hir_unresolved_calls") != "0" or \
+            dead_summary.get("hir_unresolved_binaries") != "0":
+        raise AssertionError(f"inactive syntax escaped into Typed HIR: {dead_summary}")
+    print("[OK] stage_hir_const_branches")
+
     token_source = ROOT / "tests" / "selfhost" / "fixtures" / "lex_basic.kn"
     first_tokens = out_dir / "lex-basic-first.ktokens"
     second_tokens = out_dir / "lex-basic-second.ktokens"

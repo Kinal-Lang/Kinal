@@ -1,0 +1,14 @@
+Unit Tests.HirConstBranches;
+
+Static Function int Main()
+{
+    If (true)
+    {
+        If (false) MissingDeadFunction();
+        Else Return 0;
+    }
+    Else
+    {
+        MissingDeadUnit.Call(UnknownLeft + UnknownRight);
+    }
+}
