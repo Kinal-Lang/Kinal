@@ -1,0 +1,60 @@
+Unit Tests.GcFrames;
+
+Get IO.Console;
+Get IO.Target;
+Get IO.Kinal.Runtime;
+Get IO.Kinal.Runtime.GarbageCollector;
+Get IO.Kinal.Runtime.Native;
+
+// Native-owned root slots deliberately do not belong to the managed heap.
+// Only the frame registrations keep their strings alive during collection.
+Trusted Static Function int Main()
+{
+    usize pointerBytes = [usize](IO.Target.PointerBits / 8);
+    int count = 257;
+    char** slots = [char**](IO.Kinal.Runtime.Native.HeapAllocate(
+        [usize](count) * pointerBytes));
+    If (slots == null) Return 1;
+    IO.Kinal.Runtime.Native.MemoryFill([byte*](slots), [byte](0),
+        [usize](count) * pointerBytes);
+
+    byte* previous = IO.Kinal.Runtime.GarbageCollector.CurrentFrame();
+    byte* outer = IO.Kinal.Runtime.GarbageCollector.PushFrame();
+    If (outer == null) Return 2;
+    int index = 0;
+    While (index < count)
+    {
+        IO.Kinal.Runtime.GarbageCollector.AddRoot(outer,
+            [byte*](&slots[index]), pointerBytes);
+        // Call the Kinal allocation policy explicitly: a C-built reference
+        // program otherwise creates its strings in the legacy stage0 heap.
+        slots[index] = [char*](IO.Kinal.Runtime.StringConcat("frame-root-",
+            IO.Kinal.Runtime.Int64ToString([i64](index))));
+        index = index + 1;
+    }
+    u64* words = [u64*](outer);
+    If (words[1] != [u64](count) || words[2] < [u64](count) || words[3] == [u64](0))
+        Return 3;
+
+    byte* inner = IO.Kinal.Runtime.GarbageCollector.PushFrame();
+    If (inner == null || IO.Kinal.Runtime.GarbageCollector.CurrentFrame() != inner)
+        Return 4;
+    If (([u64*](inner))[0] != [u64]([usize](outer))) Return 5;
+    IO.Kinal.Runtime.GarbageCollector.AddRoot(inner, [byte*](&slots[0]), pointerBytes);
+    IO.Kinal.Runtime.GarbageCollector.Collect();
+    IO.Kinal.Runtime.GarbageCollector.PopFrame(inner);
+    If (IO.Kinal.Runtime.GarbageCollector.CurrentFrame() != outer) Return 6;
+    IO.Kinal.Runtime.GarbageCollector.Collect();
+
+    index = 0;
+    While (index < count)
+    {
+        If ([string](slots[index]) != "frame-root-" + [string](index)) Return 7;
+        index = index + 1;
+    }
+    IO.Kinal.Runtime.GarbageCollector.PopFrame(outer);
+    If (IO.Kinal.Runtime.GarbageCollector.CurrentFrame() != previous) Return 8;
+    IO.Kinal.Runtime.Native.HeapFree([byte*](slots));
+    IO.Console.PrintLine("gc-frames-ok");
+    Return 0;
+}

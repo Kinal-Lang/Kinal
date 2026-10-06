@@ -227,6 +227,8 @@ EXPORTS
   CloseHandle
   GetFileSizeEx
   GetFileInformationByHandle
+  LockFileEx
+  UnlockFileEx
   GetCommandLineA
   CreateProcessA
   WaitForSingleObject

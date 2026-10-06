@@ -330,6 +330,21 @@ Trusted Function bool EnsureLoadedExtracted(KlibArchive archive,
         archive.Dispose();
         Return false;
     }
+    // Serialize the complete check/extract/publish transaction, not just the
+    // marker write. A second process must never discover a partial generation.
+    If (!IO.Directory.Ensure(outputRoot))
+    {
+        IO.Console.PrintLine("[Package] cannot create cache directory: " + outputRoot);
+        archive.Dispose();
+        Return false;
+    }
+    byte* lock = IO.Kinal.Runtime.Native.AcquireFileLock(IO.Path.Combine(outputRoot, ".klib-lock"));
+    If (lock == null)
+    {
+        IO.Console.PrintLine("[Package] cannot lock archive cache: " + outputRoot);
+        archive.Dispose();
+        Return false;
+    }
     string marker = IO.Path.Combine(outputRoot, ".klib-ready");
     string expected = [string](archive.Length) + ":" +
         [string](archive.Fingerprint());
@@ -338,6 +353,7 @@ Trusted Function bool EnsureLoadedExtracted(KlibArchive archive,
         IO.File.ReadAllText(marker) == expected)
     {
         archive.Dispose();
+        IO.Kinal.Runtime.Native.ReleaseFileLock(lock);
         Return true;
     }
 
@@ -346,13 +362,16 @@ Trusted Function bool EnsureLoadedExtracted(KlibArchive archive,
     {
         IO.Console.PrintLine("[Package] failed to extract " + archivePath +
             ": " + archive.Error);
+        IO.Kinal.Runtime.Native.ReleaseFileLock(lock);
         Return false;
     }
     If (!IO.File.WriteAllText(marker, expected))
     {
         IO.Console.PrintLine("[Package] failed to record extracted archive: " + archivePath);
+        IO.Kinal.Runtime.Native.ReleaseFileLock(lock);
         Return false;
     }
+    IO.Kinal.Runtime.Native.ReleaseFileLock(lock);
     Return true;
 }
 

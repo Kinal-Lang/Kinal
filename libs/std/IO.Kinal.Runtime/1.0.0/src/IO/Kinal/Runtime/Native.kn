@@ -37,6 +37,14 @@ Extern Unsafe Function i32 FileWriteAllBytes(string path, byte* data,
 [LinkName("kn_native_paths_same_file")]
 Extern Unsafe Function i32 PathsSameFile(string left, string right) By C;
 
+// Blocking exclusive OS lock; null means failure. The opaque handle must be
+// released once. Closing it/process exit releases ownership; never unlink it.
+[LinkName("kn_native_file_lock")]
+Extern Unsafe Function byte* AcquireFileLock(string path) By C;
+
+[LinkName("kn_native_file_unlock")]
+Extern Unsafe Function void ReleaseFileLock(byte* handle) By C;
+
 [LinkName("kn_native_spin_lock")]
 Extern Unsafe Function void SpinLock(i32* lock) By C;
 

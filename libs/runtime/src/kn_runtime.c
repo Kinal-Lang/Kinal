@@ -13,6 +13,9 @@
 #if !defined(_WIN32) && !defined(_WIN64)
 #include <pthread.h>
 #include <sched.h>
+#include <fcntl.h>
+#include <sys/file.h>
+#include <unistd.h>
 #endif
 
 #if defined(_MSC_VER)
@@ -209,6 +212,52 @@ void *kn_native_heap_allocate(uint64_t size)
 void kn_native_heap_free(void *memory)
 {
     free(memory);
+}
+
+/* Raw blocking OS lock. The Kinal caller owns the cache transaction and the
+ * lifetime; process termination releases the lock without stale lock state. */
+void *kn_native_file_lock(const char *path)
+{
+    if (!path || !path[0]) return 0;
+#if defined(_WIN32) || defined(_WIN64)
+    KN_HANDLE file = CreateFileA(path, KN_GENERIC_READ | KN_GENERIC_WRITE,
+        KN_FILE_SHARE_READ | KN_FILE_SHARE_WRITE, 0, KN_OPEN_ALWAYS,
+        KN_FILE_ATTRIBUTE_NORMAL, 0);
+    if (!file || file == KN_INVALID_HANDLE_VALUE) return 0;
+    KN_OVERLAPPED range = {0};
+    if (!LockFileEx(file, 2u /* LOCKFILE_EXCLUSIVE_LOCK */, 0,
+                    UINT32_MAX, UINT32_MAX, &range))
+    {
+        CloseHandle(file);
+        return 0;
+    }
+    return file;
+#else
+    int file = open(path, O_CREAT | O_RDWR | O_CLOEXEC, 0600);
+    if (file < 0) return 0;
+    while (flock(file, LOCK_EX) != 0)
+    {
+        if (errno == EINTR) continue;
+        close(file);
+        return 0;
+    }
+    return (void *)(intptr_t)(file + 1);
+#endif
+}
+
+void kn_native_file_unlock(void *lock)
+{
+    if (!lock) return;
+#if defined(_WIN32) || defined(_WIN64)
+    KN_OVERLAPPED range = {0};
+    UnlockFileEx(lock, 0, UINT32_MAX, UINT32_MAX, &range);
+    CloseHandle(lock);
+#else
+    int file = (int)(intptr_t)lock - 1;
+    /* close is sufficient to release flock, including after an interrupted
+     * unlock. No unlink: replacing a lock file would split the lock domain. */
+    close(file);
+#endif
 }
 
 void kn_native_memory_copy(void *destination, const void *source, uint64_t count)

@@ -1,0 +1,14 @@
+Project ArchiveCache
+{
+    DefaultProfile = "test";
+    SourceSet "compiler"
+    {
+        Roots = ["../../../../apps/kinal-selfhost/src", "."];
+        Include = ["**/*.kn"];
+        RequireUnit = true;
+    }
+    Profile "test"
+    {
+        Source { Entry = "Main.kn"; Sets = ["compiler"]; Mode = ReachableUnits; }
+    }
+}

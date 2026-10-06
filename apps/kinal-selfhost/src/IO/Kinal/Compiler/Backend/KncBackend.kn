@@ -434,6 +434,13 @@ Class KncBackend
         If (value < 0 || value > 65535) { This.Fail("invalid KncIntrinsic id"); Return -1; }
         Return [int](value);
     }
+    Public Safe Function bool HasInstanceReceiver(FunctionSymbol symbol)
+    {
+        // A literal can bind lexical This through its capture environment.
+        // That semantic receiver is not a physical method argument.
+        Return symbol != null && symbol.OwnerType != null &&
+            (!symbol.Declaration.IsStatic || symbol.Declaration.IsConstructor);
+    }
     Public Safe Function KncFunctionBinding RequireFunction(FunctionSymbol symbol)
     {
         KncFunctionBinding current = This.FirstFunction;
@@ -466,7 +473,7 @@ Class KncBackend
         }
         HirFunction hir = This.FindHir(symbol);
         If (hir == null || hir.Body == null) { This.Fail("function has no bound body: " + symbol.QualifiedName()); Return null; }
-        int count = symbol.ParameterCount() + (symbol.Receiver == null ? 0 : 1);
+        int count = symbol.ParameterCount() + (This.HasInstanceReceiver(symbol) ? 1 : 0);
         If (count > 4) { This.Fail("function exceeds the KNC four-argument ABI: " + symbol.QualifiedName()); Return null; }
         KncFunctionRecord record = New KncFunctionRecord();
         record.Name = symbol.QualifiedName();
@@ -1667,7 +1674,7 @@ Class KncBackend
         binding.Built = true;
         KncFunctionContext context = New KncFunctionContext(binding, binding.Record);
         If (binding.Symbol.IsBlockLiteral) { context.Allocate(); context.Allocate(); }
-        context.AddLocal(binding.Symbol.Receiver);
+        If (This.HasInstanceReceiver(binding.Symbol)) context.AddLocal(binding.Symbol.Receiver);
         ParameterSymbol parameter = binding.Symbol.FirstParameter;
         While (parameter != null) { context.AddLocal(parameter.Value); parameter = parameter.Next; }
         // An immutable fresh register gives null a stable source after scratch
@@ -2138,7 +2145,7 @@ Class KncBackend
     {
         If (function == null) { This.Fail("call has no bound function"); Return New KncValue(255, This.Semantics.Primitive("void")); }
         int[] args = {};
-        If (function.Receiver != null || (function.OwnerType != null && !function.Declaration.IsStatic))
+        If (This.HasInstanceReceiver(function))
         {
             If (receiver == null) { This.Fail("instance call has no receiver: " + function.QualifiedName()); Return This.Default(context, function.ReturnType); }
             args = args.Add(receiver.Register);
@@ -2313,7 +2320,7 @@ Class KncBackend
     Public Trusted Function KncValue FunctionValue(KncFunctionContext context, FunctionSymbol function, TypeSymbol type)
     {
         If (function == null) { This.Fail("missing callable function"); Return This.Default(context, type); }
-        If (function.Receiver != null) { This.Unsupported(context, "bound instance method reference"); Return This.Default(context, type); }
+        If (This.HasInstanceReceiver(function)) { This.Unsupported(context, "bound instance method reference"); Return This.Default(context, type); }
         KncTypeBinding objectType = This.RequireType(This.Semantics.FindExactType(function.IsBlockLiteral ? "IO.Type.Object.Block" : "IO.Type.Object.Function"));
         int intrinsic = This.IntrinsicId(function);
         KncFunctionBinding binding = intrinsic >= 0 ? null : This.RequireFunction(function);

@@ -1,0 +1,26 @@
+Unit Tests.ArchiveCache;
+
+Get IO.Console;
+Get IO.Directory;
+Get IO.Path;
+Get IO.Time;
+Get IO.Kinal.Compiler.Project.KlibArchive;
+Get IO.Kinal.Runtime.Native;
+
+Trusted Static Function int Main(string[] args)
+{
+    If (args.Length() == 3 && args[2] == "hold")
+    {
+        If (!IO.Directory.Ensure(args[1])) Return 1;
+        byte* handle = IO.Kinal.Runtime.Native.AcquireFileLock(IO.Path.Combine(args[1], ".klib-lock"));
+        If (handle == null) Return 1;
+        IO.Console.PrintLine("locked");
+        IO.Time.Sleep(30000);
+        IO.Kinal.Runtime.Native.ReleaseFileLock(handle);
+        Return 0;
+    }
+    If (args.Length() != 2) Return 2;
+    If (!IO.Kinal.Compiler.Project.KlibArchive.EnsureExtracted(args[0], args[1])) Return 1;
+    IO.Console.PrintLine("cache-ok");
+    Return 0;
+}

@@ -30,6 +30,8 @@ from check_vm_lifecycle import check_vm_lifecycle
 from check_knc_backend import check_knc_backend, check_knc_workflow
 from check_knc_model import check_knc_model
 from check_global_initialization import check_global_initialization
+from check_gc_frames import check_gc_frames
+from check_archive_cache import check_archive_cache
 from run_bootstrap import copy_stage_support
 
 
@@ -349,6 +351,10 @@ def main() -> int:
                                   stage0_reference=args.stage0_role == "reference"))
     results.append(check_global_initialization(compiler, stage0, root, out_dir / "global-initialization",
                                               stage0_reference=args.stage0_role == "reference"))
+    results.append(check_gc_frames(compiler, stage0, root, out_dir / "gc-frames",
+                                  stage0_reference=args.stage0_role == "reference"))
+    results.append(check_archive_cache(compiler, stage0, root, out_dir / "archive-cache",
+                                      stage0_reference=args.stage0_role == "reference"))
     results.append(check_switch_loop_control(compiler, stage0, root, out_dir / "switch-loop-control",
                                              stage0_reference=args.stage0_role == "reference"))
     results.append(check_scalar_types(compiler, stage0, root, out_dir / "scalar-types",

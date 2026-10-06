@@ -92,6 +92,15 @@ typedef struct
 
 typedef struct
 {
+    uintptr_t Internal;
+    uintptr_t InternalHigh;
+    KN_DWORD Offset;
+    KN_DWORD OffsetHigh;
+    KN_HANDLE hEvent;
+} KN_OVERLAPPED;
+
+typedef struct
+{
     uint16_t wYear;
     uint16_t wMonth;
     uint16_t wDayOfWeek;
@@ -170,6 +179,8 @@ KN_DLLIMPORT KN_BOOL KN_STDCALL ReadFile(KN_HANDLE hFile, void *lpBuffer, KN_DWO
 KN_DLLIMPORT KN_BOOL KN_STDCALL CloseHandle(KN_HANDLE hObject);
 KN_DLLIMPORT KN_BOOL KN_STDCALL GetFileSizeEx(KN_HANDLE hFile, int64_t *lpFileSize);
 KN_DLLIMPORT KN_BOOL KN_STDCALL GetFileInformationByHandle(KN_HANDLE hFile, KN_BY_HANDLE_FILE_INFORMATION *lpFileInformation);
+KN_DLLIMPORT KN_BOOL KN_STDCALL LockFileEx(KN_HANDLE hFile, KN_DWORD dwFlags, KN_DWORD dwReserved, KN_DWORD nNumberOfBytesToLockLow, KN_DWORD nNumberOfBytesToLockHigh, KN_OVERLAPPED *lpOverlapped);
+KN_DLLIMPORT KN_BOOL KN_STDCALL UnlockFileEx(KN_HANDLE hFile, KN_DWORD dwReserved, KN_DWORD nNumberOfBytesToUnlockLow, KN_DWORD nNumberOfBytesToUnlockHigh, KN_OVERLAPPED *lpOverlapped);
 KN_DLLIMPORT const char *KN_STDCALL GetCommandLineA(void);
 KN_DLLIMPORT KN_BOOL KN_STDCALL CreateProcessA(const char *lpApplicationName, char *lpCommandLine, KN_SECURITY_ATTRIBUTES *lpProcessAttributes, KN_SECURITY_ATTRIBUTES *lpThreadAttributes, KN_BOOL bInheritHandles, KN_DWORD dwCreationFlags, void *lpEnvironment, const char *lpCurrentDirectory, KN_STARTUPINFOA *lpStartupInfo, KN_PROCESS_INFORMATION *lpProcessInformation);
 KN_DLLIMPORT KN_HANDLE KN_STDCALL CreateThread(KN_SECURITY_ATTRIBUTES *lpThreadAttributes, size_t dwStackSize, KN_THREAD_START_ROUTINE lpStartAddress, void *lpParameter, KN_DWORD dwCreationFlags, KN_DWORD *lpThreadId);
