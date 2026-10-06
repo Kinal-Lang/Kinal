@@ -1,7 +1,7 @@
 # PR #3–5 local integration
 
 PR heads: #3 `e88543f`, #4 `9fa05d8`, #5 `9e20e95`.
-Local branch: `codex/selfhost-integration`, incorporating main's ordered global
+Primary checkout branch: `codex/selfhost-integrated`, incorporating main's ordered global
 initialization and complete global/fixed-array root registration. Main and the
 GitHub PRs have not been changed or published by this integration.
 
@@ -45,6 +45,9 @@ Do not interpret the stage0-only extended-profile tests as selfhost support.
 - Function symbol dumps collect ordered records and join them once instead of
   repeatedly copying the complete accumulated dump. A 5,000-record exact-output
   test covers empty output, owners, parameters and generic flags.
+- Unqualified callable lookup filters imports by the requested name before
+  scanning function symbols, avoiding unrelated qualified-name allocations.
+  Owner/local/import-order/generic lookup behavior is regression-tested.
 
 ## Local evidence (Windows x64, LLVM 21.1.8)
 
@@ -74,6 +77,8 @@ Do not interpret the stage0-only extended-profile tests as selfhost support.
 - Cache transaction: four competing processes on one cold cache, a warm retry,
   extraction failure/recovery and owner termination, on C-/stage1-built tests.
 - Function dump: 5,000 exact ordered records, two runs of each C-/stage1-built test.
+  The same model checks 32 unrelated imports and 64 missing-name lookups, plus
+  owner/local/import priority and generic qualified targets.
 - Audit harness: 14 unit tests; fake POSIX paths/path separators are independent
   of the OS running the unit tests. Linux/macOS/Windows x86/ARM64 native lock
   object compilation does not establish execution on those hosts.
@@ -91,8 +96,13 @@ Before main's global initialization fixes were integrated, stage2's large
 runtime audits passed only 164/190 and 155/186. The first integrated pre-lock
 object audit improved to 189/191 but failed one cold-cache transaction and one
 compiler invocation with `0xC0000374`. The cache race is fixed and tested; the
-heap fault did not recur in eight warm retries or an ASan-instrumented retry,
-which does not prove its cause. Fresh complete stage3 audits are still required.
+heap fault did not recur in eight warm retries or an ASan-instrumented retry.
+However, the fresh `138293e` stage3 audits fail: Native objects 179/191, runtime
+178/187. A second complete object audit is 189/191 with different failing cases.
+Failures are compiler `0xC0000005`/`0xC0000374` exits, not relaxed output checks;
+no cache-transaction failure is recorded in these runs. The memory defect remains
+unresolved. The summary/import lookup optimizations are separately tested and
+must not be presented as a memory-stability fix.
 Binary equality alone is not a passing bootstrap gate.
 
 Windows CRT argv is currently ANSI/system
