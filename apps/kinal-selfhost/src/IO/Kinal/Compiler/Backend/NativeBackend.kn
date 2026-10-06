@@ -28,6 +28,7 @@ Class NativeBackend
     Public LlvmDelegateAdapter FirstDelegateAdapter;
     Public LlvmFunctionBinding FirstFunction;
     Public byte* AnyType;
+    Private LlvmFunctionBinding GlobalInitializer;
     Public string Error;
     Private int NameSequence;
 
@@ -41,6 +42,7 @@ Class NativeBackend
         This.FirstDelegateAdapter = null;
         This.FirstFunction = null;
         This.AnyType = null;
+        This.GlobalInitializer = null;
         This.Error = "";
         This.NameSequence = 0;
     }
@@ -379,8 +381,13 @@ Class NativeBackend
 
     Public Safe Function void AddGlobalBinding(LlvmGlobalBinding binding)
     {
-        binding.Next = This.FirstGlobal;
-        This.FirstGlobal = binding;
+        If (This.FirstGlobal == null) This.FirstGlobal = binding;
+        Else
+        {
+            LlvmGlobalBinding last = This.FirstGlobal;
+            While (last.Next != null) last = last.Next;
+            last.Next = binding;
+        }
     }
 
     Public Safe Function LlvmGlobalBinding FindGlobalBinding(ValueSymbol symbol)
@@ -524,9 +531,8 @@ Class NativeBackend
     {
         TypeSymbol type = symbol.Value.Type;
         ExpressionNode initializer = symbol.Declaration.Initializer;
-        // Existing hosted startup resolves global copies in declaration order.
-        // Array elements must never use this placeholder: an unsupported value
-        // there is an error, not an implicit zero.
+        // Freestanding storage has no executable initializer. Its validator
+        // rejects non-constant startup before this constant-only path is used.
         If (initializer != null && initializer.Kind == [int](ExpressionKind.Name))
             Return This.Module.ConstNull(This.TypeHandle(type));
         If (type.Kind != [int](TypeKind.ArrayType))
@@ -552,6 +558,27 @@ Class NativeBackend
             This.Types2(data, This.Module.ConstInt(This.Module.IntType(64), length)));
     }
 
+    Public Trusted Function byte* ZeroedGlobalInitializer(LlvmGlobalBinding binding)
+    {
+        TypeSymbol type = binding.Symbol.Value.Type;
+        int length = This.Semantics.StorageArrayLength(binding.Symbol.Declaration);
+        If (type.Kind != [int](TypeKind.ArrayType) || length <= 0)
+            Return This.Module.ConstNull(This.TypeHandle(type));
+        // Fixed arrays already own zeroed backing at load time. An earlier
+        // initializer may read/write them before their declaration is reached.
+        byte* elementType = This.TypeHandle(type.ElementType);
+        byte* storageType = This.Module.ArrayType(elementType, length);
+        byte* storage = This.Module.AddGlobal(storageType, This.Unique("__kn_sh_zero_array"));
+        This.Module.SetPrivateLinkage(storage);
+        This.Module.SetInitializer(storage, This.Module.ConstNull(storageType));
+        byte* zero = This.Module.ConstInt(This.Module.IntType(64), 0);
+        byte* data = This.Module.ConstGep(storageType, storage, This.Types2(zero, zero));
+        binding.StaticStorage = data;
+        binding.StaticStorageSize = This.Module.SizeOf(storageType);
+        Return This.Module.ConstStruct(This.TypeHandle(type),
+            This.Types2(data, This.Module.ConstInt(This.Module.IntType(64), length)));
+    }
+
     Public Trusted Function void DeclareGlobals()
     {
         GlobalSymbol symbol = This.Semantics.FirstGlobal;
@@ -560,74 +587,101 @@ Class NativeBackend
             byte* type = This.TypeHandle(symbol.Value.Type);
             byte* address = This.Module.AddGlobal(type,
                 "__kn_sh_global_" + This.Sanitize(symbol.QualifiedName()));
-            byte* initializer = This.ConstantGlobalInitializer(symbol);
+            LlvmGlobalBinding binding = New LlvmGlobalBinding(symbol, address);
+            byte* initializer = This.Semantics.Session.IsFreestandingCore() ?
+                This.ConstantGlobalInitializer(symbol) : This.ZeroedGlobalInitializer(binding);
             If (initializer == null)
                 This.Fail("unsupported global initializer: " + symbol.QualifiedName());
             ElseIf (address == null || !This.Module.SetInitializer(address, initializer))
                 This.Fail("failed to declare global: " + symbol.QualifiedName());
-            Else This.AddGlobalBinding(New LlvmGlobalBinding(symbol, address));
+            Else
+            {
+                HirModule module = This.Semantics.FirstHirModule;
+                While (module != null)
+                {
+                    HirGlobal global = module.FirstGlobal;
+                    While (global != null)
+                    {
+                        If (global.Symbol == symbol) binding.Initializer = global.Initializer;
+                        global = global.Next;
+                    }
+                    module = module.Next;
+                }
+                This.AddGlobalBinding(binding);
+            }
             symbol = symbol.Next;
         }
     }
 
 
-    Public Trusted Function void InitializeGlobalArrayStorage()
+    Public Trusted Function void EmitGlobalInitializer()
     {
+        If (This.Semantics.Session.IsFreestandingCore()) Return;
+        FunctionDecl declaration = New FunctionDecl("__global_init", "void", 0, 0);
+        declaration.IsStatic = true;
+        FunctionSymbol symbol = New FunctionSymbol("", null, declaration);
+        symbol.ReturnType = This.Semantics.Primitive("void");
+        byte* functionType = This.Module.FunctionType(This.Module.VoidType(), This.Types0(), false);
+        byte* function = This.Module.AddFunction("__kn_sh_global_init", functionType);
+        This.Module.SetPrivateLinkage(function);
+        This.GlobalInitializer = New LlvmFunctionBinding(symbol, functionType, function, false);
+        LlvmFunctionContext context = New LlvmFunctionContext(This.GlobalInitializer);
+        context.TraceName = "<global init>";
+        byte* boolType = This.Module.IntType(1);
+        byte* guard = This.Module.AddGlobal(boolType, "__kn_sh_global_init_done");
+        This.Module.SetPrivateLinkage(guard);
+        This.Module.SetInitializer(guard, This.Module.ConstInt(boolType, 0));
+        byte* entry = This.Module.AppendBlock(function, "entry");
+        byte* initialize = This.Module.AppendBlock(function, "initialize");
+        byte* done = This.Module.AppendBlock(function, "done");
+        This.Module.PositionAtEnd(entry);
+        This.Module.ConditionalBranch(This.Module.Load(boolType, guard, "initialized"), done, initialize);
+        This.Module.PositionAtEnd(initialize);
+        // Set the guard before calling runtime/user code. Re-entrant calls must
+        // observe already initialized slots and zero for later declarations.
+        This.Module.Store(This.Module.ConstInt(boolType, 1), guard);
+        This.CallKinalRuntime("IO.Kinal.Runtime.GarbageCollector.Initialize", 0, This.Types0(), "");
+        This.InitializeGlobalRoots();
+        context.GcFrame = This.CallKinalRuntime("IO.Kinal.Runtime.GarbageCollector.PushFrame", 0,
+            This.Types0(), "global_init_frame");
         LlvmGlobalBinding binding = This.FirstGlobal;
         While (binding != null)
         {
-            TypeSymbol arrayType = binding.Symbol.Value.Type;
-            int lengthValue = This.GlobalArrayLength(binding.Symbol);
-            If (arrayType.Kind == [int](TypeKind.ArrayType) && lengthValue >= 0)
-            {
-                TypeSymbol elementType = arrayType.ElementType;
-                byte* elementHandle = This.TypeHandle(elementType);
-                byte* length = This.Module.ConstInt(This.Module.IntType(64), lengthValue);
-                byte* bytes = This.Module.Multiply(length, This.Module.SizeOf(elementHandle),
-                    This.Unique("global_array_bytes"));
-                byte* memory = This.CallKinalRuntime(
-                    "IO.Kinal.Runtime.GarbageCollector.Allocate", 1,
-                    This.Types1(bytes), This.Unique("global_array_memory"));
-                This.CallKinalRuntime("IO.Kinal.Runtime.MemoryZero", 2,
-                    This.Types2(memory, bytes), "");
-                ExpressionNode initializer = binding.Symbol.Declaration.Initializer;
-                If (initializer != null && initializer.Kind == [int](ExpressionKind.ArrayLiteral))
-                {
-                    byte* content = This.ConstantArrayContent(binding.Symbol, lengthValue);
-                    If (content != null) This.Module.Store(content, memory);
-                }
-                byte* data = This.Module.BitCast(memory, This.Module.PointerType(elementHandle),
-                    This.Unique("global_array_data"));
-                byte* value = This.Module.ConstUndef(This.TypeHandle(arrayType));
-                value = This.Module.InsertValue(value, data, 0, "");
-                value = This.Module.InsertValue(value, length, 1, "");
-                This.Module.Store(value, binding.Address);
-            }
+            This.PrepareExpressionRoots(context, binding.Initializer);
             binding = binding.Next;
         }
+        binding = This.FirstGlobal;
+        While (binding != null)
+        {
+            TypeSymbol type = binding.Symbol.Value.Type;
+            HirExpression initializer = binding.Initializer;
+            int length = This.GlobalArrayLength(binding.Symbol);
+            LlvmValue value = null;
+            If (type.Kind == [int](TypeKind.ArrayType) && length >= 0 &&
+                initializer != null && initializer.Kind == [int](HirExpressionKind.ArrayLiteral))
+            {
+                value = This.EmitArrayValue(context, type,
+                    initializer == null ? null : initializer.FirstArgument,
+                    This.Module.ConstInt(This.Module.IntType(64), length), binding.Address, length);
+            }
+            ElseIf (initializer != null)
+                value = This.CastValue(This.EmitExpression(context, initializer), type);
+            // No initializer means loader-zero storage. In particular, runtime
+            // startup state must not be reset after GC registration/allocations.
+            If (value != null && value.Handle != null) This.Module.Store(value.Handle, binding.Address);
+            binding = binding.Next;
+        }
+        This.PopGcFrame(context);
+        This.Module.Branch(done);
+        This.Module.PositionAtEnd(done);
+        This.Module.ReturnVoid();
     }
 
-    Public Trusted Function void InitializeGlobalCopies()
+    Public Trusted Function void CallGlobalInitializer()
     {
-        LlvmGlobalBinding destination = This.FirstGlobal;
-        While (destination != null)
-        {
-            ExpressionNode initializer = destination.Symbol.Declaration.Initializer;
-            If (initializer != null && initializer.Kind == [int](ExpressionKind.Name))
-            {
-                GlobalSymbol sourceSymbol = This.Semantics.FindGlobal(
-                    destination.Symbol.UnitName, initializer.Text);
-                LlvmGlobalBinding source = sourceSymbol == null ?
-                    null : This.FindGlobalBinding(sourceSymbol.Value);
-                If (source != null)
-                {
-                    byte* value = This.Module.Load(This.TypeHandle(source.Symbol.Value.Type),
-                        source.Address, This.Unique("global_copy"));
-                    This.Module.Store(value, destination.Address);
-                }
-            }
-            destination = destination.Next;
-        }
+        If (This.GlobalInitializer != null)
+            This.Module.Call(This.GlobalInitializer.FunctionType, This.GlobalInitializer.Function,
+                This.Types0(), "");
     }
 
     Public Trusted Function void InitializeGlobalRoots()
@@ -645,6 +699,9 @@ Class NativeBackend
                     "IO.Kinal.Runtime.GarbageCollector.AddGlobalRoot", 2,
                     This.Types2(address, This.Module.SizeOf(This.TypeHandle(type))), "");
             }
+            If (binding.StaticStorage != null && This.NeedsGcRoot(type.ElementType))
+                This.CallKinalRuntime("IO.Kinal.Runtime.GarbageCollector.AddGlobalRoot", 2,
+                    This.Types2(binding.StaticStorage, binding.StaticStorageSize), "");
             binding = binding.Next;
         }
     }
@@ -747,31 +804,6 @@ Class NativeBackend
             This.EnsureCallableWrapper(binding);
         Return This.CreateCallableObject(binding.Symbol.IsBlockLiteral,
             entry, environment);
-    }
-
-    Public Trusted Function void InitializeGlobalCallables()
-    {
-        LlvmGlobalBinding global = This.FirstGlobal;
-        While (global != null)
-        {
-            FunctionSymbol function = global.Symbol.Value.CallableFunction;
-            If (function != null)
-            {
-                LlvmFunctionBinding binding = This.FindFunctionBinding(function);
-                If (binding == null) This.Fail("global callable binding is missing: " +
-                    global.Symbol.QualifiedName());
-                Else
-                {
-                    byte* entry = binding.Symbol.IsBlockLiteral ?
-                        This.Module.BitCast(binding.Function,
-                            This.Module.PointerType(This.Module.IntType(8)), This.Unique("block_entry")) :
-                        This.EnsureCallableWrapper(binding);
-                    This.Module.Store(This.CreateCallableObject(
-                        binding.Symbol.IsBlockLiteral, entry, null), global.Address);
-                }
-            }
-            global = global.Next;
-        }
     }
 
     Public Safe Function LlvmFunctionBinding FindFunctionBinding(FunctionSymbol symbol)
@@ -5160,7 +5192,7 @@ Class NativeBackend
                                                  byte* error)
     {
         byte* functionName = This.Module.GlobalString(
-            context.Binding.Symbol.QualifiedName(), This.Unique("exception_function"));
+            context.TraceName, This.Unique("exception_function"));
         This.CallKinalRuntime("IO.Kinal.Runtime.Exception.Push", 1,
             This.Types1(functionName), "");
         byte* trace = This.CallKinalRuntime("IO.Kinal.Runtime.Exception.Trace", 0,
@@ -5711,6 +5743,7 @@ Class NativeBackend
             }
         }
 
+        If (!This.IsRuntimeInfrastructureFunction(binding.Symbol)) This.CallGlobalInitializer();
         This.EmitGcSafePoint(context);
 
         LlvmBlockBinding block = This.RegisterUnsafeBlock(context, hirFunction.Body);
@@ -5841,6 +5874,7 @@ Class NativeBackend
             parameter = parameter.Next;
         }
 
+        If (!This.IsRuntimeInfrastructureFunction(binding.Symbol)) This.CallGlobalInitializer();
         This.EmitGcSafePoint(context);
         This.EmitStatementList(context, hirFunction.Body);
         If (!This.Module.IsTerminated(This.Module.CurrentBlock())) This.EmitReturn(context, null);
@@ -6025,12 +6059,7 @@ Class NativeBackend
         byte* mainFunction = This.Module.AddFunction("main", mainType);
         byte* block = This.Module.AppendBlock(mainFunction, "entry");
         This.Module.PositionAtEnd(block);
-        This.CallKinalRuntime("IO.Kinal.Runtime.GarbageCollector.Initialize", 0,
-            This.Types0(), "");
-        This.InitializeGlobalRoots();
-        This.InitializeGlobalArrayStorage();
-        This.InitializeGlobalCallables();
-        This.InitializeGlobalCopies();
+        This.CallGlobalInitializer();
 
         LlvmHandles arguments = New LlvmHandles();
         int count = entryBinding.Symbol.ParameterCount();
@@ -6182,6 +6211,7 @@ Class NativeBackend
         This.PrepareTypes();
         This.DeclareFunctions();
         This.DeclareGlobals();
+        This.EmitGlobalInitializer();
         This.EmitFunctions();
         If (This.Semantics.Session.IsFreestandingCore()) This.EmitFreestandingEntry();
         Else This.EmitEntryPoint();

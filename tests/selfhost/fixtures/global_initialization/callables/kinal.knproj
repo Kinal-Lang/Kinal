@@ -1,0 +1,5 @@
+Project GlobalCallables {
+    DefaultProfile = "test";
+    SourceSet "main" { Files = ["Main.kn", "Extra.kn"]; RequireUnit = true; }
+    Profile "test" { Source { Entry = "Main.kn"; Sets = ["main"]; Mode = AllSources; } }
+}

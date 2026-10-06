@@ -1,0 +1,23 @@
+Unit Tests.GlobalFixedStorage;
+
+Get IO.Console;
+
+int ObservedLength = ReadLength();
+int Written = WriteValue();
+int[3] Buffer;
+
+Static Function int ReadLength() { Return Buffer.Length(); }
+Static Function int WriteValue()
+{
+    If (Buffer.Length() != 3) Return -1;
+    Buffer[1] = 23;
+    Return Buffer[1];
+}
+
+Static Function int Main()
+{
+    IO.Console.PrintLine(ObservedLength);
+    IO.Console.PrintLine(Written);
+    IO.Console.PrintLine(Buffer[1]);
+    Return 0;
+}

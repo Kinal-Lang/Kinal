@@ -1,0 +1,7 @@
+Project GlobalFixedGc {
+    DefaultProfile = "test";
+    SourceSet "main" { Files = ["../../../../common/global_fixed_gc.kn"]; RequireUnit = true; }
+    Profile "test" {
+        Source { Entry = "../../../../common/global_fixed_gc.kn"; Sets = ["main"]; Mode = AllSources; }
+    }
+}

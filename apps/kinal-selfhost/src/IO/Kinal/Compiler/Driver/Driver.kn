@@ -522,7 +522,17 @@ Trusted Function int CompileProject(ProjectBuildRequest request)
     If (!session.HasErrors())
     {
         string entryPath = session.Project.ResolvePath(session.Profile.Entry);
-        PrepareProjectDependencies(session, entryPath);
+        // A project without SourceSet declarations uses the manifest's
+        // directory as its local module scope.  Keep this discovery bounded
+        // by the explicit AutoDiscovery/Mode settings, matching stage0.
+        If (session.Profile.AutoDiscovery &&
+            session.Profile.Mode != "FileOnly" &&
+            session.Project.FirstSourceSet == null &&
+            session.Profile.Sets.Count() == 0)
+        {
+            DiscoverRelatedSources(session, entryPath, true);
+        }
+        If (!session.HasErrors()) PrepareProjectDependencies(session, entryPath);
     }
     SemanticCompilation semantics = null;
     If (!session.HasErrors())
@@ -756,6 +766,8 @@ Safe Function void DiscoverSourceCandidates(CompileSession session, list files,
         While (index < files.Count())
         {
             string path = [string](files.Fetch(index));
+            string packageName = StandardPackageName(path, standardLibraryRoot);
+            bool isInstalledStandardSource = !IO.Text.IsEmpty(packageName);
             If (IO.Text.EndsWith(path, ".kn") && !SessionContainsSource(session, path) &&
                 IsPotentialPackageSource(session, path, standardLibraryRoot))
             {
@@ -763,7 +775,8 @@ Safe Function void DiscoverSourceCandidates(CompileSession session, list files,
                 // Project-local Units take precedence over an installed package
                 // with the same Unit name, matching the C stage0 module map.
                 If (candidate != null &&
-                    !SessionHasProjectUnit(session, candidate.UnitName) &&
+                    (!isInstalledStandardSource ||
+                     !SessionHasProjectUnit(session, candidate.UnitName)) &&
                     IsRelatedUnit(session, candidate))
                 {
                     session.ParseFile(path);

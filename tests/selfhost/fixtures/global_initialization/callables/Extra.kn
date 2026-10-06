@@ -1,0 +1,5 @@
+Unit Tests.GlobalCallables;
+
+// Literal IDs are local to syntax files, but emitted function identities must
+// remain distinct when multiple files contribute to the same Unit.
+Object.Function Extra = Function int() { Return 42; };

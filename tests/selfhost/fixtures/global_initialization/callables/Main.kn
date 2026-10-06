@@ -1,0 +1,35 @@
+Unit Tests.GlobalCallables;
+
+Get IO.Console;
+
+int Total = 5;
+Object.Function Apply = Function int(int value)
+{
+    Return Total + value;
+};
+int Initial = [int](Apply(7));
+Object.Function Copy = Apply;
+Object.Block Tick = Block< / Total = Total + 1; / >;
+
+Static Class Holder
+{
+    Private int Factor = 2;
+    Public Object.Function Double = Function int(int value)
+    {
+        Return value * Factor;
+    };
+}
+
+Static Function int Main()
+{
+    IO.Console.PrintLine(Initial);
+    IO.Console.PrintLine([int](Copy(8)));
+    Tick.Run();
+    IO.Console.PrintLine(Total);
+    Object.Function doubled = Holder.Double;
+    IO.Console.PrintLine([int](doubled(9)));
+    IO.Console.PrintLine(Extra());
+    Object.Function empty = Function int() {};
+    IO.Console.PrintLine(empty());
+    Return 0;
+}

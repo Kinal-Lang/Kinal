@@ -38,6 +38,7 @@ Class FunctionSymbol
     Public string GenericKey;
     Public TypeSubstitution FirstSubstitution;
     Public CaptureSymbol FirstCapture;
+    Public bool IsLiteral;
     Public bool IsBlockLiteral;
     Public string BlockRecords;
     Public FunctionSymbol Next;
@@ -58,6 +59,7 @@ Class FunctionSymbol
         This.GenericKey = "";
         This.FirstSubstitution = null;
         This.FirstCapture = null;
+        This.IsLiteral = false;
         This.IsBlockLiteral = false;
         This.BlockRecords = "";
         This.Next = null;

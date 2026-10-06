@@ -72,13 +72,19 @@ Class LlvmFunctionBinding
 Class LlvmGlobalBinding
 {
     Public GlobalSymbol Symbol;
+    Public HirExpression Initializer;
     Public byte* Address;
+    Public byte* StaticStorage;
+    Public byte* StaticStorageSize;
     Public LlvmGlobalBinding Next;
 
     Public Safe Constructor(GlobalSymbol symbol, byte* address)
     {
         This.Symbol = symbol;
+        This.Initializer = null;
         This.Address = address;
+        This.StaticStorage = null;
+        This.StaticStorageSize = null;
         This.Next = null;
     }
 }
@@ -248,6 +254,7 @@ Class LlvmFunctionContext
     Public byte* GcFrame;
     Public byte* RuntimeUntilEnabled;
     Public byte* RuntimeUntilOrdinal;
+    Public string TraceName;
 
     Public Safe Constructor(LlvmFunctionBinding binding)
     {
@@ -264,6 +271,7 @@ Class LlvmFunctionContext
         This.GcFrame = null;
         This.RuntimeUntilEnabled = null;
         This.RuntimeUntilOrdinal = null;
+        This.TraceName = binding.Symbol.QualifiedName();
     }
 
     Public Safe Function void AddVariable(LlvmVariable variable)

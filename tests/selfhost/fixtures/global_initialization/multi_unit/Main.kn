@@ -1,0 +1,19 @@
+Unit Tests.GlobalInitEntry;
+
+Get IO.Console;
+Get Tests.GlobalInitSupport;
+
+int Observed = Tests.GlobalInitSupport.ReadValue();
+
+Static Class AfterGlobals
+{
+    Public int Observed = Tests.GlobalInitSupport.ReadValue();
+}
+
+Static Function int Main()
+{
+    IO.Console.PrintLine(Observed);
+    IO.Console.PrintLine(Tests.GlobalInitSupport.ReadValue());
+    IO.Console.PrintLine(AfterGlobals.Observed);
+    Return 0;
+}

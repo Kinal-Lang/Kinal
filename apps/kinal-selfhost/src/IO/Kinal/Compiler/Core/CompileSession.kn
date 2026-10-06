@@ -334,7 +334,17 @@ Class CompileSession
             ProjectSourceProbe entry = This.FindProjectProbe(first, entryPath);
             If (entry == null)
             {
-                This.ParseFile(entryPath);
+                // Keep the entry source authoritative even when the probe
+                // could not recover a syntax tree.  ParseFile is the source
+                // of truth for diagnostics and may still accept parser
+                // recovery, so do not turn a valid entry into a misleading
+                // "Entry source not found" error.
+                CompilationUnit unit = This.ParseFile(entryPath);
+                If (unit != null)
+                {
+                    This.EntryUnitName = unit.Syntax.UnitName;
+                    entryFound = true;
+                }
             }
             Else
             {
