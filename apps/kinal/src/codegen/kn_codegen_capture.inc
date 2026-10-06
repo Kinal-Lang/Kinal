@@ -96,12 +96,16 @@ static void capture_promote_cell(Codegen *g, CaptureStorage *storage)
     // The managed cell is now scanned through its rooted pointer. Do not retain
     // the old stack-root registrations: a repeated declaration replaces the
     // cell, and such a registration would keep scanning a freed heap address.
+    const char *marker = "kn.gc.entry.root.zero";
+    unsigned zero_kind = LLVMGetMDKindIDInContext(g->ctx, marker, (unsigned)kn_strlen(marker));
     for (LLVMUseRef use = LLVMGetFirstUse(old); use; )
     {
         LLVMUseRef next = LLVMGetNextUse(use);
         LLVMValueRef user = LLVMGetUser(use);
         if (LLVMIsACallInst(user) && LLVMGetCalledValue(user) == g->fn_gc_add_root &&
             LLVMGetOperand(user, 1) == old)
+            LLVMInstructionEraseFromParent(user);
+        else if (LLVMIsAStoreInst(user) && LLVMGetMetadata(user, zero_kind))
             LLVMInstructionEraseFromParent(user);
         use = next;
     }

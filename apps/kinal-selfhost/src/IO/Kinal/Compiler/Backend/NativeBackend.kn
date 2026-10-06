@@ -5709,14 +5709,41 @@ Class NativeBackend
             This.Semantics.MakePointerType(This.Semantics.Primitive("byte")), slot);
     }
 
+    Public Trusted Function byte* AllocateStackAddress(TypeSymbol type, string name)
+    {
+        byte* address = This.Module.Alloca(This.TypeHandle(type), name);
+        If (This.Semantics.IsStructType(type) && type.Declaration.Align > 0 &&
+            !This.Module.SetAlignment(address, type.Declaration.Align))
+            This.Fail("failed to set Struct alignment: " + type.QualifiedName());
+        Return address;
+    }
+
+    Public Trusted Function void PrepareVariableRoot(
+        LlvmFunctionContext context, ValueSymbol symbol, TypeSymbol type)
+    {
+        If (symbol == null || type == null) Return;
+        If (symbol.IsCaptured)
+        {
+            This.PrepareCaptureRoot(context, symbol);
+            Return;
+        }
+        If (!This.NeedsGcRoot(type) || context.FindLocalRoot(symbol) != null) Return;
+        byte* address = This.AllocateStackAddress(type, This.Sanitize(symbol.Name));
+        LlvmValue empty = This.DefaultValue(type);
+        This.Module.Store(empty.Handle, address);
+        context.AddLocalRoot(New LlvmLocalRoot(symbol, address));
+        This.AddGcRoot(context, type, address);
+    }
+
     Public Trusted Function void PrepareStatementRoots(
         LlvmFunctionContext context, HirStatement statement)
     {
         HirStatement current = statement;
         While (current != null)
         {
-            This.PrepareCaptureRoot(context, current.DeclaredSymbol);
-            If (current.Kind == [int](StatementKind.Switch))
+            This.PrepareVariableRoot(context, current.DeclaredSymbol, current.DeclaredType);
+            If (current.Kind == [int](StatementKind.Switch) ||
+                current.Kind == [int](StatementKind.Foreach))
                 This.PrepareExpressionRoot(context, current.Expression);
             This.PrepareExpressionRoots(context, current.Expression);
             This.PrepareExpressionRoots(context, current.SecondExpression);
@@ -5731,11 +5758,13 @@ Class NativeBackend
     Public Trusted Function void PrepareFunctionRoots(
         LlvmFunctionContext context, HirStatement body)
     {
-        This.PrepareCaptureRoot(context, context.Binding.Symbol.Receiver);
+        ValueSymbol receiver = context.Binding.Symbol.Receiver;
+        If (receiver != null)
+            This.PrepareVariableRoot(context, receiver, receiver.Type);
         ParameterSymbol parameter = context.Binding.Symbol.FirstParameter;
         While (parameter != null)
         {
-            This.PrepareCaptureRoot(context, parameter.Value);
+            This.PrepareVariableRoot(context, parameter.Value, parameter.Type);
             parameter = parameter.Next;
         }
         This.PrepareStatementRoots(context, body);
@@ -5744,10 +5773,12 @@ Class NativeBackend
     Public Trusted Function void AddVariableGcRoot(LlvmFunctionContext context,
         ValueSymbol symbol, TypeSymbol type, byte* address)
     {
-        // Captured storage is traced through its entry-owned pointer slot.
+        // Ordinary lexical slots are already registered at entry. Captured
+        // storage is traced through its entry-owned pointer slot.
         // Registering the heap cell itself would leave stale scan regions
         // when a repeated declaration replaces it and the old cell is freed.
-        If (symbol == null || !symbol.IsCaptured)
+        If (symbol == null ||
+            (!symbol.IsCaptured && context.FindLocalRoot(symbol) == null))
             This.AddGcRoot(context, type, address);
     }
 
@@ -5775,12 +5806,14 @@ Class NativeBackend
     {
         If (symbol == null || !symbol.IsCaptured)
         {
-            byte* address = This.Module.Alloca(This.TypeHandle(type), name);
-            If (This.Semantics.IsStructType(type) &&
-                type.Declaration.Align > 0 &&
-                !This.Module.SetAlignment(address, type.Declaration.Align))
-                This.Fail("failed to set Struct alignment: " + type.QualifiedName());
-            Return address;
+            LlvmLocalRoot local = symbol == null ? null : context.FindLocalRoot(symbol);
+            If (local != null) Return local.Address;
+            If (context.GcFrame != null && symbol != null && This.NeedsGcRoot(type))
+            {
+                This.Fail("managed declaration has no entry root: " + name);
+                Return null;
+            }
+            Return This.AllocateStackAddress(type, name);
         }
 
         LlvmCaptureRoot root = context.FindCaptureRoot(symbol);
@@ -6089,10 +6122,11 @@ Class NativeBackend
         }
 
         byte* int64Type = This.Module.IntType(64);
-        byte* sourceAddress = This.Module.Alloca(This.TypeHandle(source.Type),
-            This.Unique("foreach_source"));
+        byte* sourceAddress = This.ExpressionRootAddress(context, statement.Expression);
+        If (sourceAddress == null)
+            sourceAddress = This.Module.Alloca(This.TypeHandle(source.Type),
+                This.Unique("foreach_source"));
         This.Module.Store(source.Handle, sourceAddress);
-        This.AddGcRoot(context, source.Type, sourceAddress);
         byte* indexAddress = This.Module.Alloca(int64Type,
             This.Unique("foreach_index"));
         This.Module.Store(This.Module.ConstInt(int64Type, 0), indexAddress);

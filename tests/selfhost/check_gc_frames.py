@@ -2,8 +2,40 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import subprocess
 from pathlib import Path
+
+from check_targets import TARGETS, function_body
+
+
+def check_entry_roots(ir: str, *, legacy_stage0: bool = False) -> None:
+    body = function_body(ir, "CheckLoopRoots")
+    stack_slots = set(re.findall(r"(%[\w.]+) = alloca ", body))
+    registered: set[str] = set()
+    block = ""
+    if legacy_stage0:
+        frame = re.search(r"(%[\w.]+) = call ptr @__kn_gc_push_frame\(", body)
+        assert frame, "fixture no longer uses a C-stage0 GC frame"
+        pattern = (r"@__kn_gc_add_root\(ptr " + re.escape(frame[1]) +
+                   r", ptr (%[\w.]+),")
+    else:
+        pattern = (r"@__kn_sh_IO_Kinal_Runtime_GarbageCollector_AddRoot_3"
+                   r"\(ptr [^,]+, ptr (%[\w.]+),")
+    for line in body.splitlines():
+        label = re.match(r"([\w.]+):", line)
+        if label:
+            block = label[1]
+        root = re.search(pattern, line)
+        if root:
+            slot = root[1]
+            assert block == "entry", f"root registration repeats in {block}: {line}"
+            assert slot in stack_slots, f"root is not an entry-owned slot: {line}"
+            assert slot not in registered, f"duplicate root registration: {slot}"
+            assert re.search(r"store [^\n]*, ptr " + re.escape(slot) + r",", body[:body.index(line)]), \
+                f"uninitialized entry root: {slot}"
+            registered.add(slot)
+    assert len(registered) >= 5, "loop fixture no longer exercises managed declarations"
 
 
 def check_gc_frames(compiler: Path, stage0: Path, root: Path, out: Path,
@@ -24,9 +56,29 @@ def check_gc_frames(compiler: Path, stage0: Path, root: Path, out: Path,
                                     text=True, timeout=60)
             assert result.returncode == 0 and result.stdout == "gc-frames-ok\n" and not result.stderr, \
                 (label, repeat, result.returncode, result.stdout, result.stderr)
-        print(f"[OK] {label} Kinal GC frame growth/nesting/collection", flush=True)
+        print(f"[OK] {label} Kinal GC frame growth/nesting/collection/loop slots", flush=True)
+    for target, *_ in TARGETS:
+        if stage0_reference:
+            output = out / ("roots-stage0-" + target + ".ll")
+            build = subprocess.run(
+                [str(stage0), "build", "--project", str(project), "--profile", "test",
+                 "--target", target, "--emit", "ir", "-o", str(output)],
+                cwd=root, capture_output=True, text=True, timeout=180,
+            )
+            assert build.returncode == 0, (target, "stage0", build.stdout, build.stderr)
+            check_entry_roots(output.read_text(encoding="utf-8"), legacy_stage0=True)
+        output = out / ("roots-" + target + ".ll")
+        build = subprocess.run(
+            [str(compiler), "build", "--project", str(project), "--profile", "test",
+             "--target", target, "--emit", "ir", "-o", str(output)],
+            cwd=root, capture_output=True, text=True, timeout=180,
+        )
+        assert build.returncode == 0, (target, build.returncode, build.stdout, build.stderr)
+        check_entry_roots(output.read_text(encoding="utf-8"))
+        print(f"[OK] GC lexical roots at function entry {target}", flush=True)
     return {"name": "gc_frames", "ok": True, "compilers": len(tools),
-            "roots": 257, "repeats": 3, "stage0_reference": stage0_reference}
+            "roots": 257, "repeats": 3, "ir_targets": len(TARGETS),
+            "stage0_reference": stage0_reference}
 
 
 if __name__ == "__main__":

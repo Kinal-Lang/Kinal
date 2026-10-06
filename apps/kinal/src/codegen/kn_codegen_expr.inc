@@ -2104,12 +2104,35 @@ static void gc_add_root(Codegen *g, LLVMValueRef slot, Type t)
 {
     if (!g || !g->gc_frame || !g->fn_gc_add_root) return;
     if (!is_gc_root_type(t)) return;
+    if (!LLVMIsAAllocaInst(slot)) kn_die("lexical GC root requires entry-owned stack storage");
+    LLVMValueRef function = LLVMGetBasicBlockParent(LLVMGetInstructionParent(slot));
+    LLVMBasicBlockRef entry = LLVMGetEntryBasicBlock(function);
+    LLVMBuilderRef roots = LLVMCreateBuilderInContext(g->ctx);
+
+    // A loop declaration reuses this alloca. Initialize it before any user
+    // code and register it once, rather than growing the frame each iteration.
+    LLVMValueRef first = LLVMGetFirstInstruction(entry);
+    while (first && LLVMIsAAllocaInst(first)) first = LLVMGetNextInstruction(first);
+    if (first) LLVMPositionBuilderBefore(roots, first);
+    else LLVMPositionBuilderAtEnd(roots, entry);
+    LLVMValueRef zero = LLVMBuildStore(roots, LLVMConstNull(llvm_type(g, t)), slot);
+    // Capture promotion must discard only this entry initializer: the promoted
+    // cell is allocated at its declaration and cannot be referenced at entry.
+    const char *marker = "kn.gc.entry.root.zero";
+    unsigned kind = LLVMGetMDKindIDInContext(g->ctx, marker, (unsigned)kn_strlen(marker));
+    LLVMSetMetadata(zero, kind,
+        LLVMMetadataAsValue(g->ctx, LLVMMDNodeInContext2(g->ctx, 0, 0)));
+
+    LLVMValueRef next = LLVMGetNextInstruction(g->gc_frame);
+    if (next) LLVMPositionBuilderBefore(roots, next);
+    else LLVMPositionBuilderAtEnd(roots, LLVMGetInstructionParent(g->gc_frame));
     LLVMValueRef sizev = LLVMSizeOf(llvm_type(g, t));
     if (LLVMGetTypeKind(LLVMTypeOf(sizev)) != LLVMIntegerTypeKind || LLVMGetIntTypeWidth(LLVMTypeOf(sizev)) != 64)
-        sizev = LLVMBuildZExtOrBitCast(g->builder, sizev, g->i64, "gc.sz");
-    LLVMValueRef addr = LLVMBuildBitCast(g->builder, slot, g->i8ptr, "gc.addr");
+        sizev = LLVMBuildZExtOrBitCast(roots, sizev, g->i64, "gc.sz");
+    LLVMValueRef addr = LLVMBuildBitCast(roots, slot, g->i8ptr, "gc.addr");
     LLVMValueRef argv[3] = { g->gc_frame, addr, sizev };
-    LLVMBuildCall2(g->builder, g->fn_gc_add_root_ty, g->fn_gc_add_root, argv, 3, "");
+    LLVMBuildCall2(roots, g->fn_gc_add_root_ty, g->fn_gc_add_root, argv, 3, "");
+    LLVMDisposeBuilder(roots);
 }
 
 static void gc_add_root_to_frame(Codegen *g, LLVMValueRef frame, LLVMValueRef slot, Type t)

@@ -158,6 +158,22 @@ Class LlvmCaptureRoot
     }
 }
 
+// Noncaptured lexical declarations reuse one initialized stack slot. Root
+// registration belongs to function entry even when the declaration is in a loop.
+Class LlvmLocalRoot
+{
+    Public ValueSymbol Symbol;
+    Public byte* Address;
+    Public LlvmLocalRoot Next;
+
+    Public Safe Constructor(ValueSymbol symbol, byte* address)
+    {
+        This.Symbol = symbol;
+        This.Address = address;
+        This.Next = null;
+    }
+}
+
 Class LlvmExpressionRoot
 {
     Public HirExpression Expression;
@@ -245,6 +261,7 @@ Class LlvmFunctionContext
     Public LlvmVariable FirstVariable;
     Public LlvmExpressionRoot FirstExpressionRoot;
     Public LlvmCaptureRoot FirstCaptureRoot;
+    Public LlvmLocalRoot FirstLocalRoot;
     Public LlvmBlockBinding FirstBlock;
     Public LlvmBlockBinding ActiveBlock;
     Public byte* BreakTarget;
@@ -262,6 +279,7 @@ Class LlvmFunctionContext
         This.FirstVariable = null;
         This.FirstExpressionRoot = null;
         This.FirstCaptureRoot = null;
+        This.FirstLocalRoot = null;
         This.FirstBlock = null;
         This.ActiveBlock = null;
         This.BreakTarget = null;
@@ -307,6 +325,23 @@ Class LlvmFunctionContext
     Public Safe Function LlvmCaptureRoot FindCaptureRoot(ValueSymbol symbol)
     {
         LlvmCaptureRoot current = This.FirstCaptureRoot;
+        While (current != null)
+        {
+            If (current.Symbol == symbol) Return current;
+            current = current.Next;
+        }
+        Return null;
+    }
+
+    Public Safe Function void AddLocalRoot(LlvmLocalRoot root)
+    {
+        root.Next = This.FirstLocalRoot;
+        This.FirstLocalRoot = root;
+    }
+
+    Public Safe Function LlvmLocalRoot FindLocalRoot(ValueSymbol symbol)
+    {
+        LlvmLocalRoot current = This.FirstLocalRoot;
         While (current != null)
         {
             If (current.Symbol == symbol) Return current;

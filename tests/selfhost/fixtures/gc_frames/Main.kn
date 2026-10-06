@@ -6,10 +6,50 @@ Get IO.Kinal.Runtime;
 Get IO.Kinal.Runtime.GarbageCollector;
 Get IO.Kinal.Runtime.Native;
 
+// A lexical slot must register once, not once per loop iteration. The C
+// reference uses its own collector, so CurrentFrame may be null there.
+Trusted Static Function bool CheckLoopRoots()
+{
+    byte* frame = IO.Kinal.Runtime.GarbageCollector.CurrentFrame();
+    u64 before = frame == null ? [u64](0) : ([u64*](frame))[1];
+    int index = 0;
+    While (index < 128)
+    {
+        string text = IO.Kinal.Runtime.Int64ToString([i64](index));
+        If (text == null || text == "") Return false;
+        Foreach (string item Is {text, "tail"})
+        {
+            string copy = item;
+            If (copy == null) Return false;
+        }
+        If (text Is string bound)
+        {
+            string shadow = bound;
+            If (shadow != text) Return false;
+        }
+        {
+            string shadow = "separate lexical slot";
+            If (shadow == text) Return false;
+        }
+        Try
+        {
+            Throw "loop error";
+        }
+        Catch (string message)
+        {
+            If (message != "loop error") Return false;
+        }
+        index = index + 1;
+    }
+    u64 after = frame == null ? [u64](0) : ([u64*](frame))[1];
+    Return before == after;
+}
+
 // Native-owned root slots deliberately do not belong to the managed heap.
 // Only the frame registrations keep their strings alive during collection.
 Trusted Static Function int Main()
 {
+    If (!CheckLoopRoots()) Return 9;
     usize pointerBytes = [usize](IO.Target.PointerBits / 8);
     int count = 257;
     char** slots = [char**](IO.Kinal.Runtime.Native.HeapAllocate(
