@@ -6,6 +6,26 @@ Get IO.Kinal.Runtime;
 Get IO.Kinal.Runtime.GarbageCollector;
 Get IO.Kinal.Runtime.Native;
 
+Trusted Static Function bool CheckNativeMemoryLeaves()
+{
+    byte* left = IO.Kinal.Runtime.Native.HeapAllocate([u64](8));
+    byte* right = IO.Kinal.Runtime.Native.HeapAllocate([u64](8));
+    If (left == null || right == null)
+    {
+        IO.Kinal.Runtime.Native.HeapFree(left);
+        IO.Kinal.Runtime.Native.HeapFree(right);
+        Return false;
+    }
+    IO.Kinal.Runtime.Native.MemoryFill(left, [byte](66), [u64](8));
+    IO.Kinal.Runtime.Native.MemoryCopy(right, left, [u64](8));
+    bool copied = IO.Kinal.Runtime.Native.MemoryCompare(left, right, [u64](8)) == [i32](0);
+    right[1] = [byte](67);
+    bool ordered = IO.Kinal.Runtime.Native.MemoryCompare(left, right, [u64](8)) < [i32](0);
+    IO.Kinal.Runtime.Native.HeapFree(left);
+    IO.Kinal.Runtime.Native.HeapFree(right);
+    Return copied && ordered;
+}
+
 // A lexical slot must register once, not once per loop iteration. The C
 // reference uses its own collector, so CurrentFrame may be null there.
 Trusted Static Function bool CheckLoopRoots()
@@ -49,14 +69,15 @@ Trusted Static Function bool CheckLoopRoots()
 // Only the frame registrations keep their strings alive during collection.
 Trusted Static Function int Main()
 {
+    If (!CheckNativeMemoryLeaves()) Return 10;
     If (!CheckLoopRoots()) Return 9;
     usize pointerBytes = [usize](IO.Target.PointerBits / 8);
     int count = 257;
     char** slots = [char**](IO.Kinal.Runtime.Native.HeapAllocate(
-        [usize](count) * pointerBytes));
+        [u64]([usize](count) * pointerBytes)));
     If (slots == null) Return 1;
     IO.Kinal.Runtime.Native.MemoryFill([byte*](slots), [byte](0),
-        [usize](count) * pointerBytes);
+        [u64]([usize](count) * pointerBytes));
 
     byte* previous = IO.Kinal.Runtime.GarbageCollector.CurrentFrame();
     byte* outer = IO.Kinal.Runtime.GarbageCollector.PushFrame();

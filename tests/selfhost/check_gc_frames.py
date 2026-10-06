@@ -9,6 +9,23 @@ from pathlib import Path
 from check_targets import TARGETS, function_body
 
 
+def check_native_memory_abi(ir: str) -> None:
+    # The C leaves intentionally use fixed uint64_t counts, not size_t.
+    # An x64-only executable test cannot catch an incorrect usize declaration.
+    signatures = {
+        "kn_native_heap_allocate": ("ptr", "i64"),
+        "kn_native_memory_copy": ("void", "ptr, ptr, i64"),
+        "kn_native_memory_set": ("void", "ptr, i8, i64"),
+        "kn_native_memory_compare": ("i32", "ptr, ptr, i64"),
+    }
+    for name, (result, arguments) in signatures.items():
+        declaration = re.search(r"^declare (\w+) @" + name + r"\(([^)]*)\)",
+                                ir, re.MULTILINE)
+        assert declaration, f"missing native memory declaration: {name}"
+        assert declaration.groups() == (result, arguments), \
+            f"incorrect fixed-width native memory ABI: {declaration[0]}"
+
+
 def check_entry_roots(ir: str, *, legacy_stage0: bool = False) -> None:
     body = function_body(ir, "CheckLoopRoots")
     stack_slots = set(re.findall(r"(%[\w.]+) = alloca ", body))
@@ -66,7 +83,9 @@ def check_gc_frames(compiler: Path, stage0: Path, root: Path, out: Path,
                 cwd=root, capture_output=True, text=True, timeout=180,
             )
             assert build.returncode == 0, (target, "stage0", build.stdout, build.stderr)
-            check_entry_roots(output.read_text(encoding="utf-8"), legacy_stage0=True)
+            ir = output.read_text(encoding="utf-8")
+            check_entry_roots(ir, legacy_stage0=True)
+            check_native_memory_abi(ir)
         output = out / ("roots-" + target + ".ll")
         build = subprocess.run(
             [str(compiler), "build", "--project", str(project), "--profile", "test",
@@ -74,8 +93,10 @@ def check_gc_frames(compiler: Path, stage0: Path, root: Path, out: Path,
             cwd=root, capture_output=True, text=True, timeout=180,
         )
         assert build.returncode == 0, (target, build.returncode, build.stdout, build.stderr)
-        check_entry_roots(output.read_text(encoding="utf-8"))
-        print(f"[OK] GC lexical roots at function entry {target}", flush=True)
+        ir = output.read_text(encoding="utf-8")
+        check_entry_roots(ir)
+        check_native_memory_abi(ir)
+        print(f"[OK] GC entry roots and fixed-width native memory ABI {target}", flush=True)
     return {"name": "gc_frames", "ok": True, "compilers": len(tools),
             "roots": 257, "repeats": 3, "ir_targets": len(TARGETS),
             "stage0_reference": stage0_reference}

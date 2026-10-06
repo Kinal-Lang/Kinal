@@ -29,12 +29,12 @@ Safe Function usize MetadataWordBytes()
 
 Trusted Function void RawZero(byte* memory, usize count)
 {
-    IO.Kinal.Runtime.Native.MemoryFill(memory, [byte](0), count);
+    IO.Kinal.Runtime.Native.MemoryFill(memory, [byte](0), [u64](count));
 }
 
 Trusted Function void RawCopy(byte* destination, byte* source, usize count)
 {
-    IO.Kinal.Runtime.Native.MemoryCopy(destination, source, count);
+    IO.Kinal.Runtime.Native.MemoryCopy(destination, source, [u64](count));
 }
 
 Trusted Function byte* ThreadStorage()
@@ -118,7 +118,7 @@ Trusted Function byte* Allocate(usize requestedSize)
     usize headerSize = MetadataWordBytes() * [usize](4);
 
     IO.Kinal.Runtime.Native.SpinLock(&CollectorLock);
-    byte* block = IO.Kinal.Runtime.Native.HeapAllocate(headerSize + size);
+    byte* block = IO.Kinal.Runtime.Native.HeapAllocate([u64](headerSize + size));
     If (block == null)
     {
         IO.Kinal.Runtime.Native.SpinUnlock(&CollectorLock);
@@ -153,7 +153,7 @@ Trusted Function void MaybeCollect()
 Trusted Function byte* PushFrame()
 {
     byte* frame = IO.Kinal.Runtime.Native.HeapAllocate(
-        MetadataWordBytes() * [usize](4));
+        [u64](MetadataWordBytes() * [usize](4)));
     If (frame == null) Return null;
     RawZero(frame, MetadataWordBytes() * [usize](4));
     ([u64*](frame))[0] = [u64]([usize](CurrentFrame()));
@@ -171,7 +171,7 @@ Trusted Function void AddRoot(byte* frame, byte* address, usize size)
     {
         int nextCapacity = capacity == 0 ? 8 : capacity * 2;
         usize bytes = [usize](nextCapacity) * MetadataWordBytes() * [usize](2);
-        byte* roots = IO.Kinal.Runtime.Native.HeapAllocate(bytes);
+        byte* roots = IO.Kinal.Runtime.Native.HeapAllocate([u64](bytes));
         If (roots == null) Return;
         RawZero(roots, bytes);
         If (words[3] != [u64](0) && count > 0)
@@ -197,7 +197,7 @@ Trusted Function void AddGlobalRoot(byte* address, usize size)
     {
         int nextCapacity = GlobalRootCapacity == 0 ? 16 : GlobalRootCapacity * 2;
         usize bytes = [usize](nextCapacity) * MetadataWordBytes() * [usize](2);
-        byte* roots = IO.Kinal.Runtime.Native.HeapAllocate(bytes);
+        byte* roots = IO.Kinal.Runtime.Native.HeapAllocate([u64](bytes));
         If (roots == null)
         {
             IO.Kinal.Runtime.Native.SpinUnlock(&CollectorLock);
@@ -371,8 +371,8 @@ Trusted Function void Collect()
     }
 
     usize indexBytes = [usize](blockCount) * MetadataWordBytes();
-    u64* index = [u64*](IO.Kinal.Runtime.Native.HeapAllocate(indexBytes));
-    u64* stack = [u64*](IO.Kinal.Runtime.Native.HeapAllocate(indexBytes));
+    u64* index = [u64*](IO.Kinal.Runtime.Native.HeapAllocate([u64](indexBytes)));
+    u64* stack = [u64*](IO.Kinal.Runtime.Native.HeapAllocate([u64](indexBytes)));
     If (index == null || stack == null)
     {
         If (index != null) IO.Kinal.Runtime.Native.HeapFree([byte*](index));

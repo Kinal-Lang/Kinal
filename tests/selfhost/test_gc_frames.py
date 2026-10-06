@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import re
 import unittest
 
-from check_gc_frames import check_entry_roots
+from check_gc_frames import check_entry_roots, check_native_memory_abi
 
 
 def entry_ir(*, legacy: bool = False) -> str:
@@ -44,6 +45,28 @@ class EntryRootTests(unittest.TestCase):
         ir = entry_ir().replace("ptr %slot4, i64 8", "ptr %heap_cell, i64 8")
         with self.assertRaisesRegex(AssertionError, "entry-owned"):
             check_entry_roots(ir)
+
+
+class NativeMemoryAbiTests(unittest.TestCase):
+    ABI = "\n".join([
+        "declare ptr @kn_native_heap_allocate(i64)",
+        "declare void @kn_native_memory_copy(ptr, ptr, i64)",
+        "declare void @kn_native_memory_set(ptr, i8, i64)",
+        "declare i32 @kn_native_memory_compare(ptr, ptr, i64)",
+    ])
+
+    def test_fixed_width_counts(self):
+        check_native_memory_abi(self.ABI)
+
+    def test_rejects_target_width_counts(self):
+        for name in ("heap_allocate", "memory_copy", "memory_set", "memory_compare"):
+            with self.subTest(name=name), self.assertRaisesRegex(AssertionError, "fixed-width"):
+                ir = re.sub(r"(@kn_native_" + name + r"\([^\n]*?)i64", r"\1i32", self.ABI)
+                check_native_memory_abi(ir)
+
+    def test_rejects_missing_leaf(self):
+        with self.assertRaisesRegex(AssertionError, "missing"):
+            check_native_memory_abi(self.ABI.split("\n", 1)[1])
 
 
 if __name__ == "__main__":

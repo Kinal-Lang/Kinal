@@ -124,7 +124,7 @@ Trusted Function string CopyNativeTextLength(char* text, int length)
     char* result = AllocateText(length);
     If (result == null) Return "";
     IO.Kinal.Runtime.Native.MemoryCopy([byte*](result), [byte*](text),
-                                       [usize](length));
+                                       [u64](length));
     Return [string](result);
 }
 
@@ -510,12 +510,12 @@ Trusted Function char StringToChar(string text)
 
 Trusted Function void MemoryCopy(byte* destination, byte* source, usize count)
 {
-    IO.Kinal.Runtime.Native.MemoryCopy(destination, source, count);
+    IO.Kinal.Runtime.Native.MemoryCopy(destination, source, [u64](count));
 }
 
 Trusted Function void MemorySet(byte* destination, byte value, usize count)
 {
-    IO.Kinal.Runtime.Native.MemoryFill(destination, value, count);
+    IO.Kinal.Runtime.Native.MemoryFill(destination, value, [u64](count));
 }
 
 Trusted Function void MemoryZero(byte* destination, usize count)
@@ -525,7 +525,7 @@ Trusted Function void MemoryZero(byte* destination, usize count)
 
 Trusted Function i32 MemoryCompare(byte* left, byte* right, usize count)
 {
-    Return IO.Kinal.Runtime.Native.MemoryCompare(left, right, count);
+    Return IO.Kinal.Runtime.Native.MemoryCompare(left, right, [u64](count));
 }
 
 Trusted Function string TraceFormat(string trace)
