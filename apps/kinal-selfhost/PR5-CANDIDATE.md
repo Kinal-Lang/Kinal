@@ -48,6 +48,15 @@ Do not interpret the stage0-only extended-profile tests as selfhost support.
 - Unqualified callable lookup filters imports by the requested name before
   scanning function symbols, avoiding unrelated qualified-name allocations.
   Owner/local/import-order/generic lookup behavior is regression-tested.
+- Managed lexical declarations register zeroed slots once at function entry,
+  including loop, foreach, pattern and catch bindings. Captured locals retain
+  declaration-time heap cells and entry-owned pointer roots. The C stage0 follows
+  the same stack-root contract; capture promotion removes its marked old initializer.
+- C Typed HIR ignores semantically inactive compile-time branches when lowering
+  and counting bindings, rather than reporting their intentionally unresolved syntax.
+- Runtime native allocation/copy/fill/compare leaves use fixed `u64` counts to match
+  their C contracts on x86 as well as 64-bit targets. Kinal GC/Core policy keeps its
+  internal `usize` interface and converts explicitly at the raw boundary.
 
 ## Local evidence (Windows x64, LLVM 21.1.8)
 
@@ -73,37 +82,51 @@ Do not interpret the stage0-only extended-profile tests as selfhost support.
 - Process argument regression: spaces in executable/output paths, empty args,
   quotes, tabs, backslashes and shell metacharacters, without a shell.
 - Kinal GC frame growth: 257 native-owned root slots, nested frames, explicit
-  collection and restoration, three executions each of C-/stage3-built tests.
+  collection and restoration, 128 loop iterations with nested/same-name/pattern/catch
+  declarations, three executions each of C-/stage3-built tests. Both compilers'
+  seven-target IR has entry-only initialized roots and exact native-memory prototypes.
 - Cache transaction: four competing processes on one cold cache, a warm retry,
   extraction failure/recovery and owner termination, on C-/stage1-built tests.
 - Function dump: 5,000 exact ordered records, two runs of each C-/stage1-built test.
   The same model checks 32 unrelated imports and 64 missing-name lookups, plus
   owner/local/import priority and generic qualified targets.
-- Audit harness: 14 unit tests; fake POSIX paths/path separators are independent
+- Selfhost Python harness: 30 unit tests; fake POSIX paths/path separators are independent
   of the OS running the unit tests. Linux/macOS/Windows x86/ARM64 native lock
   object compilation does not establish execution on those hosts.
+- Current C stage0: all 286 enabled main-manifest cases, driver/package checks,
+  complete stage/HIR checks, and seven-target capture-storage checks pass.
+- After the lexical-root repair, stage3 Native objects pass 191/191 and executable
+  runtime checks pass 187/187. A separate stage2 object audit passes 190/191,
+  with `multidim_arrays` failing inside the compiler with `0xC0000374`.
+  A second complete stage3 object audit passes 190/191; `stdlib_request_compile`
+  fails inside the compiler with `0xC0000005`, before producing an object.
 
 ## Not a release gate
 
-Full PR acceptance is not claimed. Integrated snapshot `138293e` builds stage2
-and stage3 with identical executable SHA-256
-`eca8f7448b86c7543e0ebae048e27a8acae7bc6f8e944be9a1a985eec3a84866`.
-The complete frontend/symbol/LLVM-IR comparison is a separate gate and is not
-yet recorded as passed for this snapshot.
+Full PR acceptance is not claimed. The fresh post-root-repair bootstrap passes
+large parser input, frontend/project summaries, check/symbol summaries and
+stage1/2/3 LLVM-IR comparisons. Stage2/stage3 executable SHA-256 is
+`4c6bba0dab691b20143efc7d4271d34854a44ad9c2ba32616589eef9d336d67e`;
+all three stages' LLVM-IR SHA-256 is
+`9b1fa27df921e0510d5b7aa2b2d95102078708677ec93a5f966c6cd953f4bcf0`.
+The separate bootstrap consuming the fixed-width runtime package also passes
+all summaries and stage1/2/3 IR comparisons, with the same IR and stage2/stage3
+executable hashes.
 
-Before main's global initialization fixes were integrated, stage2's large
-`symbols` command repeatedly exited with `0xC0000005`; stage3's object and
-runtime audits passed only 164/190 and 155/186. The first integrated pre-lock
-object audit improved to 189/191 but failed one cold-cache transaction and one
-compiler invocation with `0xC0000374`. The cache race is fixed and tested; the
-heap fault did not recur in eight warm retries or an ASan-instrumented retry.
-However, the fresh `138293e` stage3 audits fail: Native objects 179/191, runtime
-178/187. A second complete object audit is 189/191 with different failing cases.
-Failures are compiler `0xC0000005`/`0xC0000374` exits, not relaxed output checks;
-no cache-transaction failure is recorded in these runs. The memory defect remains
-unresolved. The summary/import lookup optimizations are separately tested and
-must not be presented as a memory-stability fix.
-Binary equality alone is not a passing bootstrap gate.
+Earlier integrated batches failed repeatedly with compiler `0xC0000005` and
+`0xC0000374` exits. A stage3 object/runtime batch is green, but separate stage2
+and stage3 object batches each record one compiler memory fault. A heap-ASan build
+passes `multidim_arrays`; neither that retry nor one green batch establishes a
+root-cause fix. The archive cache race and repeated loop-root registration are independently
+fixed and tested, not explanations for every historical heap failure. Repeatable
+batch stability remains a release/main-promotion gate. Bootstrap `100%` means
+stage convergence, not complete language/backend/platform behavior parity.
+Diagnostic-only O1 heap-ASan with a reduced GC threshold also passes
+`multidim_arrays`, `binary_hir_native_semantics`, `any_object_casts`,
+`capture_control_flow`, `global_fixed_gc` and `stdlib_request_compile` object
+compilation. These are isolated retries with a different allocator/optimization
+environment, not passing production stability evidence; no diagnostic threshold
+or sanitizer setting is part of the shipped runtime.
 
 Windows CRT argv is currently ANSI/system
 code-page text, while Kinal strings/literals are UTF-8. A direct stage0 probe
