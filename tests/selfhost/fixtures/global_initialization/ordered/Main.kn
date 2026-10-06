@@ -1,0 +1,65 @@
+Unit Tests.GlobalInitialization;
+
+Get IO.GC;
+
+int Sequence = 0;
+int First = Step(1);
+int Second = First;
+int Third = Second;
+int SawLater = ReadLater();
+int Later = 99;
+int[3] Values = {Step(2), Step(3)};
+string Text = MakeText();
+<int, string> Pair = <Third, Text>;
+string[2] Texts = {MakeText(), MakeText()};
+Cell Box = New Cell(Third);
+list Items = MakeItems();
+
+Class Cell
+{
+    Public int Value;
+    Public Constructor(int value) { This.Value = value; }
+}
+
+Static Class StaticValues
+{
+    Public int Last = Step(4);
+}
+
+Static Function int Step(int digit)
+{
+    Sequence = Sequence * 10 + digit;
+    Return Sequence;
+}
+
+Static Function string MakeText()
+{
+    // Earlier initialized global slots must already be registered roots.
+    IO.GC.Collect();
+    Return "value=" + [string](Third);
+}
+
+Static Function int ReadLater() { Return Later; }
+
+Static Function list MakeItems()
+{
+    list result = list.Create();
+    result.Add(Third);
+    result.Add(Text);
+    Return result;
+}
+
+Static Function int Main()
+{
+    IO.GC.Collect();
+    If (First != 1 || Second != 1 || Third != 1) Return 1;
+    If (SawLater != 0 || Later != 99) Return 2;
+    If (Values.Length() != 3 || Values[0] != 12 || Values[1] != 123 || Values[2] != 0) Return 3;
+    If (Text != "value=1" || Pair[0] != 1 || Pair[1] != Text) Return 4;
+    If (Sequence != 1234 || StaticValues.Last != 1234) Return 5;
+    If (Step(5) != 12345 || StaticValues.Last != 1234) Return 6;
+    If (Texts[0] != Text || Texts[1] != Text) Return 7;
+    If (Box.Value != Third || Items.Count() != 2) Return 8;
+    If ([int](Items.Fetch(0)) != Third || [string](Items.Fetch(1)) != Text) Return 9;
+    Return 0;
+}

@@ -1,0 +1,13 @@
+Unit Tests.GlobalInitializationError;
+
+Get IO.Console;
+
+int Value = Fail();
+
+Static Function int Fail() { Throw "global init failed"; }
+
+Static Function int Main()
+{
+    IO.Console.PrintLine("main ran");
+    Return 0;
+}

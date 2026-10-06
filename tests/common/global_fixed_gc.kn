@@ -1,0 +1,55 @@
+Unit Tests.GlobalFixedGc;
+
+Get IO.Console;
+Get IO.GC;
+
+int Ready = Populate();
+int Checked = CollectAndCheck();
+string[2] Values;
+string Plain;
+
+Static Class Shared
+{
+    Public string[1] Values;
+}
+
+Static Function int Populate()
+{
+    If (Values.Length() != 2) Return -1;
+    Values[0] = "kept-" + [string](Values.Length());
+    Values[1] = "second-" + [string](Values.Length());
+    Plain = "plain-" + [string](Values.Length());
+    Shared.Values[0] = "static-" + [string](Values.Length());
+    Return 1;
+}
+
+Static Function int Churn()
+{
+    int[1024] stack;
+    int i = 0;
+    While (i < stack.Length()) { stack[i] = i; i = i + 1; }
+    IO.GC.Collect();
+    i = 0;
+    While (i < 2048)
+    {
+        string trash = "garbage-" + [string](i);
+        If (trash == "") Return -1;
+        i = i + 1;
+    }
+    Return stack[1023];
+}
+
+Static Function int CollectAndCheck()
+{
+    Churn();
+    Return Values[0] == "kept-2" && Values[1] == "second-2" &&
+        Plain == "plain-2" && Shared.Values[0] == "static-2" ? 1 : 0;
+}
+
+Static Function int Main()
+{
+    IO.Console.PrintLine(Ready == 1);
+    IO.Console.PrintLine(Checked == 1);
+    IO.Console.PrintLine(CollectAndCheck() == 1);
+    Return 0;
+}

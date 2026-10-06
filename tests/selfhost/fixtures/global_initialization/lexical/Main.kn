@@ -1,0 +1,44 @@
+Unit Tests.LiteralLexicalContext;
+
+Get IO.Console;
+Get IO.GC;
+
+Class Counter
+{
+    Private int Value;
+    Public Constructor(int value) { This.Value = value; }
+    Public Function Object.Function Make()
+    {
+        Return Function int(int increment)
+        {
+            Value = Value + increment;
+            Return Value;
+        };
+    }
+}
+
+Static Function Object.Function Identity<T>(T initial)
+{
+    Return Function T(T value)
+    {
+        T previous = initial;
+        initial = value;
+        Return previous;
+    };
+}
+
+Static Function int Main()
+{
+    Object.Function counter = New Counter(10).Make();
+    Object.Function integer = Identity<int>(20);
+    Object.Function text = Identity<string>("first");
+    IO.GC.Collect();
+    IO.Console.PrintLine(counter(3));
+    IO.Console.PrintLine(counter(4));
+    IO.Console.PrintLine(integer(30));
+    IO.Console.PrintLine(integer(40));
+    IO.Console.PrintLine(text("second"));
+    IO.GC.Collect();
+    IO.Console.PrintLine(text("third"));
+    Return 0;
+}

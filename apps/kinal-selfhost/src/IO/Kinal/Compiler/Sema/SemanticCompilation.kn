@@ -186,7 +186,8 @@ Class SemanticCompilation
 
     Public Safe Function FunctionSymbol CreateLocalLiteralFunction(SyntaxTree syntax,
                                                                     ExpressionNode expression,
-                                                                    BindingScope outerScope)
+                                                                    BindingScope outerScope,
+                                                                    FunctionSymbol enclosing)
     {
         This.LocalLiteralCount = This.LocalLiteralCount + 1;
         string literalKind = expression.Kind == [int](ExpressionKind.BlockLiteral) ?
@@ -213,7 +214,9 @@ Class SemanticCompilation
         syntax.AddFunction(literal);
         UnitSymbol unit = This.FindSyntaxUnit(syntax);
         If (unit == null) Return null;
-        FunctionSymbol function = This.IndexFunction(unit, null, literal);
+        FunctionSymbol function = This.IndexFunctionInContext(unit,
+            enclosing == null ? null : enclosing.OwnerType, literal, enclosing);
+        function.IsLiteral = true;
         function.IsBlockLiteral = expression.Kind == [int](ExpressionKind.BlockLiteral);
         function.BlockRecords = This.BlockRecordNames(expression.Body == null ?
             null : expression.Body.FirstChild);
@@ -762,8 +765,23 @@ Class SemanticCompilation
 
     Public Safe Function FunctionSymbol IndexFunction(UnitSymbol unit, TypeSymbol owner, FunctionDecl declaration)
     {
+        Return This.IndexFunctionInContext(unit, owner, declaration, null);
+    }
+
+    Public Safe Function FunctionSymbol IndexFunctionInContext(UnitSymbol unit, TypeSymbol owner,
+                                                               FunctionDecl declaration,
+                                                               FunctionSymbol enclosing)
+    {
         FunctionSymbol function = New FunctionSymbol(unit.Name, owner, declaration);
         function.Syntax = unit.Syntax;
+        // A literal is a distinct callable, but its type names and access checks
+        // belong to the enclosing lexical context (including generic instances).
+        TypeSubstitution inherited = enclosing == null ? null : enclosing.FirstSubstitution;
+        While (inherited != null)
+        {
+            function.AddSubstitution(New TypeSubstitution(inherited.Name, inherited.Type));
+            inherited = inherited.Next;
+        }
         This.FunctionCount = This.FunctionCount + 1;
         TypeParameterDecl typeParameter = declaration.FirstTypeParameter;
         While (typeParameter != null)
@@ -1036,24 +1054,16 @@ Class SemanticCompilation
                     global.Syntax = unit.Syntax;
                     This.AddGlobalSymbol(global);
                     This.GlobalCount = This.GlobalCount + 1;
-                    If (declaration.Initializer != null &&
-                        (declaration.Initializer.Kind == [int](ExpressionKind.FunctionLiteral) ||
-                         declaration.Initializer.Kind == [int](ExpressionKind.BlockLiteral)))
-                    {
-                        string literalName = "__global_literal_" + declaration.Name;
-                        string returnType = declaration.Initializer.Kind ==
-                            [int](ExpressionKind.FunctionLiteral) ?
-                            declaration.Initializer.Text : "void";
-                        FunctionDecl literal = New FunctionDecl(literalName, returnType,
-                            declaration.Line, declaration.Column);
-                        literal.ReturnTypeSyntax = declaration.Initializer.TypeSyntax;
-                        literal.IsStatic = true;
-                        literal.Body = declaration.Initializer.Body;
-                        unit.Syntax.AddFunction(literal);
-                    }
                 }
                 declaration = declaration.Next;
             }
+            unit = unit.Next;
+        }
+        // C stage0 initializes all top-level declarations before static fields,
+        // including when several Units participate in the compilation.
+        unit = This.FirstUnit;
+        While (unit != null)
+        {
             TypeDecl typeDeclaration = unit.Syntax.FirstType;
             While (typeDeclaration != null)
             {
@@ -1092,30 +1102,6 @@ Class SemanticCompilation
                 typeDeclaration = typeDeclaration.Next;
             }
             unit = unit.Next;
-        }
-    }
-
-    Public Safe Function void LinkGlobalLiteralFunctions()
-    {
-        GlobalSymbol global = This.FirstGlobal;
-        While (global != null)
-        {
-            If (global.Declaration.Initializer != null &&
-                (global.Declaration.Initializer.Kind == [int](ExpressionKind.FunctionLiteral) ||
-                 global.Declaration.Initializer.Kind == [int](ExpressionKind.BlockLiteral)))
-            {
-                global.Value.CallableFunction = This.FindQualifiedFunction(global.UnitName +
-                    ".__global_literal_" + global.Declaration.Name, 0);
-                If (global.Value.CallableFunction != null &&
-                    global.Declaration.Initializer.Kind == [int](ExpressionKind.BlockLiteral))
-                {
-                    global.Value.CallableFunction.IsBlockLiteral = true;
-                    StatementNode body = global.Declaration.Initializer.Body;
-                    global.Value.CallableFunction.BlockRecords = This.BlockRecordNames(
-                        body == null ? null : body.FirstChild);
-                }
-            }
-            global = global.Next;
         }
     }
 
@@ -4579,7 +4565,7 @@ Class SemanticCompilation
         If (expression.Kind == [int](ExpressionKind.FunctionLiteral) ||
             expression.Kind == [int](ExpressionKind.BlockLiteral))
         {
-            FunctionSymbol literal = This.CreateLocalLiteralFunction(syntax, expression, scope);
+            FunctionSymbol literal = This.CreateLocalLiteralFunction(syntax, expression, scope, function);
             If (literal == null)
                 Return This.InvalidExpression(syntax, expression, "Invalid local literal", "unit is missing");
             TypeSymbol callableType = This.FindExactType(expression.Kind ==
@@ -5361,9 +5347,7 @@ Class SemanticCompilation
         While (global != null)
         {
             ExpressionNode expression = global.Declaration.Initializer;
-            If (expression != null &&
-                expression.Kind != [int](ExpressionKind.FunctionLiteral) &&
-                expression.Kind != [int](ExpressionKind.BlockLiteral))
+            If (expression != null)
             {
                 FunctionDecl declaration = New FunctionDecl("__global_init", "void",
                     global.Declaration.Line, global.Declaration.Column);
@@ -5375,6 +5359,15 @@ Class SemanticCompilation
                 context.ReturnType = This.Primitive("void");
                 HirExpression initializer = This.BindExpression(global.Syntax, context,
                     New BindingScope(null), expression);
+                If (initializer != null)
+                {
+                    global.Value.AsyncResultType = initializer.AsyncResultType;
+                    FunctionSymbol callable = initializer.Function;
+                    If (initializer.Symbol != null)
+                        callable = initializer.Symbol.CallableFunction;
+                    global.Value.CallableFunction = callable;
+                    If (callable != null) global.Value.BlockRecords = callable.BlockRecords;
+                }
                 bool emptyArray = global.Value.Type.Kind == [int](TypeKind.ArrayType) &&
                     initializer != null && initializer.Kind == [int](HirExpressionKind.ArrayLiteral) &&
                     initializer.FirstArgument == null;
@@ -5401,6 +5394,7 @@ Class SemanticCompilation
                     While (capture != null)
                     {
                         scope.Add(capture.Value);
+                        If (capture.Name == "This") function.Receiver = capture.Value;
                         capture = capture.Next;
                     }
                     If (function.OwnerType != null &&
@@ -5419,7 +5413,7 @@ Class SemanticCompilation
                     HirFunction hirFunction = New HirFunction(function);
                     If (function.Declaration.Body != null &&
                         function.ReturnType.Kind != [int](TypeKind.VoidType) &&
-                        !IO.Text.StartsWith(function.Name, "__global_literal_") &&
+                        !function.IsLiteral &&
                         !This.StatementAlwaysReturns(function.Declaration.Body))
                         This.Report(syntax, "Missing Return", function.QualifiedName(),
                             function.Declaration.Line, function.Declaration.Column);
@@ -5442,7 +5436,6 @@ Class SemanticCompilation
         This.ResolveGlobalTypes();
         This.IndexFunctions();
         This.ValidateClassRelationships();
-        This.LinkGlobalLiteralFunctions();
         UnitSymbol unit = This.FirstUnit;
         While (unit != null)
         {

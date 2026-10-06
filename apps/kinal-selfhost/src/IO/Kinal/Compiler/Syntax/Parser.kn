@@ -825,7 +825,7 @@ Safe Function bool IsTypeStart(TokenKind kind)
 Safe Function bool IsGlobalStart(TokenKind kind)
 {
     Return kind == TokenKind.KwConst || kind == TokenKind.Identifier ||
-           IsPrimitiveTypeToken(kind);
+           kind == TokenKind.Less || IsPrimitiveTypeToken(kind);
 }
 
 Safe Function bool Validate(SourceFile source, list tokens, list diagnostics)

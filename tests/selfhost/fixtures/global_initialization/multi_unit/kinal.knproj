@@ -1,0 +1,5 @@
+Project GlobalInitializationUnits {
+    DefaultProfile = "test";
+    SourceSet "main" { Files = ["Main.kn", "Support.kn"]; RequireUnit = true; }
+    Profile "test" { Source { Entry = "Main.kn"; Sets = ["main"]; Mode = AllSources; } }
+}

@@ -7,6 +7,7 @@ import platform
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 from check_targets import check_targets
@@ -28,6 +29,8 @@ from check_vm_cli import check_vm_cli
 from check_vm_lifecycle import check_vm_lifecycle
 from check_knc_backend import check_knc_backend, check_knc_workflow
 from check_knc_model import check_knc_model
+from check_global_initialization import check_global_initialization
+from run_bootstrap import copy_stage_support
 
 
 def run(command: list[str], *, cwd: Path) -> subprocess.CompletedProcess[str]:
@@ -263,6 +266,27 @@ def check_project_hosted_link_options(stage0: Path, compiler: Path, root: Path,
     return {"name": "project_hosted_link_options", "ok": True, "host_triple": host_triple}
 
 
+def check_installed_stdlib_extraction(compiler: Path, project: Path,
+                                     out_dir: Path, root: Path) -> None:
+    # Never delete a caller-owned compiler's cache: bootstrap and other test
+    # processes may already have selected sources from that generation.
+    with tempfile.TemporaryDirectory(prefix="stdlib-install-", dir=out_dir) as directory:
+        bundle = Path(directory).resolve()
+        require(bundle.is_relative_to(out_dir.resolve()), "isolated bundle escaped test output")
+        copy_stage_support(compiler.parent, bundle)
+        isolated = bundle / compiler.name
+        shutil.copy2(compiler, isolated)
+        cache = bundle / "stdlib-cache"
+        require(not cache.exists(), "isolated stdlib extraction must start without a cache")
+        checked = run([str(isolated), "check", str(project), "test"], cwd=root)
+        require(checked.returncode == 0, "isolated installed-stdlib check failed", checked)
+        require(
+            any(cache.glob("*/IO.Core/1.0.0/src/IO/Text.kn"))
+            and any(cache.glob("*/IO.Kinal.Runtime/1.0.0/src/IO/Kinal/Runtime/Core.kn")),
+            "stage1 did not validate and extract its packaged .klib standard library",
+        )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--stage0", type=Path, required=True)
@@ -323,6 +347,8 @@ def main() -> int:
                                     stage0_reference=args.stage0_role == "reference"))
     results.append(check_callables(compiler, stage0, root, out_dir / "callables",
                                   stage0_reference=args.stage0_role == "reference"))
+    results.append(check_global_initialization(compiler, stage0, root, out_dir / "global-initialization",
+                                              stage0_reference=args.stage0_role == "reference"))
     results.append(check_switch_loop_control(compiler, stage0, root, out_dir / "switch-loop-control",
                                              stage0_reference=args.stage0_role == "reference"))
     results.append(check_scalar_types(compiler, stage0, root, out_dir / "scalar-types",
@@ -1291,24 +1317,14 @@ def main() -> int:
     results.append({"name": "stage0_bundle_safety", "ok": True, "cases": 4})
 
     packaged_core = compiler.parent / "stdpkg" / "IO.Core" / "1.0.0" / "lib" / "IO.Core.klib"
-    stdlib_cache = compiler.parent / "stdlib-cache"
     require(packaged_core.is_file(), "stage1 .klib standard-library package is missing")
     require(not (compiler.parent / "stdlib-src").exists(),
             "stage1 still carries a loose standard-library source tree")
-    if stdlib_cache.exists():
-        shutil.rmtree(stdlib_cache)
-
     stdlib_project = root / "tests" / "selfhost" / "fixtures" / "stdlib_core" / "kinal.knproj"
+    check_installed_stdlib_extraction(compiler, stdlib_project, out_dir, root)
     stdlib_executable = out_dir / f"stdlib-core{executable_suffix}"
     stdlib_check = run([str(compiler), "check", str(stdlib_project), "test"], cwd=root)
     require(stdlib_check.returncode == 0, "stage1 standard-library source check failed", stdlib_check)
-    require(
-        any(stdlib_cache.glob("*/IO.Core/1.0.0/src/IO/Text.kn"))
-        and any(stdlib_cache.glob(
-            "*/IO.Kinal.Runtime/1.0.0/src/IO/Kinal/Runtime/Core.kn"
-        )),
-        "stage1 did not validate and extract its packaged .klib standard library",
-    )
     stdlib_build = run(
         [str(compiler), "build", str(stdlib_project), str(stdlib_executable), "test"],
         cwd=root,

@@ -4,15 +4,18 @@ Get IO.Target;
 Get IO.Kinal.Runtime.Native;
 Get IO.Kinal.Runtime.Thread;
 
-byte* ManagedBlocks = null;
-byte* GlobalRoots = null;
-int GlobalRootCount = 0;
-int GlobalRootCapacity = 0;
-u64 ManagedBytes = [u64](0);
-u64 CollectionThreshold = [u64](8388608);
-i32 CollectorLock = [i32](0);
-bool Collecting = false;
-byte* MainThreadStorage = null;
+// These slots use loader zero-initialization, not language initializers:
+// GC startup precedes user initializers and may already have populated them
+// when declaration-ordered global initialization reaches this Unit.
+byte* ManagedBlocks;
+byte* GlobalRoots;
+int GlobalRootCount;
+int GlobalRootCapacity;
+u64 ManagedBytes;
+u64 CollectionThreshold;
+i32 CollectorLock;
+bool Collecting;
+byte* MainThreadStorage;
 
 Safe Function usize PointerBytes()
 {
@@ -70,6 +73,7 @@ Trusted Function void Initialize()
     usize marker = [usize](0);
     byte* storage = ThreadStorage();
     If (MainThreadStorage == null) MainThreadStorage = storage;
+    If (CollectionThreshold == [u64](0)) CollectionThreshold = [u64](8388608);
     SetStackBase([usize](&marker));
 }
 
