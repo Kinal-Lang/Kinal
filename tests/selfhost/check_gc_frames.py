@@ -46,21 +46,26 @@ def check_converted_argument_roots(ir: str, *, function_name: str = "CheckConver
             f"converted argument slot is unregistered: {stored[1]}"
 
 
-def check_character_argument_root(ir: str) -> None:
-    body = function_body(ir, "CheckConvertedArguments")
-    conversion = re.search(r"(%[\w.]+) = call ptr "
-                           r"@__kn_sh_IO_Kinal_Runtime_CharToString_1\(i8 120\)", body)
-    assert conversion, "fixture must exercise implicit char-to-string conversion"
-    remaining = body[conversion.end():]
-    collection = re.search(r"call i64 @\w+_CollectCallArgument_0\(\)", remaining)
-    assert collection, "converted character must precede another collecting argument"
-    stored = re.search(r"store ptr " + re.escape(conversion[1]) +
-                       r", ptr (%[\w.]+),", remaining[:collection.start()])
-    assert stored, "converted character has no root before collection"
-    assert re.search(r"@__kn_sh_IO_Kinal_Runtime_GarbageCollector_AddRoot_3"
-                     r"\(ptr [^,]+, ptr " + re.escape(stored[1]) + r",",
-                     body[:conversion.start()]), \
-        "converted character slot is unregistered"
+def check_character_argument_root(ir: str, *, function_name: str = "CheckConvertedArguments",
+                                  collector: str = "CollectCallArgument",
+                                  expected_conversions: int = 1) -> None:
+    body = function_body(ir, function_name)
+    conversions = list(re.finditer(r"(%[\w.]+) = call ptr "
+                                   r"@__kn_sh_IO_Kinal_Runtime_CharToString_1\(i8 120\)", body))
+    assert len(conversions) == expected_conversions, \
+        "fixture must exercise every implicit char-to-string conversion"
+    for conversion in conversions:
+        remaining = body[conversion.end():]
+        collection = re.search(r"call (?:i64|ptr) @\w+_" + re.escape(collector) + r"_0\(\)",
+                               remaining)
+        assert collection, "converted character must precede another collecting argument"
+        stored = re.search(r"store ptr " + re.escape(conversion[1]) +
+                           r", ptr (%[\w.]+),", remaining[:collection.start()])
+        assert stored, "converted character has no root before collection"
+        assert re.search(r"@__kn_sh_IO_Kinal_Runtime_GarbageCollector_AddRoot_3"
+                         r"\(ptr [^,]+, ptr " + re.escape(stored[1]) + r",",
+                         body[:conversion.start()]), \
+            "converted character slot is unregistered"
 
 
 def check_entry_roots(ir: str, *, legacy_stage0: bool = False) -> None:
@@ -136,6 +141,8 @@ def check_gc_frames(compiler: Path, stage0: Path, root: Path, out: Path,
         check_converted_argument_roots(ir, function_name="CheckDynamicConvertedArguments",
                                        expected_boxes=1)
         check_character_argument_root(ir)
+        check_character_argument_root(ir, function_name="CheckBuiltinConvertedArguments",
+                                      collector="CollectBuiltinArgument", expected_conversions=4)
         check_native_memory_abi(ir)
         print(f"[OK] GC entry roots and fixed-width native memory ABI {target}", flush=True)
     return {"name": "gc_frames", "ok": True, "compilers": len(tools),

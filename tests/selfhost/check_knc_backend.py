@@ -52,6 +52,7 @@ REGISTERED_LABELS = (
     'knc_vm_typeof',
     'knc_vm_builtin_string_length_reference',
     'knc_vm_string_builtin_references',
+    'knc_vm_string_builtin_conversions',
     'knc_vm_typeof_static_query',
     'knc_vm_pointer_rhs_addition',
     'knc_vm_pointers',

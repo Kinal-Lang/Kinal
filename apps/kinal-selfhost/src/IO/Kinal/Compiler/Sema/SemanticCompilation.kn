@@ -3402,11 +3402,11 @@ Class SemanticCompilation
         Return type.Kind == [int](TypeKind.NamedType) ? type.QualifiedName() : type.Name;
     }
 
-    Public Safe Function HirExpression BindBuiltinReferenceCall(SyntaxTree syntax,
-                                                                  FunctionSymbol function,
-                                                                  BindingScope scope,
-                                                                  ExpressionNode expression,
-                                                                  string target)
+    Public Safe Function HirExpression BindStringBuiltinCall(SyntaxTree syntax,
+                                                              FunctionSymbol function,
+                                                              BindingScope scope,
+                                                              ExpressionNode expression,
+                                                              string target)
     {
         If (expression.TypeArgumentCount() != 0)
         {
@@ -3440,7 +3440,9 @@ Class SemanticCompilation
             If (!value.HasPrimaryError && !This.IsHirAssignable(This.Primitive("string"), value))
                 This.Report(syntax, "Type Mismatch", "Builtin argument must be string",
                     argument.Line, argument.Column);
-            bound.AddArgument(value);
+            // Keep allocating conversions visible to expression-root planning
+            // before a later argument reaches a GC safe point.
+            bound.AddArgument(This.ConvertCallArgument(This.Primitive("string"), value));
             argument = argument.Next;
         }
         Return bound;
@@ -3489,6 +3491,8 @@ Class SemanticCompilation
         }
         Else
         {
+            If (This.IsStringBuiltinReferenceTarget(path))
+                Return This.BindStringBuiltinCall(syntax, function, scope, expression, path);
             returnType = This.RuntimeCallType(path, null);
             If (returnType != null)
             {
@@ -3596,7 +3600,7 @@ Class SemanticCompilation
                 If (dynamic != null && !dynamic.IsParameter &&
                     This.IsFunctionObjectType(dynamic.Type) &&
                     This.IsStringBuiltinReferenceTarget(dynamic.BuiltinReferenceTarget))
-                    Return This.BindBuiltinReferenceCall(syntax, function, scope, expression,
+                    Return This.BindStringBuiltinCall(syntax, function, scope, expression,
                         dynamic.BuiltinReferenceTarget);
                 If (dynamic == null)
                 {

@@ -2927,7 +2927,7 @@ static CGValue gen_collection_string(Codegen *g, KnBuiltinKind kind, ExprList *a
             // Module call: IO.Type.string.Length(string)
             arg = gen_expr(g, args->items[0]);
         }
-        LLVMValueRef argv[1] = { arg.value };
+        LLVMValueRef argv[1] = { cast_value(g, arg, type_make(TY_STRING)) };
         out.value = LLVMBuildCall2(g->builder, g->fn_strlen_ty, g->fn_strlen, argv, 1, "strlen");
         out.type = type_make(TY_INT);
         return out;
@@ -2946,20 +2946,24 @@ static CGValue gen_collection_string(Codegen *g, KnBuiltinKind kind, ExprList *a
     }
     case KN_BUILTIN_IO_STRING_CONCAT:
     {
-        CGValue a = gen_expr(g, args->items[0]);
-        CGValue b = gen_expr(g, args->items[1]);
-        LLVMValueRef argv[2] = { a.value, b.value };
+        LLVMValueRef frame = gc_push_temp_frame(g, "gc.string.args");
+        LLVMValueRef argv[2];
+        argv[0] = gen_rooted_call_arg(g, frame, args->items[0], type_make(TY_STRING));
+        argv[1] = gen_rooted_call_arg(g, frame, args->items[1], type_make(TY_STRING));
         out.value = LLVMBuildCall2(g->builder, g->fn_str_concat_ty, g->fn_str_concat, argv, 2, "strcat");
         out.type = type_make(TY_STRING);
+        gc_pop_temp_frame(g, frame);
         return out;
     }
     case KN_BUILTIN_IO_STRING_EQUALS:
     {
-        CGValue a = gen_expr(g, args->items[0]);
-        CGValue b = gen_expr(g, args->items[1]);
-        LLVMValueRef argv[2] = { a.value, b.value };
+        LLVMValueRef frame = gc_push_temp_frame(g, "gc.string.args");
+        LLVMValueRef argv[2];
+        argv[0] = gen_rooted_call_arg(g, frame, args->items[0], type_make(TY_STRING));
+        argv[1] = gen_rooted_call_arg(g, frame, args->items[1], type_make(TY_STRING));
         out.value = LLVMBuildCall2(g->builder, g->fn_str_eq_ty, g->fn_str_eq, argv, 2, "streq");
         out.type = type_make(TY_BOOL);
+        gc_pop_temp_frame(g, frame);
         return out;
     }
     case KN_BUILTIN_IO_STRING_TOCHARS:

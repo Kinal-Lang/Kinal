@@ -64,9 +64,22 @@ Do not interpret the stage0-only extended-profile tests as selfhost support.
 - Native callable adapters preserve `any -> any` unchanged in both C stage0 and
   selfhost. The former zero fallback lost the incoming tag/payload and could crash
   dynamic calls with array arguments.
+- Direct and known-reference string builtins share typed argument binding, retaining
+  allocating character conversions before later arguments. C stage0 also converts
+  accepted character arguments and roots converted Concat/Equals values; its KNC
+  emitter supplies String rather than Char registers to the existing VM builtins.
 
 ## Local evidence (Windows x64, LLVM 21.1.8)
 
+- String-builtin follow-up: old selfhost lowering deterministically fails heap-ASan
+  with use-after-free when a later argument collects; repaired output prints `xx`
+  and `true`. Four direct/reference GC forms pass three C-/stage1-/stage2-built host runs;
+  seven-target IR requires each conversion to be rooted before collection.
+  The ordinary nine-output fixture passes C/selfhost Native and KNC. Fresh C full
+  manifest passes 288 enabled cases; the first attempt stopped on `function_objects`
+  with `0xC0000043`, then that case and the fresh full retry passed. This retry is
+  not a diagnosis of the initial process failure. Current stage1 diagnostics pass
+  95/95, registered KNC passes 56/56, and Python harness units pass 37/37.
 - Fresh C stage0 and stage1 built; stage1 compiled the matching KinalVM.
 - Integrated stage1 manifest Native object compilation: 191/191 positive cases.
 - Integrated stage1 manifest executable/runtime checks: 187/187 cases, including hosted
@@ -123,7 +136,17 @@ Do not interpret the stage0-only extended-profile tests as selfhost support.
 
 ## Not a release gate
 
-Full PR acceptance is not claimed. The current argument-root/Any-identity snapshot
+Full PR acceptance is not claimed. The string-builtin follow-up produces stage2
+SHA-256 `f1a819d5f5038133d8e8533963834ec40b081022023897abdf3567bd37dff7a6`,
+but stage2 exits with `0xC0000005` while building stage3. Its complete Native-object
+batch passes 189/193: `any_cast` and `overload_functions` fail inside the compiler
+with `0xC0000374`; `any_mixed_kind_equals` and `string_builtin_conversions` fail
+with `0xC0000005`. None produces an object. These are failed compilation gates,
+not unsupported features or skipped expectations. The same stage2 separately
+builds the GC fixture, whose executable passes three times; that does not erase
+the failed full batch or establish a fix for the remaining compiler instability.
+
+The preceding argument-root/Any-identity snapshot
 builds stage2 and stage3 with identical executable SHA-256
 `218e7d3d18997fd7b0c978dd46cc8d8a215ad41db32ae7db7be8ad29fd3dc4ad`.
 Both pass the large parser input and the stage1/2/3 project-AST comparisons.

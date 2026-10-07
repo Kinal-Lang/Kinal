@@ -101,6 +101,20 @@ class CharacterArgumentRootTests(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError, "unregistered"):
             check_character_argument_root(ir)
 
+    def test_checks_each_builtin_conversion(self):
+        body = self.IR.split("entry:\n", 1)[1].split("  ret i1", 1)[0]
+        body = body.replace("call i64 @Tests_CollectCallArgument", "call ptr @Tests_CollectBuiltinArgument")
+        ir = "define i1 @Tests_CheckBuiltinConvertedArguments_0() {\nentry:\n"
+        for index in range(4):
+            ir += re.sub(r"%(root|text|ignored)\b", lambda m: m[0] + str(index), body)
+        ir += "  ret i1 true\n}\n"
+        options = dict(function_name="CheckBuiltinConvertedArguments",
+                       collector="CollectBuiltinArgument", expected_conversions=4)
+        check_character_argument_root(ir, **options)
+        with self.assertRaisesRegex(AssertionError, "no root before collection"):
+            check_character_argument_root(ir.replace(
+                "  store ptr %text2, ptr %root2, align 8\n", ""), **options)
+
 
 class NativeMemoryAbiTests(unittest.TestCase):
     ABI = "\n".join([

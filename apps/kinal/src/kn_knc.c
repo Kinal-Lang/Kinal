@@ -3314,6 +3314,14 @@ static KncValue compile_builtin_invoke(KncFuncState *st,
             KncValue av = compile_value_expr(st, args->items[i]);
             if (kn_diag_error_count() > 0)
                 return out;
+            /* Sema accepts char -> string here just as for ordinary string
+             * parameters. The VM builtin expects a String register, not Char. */
+            if (av.type.kind == TY_CHAR &&
+                (builtin_id == KN_BUILTIN_IO_STRING_LENGTH ||
+                 builtin_id == KN_BUILTIN_IO_STRING_CONCAT ||
+                 builtin_id == KN_BUILTIN_IO_STRING_EQUALS ||
+                 builtin_id == KN_BUILTIN_IO_STRING_TOCHARS))
+                av = emit_stringify_value(st, av);
             arg_regs[arg_count++] = av.reg;
         }
     }

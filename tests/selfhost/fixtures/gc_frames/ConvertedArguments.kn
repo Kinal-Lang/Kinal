@@ -1,6 +1,7 @@
 Unit Tests.GcFrames;
 
 Get IO.Kinal.Runtime.GarbageCollector;
+Get IO.Type.string;
 
 Safe Function int[] MakeGcPair()
 {
@@ -78,5 +79,22 @@ Trusted Function bool CheckConvertedArguments()
     Object.Function callable = ReadGcPair;
     If (!CheckDynamicConvertedArguments(callable, pair)) Return false;
     If (!ReadConvertedCharacter('x', CollectCallArgument())) Return false;
+    Return true;
+}
+
+Trusted Function string CollectBuiltinArgument()
+{
+    CollectCallArgument();
+    Return "x";
+}
+
+Trusted Function bool CheckBuiltinConvertedArguments()
+{
+    If (IO.Type.string.Concat('x', CollectBuiltinArgument()) != "xx") Return false;
+    If (!IO.Type.string.Equals('x', CollectBuiltinArgument())) Return false;
+    Var concatenate = IO.Type.string.Concat;
+    Var equal = IO.Type.string.Equals;
+    If (concatenate('x', CollectBuiltinArgument()) != "xx") Return false;
+    If (!equal('x', CollectBuiltinArgument())) Return false;
     Return true;
 }

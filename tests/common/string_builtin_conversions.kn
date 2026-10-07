@@ -1,0 +1,25 @@
+Unit Tests.StringBuiltinConversions;
+
+Get IO.Console;
+Get IO.Type.string;
+
+Static Function int Main()
+{
+    IO.Console.PrintLine(IO.Type.string.Length('x'));
+    IO.Console.PrintLine(IO.Type.string.Concat('x', 'y'));
+    IO.Console.PrintLine(IO.Type.string.Equals('x', "x"));
+    IO.Console.PrintLine(IO.Type.string.Equals("x", 'y'));
+    char[] characters = IO.Type.string.ToChars('z');
+    IO.Console.PrintLine(characters[0]);
+
+    Var concatenate = IO.Type.string.Concat;
+    Var equal = IO.Type.string.Equals;
+    Var length = IO.Type.string.Length;
+    Var toCharacters = IO.Type.string.ToChars;
+    IO.Console.PrintLine(concatenate('a', 'b'));
+    IO.Console.PrintLine(equal('a', "a"));
+    IO.Console.PrintLine(length('b'));
+    char[] throughReference = toCharacters('c');
+    IO.Console.PrintLine(throughReference[0]);
+    Return 0;
+}

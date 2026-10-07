@@ -22,7 +22,7 @@ from audit_manifest_native import (
 )
 
 
-EXPECTED_HOST_RUNTIME_CASES = {"windows": 188, "linux": 186, "macos": 184}
+EXPECTED_HOST_RUNTIME_CASES = {"windows": 189, "linux": 187, "macos": 185}
 ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;]*m")
 
 

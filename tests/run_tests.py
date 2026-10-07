@@ -869,6 +869,9 @@ def run_driver_integration_tests(compiler: Path, out_dir: Path) -> int:
         return 1
     if run_knc_case("knc_vm_string_builtin_references", "string_builtin_references.kn", "ok\n") != 0:
         return 1
+    if run_knc_case("knc_vm_string_builtin_conversions", "string_builtin_conversions.kn",
+                    "1\nxy\ntrue\nfalse\nz\nab\ntrue\n1\nc\n") != 0:
+        return 1
     if run_knc_case("knc_vm_typeof_static_query", "typeof_static_query.kn", "ok\n") != 0:
         return 1
     if run_knc_case("knc_vm_pointer_rhs_addition", "pointer_rhs_addition.kn", "ok\n") != 0:

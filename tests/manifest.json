@@ -1,5 +1,10 @@
 [
   {
+    "name": "string_builtin_conversions",
+    "file": "tests/common/string_builtin_conversions.kn",
+    "expected": "1\nxy\ntrue\nfalse\nz\nab\ntrue\n1\nc\n"
+  },
+  {
     "name": "any_mixed_kind_equals",
     "file": "tests/common/any_mixed_kind_equals.kn",
     "expected": ""
