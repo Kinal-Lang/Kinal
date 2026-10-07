@@ -1,6 +1,7 @@
 Unit Tests.GcFrames;
 
 Get IO.Kinal.Runtime.GarbageCollector;
+Get IO.Kinal.Runtime.Native;
 Get IO.Type.string;
 
 Safe Function int[] MakeGcPair()
@@ -97,4 +98,66 @@ Trusted Function bool CheckBuiltinConvertedArguments()
     If (concatenate('x', CollectBuiltinArgument()) != "xx") Return false;
     If (!equal('x', CollectBuiltinArgument())) Return false;
     Return true;
+}
+
+Struct AssignmentRecord
+{
+    int Value;
+    int Tail;
+}
+
+byte* AssignmentRemembered;
+int AssignmentRememberedCount;
+
+Trusted Function void RememberAssignmentAddress(int* address)
+{
+    // A native allocation is not traced by the Kinal collector. Its contents
+    // let this fixture inspect the writes without supplying another GC root.
+    ([int**](AssignmentRemembered))[AssignmentRememberedCount] = address;
+    AssignmentRememberedCount = AssignmentRememberedCount + 1;
+}
+
+Trusted Function int* MakeAssignmentAddress()
+{
+    int[] pair = MakeGcPair();
+    RememberAssignmentAddress(&pair[0]);
+    Return &pair[0];
+}
+
+Trusted Function AssignmentRecord* MakeAssignmentRecord()
+{
+    AssignmentRecord record;
+    record.Value = 19;
+    record.Tail = 23;
+    AssignmentRecord[] records = {record};
+    RememberAssignmentAddress(&records[0].Value);
+    Return &records[0];
+}
+
+Trusted Function int CollectAndReplaceAssignment()
+{
+    int* target = ([int**](AssignmentRemembered))[AssignmentRememberedCount - 1];
+    target[0] = 7;
+    CollectCallArgument();
+    Return 5;
+}
+
+Trusted Function bool CheckAssignmentAddressRoots()
+{
+    // Only the evaluated lvalue address retains these blocks while the RHS
+    // collects. A scalar/Struct value copy does not retain its original storage.
+    AssignmentRemembered = IO.Kinal.Runtime.Native.HeapAllocate([u64](32));
+    AssignmentRememberedCount = 0;
+    If (AssignmentRemembered == null) Return false;
+    *MakeAssignmentAddress() = CollectCallArgument();
+    *MakeAssignmentAddress() += CollectAndReplaceAssignment();
+    (*MakeAssignmentRecord()).Value = CollectCallArgument();
+    (*MakeAssignmentRecord()).Value += CollectAndReplaceAssignment();
+    int** addresses = [int**](AssignmentRemembered);
+    bool correct = AssignmentRememberedCount == 4 &&
+        addresses[0][0] == 0 && addresses[1][0] == 24 &&
+        addresses[2][0] == 0 && addresses[3][0] == 24;
+    IO.Kinal.Runtime.Native.HeapFree(AssignmentRemembered);
+    AssignmentRemembered = null;
+    Return correct;
 }

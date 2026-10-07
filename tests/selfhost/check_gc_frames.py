@@ -97,6 +97,37 @@ def check_entry_roots(ir: str, *, legacy_stage0: bool = False) -> None:
     assert len(registered) >= 5, "loop fixture no longer exercises managed declarations"
 
 
+def check_assignment_address_roots(ir: str, *, legacy_stage0: bool = False) -> None:
+    body = function_body(ir, "CheckAssignmentAddressRoots")
+    prefix = r"gc\.assignment\.address" if legacy_stage0 else "gc_assignment_address"
+    register = "__kn_gc_add_root" if legacy_stage0 else "__kn_sh_IO_Kinal_Runtime_GarbageCollector_AddRoot_3"
+    slots = re.findall(r"(%" + prefix + r"[\w.]*) = alloca ptr", body)
+    assert len(slots) == 4, "fixture must preserve all four assignment addresses"
+    for slot in slots:
+        escaped = re.escape(slot)
+        initialized = re.search(r"store ptr null, ptr " + escaped + r",", body)
+        registrations = list(re.finditer(r"@" + register + r"\(ptr [^,]+, ptr " + escaped + r",", body))
+        assert len(registrations) == 1, f"assignment address must register once: {slot}"
+        registered = registrations[0]
+        assert initialized and registered and initialized.start() < registered.start(), \
+            f"assignment address slot is uninitialized/unregistered: {slot}"
+        preceding_labels = re.findall(r"^([\w.]+):", body[:registered.start()], re.MULTILINE)
+        assert preceding_labels and preceding_labels[-1] == "entry", \
+            f"assignment address must register at entry: {slot}"
+        stored = re.search(r"store ptr (%[\w.]+), ptr " + escaped + r",", body)
+        assert stored, f"assignment address has no root before collection: {slot}"
+        remainder = body[stored.end():]
+        collection = re.search(r"call i64 @[\w.]+[._](CollectCallArgument|CollectAndReplaceAssignment)(?:_0)?\(\)", remainder)
+        assert collection, "assignment must evaluate a collecting RHS after the address"
+        written = re.search(r"store i64 [^,]+, ptr " + re.escape(stored[1]) + r",",
+                            remainder[collection.end():])
+        assert written, "rooted address must be the actual assignment destination"
+        if collection[1] == "CollectAndReplaceAssignment":
+            assert re.search(r"load i64, ptr " + re.escape(stored[1]) + r",",
+                             remainder[:collection.start()]), \
+                "compound assignment must read its old value before the RHS"
+
+
 def check_gc_frames(compiler: Path, stage0: Path, root: Path, out: Path,
                     *, stage0_reference: bool = True) -> dict[str, object]:
     out.mkdir(parents=True, exist_ok=True)
@@ -128,6 +159,7 @@ def check_gc_frames(compiler: Path, stage0: Path, root: Path, out: Path,
             ir = output.read_text(encoding="utf-8")
             check_entry_roots(ir, legacy_stage0=True)
             check_native_memory_abi(ir)
+            check_assignment_address_roots(ir, legacy_stage0=True)
         output = out / ("roots-" + target + ".ll")
         build = subprocess.run(
             [str(compiler), "build", "--project", str(project), "--profile", "test",
@@ -144,6 +176,7 @@ def check_gc_frames(compiler: Path, stage0: Path, root: Path, out: Path,
         check_character_argument_root(ir, function_name="CheckBuiltinConvertedArguments",
                                       collector="CollectBuiltinArgument", expected_conversions=4)
         check_native_memory_abi(ir)
+        check_assignment_address_roots(ir)
         print(f"[OK] GC entry roots and fixed-width native memory ABI {target}", flush=True)
     return {"name": "gc_frames", "ok": True, "compilers": len(tools),
             "roots": 257, "repeats": 3, "ir_targets": len(TARGETS),

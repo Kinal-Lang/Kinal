@@ -10,6 +10,7 @@ static LLVMValueRef ensure_c_abi_adapter(Codegen *g, FuncSymbol *target, FuncSym
 static void init_class_array_fields(Codegen *g, ClassSymbol *cs, LLVMValueRef obj);
 static CGValue gen_builtin_call(Codegen *g, KnBuiltinKind kind, ExprList *args, Expr *recv);
 static LLVMValueRef gen_lvalue(Codegen *g, Expr *e, Type *out_type);
+static void gc_add_root(Codegen *g, LLVMValueRef slot, Type t);
 static LLVMValueRef gen_member_ptr(Codegen *g, Expr *e, Type *out_type);
 static LLVMValueRef gen_index_ptr(Codegen *g, Expr *e, Type *out_type);
 static CGValue gen_new(Codegen *g, Expr *e);
@@ -1774,6 +1775,17 @@ static CGValue gen_expr(Codegen *g, Expr *e)
         }
         Type tgt_type = type_make(TY_UNKNOWN);
         LLVMValueRef ptr = gen_lvalue(g, e->v.assign.target, &tgt_type);
+        if (g->gc_frame && e->v.assign.target->kind != EXPR_VAR)
+        {
+            // The pointee can be scalar storage in an otherwise unreachable
+            // managed block. Keep its interior address alive across the RHS.
+            LLVMValueRef function = LLVMGetBasicBlockParent(LLVMGetInsertBlock(g->builder));
+            LLVMValueRef slot = build_entry_alloca(g, function, g->i8ptr,
+                                                  "gc.assignment.address");
+            gc_add_root(g, slot, type_ptr(TY_BYTE));
+            LLVMBuildStore(g->builder, LLVMBuildBitCast(g->builder, ptr, g->i8ptr,
+                                                      "assignment.address"), slot);
+        }
         CGValue val;
         if (e->v.assign.is_compound)
         {

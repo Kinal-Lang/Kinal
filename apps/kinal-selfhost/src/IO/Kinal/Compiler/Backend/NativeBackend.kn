@@ -2108,6 +2108,14 @@ Class NativeBackend
 
     Public Trusted Function byte* EmitAddress(LlvmFunctionContext context, HirExpression expression)
     {
+        byte* address = This.EmitAddressValue(context, expression);
+        LlvmAddressRoot root = expression == null ? null : context.FindAddressRoot(expression);
+        If (root != null && address != null) This.Module.Store(address, root.Address);
+        Return address;
+    }
+
+    Public Trusted Function byte* EmitAddressValue(LlvmFunctionContext context, HirExpression expression)
+    {
         If (expression == null) Return null;
         If (expression.Kind == [int](HirExpressionKind.Unary) && expression.Operator == TokenKind.Star)
             Return This.EmitExpression(context, expression.Left).Handle;
@@ -4950,6 +4958,22 @@ Class NativeBackend
                 expression.Left.Left != null &&
                 expression.Left.Left.Type.Kind == [int](TypeKind.PackageType);
             byte* address = This.EmitAddress(context, expression.Left);
+            LlvmValue left = null;
+            If (operatorKind != TokenKind.Assign)
+            {
+                If (packageElement)
+                {
+                    LlvmValue boxedLeft = New LlvmValue(This.Module.Load(This.AnyType, address,
+                        This.Unique("assignment_any")), This.Semantics.Primitive("any"));
+                    left = expression.Left.Type.Kind == [int](TypeKind.AnyType) ? boxedLeft :
+                        This.CastValue(boxedLeft, expression.Left.Type);
+                }
+                Else left = New LlvmValue(This.Module.Load(This.TypeHandle(expression.Left.Type), address,
+                    This.Unique("assignment_left")), expression.Left.Type);
+                // Match source evaluation order: read the old value before a
+                // RHS can replace it, and preserve managed old values across GC.
+                This.StoreExpressionRoot(context, expression.Left, left);
+            }
             LlvmValue right = null;
             If (expression.Left.Kind == [int](HirExpressionKind.Delegate) &&
                 expression.Right.Kind == [int](HirExpressionKind.FunctionReference))
@@ -4971,16 +4995,6 @@ Class NativeBackend
             Else right = This.CastValue(This.EmitExpression(context, expression.Right), operationType);
             If (operatorKind != TokenKind.Assign)
             {
-                LlvmValue left = null;
-                If (packageElement)
-                {
-                    LlvmValue boxedLeft = New LlvmValue(This.Module.Load(This.AnyType, address,
-                        This.Unique("assignment_any")), This.Semantics.Primitive("any"));
-                    left = expression.Left.Type.Kind == [int](TypeKind.AnyType) ? boxedLeft :
-                        This.CastValue(boxedLeft, expression.Left.Type);
-                }
-                Else left = New LlvmValue(This.Module.Load(This.TypeHandle(expression.Left.Type), address,
-                    This.Unique("assignment_left")), expression.Left.Type);
                 left = This.CastValue(left, operationType);
                 If (operatorKind == TokenKind.PlusAssign && left.Type.Kind == [int](TypeKind.StringType))
                     right = New LlvmValue(This.CallKinalRuntime(
@@ -5669,6 +5683,12 @@ Class NativeBackend
             If (ownsPartiallyInitializedStorage)
                 This.PrepareExpressionRoot(context, current);
 
+            If (current.Kind == [int](HirExpressionKind.Binary) &&
+                (current.Operator == TokenKind.Assign || current.Operator == TokenKind.PlusAssign ||
+                 current.Operator == TokenKind.MinusAssign || current.Operator == TokenKind.StarAssign ||
+                 current.Operator == TokenKind.SlashAssign || current.Operator == TokenKind.PercentAssign))
+                This.PrepareAssignmentAddressRoot(context, current.Left);
+
             // A left value remains live while the right side, receiver
             // arguments, or switch cases are evaluated. Any of those paths
             // may enter another Kinal function and therefore reach a GC safe
@@ -5709,6 +5729,24 @@ Class NativeBackend
         byte* slot = This.Module.Alloca(bytePointer, This.Unique("captured_root"));
         This.Module.Store(This.Module.ConstNull(bytePointer), slot);
         context.AddCaptureRoot(New LlvmCaptureRoot(symbol, slot));
+        This.AddGcRoot(context,
+            This.Semantics.MakePointerType(This.Semantics.Primitive("byte")), slot);
+    }
+
+    Public Trusted Function void PrepareAssignmentAddressRoot(
+        LlvmFunctionContext context, HirExpression expression)
+    {
+        If (expression == null || context.FindAddressRoot(expression) != null) Return;
+        // Ordinary named slots already have a local/global/capture root. A
+        // property setter consumes its receiver, not a storage address.
+        If (expression.Kind == [int](HirExpressionKind.Local) ||
+            expression.Kind == [int](HirExpressionKind.Global) ||
+            expression.Kind == [int](HirExpressionKind.Delegate) ||
+            (expression.Kind == [int](HirExpressionKind.Field) && expression.Function != null)) Return;
+        byte* pointer = This.Module.PointerType(This.Module.IntType(8));
+        byte* slot = This.Module.Alloca(pointer, This.Unique("gc_assignment_address"));
+        This.Module.Store(This.Module.ConstNull(pointer), slot);
+        context.AddAddressRoot(New LlvmAddressRoot(expression, slot));
         This.AddGcRoot(context,
             This.Semantics.MakePointerType(This.Semantics.Primitive("byte")), slot);
     }

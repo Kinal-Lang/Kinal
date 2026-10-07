@@ -68,10 +68,25 @@ Do not interpret the stage0-only extended-profile tests as selfhost support.
   allocating character conversions before later arguments. C stage0 also converts
   accepted character arguments and roots converted Concat/Equals values; its KNC
   emitter supplies String rather than Char registers to the existing VM builtins.
+- Assignment destinations keep the exact computed interior pointer in a zeroed,
+  entry-registered root before RHS evaluation. A scalar/Struct value copy cannot
+  retain its original storage. Both C stage0 and selfhost follow this rule without
+  introducing temporary frames. Ordinary compound assignments read/root the old
+  value before RHS effects, matching C stage0 evaluation order.
 
 ## Local evidence (Windows x64, LLVM 21.1.8)
 
-- String-builtin follow-up: old selfhost lowering deterministically fails heap-ASan
+- Assignment-storage follow-up: the old pointer-assignment fixture deterministically
+  fails heap-ASan with WRITE8 use-after-free. Repaired pointer/Struct-field direct
+  and compound assignments pass the complete GC fixture three times under heap-ASan;
+  the RHS-replacement cases yield 24 rather than the former 12. C-/stage1-/stage3-built
+  GC fixtures pass three host runs each, and both compilers pass seven-target IR
+  checks requiring initialized, exactly-once entry roots for all four destination
+  addresses. Current C full manifest passes all 288 enabled Windows cases on its
+  first attempt, and Python harness units pass 44/44. No production collector or
+  allocation-threshold workaround was added. Cross-target IR is not foreign-host
+  execution, and these focused passes do not establish compiler batch stability.
+- String-builtin follow-up (preceding snapshot): old selfhost lowering deterministically fails heap-ASan
   with use-after-free when a later argument collects; repaired output prints `xx`
   and `true`. Four direct/reference GC forms pass three C-/stage1-/stage2-built host runs;
   seven-target IR requires each conversion to be rooted before collection.
@@ -136,7 +151,18 @@ Do not interpret the stage0-only extended-profile tests as selfhost support.
 
 ## Not a release gate
 
-Full PR acceptance is not claimed. The string-builtin follow-up produces stage2
+Full PR acceptance is not claimed. The assignment-storage follow-up builds stage2
+and stage3 with identical executable SHA-256
+`19fcc5a5c3daa93c3b3ff8eee712b7509c18a04f523dfbdcffc2045b82f1d47e`.
+Full bootstrap summaries/IR comparisons are still being evaluated. Its stage2
+Native-object batch fails overall at 185/193: `array_type_contract`, `autolink`,
+`ffi_attr_file`, `knc_f32_rounding`, `pointer_depth`, `recursive_method_static`,
+and `type_modules` fail inside the compiler with `0xC0000005`;
+`unsafe_alias_unicode_keyword` fails with `0xC0000374`. None produces an object.
+The independently reproduced assignment-storage bug is fixed, but is not the
+complete explanation for the remaining compiler instability.
+
+The preceding string-builtin follow-up produces stage2
 SHA-256 `f1a819d5f5038133d8e8533963834ec40b081022023897abdf3567bd37dff7a6`,
 but stage2 exits with `0xC0000005` while building stage3. Its complete Native-object
 batch passes 189/193: `any_cast` and `overload_functions` fail inside the compiler

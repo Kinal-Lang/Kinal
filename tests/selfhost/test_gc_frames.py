@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 import unittest
 
-from check_gc_frames import (check_character_argument_root, check_converted_argument_roots,
+from check_gc_frames import (check_assignment_address_roots, check_character_argument_root, check_converted_argument_roots,
                              check_entry_roots, check_native_memory_abi)
 
 
@@ -136,6 +136,67 @@ class NativeMemoryAbiTests(unittest.TestCase):
     def test_rejects_missing_leaf(self):
         with self.assertRaisesRegex(AssertionError, "missing"):
             check_native_memory_abi(self.ABI.split("\n", 1)[1])
+
+
+class AssignmentAddressRootTests(unittest.TestCase):
+    @staticmethod
+    def fixture_ir() -> str:
+        lines = ["define i1 @Tests_CheckAssignmentAddressRoots_0() {", "entry:"]
+        for index in range(4):
+            lines.extend([
+                f"  %gc_assignment_address{index} = alloca ptr, align 8",
+                f"  store ptr null, ptr %gc_assignment_address{index}, align 8",
+                f"  call void @__kn_sh_IO_Kinal_Runtime_GarbageCollector_AddRoot_3(ptr %frame, ptr %gc_assignment_address{index}, i64 8)",
+            ])
+        for index in range(4):
+            lines.extend([
+                f"  %address{index} = call ptr @Tests_MakeAssignmentAddress_0()",
+                f"  store ptr %address{index}, ptr %gc_assignment_address{index}, align 8",
+                f"  %value{index} = call i64 @Tests_CollectCallArgument_0()",
+                f"  store i64 %value{index}, ptr %address{index}, align 8",
+            ])
+        return "\n".join(lines + ["  ret i1 true", "}", ""])
+
+    def test_accepts_rooted_assignment_addresses(self):
+        check_assignment_address_roots(self.fixture_ir())
+
+    def test_rejects_unrooted_assignment_address(self):
+        ir = self.fixture_ir().replace(
+            "  store ptr %address2, ptr %gc_assignment_address2, align 8\n", "")
+        with self.assertRaisesRegex(AssertionError, "no root before collection"):
+            check_assignment_address_roots(ir)
+
+    def test_rejects_root_of_an_unrelated_pointer(self):
+        ir = self.fixture_ir().replace(
+            "store ptr %address2, ptr %gc_assignment_address2", "store ptr %unrelated, ptr %gc_assignment_address2")
+        with self.assertRaisesRegex(AssertionError, "actual assignment destination"):
+            check_assignment_address_roots(ir)
+
+    def test_accepts_legacy_stage0_address_roots(self):
+        ir = self.fixture_ir().replace("gc_assignment_address", "gc.assignment.address")
+        ir = ir.replace("__kn_sh_IO_Kinal_Runtime_GarbageCollector_AddRoot_3", "__kn_gc_add_root")
+        check_assignment_address_roots(ir, legacy_stage0=True)
+
+    def test_rejects_duplicate_address_registration(self):
+        ir = self.fixture_ir()
+        line = next(line for line in ir.splitlines() if "AddRoot_3" in line)
+        ir = ir.replace(line, line + "\n" + line, 1)
+        with self.assertRaisesRegex(AssertionError, "register once"):
+            check_assignment_address_roots(ir)
+
+    def test_rejects_address_registration_in_a_loop(self):
+        ir = self.fixture_ir().replace("  call void @", "loop:\n  call void @", 1)
+        with self.assertRaisesRegex(AssertionError, "register at entry"):
+            check_assignment_address_roots(ir)
+
+    def test_rejects_compound_read_after_the_rhs(self):
+        ir = self.fixture_ir().replace("Tests_CollectCallArgument_0", "Tests_CollectAndReplaceAssignment_0")
+        for index in range(4):
+            ir = ir.replace(f"  %value{index} = call", f"  %old{index} = load i64, ptr %address{index}, align 8\n  %value{index} = call")
+        check_assignment_address_roots(ir)
+        ir = ir.replace("  %old2 = load i64, ptr %address2, align 8\n", "")
+        with self.assertRaisesRegex(AssertionError, "read its old value before"):
+            check_assignment_address_roots(ir)
 
 
 if __name__ == "__main__":
