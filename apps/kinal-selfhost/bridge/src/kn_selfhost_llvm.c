@@ -74,10 +74,17 @@ static void initialize_targets(void)
             &g_target_state, &expected, 1,
             memory_order_acq_rel, memory_order_acquire))
     {
-        LLVMInitializeAllTargetInfos();
-        LLVMInitializeAllTargets();
-        LLVMInitializeAllTargetMCs();
-        LLVMInitializeAllAsmPrinters();
+        /* Kinal supports X86 and AArch64. "All" follows the build host's LLVM
+         * headers and can reference optional targets absent from the frozen
+         * stage0 library (for example SPIR-V/Xtensa in Linux LLVM packages). */
+        LLVMInitializeX86TargetInfo();
+        LLVMInitializeX86Target();
+        LLVMInitializeX86TargetMC();
+        LLVMInitializeX86AsmPrinter();
+        LLVMInitializeAArch64TargetInfo();
+        LLVMInitializeAArch64Target();
+        LLVMInitializeAArch64TargetMC();
+        LLVMInitializeAArch64AsmPrinter();
         atomic_store_explicit(&g_target_state, 2, memory_order_release);
         return;
     }
