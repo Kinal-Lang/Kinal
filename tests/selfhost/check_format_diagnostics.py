@@ -3,9 +3,8 @@
 Formatting is compared byte-for-byte with stage0 on valid lexical inputs, and
 re-lexed independently of formatter parity on boundary-sensitive inputs.
 Malformed text is intentionally rejected rather than silently truncated. The
-selfhost's established diagnostic envelope/stdout channel is preserved; this
-checks effective language, locale, color and warning policies, not identical
-stage0 diagnostic presentation or identical frontend diagnostic coverage.
+original compiler is the diagnostic oracle: channels, raw bytes, colors and
+exit status must match, including fallback behavior for malformed options.
 """
 from __future__ import annotations
 
@@ -138,85 +137,61 @@ def check_formatter(compiler: Path, stage0: Path, root: Path, out: Path) -> dict
             "boundary_token_streams": len(boundaries), "executable_semantics": True}
 
 
-def check_diagnostics(compiler: Path, root: Path, out: Path) -> dict:
+def check_diagnostics(compiler: Path, stage0: Path, root: Path, out: Path) -> dict:
     out.mkdir(parents=True, exist_ok=True)
     source = out / "warning-{1}-café-雪.kn"
     source.write_text("Unit Tests.WarningPolicy;\nFunction int Main() { int values[1]; Return 0; }\n", encoding="utf-8")
     checks = 0
 
-    def invoke(*options: str | Path, expected: int = 0):
+    def invoke(*options: str | Path):
         nonlocal checks
+        results = []
+        for tool in (stage0, compiler):
+            result = subprocess.run([str(tool), "build", str(source), "--emit", "check",
+                                     "-o", str(out / "summary.kcheck"), *map(str, options)],
+                                    cwd=root, capture_output=True, timeout=60)
+            results.append((result.returncode, result.stdout, result.stderr))
         checks += 1
-        result = subprocess.run([str(compiler), "build", str(source), "--emit", "check",
-                                 "-o", str(out / "summary.kcheck"), *map(str, options)],
-                                cwd=root, capture_output=True, timeout=60)
-        assert result.returncode == expected, (options, result.returncode, result.stdout, result.stderr)
-        return result.stdout + result.stderr
+        assert results[0] == results[1], (options, results)
+        return results[1][2]
 
     normal = invoke("--color", "never")
-    assert b"[warning] Legacy Array Syntax" in normal and b"\x1b" not in normal
-    assert b"[warning]" not in invoke("--warn-level", "0")
-    promoted = invoke("--Werror", expected=1)
-    assert b"Legacy Array Syntax" in promoted and b"[warning]" not in promoted
-    assert b"Legacy Array Syntax" not in invoke("--Werror", "--warn-level", "0")
-    assert b"\x1b[33m" in invoke("--color", "always")
-    assert b"\x1b" not in invoke("--color", "auto")
-    if os.name != "nt":
-        import pty
-        reader, writer = pty.openpty()
-        try:
-            terminal = subprocess.run([str(compiler), "build", str(source), "--emit", "check",
-                                       "-o", str(out / "summary.kcheck"), "--color", "auto"],
-                                      cwd=root, stdout=writer, stderr=subprocess.PIPE, timeout=60)
-            os.close(writer)
-            writer = -1
-            terminal_output = os.read(reader, 65536)
-            assert terminal.returncode == 0 and b"\x1b[33m" in terminal_output
-            checks += 1
-        finally:
-            os.close(reader)
-            if writer >= 0:
-                os.close(writer)
-    chinese = invoke("--lang", "zh")
-    assert "警告".encode() in chinese and "旧式数组语法".encode() in chinese
-    assert invoke("--lang", "zh-CN") == chinese
-
+    for options in [("--warn-level", "0"), ("--Werror",), ("--Werror", "--warn-level", "0"),
+                    ("--color", "always"), ("--color", "auto"), ("--lang", "zh"),
+                    ("--lang", "zh-CN"), ("--color", "invalid"), ("--lang", "invalid"),
+                    ("--warn-level", "-1"), ("--warn-level", "no"),
+                    ("--warn-level", "9999999999999999999999999"),
+                    ("--locale-file", out / "missing.json"), ("--locale-file",)]:
+        invoke(*options)
     locale = out / "custom-locale.json"
     locale.write_text(json.dumps({
         "ui.stage.parser": {"text": "解析 café"},
         "ui.severity.warning": {"text": "注意"},
         "ui.diag.location": {"text": "{0}：{1}：{2}"},
-        "W-SYN-00001": {"title": "Custom \"array\" 雪", "detail": "Use canonical arrays"},
+        "W-SYN-00001": {"title": 'Custom "array" 雪', "detail": "Use canonical arrays"},
     }, ensure_ascii=True), encoding="utf-8")
-    localized = invoke("--locale-file", locale)
-    assert 'Custom "array" 雪: Use canonical arrays'.encode() in localized
-    assert "[解析 café][注意]".encode() in localized
-    assert str(source).encode() in localized
-    # The explicit selfhost key can localize diagnostics without a C registry code.
+    invoke("--locale-file", locale)
     locale.write_text(json.dumps({"selfhost.Parser.Legacy Array Syntax": {"title": "Direct entry"}}), encoding="utf-8")
-    assert b"Direct entry" in invoke("--locale-file", locale)
-    # Each compiler process starts from defaults.
-    assert invoke("--color", "never") == normal
-
+    invoke("--locale-file", locale)
     for contents in ["{", '{"x": {"text": "bad\\uD800"}}', '{"x": 2}',
                      '{"x": {"title": "ok",}}', '{"x": {}} trailing', "[]"]:
         locale.write_text(contents, encoding="utf-8")
-        assert b"locale" in invoke("--locale-file", locale, expected=2)
-    for options in [("--color", "invalid"), ("--lang", "invalid"), ("--warn-level", "-1"),
-                    ("--warn-level", "no"), ("--warn-level", "9999999999999999999999999"),
-                    ("--locale-file", out / "missing.json"), ("--locale-file",)]:
-        invoke(*options, expected=2)
+        invoke("--locale-file", locale)
+    assert invoke("--color", "never") == normal
 
     exported = out / "english.json"
-    result = subprocess.run([str(compiler), "build", "--dump-locale-en", str(exported)],
-                            cwd=root, capture_output=True, timeout=60)
-    assert result.returncode == 0, result
+    exports = []
+    for tool in (stage0, compiler):
+        if exported.exists():
+            exported.unlink()
+        result = subprocess.run([str(tool), "build", "--dump-locale-en", str(exported)],
+                                cwd=root, capture_output=True, timeout=60)
+        assert result.returncode == 0, result
+        exports.append((result.returncode, result.stdout, result.stderr, exported.read_bytes()))
+    assert exports[0] == exports[1], ("English locale export differs", exports)
     template = json.loads(exported.read_text(encoding="utf-8"))
-    assert template["W-SYN-00001"]["title"] == "Legacy Array Syntax"
-    assert template["ui.severity.warning"]["text"] == "warning"
-    # Applying the exported template restores all default messages.
     assert invoke("--locale-file", exported, "--color", "never") == normal
-    return {"checks": checks, "exported_entries": len(template)}
+    return {"checks": checks, "exported_entries": len(template), "byte_exact": True}
 
 
 def main() -> int:
@@ -230,7 +205,7 @@ def main() -> int:
     root, output = args.root.resolve(), args.output.resolve()
     result = {"formatter": check_formatter(args.compiler.resolve(), args.stage0.resolve(), root, output / "formatter")}
     if not args.formatter_only:
-        result["diagnostics"] = check_diagnostics(args.compiler.resolve(), root, output / "diagnostics")
+        result["diagnostics"] = check_diagnostics(args.compiler.resolve(), args.stage0.resolve(), root, output / "diagnostics")
     print(json.dumps(result, indent=2))
     (output / "result.json").write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
     return 0

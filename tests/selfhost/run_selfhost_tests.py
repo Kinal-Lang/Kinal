@@ -24,6 +24,8 @@ from check_driver_parity import check_driver_parity, check_shared_metadata_cli
 from check_driver_target_linking import check_driver_target_linking
 from check_metadata_artifacts import check_metadata_artifacts
 from check_format_diagnostics import check_formatter, check_diagnostics
+from check_cli_presentation import check_cli_presentation
+from check_cli_console import check_cli_console
 from check_package_cli import check_package_cli
 from check_vm_cli import check_vm_cli
 from check_vm_lifecycle import check_vm_lifecycle
@@ -322,14 +324,14 @@ def main() -> int:
     results: list[dict[str, object]] = []
     versions = dict(line.split("=", 1) for line in (root / "VERSION").read_text(encoding="utf-8").splitlines()
                     if "=" in line)
-    for option in ("version", "--version", "-V"):
+    for option in ("--version", "-V"):
         version = run([str(compiler), option], cwd=out_dir)
         require(version.returncode == 0
-                and version.stdout.replace("\r\n", "\n") == f"Kinal selfhost {versions['kinal']}\n"
-                and not version.stderr, "selfhost version metadata differs", version)
+                and version.stderr == f"Kinal {versions['kinal']}\n"
+                and not version.stdout, "selfhost version metadata differs", version)
     require((compiler.parent / "VERSION").read_bytes() == (root / "VERSION").read_bytes(),
             "selfhost packaged VERSION differs from canonical VERSION")
-    results.append({"name": "version", "ok": True, "cases": 3, "version": versions["kinal"]})
+    results.append({"name": "version", "ok": True, "cases": 2, "version": versions["kinal"]})
 
     probe_object = out_dir / ("llvm-probe.obj" if compiler.suffix.lower() == ".exe" else "llvm-probe.o")
     llvm_probe = run([str(compiler), "llvm-probe", str(probe_object)], cwd=root)
@@ -369,13 +371,20 @@ def main() -> int:
     results.append(check_cli_workflows(compiler, stage0, root, out_dir / "cli-workflows",
                                       stage0_reference=args.stage0_role == "reference"))
     if args.stage0_role == "reference":
+        presentation = check_cli_presentation(compiler, stage0, root, out_dir / "cli-presentation", manifest=True)
+        require(not presentation["failures"] and
+                (presentation["icons"] is None or presentation["icons"]["passed"]),
+                f"public CLI presentation differs: {presentation['failures']}")
+        results.append({"name": "cli_presentation", "ok": True, **presentation})
+        console = check_cli_console(compiler, stage0, root, out_dir / "cli-console")
+        results.append({"name": "cli_console", "ok": True, **console})
         results.append(check_driver_parity(compiler, stage0, root, out_dir / "driver-parity"))
         results.append(check_driver_target_linking(compiler, stage0, root, out_dir / "driver-target-linking"))
         results.append(check_shared_metadata_cli(compiler, stage0, root, out_dir / "shared-metadata-cli"))
         results.append(check_metadata_artifacts(compiler, stage0, root, out_dir / "metadata-artifacts"))
         formatter = check_formatter(compiler, stage0, root, out_dir / "formatter")
         results.append({"name": "formatter_cli", "ok": True, **formatter})
-    diagnostic_policy = check_diagnostics(compiler, root, out_dir / "diagnostic-policy")
+    diagnostic_policy = check_diagnostics(compiler, stage0, root, out_dir / "diagnostic-policy")
     results.append({"name": "diagnostic_policy", "ok": True, **diagnostic_policy})
     results.append(check_package_cli(compiler, stage0, root, out_dir / "package-cli",
                                     stage0_reference=args.stage0_role == "reference"))
@@ -2004,7 +2013,7 @@ def main() -> int:
         "true\n4\n4\nRED\nblue\nGREEN\nfallback\ntrue\nfalse\n2\n-1\ntail\n"
         "blue\ntail\n2\ntrue\n3\n3\nkinal\n8\nfallback\n8\ntrue\nfalse\n3\n"
         "true\n3\ntrue\ntrue\nfalse\ntrue\n2\n2\ntrue\nfalse\n2\ntrue\ntrue\n"
-        "false\ntrue"
+        "false\ntrue\n20\n40\n99\n99\n4"
     )
     require(
         collection_run.returncode == 0

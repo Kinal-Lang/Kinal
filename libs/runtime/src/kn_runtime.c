@@ -4511,13 +4511,17 @@ static void gc_mark_ptr(void *p, KnGcBlock **index, int index_count,
 static void gc_scan_region(void *addr, uint64_t size, KnGcBlock **index, int index_count,
                            KnGcBlock **stack, int *sp, int cap)
 {
-    if (!addr || size == 0) return;
-    uintptr_t *cur = (uintptr_t *)addr;
-    uintptr_t *end = (uintptr_t *)((uint8_t *)addr + size);
-    while (cur < end)
+    if (!addr) return;
+    const uint8_t *cur = (const uint8_t *)addr;
+    while (size >= sizeof(uintptr_t))
     {
-        gc_mark_ptr((void *)(*cur), index, index_count, stack, sp, cap);
-        cur++;
+        // Root/object regions can end in a partial word or start unaligned.
+        // Only read complete words within the supplied byte range.
+        uintptr_t value;
+        rt_memcpy(&value, cur, sizeof(value));
+        gc_mark_ptr((void *)value, index, index_count, stack, sp, cap);
+        cur += sizeof(value);
+        size -= sizeof(value);
     }
 }
 

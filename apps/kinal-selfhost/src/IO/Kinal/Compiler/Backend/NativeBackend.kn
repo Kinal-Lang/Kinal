@@ -4252,6 +4252,11 @@ Class NativeBackend
             {
                 LlvmValue key = This.CastValue(This.EmitExpression(context, argument),
                     This.Semantics.Primitive("string"));
+                // Evaluate every argument before reading the collection. The
+                // fallback may mutate it or collect a removed managed value.
+                LlvmValue fallback = null;
+                If (target == "TryFetch")
+                    fallback = This.BoxAny(This.EmitExpression(context, argument.Next));
                 byte* tagSlot = This.Module.Alloca(This.Module.IntType(64),
                     This.Unique("dict_result_tag_slot"));
                 byte* payloadSlot = This.Module.Alloca(This.Module.IntType(64),
@@ -4265,7 +4270,6 @@ Class NativeBackend
                 byte* has = This.RuntimeBool(This.CallKinalRuntime(
                     "IO.Kinal.Runtime.Collections.DictionaryContains", 2,
                     This.Types2(values.Handle, key.Handle), This.Unique("dict_try_has_c")));
-                LlvmValue fallback = This.BoxAny(This.EmitExpression(context, argument.Next));
                 Return This.AnyValue(
                     This.Module.Select(has,
                         This.Module.ExtractValue(fetched.Handle, 0, This.Unique("dict_try_tag")),

@@ -448,8 +448,11 @@ Safe Function list Tokenize(SourceFile source, list diagnostics)
         ElseIf (IO.Kinal.Compiler.Lex.Token.Kind(token) == TokenKind.BadCharacter)
         {
             IO.Kinal.Compiler.Core.Diagnostics.Add(diagnostics, source, "Parser", "Invalid Character Literal",
-                IO.Kinal.Compiler.Lex.Token.Text(token), IO.Kinal.Compiler.Lex.Token.Line(token),
-                IO.Kinal.Compiler.Lex.Token.Column(token), 1);
+                "Character literal must contain exactly one character or a supported escape sequence",
+                IO.Kinal.Compiler.Lex.Token.Line(token), IO.Kinal.Compiler.Lex.Token.Column(token),
+                IO.Text.Length(IO.Kinal.Compiler.Lex.Token.Text(token)));
+            Diagnostic diagnostic = [Diagnostic](diagnostics.Fetch(diagnostics.Count() - 1));
+            diagnostic.Got = "<invalid-char>";
         }
         If (IO.Kinal.Compiler.Lex.Token.Kind(token) == TokenKind.Eof) Break;
     }

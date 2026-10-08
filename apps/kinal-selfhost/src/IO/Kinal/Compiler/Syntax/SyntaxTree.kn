@@ -186,6 +186,8 @@ Class FunctionDecl
     Public string Abi;
     Public int Line;
     Public int Column;
+    Public int StartLine;
+    Public int StartColumn;
     Public ParameterDecl FirstParameter;
     Public ParameterDecl LastParameter;
     Public TypeParameterDecl FirstTypeParameter;
@@ -213,6 +215,8 @@ Class FunctionDecl
         This.Abi = "Kinal";
         This.Line = line;
         This.Column = column;
+        This.StartLine = line;
+        This.StartColumn = column;
         This.FirstParameter = null;
         This.LastParameter = null;
         This.FirstTypeParameter = null;

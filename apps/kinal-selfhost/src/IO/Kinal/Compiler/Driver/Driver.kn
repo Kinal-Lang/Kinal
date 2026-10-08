@@ -1,6 +1,7 @@
 Unit IO.Kinal.Compiler.Driver;
 
 Get IO.Console;
+Get IO.Kinal.Compiler.Driver.CliOutput;
 Get IO.File;
 Get IO.Directory;
 Get IO.Host;
@@ -42,6 +43,8 @@ Extern Unsafe Function char* NativeEnvironment(string name) By C;
 Class ProjectBuildRequest
 {
     Public string Mode;
+    Public bool Internal;
+    Public int ErrorCode;
     Public string Backend;
     Public string Manifest;
     Public string Output;
@@ -66,6 +69,8 @@ Class ProjectBuildRequest
     Public bool CRTExplicit;
     Public bool Trace;
     Public bool Timing;
+    Public int CodegenMillis;
+    Public int LinkMillis;
     Public string Color;
     Public string Language;
     Public string LocaleFile;
@@ -77,6 +82,8 @@ Class ProjectBuildRequest
     Public Safe Constructor(string mode)
     {
         This.Mode = mode;
+        This.Internal = mode == "build-ir" || mode == "build-object";
+        This.ErrorCode = 1;
         This.Backend = IO.Text.StartsWith(mode, "vm ") ? "VM" : "Native";
         This.VmAction = This.Backend == "VM" ? IO.Text.Slice(mode, 3, IO.Text.Length(mode) - 3) : "";
         This.VmPath = "";
@@ -89,6 +96,8 @@ Class ProjectBuildRequest
         This.CRTExplicit = false;
         This.Trace = false;
         This.Timing = false;
+        This.CodegenMillis = 0;
+        This.LinkMillis = 0;
         This.Color = "auto";
         This.Language = "en";
         This.LocaleFile = "";
@@ -227,6 +236,7 @@ Safe Function ProjectBuildRequest ParseProjectBuildRequest(string[] args, string
           IO.Text.ToLower(IO.Path.Extension(args[1])) == "knproj") &&
         args.Length() >= 3 && !IO.Text.StartsWith(args[2], "-"))
     {
+        request.Internal = true;
         request.Manifest = args[1];
         If (args.Length() >= 3) request.Output = args[2];
         If (args.Length() >= 4) request.Profile = args[3];
@@ -259,7 +269,7 @@ Safe Function ProjectBuildRequest ParseProjectBuildRequest(string[] args, string
         {
             If (request.Backend != "VM" || request.VmAction == "disasm")
             {
-                request.Error = "unsupported " + command + " option: " + argument;
+                request.ErrorCode = 2; request.Error = "unknown option: " + argument;
                 Return request;
             }
             request.EnableSuperloop = argument == "--superloop";
@@ -267,14 +277,19 @@ Safe Function ProjectBuildRequest ParseProjectBuildRequest(string[] args, string
             index = index + 1;
             Continue;
         }
-        If (argument == "--Werror") { request.WarningsAsErrors = true; index = index + 1; Continue; }
+        If (argument == "--Werror")
+        {
+            If (request.Backend == "VM" && request.VmAction != "run")
+            { request.ErrorCode = 2; request.Error = "unknown option: " + argument; Return request; }
+            request.WarningsAsErrors = true; index = index + 1; Continue;
+        }
         If (argument == "--trace" || argument == "--time" || argument == "--show-link" ||
             argument == "--show-link-search" || argument == "--no-crt" ||
             argument == "--no-default-libs" || argument == "--freestanding" ||
             argument == "--lto" || IO.Text.StartsWith(argument, "--lto="))
         {
             If (request.Backend != "Native" || request.RunAfterBuild)
-            { request.Error = "unsupported " + command + " option: " + argument; Return request; }
+            { request.ErrorCode = 2; request.Error = "unknown option: " + argument; Return request; }
             If (argument == "--trace") request.Trace = true;
             ElseIf (argument == "--time") request.Timing = true;
             ElseIf (argument == "--show-link") request.Overrides.ShowLink = true;
@@ -307,7 +322,7 @@ Safe Function ProjectBuildRequest ParseProjectBuildRequest(string[] args, string
             If (request.VmAction == "disasm" ||
                 (request.VmAction == "build" && argument == "--keep-temps"))
             {
-                request.Error = "unsupported vm build option: " + argument;
+                request.ErrorCode = 2; request.Error = "unknown option: " + argument;
                 Return request;
             }
             If (argument == "--no-module-discovery") request.AutoDiscovery = false;
@@ -328,16 +343,21 @@ Safe Function ProjectBuildRequest ParseProjectBuildRequest(string[] args, string
             argument == "--color" || argument == "--lang" || argument == "--locale-file" ||
             argument == "--warn-level" || argument == "--dump-locale-en")
         {
+            If ((request.VmAction == "disasm" && argument != "--vm-path") ||
+                ((request.VmAction == "build" || request.VmAction == "pack") &&
+                    (argument == "--warn-level" || argument == "--dump-locale-en")) ||
+                ((request.RunAfterBuild || request.Backend == "VM") && argument == "--dump-locale-en"))
+            { request.ErrorCode = 2; request.Error = "unknown option: " + argument; Return request; }
             bool diagnosticOption = argument == "--color" || argument == "--lang" ||
                 argument == "--locale-file" || argument == "--warn-level" || argument == "--dump-locale-en";
             If (request.Backend == "VM" && !diagnosticOption && !VmAllowsValueOption(request.VmAction, argument))
             {
-                request.Error = "unsupported " + command + " option: " + argument;
+                request.ErrorCode = 2; request.Error = "unknown option: " + argument;
                 Return request;
             }
             If (request.Backend != "VM" && (argument == "--vm-path" || argument == "--listing"))
             {
-                request.Error = "unsupported " + command + " option: " + argument;
+                request.ErrorCode = 2; request.Error = "unknown option: " + argument;
                 Return request;
             }
             If (request.RunAfterBuild && !diagnosticOption && !(argument == "--project" ||
@@ -345,12 +365,12 @@ Safe Function ProjectBuildRequest ParseProjectBuildRequest(string[] args, string
                 argument == "-L" || argument == "--lib-dir" || argument == "-l" || argument == "--lib" ||
                 argument == "--link-file" || argument == "--link-root" || argument == "--link-arg"))
             {
-                request.Error = "unsupported run option: " + argument;
+                request.ErrorCode = 2; request.Error = "unknown option: " + argument;
                 Return request;
             }
             If (index + 1 >= args.Length())
             {
-                request.Error = "missing value for " + argument;
+                request.ErrorCode = 2; request.Error = "unknown option: " + argument;
                 Return request;
             }
             string value = args[index + 1];
@@ -359,14 +379,28 @@ Safe Function ProjectBuildRequest ParseProjectBuildRequest(string[] args, string
             ElseIf (argument == "--target") request.Target = value;
             ElseIf (argument == "--vm-path") request.VmPath = value;
             ElseIf (argument == "--listing") request.Listing = value;
-            ElseIf (argument == "--color") request.Color = value;
+            ElseIf (argument == "--color")
+            {
+                request.Color = IO.Text.ToLower(value);
+                If (request.Color != "auto" && request.Color != "always" && request.Color != "never")
+                {
+                    If (request.VmAction == "build" || request.VmAction == "pack") request.Color = "auto";
+                    Else { request.Error = "unknown color mode" + (command == "build" ? ": " + value : ""); Return request; }
+                }
+            }
             ElseIf (argument == "--lang") request.Language = value;
             ElseIf (argument == "--locale-file") request.LocaleFile = value;
             ElseIf (argument == "--dump-locale-en") request.DumpLocale = value;
             ElseIf (argument == "--warn-level")
             {
-                request.WarningLevel = ParseNonnegativeInteger(value);
-                If (request.WarningLevel < 0) { request.Error = "invalid warning level: " + value; Return request; }
+                request.WarningLevel = 0;
+                char[] digits = value.ToChars();
+                int digit = 0;
+                While (digit < digits.Length() && digits[digit] >= '0' && digits[digit] <= '9')
+                {
+                    request.WarningLevel = [int]([i32](request.WarningLevel * 10 + [int](digits[digit]) - [int]('0')));
+                    digit = digit + 1;
+                }
             }
             ElseIf (argument == "--kind")
             {
@@ -379,17 +413,26 @@ Safe Function ProjectBuildRequest ParseProjectBuildRequest(string[] args, string
             }
             ElseIf (argument == "--env")
             {
-                request.Overrides.Environment = value;
+                string normalized = IO.Text.ToLower(value);
+                If (normalized != "hosted" && normalized != "freestanding" && normalized != "bare")
+                { request.Error = "unknown environment: " + value; Return request; }
+                request.Overrides.Environment = normalized == "hosted" ? "Hosted" : "Freestanding";
                 request.Overrides.EnvironmentExplicit = true;
             }
             ElseIf (argument == "--runtime")
             {
-                request.Overrides.Runtime = value;
+                string normalized = IO.Text.ToLower(value);
+                If (normalized != "none" && normalized != "core" && normalized != "alloc" && normalized != "gc")
+                { request.Error = "unknown runtime mode: " + value; Return request; }
+                request.Overrides.Runtime = normalized == "none" || normalized == "core" ? "None" : (normalized == "gc" ? "GC" : "Alloc");
                 request.Overrides.RuntimeExplicit = true;
             }
             ElseIf (argument == "--panic")
             {
-                request.Overrides.Panic = value;
+                string normalized = IO.Text.ToLower(value);
+                If (normalized != "trap" && normalized != "abort" && normalized != "loop" && normalized != "halt")
+                { request.Error = "unknown panic mode: " + value; Return request; }
+                request.Overrides.Panic = normalized == "loop" || normalized == "halt" ? "Loop" : "Trap";
                 request.Overrides.PanicExplicit = true;
             }
             ElseIf (argument == "--entry") request.Overrides.EntrySymbol = value;
@@ -402,7 +445,12 @@ Safe Function ProjectBuildRequest ParseProjectBuildRequest(string[] args, string
                 { request.Error = "unknown crt mode: " + value; Return request; }
             }
             ElseIf (argument == "--link-script") request.Overrides.LinkScript = value;
-            ElseIf (argument == "--linker") request.Overrides.Linker = IO.Text.ToLower(value);
+            ElseIf (argument == "--linker")
+            {
+                request.Overrides.Linker = IO.Text.ToLower(value);
+                If (request.Overrides.Linker != "lld" && request.Overrides.Linker != "zig" && request.Overrides.Linker != "msvc")
+                { request.Error = "unknown linker: " + value; Return request; }
+            }
             ElseIf (argument == "--linker-path") request.Overrides.LinkerPath = value;
             ElseIf (argument == "-o" || argument == "--output") request.Output = value;
             ElseIf (argument == "--pkg-root") request.Overrides.PackageRoots.Add(value);
@@ -417,7 +465,9 @@ Safe Function ProjectBuildRequest ParseProjectBuildRequest(string[] args, string
                 request.Mode = BuildModeForEmit(value);
                 If (IO.Text.IsEmpty(request.Mode))
                 {
-                    request.Error = "unsupported selfhost emit mode: " + value;
+                    request.Error = "unknown emit mode: " + value;
+                    If (IO.Text.ToLower(value) == "knc" || IO.Text.ToLower(value) == "vm-exe")
+                    { request.ErrorCode = 2; request.Error = "'kinal build' does not support --emit knc/vm-exe; use 'kinal vm build' or 'kinal vm pack'"; }
                     Return request;
                 }
             }
@@ -433,9 +483,9 @@ Safe Function ProjectBuildRequest ParseProjectBuildRequest(string[] args, string
             index = index + 1;
             Continue;
         }
-        If (IO.Text.StartsWith(argument, "-"))
+        If (IO.Text.StartsWith(argument, "-") && argument != "-")
         {
-            request.Error = "unknown " + command + " option: " + argument;
+            request.ErrorCode = 2; request.Error = "unknown option: " + argument;
             Return request;
         }
         bool bytecodeInput = request.Backend == "VM" && request.VmAction != "build" &&
@@ -445,7 +495,19 @@ Safe Function ProjectBuildRequest ParseProjectBuildRequest(string[] args, string
             (extension == "ll" || extension == "s" || extension == "asm" || extension == "o" || extension == "obj");
         If (!IsSourceInput(argument) && !bytecodeInput && !intermediate)
         {
-            request.Error = "selfhost requires .kn/.kinal/.fx source files: " + argument;
+            If (request.RunAfterBuild) request.Error = extension == "knc" ?
+                "'kinal run' no longer runs .knc bytecode; use 'kinal vm run' instead" :
+                "'kinal run' requires a .kn/.kinal source file";
+            ElseIf (request.Backend == "VM") request.Error = request.VmAction == "pack" ?
+                "'kinal vm pack' requires .kn/.kinal/.fx or .knc input" :
+                "'kinal vm " + request.VmAction + "' requires a .kn/.kinal source file or a .knc file";
+            Else request.Error = "unsupported input file type: " + argument;
+            Return request;
+        }
+        If (!intermediate && (request.RunAfterBuild || request.Backend == "VM") && request.Sources.Count() > 0)
+        {
+            request.ErrorCode = 2;
+            request.Error = "'kinal " + command + "' accepts exactly one input" + (command == "vm pack" ? "" : " file");
             Return request;
         }
         If (intermediate) request.Intermediates.Add(argument);
@@ -454,11 +516,12 @@ Safe Function ProjectBuildRequest ParseProjectBuildRequest(string[] args, string
     }
 
     If (IO.Text.IsEmpty(request.Manifest) && request.Sources.Count() == 0 && request.Intermediates.Count() == 0 && IO.Text.IsEmpty(request.DumpLocale))
-        request.Error = command + " requires source files or --project <kinal.knproj>";
-    ElseIf (IO.Text.IsEmpty(request.Manifest) && !IO.Text.IsEmpty(request.Profile))
-        request.Error = "--profile requires --project";
+        request.Error = command == "build" ? "no input files" : "no input file";
     ElseIf ((request.RunAfterBuild || request.Backend == "VM") && request.Sources.Count() > 1)
-        request.Error = command + " accepts exactly one input file";
+    {
+        request.ErrorCode = 2;
+        request.Error = "'kinal " + command + "' accepts exactly one input" + (command == "vm pack" ? "" : " file");
+    }
     If (request.Mode != "build" && request.KindExplicit)
         request.Error = "--kind is only valid when linking";
     If (request.Mode != "build" && (request.Overrides.ShowLink || request.Overrides.ShowLinkSearch))
@@ -473,7 +536,7 @@ Safe Function ProjectBuildRequest ParseProjectBuildRequest(string[] args, string
         request.Error = "VM runtime arguments are not supported by the current argument ABI";
     If (request.VmAction == "disasm" && (request.Sources.Count() != 1 ||
         IO.Text.ToLower(IO.Path.Extension([string](request.Sources.Fetch(0)))) != "knc"))
-        request.Error = "vm disasm requires one .knc file";
+        request.Error = "'kinal vm disasm' requires a .knc file";
     Return request;
 }
 
@@ -670,18 +733,18 @@ Trusted Function int EmitBuildRequest(CompileSession session, SemanticCompilatio
         IO.Kinal.Compiler.Source.SourcePath.Canonical(output) ==
             IO.Kinal.Compiler.Source.SourcePath.Canonical(request.Listing))
     {
-        IO.Console.PrintLine("bytecode and listing output paths must differ");
+        IO.Kinal.Compiler.Driver.CliOutput.Line("bytecode and listing output paths must differ");
         Return 1;
     }
     string directory = IO.Path.Directory(output);
     If (!IO.Text.IsEmpty(directory) && !IO.Directory.Ensure(directory))
     {
-        IO.Console.PrintLine("failed to create output directory: " + directory);
+        IO.Kinal.Compiler.Driver.CliOutput.Line("failed to create output directory: " + directory);
         Return 1;
     }
     // Frontend-only validation never constructs an LLVM module or links.
     If (request.Mode == "build-check" && semantics == null)
-    { IO.Console.PrintLine("frontend emit requires a Kinal source input"); Return 1; }
+    { IO.Kinal.Compiler.Driver.CliOutput.Line("frontend emit requires a Kinal source input"); Return 1; }
     If (request.Mode == "build-check")
     {
         string summary = semantics.Summary() + "\n" +
@@ -689,21 +752,25 @@ Trusted Function int EmitBuildRequest(CompileSession session, SemanticCompilatio
             "pointer_bits=" + [string](session.Target.PointerBits) + "\n" +
             "environment=" + (session.IsFreestanding() ? "freestanding" : "hosted") + "\n";
         If (IO.File.WriteAllText(output, summary)) Return 0;
-        IO.Console.PrintLine("failed to write semantic summary: " + output);
+        IO.Kinal.Compiler.Driver.CliOutput.Line("failed to write semantic summary: " + output);
         Return 1;
     }
     If (request.Mode == "build-knc")
     {
+        If (request.Trace) IO.Kinal.Compiler.Driver.CliOutput.Line("[Trace] knc:start");
+        int codegenStarted = IO.Time.GetTick();
         KncBackend knc = New KncBackend(semantics);
         knc.EnableSuperloop = request.EnableSuperloop;
         If (!knc.Emit(output))
         {
-            IO.Console.PrintLine("bytecode backend failed: " + knc.Error);
+            IO.Kinal.Compiler.Driver.CliOutput.Line("bytecode backend failed: " + knc.Error);
             Return 1;
         }
+        request.CodegenMillis = IO.Time.GetTick() - codegenStarted;
+        If (request.Trace) IO.Kinal.Compiler.Driver.CliOutput.Line("[Trace] knc:ok");
         If (!IO.Text.IsEmpty(request.Listing) && !knc.EmitListing(request.Listing))
         {
-            IO.Console.PrintLine("bytecode listing failed: " + knc.Error);
+            IO.Kinal.Compiler.Driver.CliOutput.Line("bytecode listing failed: " + knc.Error);
             Return 1;
         }
         Return 0;
@@ -735,6 +802,8 @@ Trusted Function int EmitBuildRequest(CompileSession session, SemanticCompilatio
     int result = 0;
     If (semantics != null)
     {
+        If (request.Trace) IO.Kinal.Compiler.Driver.CliOutput.Line("[Trace] codegen:start");
+        int codegenStarted = IO.Time.GetTick();
         NativeBackend backend = New NativeBackend(semantics);
         bool emitted = false;
         string backendOutput = request.Mode == "build" ? output + session.Target.ObjectSuffix() : output;
@@ -751,16 +820,18 @@ Trusted Function int EmitBuildRequest(CompileSession session, SemanticCompilatio
         ElseIf (request.Mode == "build-object" || request.Mode == "build") emitted = backend.EmitObject(backendOutput);
         ElseIf (request.Mode == "build-asm") emitted = backend.EmitAssembly(output);
         ElseIf (backend.GenerateModule()) emitted = IO.File.WriteAllText(output, backend.Module.Ir());
-        If (!emitted) IO.Console.PrintLine("native backend failed: " + backend.Error);
+        If (!emitted) IO.Kinal.Compiler.Driver.CliOutput.Line("native backend failed: " + backend.Error);
         backend.Dispose();
         If (!emitted) { linker.Cleanup(); Return 1; }
+        request.CodegenMillis = IO.Time.GetTick() - codegenStarted;
+        If (request.Trace) IO.Kinal.Compiler.Driver.CliOutput.Line("[Trace] codegen:ok");
         If (request.Mode == "build") objects.Add(backendOutput);
     }
     int inputIndex = 0;
     While (inputIndex < request.Intermediates.Count())
     {
         string input = [string](request.Intermediates.Fetch(inputIndex));
-        If (!IO.File.Exists(input)) { IO.Console.PrintLine("input file not found: " + input); linker.Cleanup(); Return 1; }
+        If (!IO.File.Exists(input)) { IO.Kinal.Compiler.Driver.CliOutput.Line("input file not found: " + input); linker.Cleanup(); Return 1; }
         string extension = IO.Text.ToLower(IO.Path.Extension(input));
         If (request.Mode == "build" && (extension == "o" || extension == "obj")) objects.Add(input);
         Else
@@ -775,18 +846,40 @@ Trusted Function int EmitBuildRequest(CompileSession session, SemanticCompilatio
     }
     If (request.Mode == "build")
     {
+        If (request.Trace) IO.Kinal.Compiler.Driver.CliOutput.Line("[Trace] link:start");
+        int linkStarted = IO.Time.GetTick();
         result = linker.Link(output, objects);
-        If (result != 0) IO.Console.PrintLine("native link failed");
+        request.LinkMillis = IO.Time.GetTick() - linkStarted;
+        If (result == 0 && request.Trace) IO.Kinal.Compiler.Driver.CliOutput.Line("[Trace] link:ok");
+        If (result != 0) IO.Kinal.Compiler.Driver.CliOutput.Line("native link failed");
     }
     linker.Cleanup();
     Return result == 0 ? 0 : 1;
 }
 
+Safe Function void ProfilePhase(string name, int milliseconds)
+{
+    IO.Kinal.Compiler.Driver.CliOutput.Line("[Profile] " + name + ": " + [string](milliseconds) + " ms");
+}
+
 Trusted Function int CompileProject(ProjectBuildRequest request)
 {
     int started = IO.Time.GetTick();
-    If (request.Trace) IO.Console.PrintLine("[Trace] compile:frontend");
+    If (request.Trace) IO.Kinal.Compiler.Driver.CliOutput.Line("[Trace] compile:begin");
+    int sourceIndex = 0;
+    While (sourceIndex < request.Sources.Count())
+    {
+        string source = [string](request.Sources.Fetch(sourceIndex));
+        string extension = IO.Text.ToLower(IO.Path.Extension(source));
+        If (extension != "kn" && extension != "kinal" && extension != "fx")
+        { IO.Kinal.Compiler.Driver.CliOutput.Line("unsupported input file type: " + source); Return 1; }
+        If (!IO.File.Exists(source))
+        { IO.Kinal.Compiler.Driver.CliOutput.Line("failed to read input"); Return 1; }
+        sourceIndex++;
+    }
+    If (request.Trace) IO.Kinal.Compiler.Driver.CliOutput.Line("[Trace] compile:inputs_ready");
     CompileSession session = New CompileSession();
+    session.Trace = request.Trace;
     session.FrontendMode = request.Mode;
     session.RequestedTarget = request.Target;
     session.RequestedBackend = request.Backend;
@@ -803,11 +896,18 @@ Trusted Function int CompileProject(ProjectBuildRequest request)
         }
         If (!IO.File.Exists(manifest))
         {
-            IO.Console.PrintLine("project file not found: " + manifest);
-            Return 2;
+            IO.Kinal.Compiler.Driver.CliOutput.Line("invalid manifest path: " + request.Manifest);
+            Return 1;
         }
         session.LoadProject(manifest, request.Profile, request.Sources.Count() > 0 ?
             [string](request.Sources.Fetch(0)) : "");
+        If (session.Profile == null && session.Diagnostics.Count() == 1 &&
+            [Diagnostic](session.Diagnostics.Fetch(0)).Title == "Unknown profile")
+        {
+            IO.Kinal.Compiler.Driver.CliOutput.Line("invalid project file: " + manifest);
+            IO.Kinal.Compiler.Driver.CliOutput.Line(manifest + ":requested profile was not found");
+            Return 1;
+        }
         If (!session.HasErrors())
         {
             ApplyBuildOverrides(session, request);
@@ -841,15 +941,25 @@ Trusted Function int CompileProject(ProjectBuildRequest request)
             DiscoverRelatedSources(session, entryPath, true);
         If (!session.HasErrors()) PrepareProjectDependencies(session, entryPath);
     }
+    int parseMillis = IO.Time.GetTick() - started;
+    int semaStarted = IO.Time.GetTick();
     SemanticCompilation semantics = null;
+    If (session.HasErrors() && request.Trace)
+    {
+        IO.Kinal.Compiler.Core.Diagnostics.PrintAll(session.Diagnostics);
+        IO.Kinal.Compiler.Driver.CliOutput.Line("[Trace] sema:skipped_parser_errors");
+    }
     If (!session.HasErrors() && hasSources && !frontendOnly)
     {
-        If (request.Trace) IO.Console.PrintLine("[Trace] compile:sema");
+        If (request.Trace) IO.Kinal.Compiler.Driver.CliOutput.Line("[Trace] sema:start");
         semantics = New SemanticCompilation(session);
         semantics.Analyze();
     }
+    int semaMillis = IO.Time.GetTick() - semaStarted;
     IO.Kinal.Compiler.Core.Diagnostics.PrintAll(session.Diagnostics);
-    If (session.HasErrors()) Return 1;
+    If (session.HasErrors())
+    { IO.Kinal.Compiler.Core.Diagnostics.PrintSummary(); Return 1; }
+    If (semantics != null && request.Trace) IO.Kinal.Compiler.Driver.CliOutput.Line("[Trace] sema:ok");
 
     string output = ResolveProjectBuildOutput(request, session.Project, session.Profile, session.Target);
     string finalOutput = output;
@@ -860,15 +970,33 @@ Trusted Function int CompileProject(ProjectBuildRequest request)
         runDirectory = CreateRunDirectory();
         If (IO.Text.IsEmpty(runDirectory))
         {
-            IO.Console.PrintLine("failed to create temporary output directory");
+            IO.Kinal.Compiler.Driver.CliOutput.Line("failed to create temporary output directory");
             Return 1;
         }
         output = IO.Path.Combine(runDirectory, temporaryBytecode ? "program.knc" :
             "program" + session.Target.ExeSuffix());
     }
-    If (request.Trace) IO.Console.PrintLine("[Trace] compile:emit");
     int result = EmitBuildRequest(session, semantics, request, output);
-    If (request.Timing) IO.Console.PrintLine("[Time] compile=" + [string](IO.Time.GetTick() - started) + " ms");
+    If (result == 0)
+    {
+        If (request.Trace && request.Mode != "build-knc")
+            IO.Kinal.Compiler.Driver.CliOutput.Line("[Trace] compile:" +
+                (request.Mode == "build-check" ? "checked" : request.Mode == "build-ast" ? "syntax" :
+                 request.Mode == "build-tokens" ? "tokens" : "done"));
+        If (request.Timing)
+        {
+            If (request.Mode != "build-tokens" && request.Mode != "build-knc")
+            {
+                ProfilePhase("parse", parseMillis);
+                If (!frontendOnly) ProfilePhase("sema", semaMillis);
+            }
+            If (!frontendOnly && request.Mode != "build-check")
+                ProfilePhase(request.Mode == "build-knc" ? "knc" : "codegen", request.CodegenMillis);
+            If (request.Mode == "build") ProfilePhase("link", request.LinkMillis);
+            ProfilePhase("total", IO.Time.GetTick() - started);
+        }
+    }
+    IO.Kinal.Compiler.Core.Diagnostics.PrintSummary();
     If (request.RunAfterBuild || temporaryBytecode)
     {
         If (result == 0)
@@ -880,24 +1008,24 @@ Trusted Function int CompileProject(ProjectBuildRequest request)
                 result = RunProcess(output, request.ProgramArguments);
                 If (result < 0)
                 {
-                    IO.Console.PrintLine("failed to launch compiled program");
+                    IO.Kinal.Compiler.Driver.CliOutput.Line("failed to launch compiled program");
                     result = 1;
                 }
             }
         }
         If (!request.KeepTemps)
             CleanupRunOutput(runDirectory, output, output + session.Target.ObjectSuffix());
-        Else IO.Console.PrintLine((request.VmAction == "pack" ? "temporary=" : "output=") + output);
         Return result;
     }
     If (result != 0) Return result;
-    If (request.Mode == "build-knc") IO.Console.PrintLine("format=kinal-selfhost-knc-v1");
-    Else IO.Console.PrintLine(request.Mode == "build-object" ? "format=kinal-selfhost-object-v1" :
+    If (!request.Internal) Return 0;
+    If (request.Mode == "build-knc") IO.Kinal.Compiler.Driver.CliOutput.Line("format=kinal-selfhost-knc-v1");
+    Else IO.Kinal.Compiler.Driver.CliOutput.Line(request.Mode == "build-object" ? "format=kinal-selfhost-object-v1" :
         (request.Mode == "build-ir" ? "format=kinal-selfhost-ir-v1" :
         (request.Mode == "build-asm" ? "format=kinal-selfhost-assembly-v1" :
         (request.Mode == "build-check" ? "format=kinal-selfhost-sema-v1" :
             "format=kinal-selfhost-executable-v1"))));
-    IO.Console.PrintLine("output=" + output);
+    IO.Kinal.Compiler.Driver.CliOutput.Line("output=" + output);
     Return 0;
 }
 
@@ -1025,6 +1153,8 @@ Safe Function string FindRuntimeSourceRoot(string entryPath)
 
 Safe Function void LoadRuntimeSources(CompileSession session, string entryPath)
 {
+    bool savedTrace = session.Trace;
+    session.Trace = false;
     list sources = list.Create();
     AppendSourceFiles(sources, FindRuntimeSourceRoot(entryPath));
     int index = 0;
@@ -1037,11 +1167,14 @@ Safe Function void LoadRuntimeSources(CompileSession session, string entryPath)
         }
         index = index + 1;
     }
+    session.Trace = savedTrace;
 }
 
 Safe Function void LoadCatalogRuntimeSources(CompileSession session,
                                                PackageSourceCatalog catalog)
 {
+    bool savedTrace = session.Trace;
+    session.Trace = false;
     int index = 0;
     While (index < catalog.RuntimeSources.Count())
     {
@@ -1049,6 +1182,7 @@ Safe Function void LoadCatalogRuntimeSources(CompileSession session,
         If (!SessionContainsSource(session, path)) session.ParseFile(path);
         index = index + 1;
     }
+    session.Trace = savedTrace;
 }
 
 Safe Function string StandardPackageName(string path, string standardLibraryRoot)
@@ -1158,51 +1292,7 @@ Safe Function void PrepareProjectDependencies(CompileSession session,
 
 Safe Function void PrintHelp()
 {
-    IO.Console.PrintLine("Kinal self-hosting compiler");
-    IO.Console.PrintLine("usage: kinal-selfhost <command> [options]");
-    IO.Console.PrintLine("");
-    IO.Console.PrintLine("commands:");
-    IO.Console.PrintLine("  version [--verbose]  print embedded compiler/component versions");
-    IO.Console.PrintLine("  lex <file> tokenize one Kinal source file");
-    IO.Console.PrintLine("  tokens <file> dump stable machine-readable tokens");
-    IO.Console.PrintLine("  parse <file> validate Selfhost.Core syntax");
-    IO.Console.PrintLine("  ast <file>   build and summarize the syntax tree");
-    IO.Console.PrintLine("  check-source <entry> [sources...]  analyze direct source files");
-    IO.Console.PrintLine("  check-source-auto <entry>  discover and analyze related units");
-    IO.Console.PrintLine("  project <manifest> [profile]      load a kinal.knproj");
-    IO.Console.PrintLine("  project-ast <manifest> [profile]  parse every project source");
-    IO.Console.PrintLine("  check <manifest> [profile]        resolve declarations and types");
-    IO.Console.PrintLine("  symbols <manifest> [profile]      dump resolved function symbols");
-    IO.Console.PrintLine("  build-object <manifest> <output> [profile]  emit a native object");
-    IO.Console.PrintLine("  build-ir <manifest> <output> [profile]      emit LLVM IR");
-    IO.Console.PrintLine("  build <manifest> <output> [profile]         emit and link an executable");
-    IO.Console.PrintLine("  build <sources...> [-o <file>] [--emit bin|obj|asm|ir|check|tokens|ast] [--target <target>]");
-    IO.Console.PrintLine("  build: --kind exe|static|shared --freestanding --env hosted|freestanding");
-    IO.Console.PrintLine("  build: --runtime none|alloc|gc --panic trap|loop --entry <symbol>");
-    IO.Console.PrintLine("  build: --linker lld|zig|msvc --linker-path <file> --crt auto|static|dynamic");
-    IO.Console.PrintLine("  build: --link-script <file> --no-crt --no-default-libs --lto[=off|full|thin]");
-    IO.Console.PrintLine("  build: --show-link --show-link-search --trace --time");
-    IO.Console.PrintLine("  build inputs: .kn/.kinal/.fx, .ll/.s/.asm, .o/.obj");
-    IO.Console.PrintLine("  diagnostics: --color auto|always|never --lang en|zh --locale-file <file>");
-    IO.Console.PrintLine("  diagnostics: --Werror --warn-level <n> --dump-locale-en <file>");
-    IO.Console.PrintLine("  fmt [--check] [--stdout] [-o <file>] <sources...>");
-    IO.Console.PrintLine("  build --project <manifest> [--profile <name>] [-o <file>] [--emit bin|obj|asm|ir|check]");
-    IO.Console.PrintLine("  run <source> [-- program-args...]         compile, run and clean up");
-    IO.Console.PrintLine("  run --project <manifest> [--profile <name>] [-- program-args...]");
-    IO.Console.PrintLine("  build/run: --no-module-discovery --keep-temps --pkg-root <dir> --stdpkg-root <dir>");
-    IO.Console.PrintLine("  build/run: -L <dir> -l <name> --link-file <file> --link-root <dir> --link-arg <arg>");
-    IO.Console.PrintLine("  vm build <source> [-o <file.knc>]           emit KinalVM bytecode");
-    IO.Console.PrintLine("  vm build --project <manifest> [--profile <name>] [-o <file.knc>]");
-    IO.Console.PrintLine("  vm build: --listing <file.knasm> --superloop --no-superloop");
-    IO.Console.PrintLine("  vm run <source|file.knc> [--vm-path <kinalvm>] [--keep-temps]");
-    IO.Console.PrintLine("  vm disasm <file.knc> [--vm-path <kinalvm>]");
-    IO.Console.PrintLine("  vm pack <source|file.knc> [-o <executable>] [--vm-path <kinalvm>]");
-    IO.Console.PrintLine("  VM runtime arguments are not supported by the current argument ABI");
-    IO.Console.PrintLine("  pkg build --manifest <file|dir> [-o <file.klib> | --layout <dir>]");
-    IO.Console.PrintLine("  pkg info <file.klib>                       show package metadata");
-    IO.Console.PrintLine("  pkg unpack <file.klib> [-o <dir>]           extract package files");
-    IO.Console.PrintLine("  llvm-probe <object>               verify the LLVM bridge");
-    IO.Console.PrintLine("  help       show this help");
+    IO.Kinal.Compiler.Driver.CliOutput.Help("");
 }
 
 Safe Function bool ResolveVmExecutable(ProjectBuildRequest request)
@@ -1213,19 +1303,20 @@ Safe Function bool ResolveVmExecutable(ProjectBuildRequest request)
             HostIsWindows() ? "kinalvm.exe" : "kinalvm");
     request.VmExecutable = IO.Kinal.Compiler.Source.SourcePath.Canonical(candidate);
     If (IO.File.Exists(request.VmExecutable) && !IO.Directory.Exists(request.VmExecutable)) Return true;
-    IO.Console.PrintLine("failed to locate kinalvm; pass --vm-path <file>: " + candidate);
+    IO.Kinal.Compiler.Driver.CliOutput.Line("failed to locate kinalvm; pass --vm-path <file>: " + candidate);
     Return false;
 }
 
 Trusted Function int RunVmOutput(ProjectBuildRequest request, string bytecode)
 {
+    If (IO.Text.IsEmpty(request.VmExecutable) && !ResolveVmExecutable(request)) Return 1;
     list arguments = list.Create();
     If (request.VmAction == "disasm") arguments.Add("--disasm");
     arguments.Add(IO.Kinal.Compiler.Source.SourcePath.Canonical(bytecode));
     int result = RunProcess(request.VmExecutable, arguments);
     If (result < 0)
     {
-        IO.Console.PrintLine("failed to launch kinalvm");
+        IO.Kinal.Compiler.Driver.CliOutput.Line("failed to launch kinalvm");
         Return 1;
     }
     Return result;
@@ -1234,30 +1325,31 @@ Trusted Function int RunVmOutput(ProjectBuildRequest request, string bytecode)
 Trusted Function int PackVmOutput(ProjectBuildRequest request, string bytecode,
                                    string output, string directory)
 {
+    If (IO.Text.IsEmpty(request.VmExecutable) && !ResolveVmExecutable(request)) Return 1;
     string destination = IO.Kinal.Compiler.Source.SourcePath.Canonical(output);
     If (destination == request.VmExecutable ||
         destination == IO.Kinal.Compiler.Source.SourcePath.Canonical(bytecode))
     {
-        IO.Console.PrintLine("packed output must differ from its inputs");
+        IO.Kinal.Compiler.Driver.CliOutput.Line("packed output must differ from its inputs");
         Return 1;
     }
     string parent = IO.Path.Directory(destination);
     If (!IO.Directory.Ensure(parent))
     {
-        IO.Console.PrintLine("failed to create output directory: " + parent);
+        IO.Kinal.Compiler.Driver.CliOutput.Line("failed to create output directory: " + parent);
         Return 1;
     }
     string temporary = IO.Path.Combine(directory, HostIsWindows() ? "packed.exe" : "packed");
     VmPacker packer = New VmPacker();
     If (!packer.Pack(request.VmExecutable, bytecode, temporary))
     {
-        IO.Console.PrintLine("VM packaging failed: " + packer.Error);
+        IO.Kinal.Compiler.Driver.CliOutput.Line("VM packaging failed: " + packer.Error);
         Return 1;
     }
     If (!IO.File.Move(temporary, destination))
     {
         IO.File.DeleteIfExists(temporary);
-        IO.Console.PrintLine("failed to move packed executable: " + destination);
+        IO.Kinal.Compiler.Driver.CliOutput.Line("failed to move packed executable: " + destination);
         Return 1;
     }
     If (!HostIsWindows())
@@ -1268,12 +1360,10 @@ Trusted Function int PackVmOutput(ProjectBuildRequest request, string bytecode,
         string chmod = IO.File.Exists("/bin/chmod") ? "/bin/chmod" : "/usr/bin/chmod";
         If (!IO.File.Exists(chmod) || RunProcess(chmod, arguments) != 0)
         {
-            IO.Console.PrintLine("failed to mark packed output executable; chmod is required on POSIX");
+            IO.Kinal.Compiler.Driver.CliOutput.Line("failed to mark packed output executable; chmod is required on POSIX");
             Return 1;
         }
     }
-    IO.Console.PrintLine("format=kinal-selfhost-vm-executable-v1");
-    IO.Console.PrintLine("output=" + output);
     Return 0;
 }
 
@@ -1282,7 +1372,7 @@ Trusted Function int HandleVmArtifact(ProjectBuildRequest request)
     string input = [string](request.Sources.Fetch(0));
     If (!IO.File.Exists(input))
     {
-        IO.Console.PrintLine("bytecode file not found: " + input);
+        IO.Kinal.Compiler.Driver.CliOutput.Line("bytecode file not found: " + input);
         Return 1;
     }
     If (request.VmAction != "pack") Return RunVmOutput(request, input);
@@ -1292,7 +1382,7 @@ Trusted Function int HandleVmArtifact(ProjectBuildRequest request)
     string directory = CreateRunDirectory();
     If (IO.Text.IsEmpty(directory))
     {
-        IO.Console.PrintLine("failed to create temporary output directory");
+        IO.Kinal.Compiler.Driver.CliOutput.Line("failed to create temporary output directory");
         Return 1;
     }
     int result = PackVmOutput(request, input, output, directory);
@@ -1302,34 +1392,38 @@ Trusted Function int HandleVmArtifact(ProjectBuildRequest request)
 
 Trusted Function int RunBuildCommand(string[] args, string command)
 {
+    If (args.Length() == 1 && command == "build")
+    { IO.Kinal.Compiler.Driver.CliOutput.Help(command); Return 1; }
     ProjectBuildRequest request = ParseProjectBuildRequest(args, command);
+    IO.Kinal.Compiler.Driver.CliOutput.SelectMachineOutput(request.Internal);
     If (request.Help)
     {
-        PrintHelp();
+        IO.Kinal.Compiler.Driver.CliOutput.Help(command);
         Return 0;
     }
     If (!IO.Text.IsEmpty(request.Error))
     {
-        IO.Console.PrintLine(request.Error);
-        Return 2;
+        IO.Kinal.Compiler.Driver.CliOutput.Line(request.Error);
+        If ((IO.Text.StartsWith(request.Error, "unknown option:") && (command == "build" || command == "run")) ||
+            (request.Error == "no input file" && command == "run")) IO.Kinal.Compiler.Driver.CliOutput.Help(command);
+        Return request.ErrorCode;
     }
     IO.Kinal.Compiler.Core.Diagnostics.Reset();
     string diagnosticError = IO.Kinal.Compiler.Core.Diagnostics.Configure(request.Color,
         request.Language, request.LocaleFile, request.WarningsAsErrors, request.WarningLevel);
-    If (!IO.Text.IsEmpty(diagnosticError)) { IO.Console.PrintLine(diagnosticError); Return 2; }
+    If (!IO.Text.IsEmpty(diagnosticError)) { IO.Kinal.Compiler.Driver.CliOutput.Line(diagnosticError); Return 1; }
     If (!IO.Text.IsEmpty(request.DumpLocale) &&
         !IO.Kinal.Compiler.Core.Diagnostics.ExportEnglishTemplate(request.DumpLocale)) Return 1;
     If (request.Sources.Count() == 0 && request.Intermediates.Count() == 0 &&
         IO.Text.IsEmpty(request.Manifest)) Return 0;
     If (request.Backend == "VM" && request.VmAction != "build")
     {
-        If (!ResolveVmExecutable(request)) Return 1;
         If (!IO.Text.IsEmpty(request.Target))
         {
             TargetInfo target = IO.Kinal.Compiler.Core.TargetInfo.Resolve(request.Target);
             If (target == null || !target.IsHost())
             {
-                IO.Console.PrintLine("selfhost VM packaging currently requires the host target");
+                IO.Kinal.Compiler.Driver.CliOutput.Line("selfhost VM packaging currently requires the host target");
                 Return 1;
             }
         }
@@ -1342,8 +1436,8 @@ Trusted Function int RunBuildCommand(string[] args, string command)
 
 Safe Function int Run(string[] args)
 {
-    // Global language options precede the subcommand. Feed them through the
-    // normal build parser so later command-local options remain authoritative.
+    // Global language options affect top-level help; each subcommand configures
+    // its own diagnostics from its own options, matching the original CLI.
     int prefix = 0;
     string globalLanguage = "en";
     string globalLocale = "";
@@ -1356,78 +1450,71 @@ Safe Function int Run(string[] args)
     If (prefix > 0)
     {
         string error = IO.Kinal.Compiler.Core.Diagnostics.Configure("auto", globalLanguage, globalLocale, false, 1);
-        If (!IO.Text.IsEmpty(error)) { IO.Console.PrintLine(error); Return 2; }
-        If (prefix >= args.Length()) { PrintHelp(); Return 0; }
+        If (!IO.Text.IsEmpty(error)) { IO.Kinal.Compiler.Driver.CliOutput.Line(error); Return 2; }
+        If (prefix >= args.Length()) { PrintHelp(); Return 1; }
         string[] forwarded = {args[prefix]};
         int next = prefix + 1;
-        bool build = args[prefix] == "build" || args[prefix] == "run" || args[prefix] == "build-object" || args[prefix] == "build-ir";
-        If (args[prefix] == "vm" && next < args.Length())
-        {
-            forwarded = forwarded.Add(args[next]);
-            next = next + 1;
-            build = true;
-        }
-        If (build)
-        {
-            int globalIndex = 0;
-            While (globalIndex < prefix) { forwarded = forwarded.Add(args[globalIndex]); globalIndex = globalIndex + 1; }
-        }
         While (next < args.Length()) { forwarded = forwarded.Add(args[next]); next = next + 1; }
         args = forwarded;
     }
     If (args.Length() == 0)
     {
         PrintHelp();
-        Return 0;
+        Return 1;
     }
 
     string command = args[0];
-    If (command == "version" || command == "--version" || command == "-V")
+    If (command == "--version" || command == "-V")
     {
-        IO.Console.PrintLine("Kinal selfhost " + IO.Kinal.Compiler.Core.BuildInfo.Version());
+        IO.Kinal.Compiler.Driver.CliOutput.Line("Kinal " + IO.Kinal.Compiler.Core.BuildInfo.Version());
         If (args.Length() > 1 && args[1] == "--verbose")
-            IO.Console.PrintLine("kinalvm " + IO.Kinal.Compiler.Core.BuildInfo.VMVersion());
+            IO.Kinal.Compiler.Driver.CliOutput.Line("kinalvm " + IO.Kinal.Compiler.Core.BuildInfo.VMVersion());
         Return 0;
     }
 
-    If (command == "help" || command == "--help" || command == "-h")
+    If (command == "--help" || command == "-h")
     {
         PrintHelp();
         Return 0;
     }
 
+    IO.Kinal.Compiler.Driver.CliOutput.SelectMachineOutput(command == "llvm-probe" ||
+        command == "lex" || command == "tokens" || command == "parse" || command == "ast" ||
+        command == "check-source" || command == "check-source-auto" || command == "project" ||
+        command == "project-ast" || command == "check" || command == "symbols");
+
     If (command == "llvm-probe")
     {
         If (args.Length() < 2)
         {
-            IO.Console.PrintLine("llvm-probe requires an object output path");
+            IO.Kinal.Compiler.Driver.CliOutput.Line("llvm-probe requires an object output path");
             Return 2;
         }
         LlvmModule module = New LlvmModule("kinal.selfhost.probe");
         If (!module.IsValid())
         {
-            IO.Console.PrintLine("LLVM module creation failed: " +
+            IO.Kinal.Compiler.Driver.CliOutput.Line("LLVM module creation failed: " +
                 IO.Kinal.Compiler.Backend.LlvmBridge.LastError());
             Return 1;
         }
         If (!module.BuildProbe("kn_selfhost_probe", 42))
         {
-            IO.Console.PrintLine("LLVM probe construction failed: " +
+            IO.Kinal.Compiler.Driver.CliOutput.Line("LLVM probe construction failed: " +
                 IO.Kinal.Compiler.Backend.LlvmBridge.LastError());
             module.Dispose();
             Return 1;
         }
         If (!module.EmitObject("", args[1]))
         {
-            IO.Console.PrintLine("LLVM object emission failed: " +
+            IO.Kinal.Compiler.Driver.CliOutput.Line("LLVM object emission failed: " +
                 IO.Kinal.Compiler.Backend.LlvmBridge.LastError());
             module.Dispose();
             Return 1;
         }
-        IO.Console.PrintLine("format=kinal-selfhost-llvm-v1");
-        IO.Console.PrintLine("llvm_major=" +
+        IO.Kinal.Compiler.Driver.CliOutput.Line("format=kinal-selfhost-llvm-v1");
+        IO.Kinal.Compiler.Driver.CliOutput.Line("llvm_major=" +
             [string](IO.Kinal.Compiler.Backend.LlvmBridge.VersionMajor()));
-        IO.Console.PrintLine("output=" + args[1]);
+        IO.Kinal.Compiler.Driver.CliOutput.Line("output=" + args[1]);
         module.Dispose();
         Return 0;
     }
@@ -1443,14 +1530,15 @@ Safe Function int Run(string[] args)
     {
         If (args.Length() >= 2 && (args[1] == "--help" || args[1] == "-h"))
         {
-            PrintHelp();
+            IO.Kinal.Compiler.Driver.CliOutput.Help("vm");
             Return 0;
         }
         If (args.Length() < 2 || (args[1] != "build" && args[1] != "run" &&
             args[1] != "disasm" && args[1] != "pack"))
         {
-            IO.Console.PrintLine("usage: kinal-selfhost vm build|run|disasm|pack [options] <input>");
-            Return 2;
+            If (args.Length() >= 2) IO.Kinal.Compiler.Driver.CliOutput.Line("unknown vm subcommand: " + args[1]);
+            IO.Kinal.Compiler.Driver.CliOutput.Help("vm");
+            Return args.Length() < 2 ? 1 : 2;
         }
         string vmCommand = "vm " + args[1];
         string[] buildArgs = {vmCommand};
@@ -1467,7 +1555,7 @@ Safe Function int Run(string[] args)
     {
         If (args.Length() < 2)
         {
-            IO.Console.PrintLine("check-source requires at least one input file");
+            IO.Kinal.Compiler.Driver.CliOutput.Line("check-source requires at least one input file");
             Return 2;
         }
         CompileSession session = New CompileSession();
@@ -1489,7 +1577,7 @@ Safe Function int Run(string[] args)
         }
         IO.Kinal.Compiler.Core.Diagnostics.PrintAll(session.Diagnostics);
         If (session.HasErrors()) Return 1;
-        IO.Console.PrintLine(semantics.Summary());
+        IO.Kinal.Compiler.Driver.CliOutput.Line(semantics.Summary());
         Return 0;
     }
 
@@ -1497,13 +1585,13 @@ Safe Function int Run(string[] args)
     {
         If (args.Length() < 2)
         {
-            IO.Console.PrintLine("project requires a kinal.knproj path");
+            IO.Kinal.Compiler.Driver.CliOutput.Line("project requires a kinal.knproj path");
             Return 2;
         }
         string manifest = args[1];
         If (!IO.File.Exists(manifest))
         {
-            IO.Console.PrintLine("project file not found: " + manifest);
+            IO.Kinal.Compiler.Driver.CliOutput.Line("project file not found: " + manifest);
             Return 2;
         }
         CompileSession session = New CompileSession();
@@ -1528,18 +1616,18 @@ Safe Function int Run(string[] args)
                 semantics.Analyze();
                 IO.Kinal.Compiler.Core.Diagnostics.PrintAll(session.Diagnostics);
                 If (session.HasErrors()) Return 1;
-                IO.Console.PrintLine(command == "symbols" ? semantics.FunctionSummary() : semantics.Summary());
+                IO.Kinal.Compiler.Driver.CliOutput.Line(command == "symbols" ? semantics.FunctionSummary() : semantics.Summary());
                 Return 0;
             }
-            IO.Console.PrintLine(session.SyntaxSummary());
+            IO.Kinal.Compiler.Driver.CliOutput.Line(session.SyntaxSummary());
             Return 0;
         }
-        IO.Console.PrintLine("format=kinal-project-v1");
-        IO.Console.PrintLine("name=" + project.Name);
-        IO.Console.PrintLine("profile=" + profile.Name);
-        IO.Console.PrintLine("sources=" + [string](sources.Count()));
-        IO.Console.PrintLine("entry=" + project.ResolvePath(profile.Entry));
-        IO.Console.PrintLine("output=" + project.ResolvePath(profile.Output));
+        IO.Kinal.Compiler.Driver.CliOutput.Line("format=kinal-project-v1");
+        IO.Kinal.Compiler.Driver.CliOutput.Line("name=" + project.Name);
+        IO.Kinal.Compiler.Driver.CliOutput.Line("profile=" + profile.Name);
+        IO.Kinal.Compiler.Driver.CliOutput.Line("sources=" + [string](sources.Count()));
+        IO.Kinal.Compiler.Driver.CliOutput.Line("entry=" + project.ResolvePath(profile.Entry));
+        IO.Kinal.Compiler.Driver.CliOutput.Line("output=" + project.ResolvePath(profile.Output));
         Return 0;
     }
 
@@ -1547,13 +1635,13 @@ Safe Function int Run(string[] args)
     {
         If (args.Length() < 2)
         {
-            IO.Console.PrintLine(command + " requires an input file");
+            IO.Kinal.Compiler.Driver.CliOutput.Line(command + " requires an input file");
             Return 2;
         }
         string input = args[1];
         If (!IO.File.Exists(input))
         {
-            IO.Console.PrintLine("input file not found: " + input);
+            IO.Kinal.Compiler.Driver.CliOutput.Line("input file not found: " + input);
             Return 2;
         }
         SourceFile source = IO.Kinal.Compiler.Source.SourceFile.Load(input);
@@ -1563,8 +1651,8 @@ Safe Function int Run(string[] args)
         While (i < tokens.Count())
         {
             Token token = [Token](tokens.Fetch(i));
-            If (command == "lex") IO.Console.PrintLine(IO.Kinal.Compiler.Lex.Token.Dump(token));
-            If (command == "tokens") IO.Console.PrintLine(IO.Kinal.Compiler.Lex.Token.MachineDump(token));
+            If (command == "lex") IO.Kinal.Compiler.Driver.CliOutput.Line(IO.Kinal.Compiler.Lex.Token.Dump(token));
+            If (command == "tokens") IO.Kinal.Compiler.Driver.CliOutput.Line(IO.Kinal.Compiler.Lex.Token.MachineDump(token));
             i = i + 1;
         }
         If (!IO.Kinal.Compiler.Core.Diagnostics.HasAny(diagnostics) && command == "parse")
@@ -1574,12 +1662,13 @@ Safe Function int Run(string[] args)
         If (!IO.Kinal.Compiler.Core.Diagnostics.HasAny(diagnostics) && command == "ast")
         {
             SyntaxTree tree = IO.Kinal.Compiler.Syntax.Parser.Build(source, tokens, diagnostics);
-            If (tree != null) IO.Console.PrintLine(tree.Summary());
+            If (tree != null) IO.Kinal.Compiler.Driver.CliOutput.Line(tree.Summary());
         }
         IO.Kinal.Compiler.Core.Diagnostics.PrintAll(diagnostics);
         Return IO.Kinal.Compiler.Core.Diagnostics.HasAny(diagnostics) ? 1 : 0;
     }
 
-    IO.Console.PrintLine("unknown command: " + command);
+    IO.Kinal.Compiler.Driver.CliOutput.Line((IO.Text.StartsWith(command, "-") ? "unknown top-level option: " : "unknown subcommand: ") + command);
+    PrintHelp();
     Return 2;
 }

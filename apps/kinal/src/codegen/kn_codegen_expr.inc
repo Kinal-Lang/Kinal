@@ -2920,6 +2920,7 @@ static CGValue gen_builtin_collections(Codegen *g, KnBuiltinKind kind, ExprList 
 
 static CGValue gen_collection_string(Codegen *g, KnBuiltinKind kind, ExprList *args, Expr *recv)
 {
+    LLVMValueRef function = LLVMGetBasicBlockParent(LLVMGetInsertBlock(g->builder));
     CGValue out;
     out.value = 0;
     out.type = type_make(TY_VOID);
@@ -2982,7 +2983,7 @@ static CGValue gen_collection_string(Codegen *g, KnBuiltinKind kind, ExprList *a
     {
         CGValue sv = (args->count == 0 && recv) ? gen_expr(g, recv) : gen_expr(g, args->items[0]);
         LLVMValueRef s = cast_value(g, sv, type_make(TY_STRING));
-        LLVMValueRef len_ptr = LLVMBuildAlloca(g->builder, g->i64, "chars.len.ptr");
+        LLVMValueRef len_ptr = build_entry_alloca(g, function, g->i64, "chars.len.ptr");
         LLVMBuildStore(g->builder, LLVMConstInt(g->i64, 0, 0), len_ptr);
         LLVMValueRef argv[2] = { s, len_ptr };
         LLVMValueRef data = LLVMBuildCall2(g->builder, g->fn_string_to_chars_ty, g->fn_string_to_chars, argv, 2, "str.tochars");
@@ -3006,6 +3007,7 @@ static CGValue gen_collection_string(Codegen *g, KnBuiltinKind kind, ExprList *a
 
 static CGValue gen_collection_dict(Codegen *g, KnBuiltinKind kind, ExprList *args, Expr *recv)
 {
+    LLVMValueRef function = LLVMGetBasicBlockParent(LLVMGetInsertBlock(g->builder));
     CGValue out;
     out.value = 0;
     out.type = type_make(TY_VOID);
@@ -3048,8 +3050,9 @@ static CGValue gen_collection_dict(Codegen *g, KnBuiltinKind kind, ExprList *arg
 
         LLVMValueRef dp = dict_as_i8ptr(g, dv);
         LLVMValueRef key = cast_value(g, keyv, type_make(TY_STRING));
-        LLVMValueRef tag_ptr = LLVMBuildAlloca(g->builder, g->i64, "dict.get.tag.ptr");
-        LLVMValueRef payload_ptr = LLVMBuildAlloca(g->builder, g->i64, "dict.get.payload.ptr");
+        // Reuse fixed output slots in loops; initialization remains at the call.
+        LLVMValueRef tag_ptr = build_entry_alloca(g, function, g->i64, "dict.get.tag.ptr");
+        LLVMValueRef payload_ptr = build_entry_alloca(g, function, g->i64, "dict.get.payload.ptr");
         LLVMBuildStore(g->builder, LLVMConstInt(g->i64, 0, 0), tag_ptr);
         LLVMBuildStore(g->builder, LLVMConstInt(g->i64, 0, 0), payload_ptr);
         LLVMValueRef argv[4] = { dp, key, tag_ptr, payload_ptr };
@@ -3059,9 +3062,7 @@ static CGValue gen_collection_dict(Codegen *g, KnBuiltinKind kind, ExprList *arg
         LLVMValueRef anyres = LLVMGetUndef(g->any_ty);
         anyres = LLVMBuildInsertValue(g->builder, anyres, tag, 0, "dict.get.any.tag");
         anyres = LLVMBuildInsertValue(g->builder, anyres, payload, 1, "dict.get.any.payload");
-        LLVMValueRef anytmp = LLVMBuildAlloca(g->builder, g->any_ty, "dict.get.any.tmp");
-        LLVMBuildStore(g->builder, anyres, anytmp);
-        out.value = LLVMBuildLoad2(g->builder, g->any_ty, anytmp, "dict.get.any");
+        out.value = anyres;
         out.type = type_make(TY_ANY);
         return out;
     }
@@ -3081,8 +3082,8 @@ static CGValue gen_collection_dict(Codegen *g, KnBuiltinKind kind, ExprList *arg
             LLVMBuildCall2(g->builder, g->fn_dict_contains_ty, g->fn_dict_contains, (LLVMValueRef[]){ dp, key }, 2, "dict.try.has.c"),
             "dict.try.has");
 
-        LLVMValueRef tag_ptr = LLVMBuildAlloca(g->builder, g->i64, "dict.try.tag.ptr");
-        LLVMValueRef payload_ptr = LLVMBuildAlloca(g->builder, g->i64, "dict.try.payload.ptr");
+        LLVMValueRef tag_ptr = build_entry_alloca(g, function, g->i64, "dict.try.tag.ptr");
+        LLVMValueRef payload_ptr = build_entry_alloca(g, function, g->i64, "dict.try.payload.ptr");
         LLVMBuildStore(g->builder, LLVMConstInt(g->i64, 0, 0), tag_ptr);
         LLVMBuildStore(g->builder, LLVMConstInt(g->i64, 0, 0), payload_ptr);
         LLVMBuildCall2(g->builder, g->fn_dict_get_ty, g->fn_dict_get, (LLVMValueRef[]){ dp, key, tag_ptr, payload_ptr }, 4, "");
@@ -3185,6 +3186,7 @@ static CGValue gen_collection_dict(Codegen *g, KnBuiltinKind kind, ExprList *arg
 
 static CGValue gen_collection_list(Codegen *g, KnBuiltinKind kind, ExprList *args, Expr *recv)
 {
+    LLVMValueRef function = LLVMGetBasicBlockParent(LLVMGetInsertBlock(g->builder));
     CGValue out;
     out.value = 0;
     out.type = type_make(TY_VOID);
@@ -3222,8 +3224,9 @@ static CGValue gen_collection_list(Codegen *g, KnBuiltinKind kind, ExprList *arg
         CGValue iv = gen_expr(g, args->items[idx_i]);
         LLVMValueRef lp = list_as_i8ptr(g, lv);
         LLVMValueRef idxv = cast_value(g, iv, type_make(TY_I64));
-        LLVMValueRef tag_ptr = LLVMBuildAlloca(g->builder, g->i64, "list.get.tag.ptr");
-        LLVMValueRef payload_ptr = LLVMBuildAlloca(g->builder, g->i64, "list.get.payload.ptr");
+        // Reuse fixed output slots in loops; initialization remains at the call.
+        LLVMValueRef tag_ptr = build_entry_alloca(g, function, g->i64, "list.get.tag.ptr");
+        LLVMValueRef payload_ptr = build_entry_alloca(g, function, g->i64, "list.get.payload.ptr");
         LLVMBuildStore(g->builder, LLVMConstInt(g->i64, 0, 0), tag_ptr);
         LLVMBuildStore(g->builder, LLVMConstInt(g->i64, 0, 0), payload_ptr);
         LLVMValueRef argv[4] = { lp, idxv, tag_ptr, payload_ptr };
@@ -3286,8 +3289,8 @@ static CGValue gen_collection_list(Codegen *g, KnBuiltinKind kind, ExprList *arg
         LLVMValueRef def_any = cast_value(g, dv, type_make(TY_ANY));
         LLVMValueRef cnt = LLVMBuildCall2(g->builder, g->fn_list_count_ty, g->fn_list_count, &lp, 1, "list.try.cnt");
         LLVMValueRef in_range = LLVMBuildICmp(g->builder, LLVMIntULT, idxv, cnt, "list.try.range");
-        LLVMValueRef tag_ptr = LLVMBuildAlloca(g->builder, g->i64, "list.try.tag.ptr");
-        LLVMValueRef payload_ptr = LLVMBuildAlloca(g->builder, g->i64, "list.try.payload.ptr");
+        LLVMValueRef tag_ptr = build_entry_alloca(g, function, g->i64, "list.try.tag.ptr");
+        LLVMValueRef payload_ptr = build_entry_alloca(g, function, g->i64, "list.try.payload.ptr");
         LLVMBuildStore(g->builder, LLVMConstInt(g->i64, 0, 0), tag_ptr);
         LLVMBuildStore(g->builder, LLVMConstInt(g->i64, 0, 0), payload_ptr);
         LLVMBuildCall2(g->builder, g->fn_list_get_ty, g->fn_list_get, (LLVMValueRef[]){ lp, idxv, tag_ptr, payload_ptr }, 4, "");
@@ -3330,8 +3333,8 @@ static CGValue gen_collection_list(Codegen *g, KnBuiltinKind kind, ExprList *arg
         CGValue iv = gen_expr(g, args->items[idx_i]);
         LLVMValueRef lp = list_as_i8ptr(g, lv);
         LLVMValueRef idxv = cast_value(g, iv, type_make(TY_I64));
-        LLVMValueRef tag_ptr = LLVMBuildAlloca(g->builder, g->i64, "list.rm.tag.ptr");
-        LLVMValueRef payload_ptr = LLVMBuildAlloca(g->builder, g->i64, "list.rm.payload.ptr");
+        LLVMValueRef tag_ptr = build_entry_alloca(g, function, g->i64, "list.rm.tag.ptr");
+        LLVMValueRef payload_ptr = build_entry_alloca(g, function, g->i64, "list.rm.payload.ptr");
         LLVMBuildStore(g->builder, LLVMConstInt(g->i64, 0, 0), tag_ptr);
         LLVMBuildStore(g->builder, LLVMConstInt(g->i64, 0, 0), payload_ptr);
         LLVMValueRef argv[4] = { lp, idxv, tag_ptr, payload_ptr };
@@ -3368,8 +3371,8 @@ static CGValue gen_collection_list(Codegen *g, KnBuiltinKind kind, ExprList *arg
         int inst = (recv && args->count == 0) ? 1 : 0;
         CGValue lv = inst ? gen_expr(g, recv) : gen_expr(g, args->items[0]);
         LLVMValueRef lp = list_as_i8ptr(g, lv);
-        LLVMValueRef tag_ptr = LLVMBuildAlloca(g->builder, g->i64, "list.pop.tag.ptr");
-        LLVMValueRef payload_ptr = LLVMBuildAlloca(g->builder, g->i64, "list.pop.payload.ptr");
+        LLVMValueRef tag_ptr = build_entry_alloca(g, function, g->i64, "list.pop.tag.ptr");
+        LLVMValueRef payload_ptr = build_entry_alloca(g, function, g->i64, "list.pop.payload.ptr");
         LLVMBuildStore(g->builder, LLVMConstInt(g->i64, 0, 0), tag_ptr);
         LLVMBuildStore(g->builder, LLVMConstInt(g->i64, 0, 0), payload_ptr);
         LLVMValueRef argv[3] = { lp, tag_ptr, payload_ptr };
@@ -3390,8 +3393,8 @@ static CGValue gen_collection_list(Codegen *g, KnBuiltinKind kind, ExprList *arg
         LLVMValueRef lp = list_as_i8ptr(g, lv);
         LLVMValueRef cnt = LLVMBuildCall2(g->builder, g->fn_list_count_ty, g->fn_list_count, &lp, 1, "list.peek.cnt");
         LLVMValueRef idx = LLVMBuildSub(g->builder, cnt, LLVMConstInt(g->i64, 1, 0), "list.peek.idx");
-        LLVMValueRef tag_ptr = LLVMBuildAlloca(g->builder, g->i64, "list.peek.tag.ptr");
-        LLVMValueRef payload_ptr = LLVMBuildAlloca(g->builder, g->i64, "list.peek.payload.ptr");
+        LLVMValueRef tag_ptr = build_entry_alloca(g, function, g->i64, "list.peek.tag.ptr");
+        LLVMValueRef payload_ptr = build_entry_alloca(g, function, g->i64, "list.peek.payload.ptr");
         LLVMBuildStore(g->builder, LLVMConstInt(g->i64, 0, 0), tag_ptr);
         LLVMBuildStore(g->builder, LLVMConstInt(g->i64, 0, 0), payload_ptr);
         LLVMBuildCall2(g->builder, g->fn_list_get_ty, g->fn_list_get, (LLVMValueRef[]){ lp, idx, tag_ptr, payload_ptr }, 4, "");

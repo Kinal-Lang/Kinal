@@ -55,7 +55,9 @@ def check_vm_lifecycle(compiler: Path, vm: Path, root: Path, out: Path) -> dict:
 
     kept = invoke("run-keep", [compiler, "vm", "run", "--keep-temps", "--vm-path", vm,
                                 "--no-module-discovery", source], 7)
-    retained = Path(next(line[7:] for line in kept.stdout.splitlines() if line.startswith("output=")))
+    retained_dirs = set(temporary.iterdir()) - before
+    assert len(retained_dirs) == 1 and kept.stdout == "lifecycle-ok\n"
+    retained = next(iter(retained_dirs)) / "program.knc"
     assert retained.is_file()
     invoke("retained-bytecode", [vm, retained], 7, "lifecycle-ok")
     retained.unlink(); retained.parent.rmdir()
@@ -80,7 +82,9 @@ def check_vm_lifecycle(compiler: Path, vm: Path, root: Path, out: Path) -> dict:
     kept_exe = out / ("keep-packed" + suffix)
     kept = invoke("pack-keep", [compiler, "vm", "pack", "--keep-temps", "--vm-path", vm,
                                  "--no-module-discovery", source, "-o", kept_exe])
-    retained = Path(next(line[10:] for line in kept.stdout.splitlines() if line.startswith("temporary=")))
+    retained_dirs = set(temporary.iterdir()) - before
+    assert len(retained_dirs) == 1 and kept.stdout == ""
+    retained = next(iter(retained_dirs)) / "program.knc"
     assert retained.is_file() and kept_exe.is_file()
     invoke("keep-packed-run", [kept_exe], 7, "lifecycle-ok")
     retained.unlink(); retained.parent.rmdir()

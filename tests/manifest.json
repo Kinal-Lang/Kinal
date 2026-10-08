@@ -547,6 +547,11 @@
     "expected": "b\n0\n-1\nkinal\nnone\n"
   },
   {
+    "name": "collection_loop_storage",
+    "file": "tests/common/collection_loop_storage.kn",
+    "expected": "true\n"
+  },
+  {
     "name": "stdlib_collections_roundtrip",
     "file": "tests/common/stdlib_collections_roundtrip.kn",
     "expected": "3\nblue\ntrue\ncyan\n3\nfalse\n2\n2\n7\n2\ntrue\nfalse\n1\ntrue\ntrue\n"

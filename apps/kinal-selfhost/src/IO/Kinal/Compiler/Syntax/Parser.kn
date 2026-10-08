@@ -102,6 +102,10 @@ Safe Function void ReportToken(list diagnostics, SourceFile source, Token token,
     IO.Kinal.Compiler.Core.Diagnostics.Add(diagnostics, source, "Parser", title, detail,
         IO.Kinal.Compiler.Lex.Token.Line(token),
         IO.Kinal.Compiler.Lex.Token.Column(token), length);
+    Diagnostic diagnostic = [Diagnostic](diagnostics.Fetch(diagnostics.Count() - 1));
+    If (title == "Invalid Unsafe Alias" || title == "Invalid Unsafe Alias Position" ||
+        title == "Invalid Unit With Unsafe Alias" || title == "Invalid Get Alias") Return;
+    diagnostic.Got = IO.Kinal.Compiler.Lex.Token.Kind(token) == TokenKind.Eof ? "<end-of-file>" : text;
 }
 
 Safe Function void ReportWarningToken(list diagnostics, SourceFile source, Token token,
@@ -1325,6 +1329,7 @@ Safe Function ExpressionNode ParseBlockLiteral(ParseCursor cursor)
         blockName = IO.Kinal.Compiler.Lex.Token.Text(CurrentToken(cursor));
         Advance(cursor);
     }
+    token = CurrentToken(cursor);
     BuilderExpect(cursor, TokenKind.Less, "Expected '<'",
         "Missing '</' before Block body");
     BuilderExpect(cursor, TokenKind.Slash, "Expected '/'",
@@ -2008,6 +2013,8 @@ Safe Function StatementNode ParseAstUnsafeBlock(ParseCursor cursor)
             "Unsafe Block statement requires Block");
     value.Name = IO.Kinal.Compiler.Lex.Token.Text(CurrentToken(cursor));
     Advance(cursor);
+    value.Line = IO.Kinal.Compiler.Lex.Token.Line(CurrentToken(cursor));
+    value.Column = IO.Kinal.Compiler.Lex.Token.Column(CurrentToken(cursor));
     BuilderExpect(cursor, TokenKind.Less, "Expected '<'",
         "Missing '</' before Block body");
     BuilderExpect(cursor, TokenKind.Slash, "Expected '/'",
@@ -2099,6 +2106,8 @@ Safe Function StatementNode ParseVariableStatement(ParseCursor cursor, int line,
     If (inferred)
     {
         declaration.TypeName = "Var";
+        declaration.NameLine = IO.Kinal.Compiler.Lex.Token.Line(CurrentToken(cursor));
+        declaration.NameColumn = IO.Kinal.Compiler.Lex.Token.Column(CurrentToken(cursor));
         declaration.Name = IO.Kinal.Compiler.Lex.Token.Text(CurrentToken(cursor));
         Advance(cursor);
     }
@@ -2108,6 +2117,8 @@ Safe Function StatementNode ParseVariableStatement(ParseCursor cursor, int line,
         If (declarationName <= cursor.Position) Return null;
         declaration.TypeName = JoinTokenText(cursor, cursor.Position, declarationName);
         declaration.TypeSyntax = ReadTypeReference(cursor, cursor.Position, declarationName);
+        declaration.NameLine = IO.Kinal.Compiler.Lex.Token.Line(RawAt(cursor, declarationName));
+        declaration.NameColumn = IO.Kinal.Compiler.Lex.Token.Column(RawAt(cursor, declarationName));
         declaration.Name = IO.Kinal.Compiler.Lex.Token.Text(RawAt(cursor, declarationName));
         cursor.Position = declarationName + 1;
     }
@@ -2146,7 +2157,7 @@ Safe Function StatementNode ParseVariableStatement(ParseCursor cursor, int line,
     }
     If (Match(cursor, TokenKind.Assign)) declaration.Expression = ParseExpression(cursor, 1);
     BuilderExpect(cursor, TokenKind.Semicolon, "Expected Semicolon",
-        "Variable declaration must end with ';'");
+        "Missing ';' after declaration");
     Return declaration;
 }
 
@@ -2371,7 +2382,7 @@ Safe Function StatementNode ParseAstStatementCore(ParseCursor cursor)
     expression.Expression = ParseExpression(cursor, 1);
     If (cursor.Position == start) Advance(cursor);
     BuilderExpect(cursor, TokenKind.Semicolon, "Expected Semicolon",
-        "Expression statement must end with ';'");
+        "Missing ';' after expression");
     Return expression;
 }
 
@@ -2442,6 +2453,8 @@ Safe Function FunctionDecl ReadFunctionNode(ParseCursor cursor, bool constructor
     FunctionDecl value = New FunctionDecl(
         IO.Kinal.Compiler.Lex.Token.Text(nameToken), JoinTokenText(cursor, returnStart, nameIndex),
         IO.Kinal.Compiler.Lex.Token.Line(nameToken), IO.Kinal.Compiler.Lex.Token.Column(nameToken));
+    value.StartLine = IO.Kinal.Compiler.Lex.Token.Line(declarationToken);
+    value.StartColumn = IO.Kinal.Compiler.Lex.Token.Column(declarationToken);
     value.ReturnTypeSyntax = ReadTypeReference(cursor, returnStart, nameIndex);
     value.IsStatic = isStatic;
     value.IsAsync = isAsync;
@@ -2767,7 +2780,7 @@ Safe Function void ReadTypeMembers(ParseCursor cursor, TypeDecl type, SyntaxTree
         }
 
         Report(cursor, cursor.Diagnostics, cursor.Source, "Expected Identifier",
-            "Expected field or type member declaration");
+            "Expected field name");
         SynchronizeTypeMember(cursor, cursor.Position);
         Jump Dispatch;
 
@@ -2821,7 +2834,7 @@ Safe Function void ReadParameters(ParseCursor cursor, FunctionDecl function)
         If (!Match(cursor, TokenKind.Comma)) Break;
     }
     BuilderExpect(cursor, TokenKind.RightParen, "Expected ')'",
-        "Function parameter list is not closed");
+        "Missing ')' after parameters");
 }
 
 Safe Function int MetaTargetMask(string name)
@@ -2911,7 +2924,7 @@ Safe Function MetaDecl ReadMetaNode(ParseCursor cursor)
                 {
                     Report(cursor, cursor.Diagnostics, cursor.Source,
                         "Invalid Meta Target",
-                        "Meta targets must use built-in constants like @function");
+                        "Meta targets must use built-in constants like @function, @method, @class, @field");
                     If (!IsEnd(cursor)) Advance(cursor);
                 }
                 Else
@@ -2981,11 +2994,19 @@ Safe Function MetaDecl ReadMetaNode(ParseCursor cursor)
     BuilderExpect(cursor, TokenKind.RightBrace, "Expected '}'",
         "Meta declaration body is not closed");
     If (!sawOn)
+    {
         ReportToken(cursor.Diagnostics, cursor.Source, metaToken,
             "Missing Meta Clause", "Meta declaration requires an On clause");
+        Diagnostic diagnostic = [Diagnostic](cursor.Diagnostics.Fetch(cursor.Diagnostics.Count() - 1));
+        diagnostic.Got = IO.Kinal.Compiler.Lex.Token.Text(nameToken);
+    }
     If (!sawKeep)
+    {
         ReportToken(cursor.Diagnostics, cursor.Source, metaToken,
             "Missing Meta Clause", "Meta declaration requires a Keep clause");
+        Diagnostic diagnostic = [Diagnostic](cursor.Diagnostics.Fetch(cursor.Diagnostics.Count() - 1));
+        diagnostic.Got = IO.Kinal.Compiler.Lex.Token.Text(nameToken);
+    }
     Return meta;
 }
 
@@ -3015,9 +3036,12 @@ Safe Function FieldDecl ReadGlobalNode(ParseCursor cursor, SyntaxAttribute attri
     {
         If (IsEnd(cursor))
         {
-            Report(cursor, cursor.Diagnostics, cursor.Source,
+            ReportToken(cursor.Diagnostics, cursor.Source, nameToken,
                 "Unexpected End Of File",
                 "Unexpected end of file while parsing variable declaration");
+            Diagnostic diagnostic = [Diagnostic](cursor.Diagnostics.Fetch(cursor.Diagnostics.Count() - 1));
+            diagnostic.Got = "<end-of-file>";
+            diagnostic.Length = 1;
             Return global;
         }
         global.Initializer = ParseExpression(cursor, 1);
@@ -3031,11 +3055,12 @@ Safe Function void ReadGetDeclaration(ParseCursor cursor, SyntaxTree tree)
 {
     Token location = CurrentToken(cursor);
     Advance(cursor);
+    Token nameToken = CurrentToken(cursor);
     string name = ReadQualifiedName(cursor);
     If (Match(cursor, TokenKind.KwBy))
     {
         If (IO.Text.Contains(name, "."))
-            ReportToken(cursor.Diagnostics, cursor.Source, location,
+            ReportToken(cursor.Diagnostics, cursor.Source, nameToken,
                 "Invalid Get Alias", "Alias before By must be a simple identifier");
         string target = ReadQualifiedName(cursor);
         BuilderExpect(cursor, TokenKind.Semicolon, "Expected Semicolon",
@@ -3115,7 +3140,7 @@ Safe Function SyntaxTree Build(SourceFile source, list tokens, list diagnostics,
         int recoveryStart = cursor.Position;
         int recoveryLine = IO.Kinal.Compiler.Lex.Token.Line(CurrentToken(cursor));
         Report(cursor, diagnostics, source, "Unexpected Top-Level Token",
-            "Expected a top-level declaration after the invalid Unsafe Alias");
+            "Expected a top-level declaration (Function/Class/Struct/Enum/Interface/variable declaration)");
         SynchronizeTopLevel(cursor, recoveryStart, recoveryLine);
     }
     If (prepared.HasUnsafeAlias && CurrentKind(cursor) == TokenKind.KwUnit)
@@ -3220,6 +3245,7 @@ Safe Function SyntaxTree Build(SourceFile source, list tokens, list diagnostics,
         bool isAsync = false;
         bool isExtern = false;
         bool isDelegate = false;
+        Token declarationStart = CurrentToken(cursor);
         int safety = 0;
         While (IsFunctionModifier(CurrentKind(cursor)))
         {
@@ -3240,6 +3266,8 @@ Safe Function SyntaxTree Build(SourceFile source, list tokens, list diagnostics,
         If (CurrentKind(cursor) == TokenKind.KwFunction)
         {
             FunctionDecl function = ReadFunctionNode(cursor, false, isStatic, isAsync, isExtern, safety);
+            function.StartLine = IO.Kinal.Compiler.Lex.Token.Line(declarationStart);
+            function.StartColumn = IO.Kinal.Compiler.Lex.Token.Column(declarationStart);
             function.IsDelegate = isDelegate;
             function.FirstAttribute = attributes;
             tree.AddFunction(function);
@@ -3251,7 +3279,7 @@ Safe Function SyntaxTree Build(SourceFile source, list tokens, list diagnostics,
             int recoveryStart = cursor.Position;
             int recoveryLine = IO.Kinal.Compiler.Lex.Token.Line(CurrentToken(cursor));
             Report(cursor, diagnostics, source, "Unexpected Top-Level Token",
-                "Expected a top-level declaration");
+                "Expected a top-level declaration (Function/Class/Struct/Enum/Interface/variable declaration)");
             SynchronizeTopLevel(cursor, recoveryStart, recoveryLine);
             Jump Dispatch;
         }

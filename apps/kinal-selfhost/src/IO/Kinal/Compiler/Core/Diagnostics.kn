@@ -3,6 +3,10 @@ Unit IO.Kinal.Compiler.Core.Diagnostics;
 Get IO.Console;
 Get IO.Text;
 Get IO.File;
+Get IO.System;
+Get IO.Kinal.Compiler.Lex.Lexer;
+Get IO.Kinal.Compiler.Lex.Token;
+Get IO.Kinal.Compiler.Lex.TokenKind;
 Get IO.Kinal.Compiler.Core.ConsoleIO;
 Get IO.Kinal.Compiler.Core.Localization;
 Get IO.Kinal.Compiler.Core.DiagnosticCatalog;
@@ -18,6 +22,8 @@ Class Diagnostic
 {
     Public DiagnosticSeverity Severity;
     Public string Stage;
+    Public string Got;
+    Public string Code;
     Public string Title;
     Public string Detail;
     Public SourceFile Source;
@@ -31,6 +37,8 @@ Class Diagnostic
     {
         This.Severity = severity;
         This.Stage = stage;
+        This.Got = "";
+        This.Code = "";
         This.Title = title;
         This.Detail = detail;
         This.Source = source;
@@ -50,6 +58,9 @@ Class DiagnosticSettings
     Public int WarningLevel;
     Public LocaleMap Locale;
     Public list Templates;
+    Public list Emitted;
+    Public int Errors;
+    Public int Warnings;
 
     Public Safe Constructor()
     {
@@ -58,7 +69,10 @@ Class DiagnosticSettings
         This.WarningsAsErrors = false;
         This.WarningLevel = 1;
         This.Locale = New LocaleMap();
-        This.Templates = list.Create();
+        This.Templates = IO.Kinal.Compiler.Core.DiagnosticCatalog.CreateCatalog();
+        This.Emitted = list.Create();
+        This.Errors = 0;
+        This.Warnings = 0;
     }
 }
 
@@ -79,18 +93,14 @@ Safe Function string Configure(string color, string language, string localeFile,
                                bool warningsAsErrors, int warningLevel)
 {
     If (color != "auto" && color != "always" && color != "never") Return "unknown color mode: " + color;
-    If (language != "en" && language != "zh" && language != "zh-CN") Return "unknown diagnostic language: " + language;
-    If (warningLevel < 0) Return "warning level must be a nonnegative integer";
     LocaleMap locale = IO.Kinal.Compiler.Core.Localization.ReadLocale(localeFile);
-    If (locale.Error != "") Return locale.Error;
+    If (locale.Error != "") locale = New LocaleMap();
     DiagnosticSettings settings = New DiagnosticSettings();
     settings.Color = color;
-    settings.Language = language;
+    settings.Language = localeFile == "" ? language : "en";
     settings.Locale = locale;
     settings.WarningsAsErrors = warningsAsErrors;
     settings.WarningLevel = warningLevel;
-    If (language != "en" || localeFile != "")
-        settings.Templates = IO.Kinal.Compiler.Core.DiagnosticCatalog.CreateCatalog();
     CurrentSettings = settings;
     Return "";
 }
@@ -103,12 +113,18 @@ Safe Function string UiText(string key, string fallback)
     If (settings.Language == "zh" || settings.Language == "zh-CN")
     {
         text = IO.Kinal.Compiler.Core.DiagnosticCatalog.ChineseUi(key);
-        If (text != "") Return text;
+        // Stage0 locale lookup returns a 2048-byte native buffer.
+        If (text != "") Return IO.Text.Slice(text, 0, IO.Text.Length(text) > 2047 ? 2047 : IO.Text.Length(text));
     }
     Return fallback;
 }
 
 Safe Function string RenderLocation(string template, string path, int line, int column)
+{
+    Return RenderText(template, path, [string](line), [string](column));
+}
+
+Safe Function string RenderText(string template, string path, string line, string column)
 {
     char[] characters = template.ToChars();
     string result = "";
@@ -121,8 +137,8 @@ Safe Function string RenderLocation(string template, string path, int line, int 
         {
             char argument = characters[index + 1];
             If (argument == '0') result = result + path;
-            ElseIf (argument == '1') result = result + [string](line);
-            Else result = result + [string](column);
+            ElseIf (argument == '1') result = result + line;
+            Else result = result + column;
             index = index + 3;
         }
         Else
@@ -134,25 +150,134 @@ Safe Function string RenderLocation(string template, string path, int line, int 
     Return result;
 }
 
+Safe Function string DiagnosticGroup(string title, string detail, bool warning)
+{
+    If (warning) Return title == "Entry Unsafe" ? "SAF" : "WRN";
+    If (IO.Text.StartsWith(title, "Expected") || IO.Text.StartsWith(title, "Unexpected") ||
+        IO.Text.StartsWith(title, "Unterminated") || IO.Text.StartsWith(detail, "Missing ")) Return "SYN";
+    If (IO.Text.StartsWith(title, "Type ") || IO.Text.StartsWith(title, "Invalid Type") ||
+        IO.Text.StartsWith(title, "Unsupported Type") || IO.Text.StartsWith(title, "Invalid Cast")) Return "TYP";
+    If (IO.Text.StartsWith(title, "Unknown") || IO.Text.StartsWith(title, "Ambiguous")) Return "RES";
+    If (IO.Text.StartsWith(title, "Duplicate") || IO.Text.StartsWith(title, "Name Conflict")) Return "NAM";
+    If (IO.Text.StartsWith(title, "Argument Count")) Return "ARG";
+    If (IO.Text.StartsWith(title, "Entry")) Return "ENT";
+    If (IO.Text.Contains(title, "Return") || IO.Text.Contains(title, "Throw") || title == "Invalid Control Flow") Return "CTL";
+    If (IO.Text.StartsWith(title, "Invalid") || IO.Text.StartsWith(title, "Unsafe") ||
+        IO.Text.StartsWith(title, "Access Violation") || IO.Text.StartsWith(title, "Missing")) Return "SEM";
+    Return "GEN";
+}
+
+Safe Function string Code(Diagnostic diagnostic)
+{
+    If (diagnostic.Code != "") Return diagnostic.Code;
+    DiagnosticSettings settings = Settings();
+    bool warning = diagnostic.Severity == DiagnosticSeverity.Warning && !settings.WarningsAsErrors;
+    string detail = IO.Kinal.Compiler.Core.Localization.CanonicalDetail(diagnostic.Title, diagnostic.Detail);
+    string prefix = (warning ? "W-" : "E-") + DiagnosticGroup(diagnostic.Title, detail, warning) + "-";
+    int next = 1;
+    int index = 0;
+    While (index < settings.Templates.Count())
+    {
+        DiagnosticTemplate item = [DiagnosticTemplate](settings.Templates.Fetch(index));
+        If (IO.Text.StartsWith(item.Code, warning ? "W-" : "E-") && item.Title == diagnostic.Title &&
+            IO.Kinal.Compiler.Core.Localization.CanonicalDetail(item.Title, item.Detail) == detail)
+        { diagnostic.Code = item.Code; Return item.Code; }
+        If (IO.Text.StartsWith(item.Code, prefix))
+        {
+            char[] digits = item.Code.ToChars();
+            int value = 0;
+            int digit = 6;
+            While (digit < digits.Length()) { value = value * 10 + [int](digits[digit]) - [int]('0'); digit++; }
+            If (value >= next) next = value + 1;
+        }
+        index++;
+    }
+    string number = [string](next);
+    diagnostic.Code = prefix + Repeat("0", 5 - IO.Text.Length(number)) + number;
+    settings.Templates.Add(New DiagnosticTemplate(diagnostic.Code, diagnostic.Title, diagnostic.Detail, "", ""));
+    Return diagnostic.Code;
+}
+
+Safe Function string DynamicDetail(string detail)
+{
+    string lower = IO.Text.ToLower(detail);
+    string key = "";
+    string fallback = "";
+    string first = "";
+    string second = "";
+    int split = IO.Text.IndexOf(lower, ", got ");
+    If (IO.Text.StartsWith(lower, "expected ") && split >= 9)
+    {
+        key = "ui.diag.type_mismatch"; fallback = "Type mismatch: expected {0}, got {1}";
+        first = IO.Text.Slice(detail, 9, split - 9); second = IO.Text.Slice(detail, split + 6, IO.Text.Length(detail) - split - 6);
+    }
+    ElseIf (IO.Text.Contains(lower, " must be ") || IO.Text.Contains(lower, " requires "))
+    {
+        bool must = IO.Text.Contains(lower, " must be ");
+        split = IO.Text.IndexOf(lower, must ? " must be " : " requires ");
+        key = must ? "ui.diag.type_mismatch.must_be" : "ui.diag.type_mismatch.requires";
+        fallback = must ? "Type mismatch: {0} must be {1}" : "Type mismatch: {0} requires {1}";
+        first = IO.Text.Slice(detail, 0, split);
+        second = IO.Text.Slice(detail, split + (must ? 9 : 10), IO.Text.Length(detail) - split - (must ? 9 : 10));
+    }
+    ElseIf (IO.Text.StartsWith(lower, "cannot cast ") && IO.Text.IndexOf(lower, " to ") >= 12)
+    {
+        split = IO.Text.IndexOf(lower, " to ");
+        key = "ui.diag.type_mismatch.cast"; fallback = "Type mismatch: cannot cast {0} to {1}";
+        first = IO.Text.Slice(detail, 12, split - 12); second = IO.Text.Slice(detail, split + 4, IO.Text.Length(detail) - split - 4);
+    }
+    ElseIf (IO.Text.Contains(lower, "() takes "))
+    {
+        split = IO.Text.IndexOf(lower, "() takes ");
+        key = "ui.diag.arg_count"; fallback = "Argument count mismatch: {0} expects {1} argument(s)";
+        first = IO.Text.Slice(detail, 0, split + 2);
+        string tail = IO.Text.Slice(detail, split + 9, IO.Text.Length(detail) - split - 9);
+        int end = IO.Text.IndexOf(tail, " ");
+        second = end < 0 ? tail : IO.Text.Slice(tail, 0, end);
+    }
+    ElseIf (IO.Text.StartsWith(lower, "variable '") && IO.Text.EndsWith(lower, "' is never used"))
+    {
+        key = "ui.diag.unused_var"; fallback = "Unused variable: {0}";
+        first = IO.Text.Slice(detail, 10, IO.Text.Length(detail) - 25);
+    }
+    ElseIf (IO.Text.StartsWith(lower, "unreachable code"))
+    {
+        key = "ui.diag.unreachable"; fallback = "Unreachable code: {0}";
+        first = IO.Text.Length(detail) > 18 ? IO.Text.Slice(detail, 18, IO.Text.Length(detail) - 18) : "";
+    }
+    If (key == "") Return "";
+    Return RenderText(UiText(key, fallback), IO.Text.Trim(first), IO.Text.Trim(second), "");
+}
+
 Safe Function string TranslatedField(Diagnostic diagnostic, string field)
 {
     DiagnosticSettings settings = Settings();
     string original = field == "title" ? diagnostic.Title : diagnostic.Detail;
-    string key = "selfhost." + diagnostic.Stage + "." + diagnostic.Title;
-    string translated = settings.Locale.Find(key, field);
-    If (translated != "") Return translated;
-    DiagnosticTemplate item = IO.Kinal.Compiler.Core.Localization.FindTemplate(settings.Templates,
-        diagnostic.Title, diagnostic.Detail, diagnostic.Severity == DiagnosticSeverity.Warning);
-    If (item == null) Return original;
-    // Do not replace concrete payloads (names, types, paths) with a generic
-    // registry message merely because they share a title.
-    If (field == "detail" && diagnostic.Detail != item.Detail) Return original;
-    translated = settings.Locale.Find(item.Code, field);
+    string code = Code(diagnostic);
+    If (field == "detail")
+    {
+        string dynamic = DynamicDetail(original);
+        If (dynamic != "") Return dynamic;
+    }
+    // Dynamic details retain their concrete payload, as in stage0.
+    If (field == "detail" && IO.Kinal.Compiler.Core.Localization.CanonicalDetail(diagnostic.Title, original) != original)
+        Return original;
+    string translated = settings.Locale.Find(code, field);
     If (translated != "") Return translated;
     If (settings.Language == "zh" || settings.Language == "zh-CN")
     {
-        translated = field == "title" ? item.ChineseTitle : item.ChineseDetail;
-        If (translated != "") Return translated;
+        int index = 0;
+        While (index < settings.Templates.Count())
+        {
+            DiagnosticTemplate item = [DiagnosticTemplate](settings.Templates.Fetch(index));
+            If (item.Code == code)
+            {
+                translated = field == "title" ? item.ChineseTitle : item.ChineseDetail;
+                If (translated != "") Return translated;
+                Break;
+            }
+            index++;
+        }
     }
     Return original;
 }
@@ -166,21 +291,18 @@ Safe Function bool ExportEnglishTemplate(string path)
     {
         DiagnosticTemplate item = [DiagnosticTemplate](templates.Fetch(index));
         entries.Add("  " + IO.Kinal.Compiler.Core.Localization.JsonString(item.Code) +
-            ": { \"title\": " + IO.Kinal.Compiler.Core.Localization.JsonString(item.Title) +
-            ", \"detail\": " + IO.Kinal.Compiler.Core.Localization.JsonString(item.Detail) + " }");
+            ": {\n    \"title\": " + IO.Kinal.Compiler.Core.Localization.JsonString(item.Title) +
+            ",\n    \"detail\": " + IO.Kinal.Compiler.Core.Localization.JsonString(
+                IO.Kinal.Compiler.Core.Localization.CanonicalDetail(item.Title, item.Detail)) + "\n  }");
         index = index + 1;
     }
-    entries.Add("  \"ui.severity.warning\": { \"text\": \"warning\" }");
-    entries.Add("  \"ui.severity.error\": { \"text\": \"error\" }");
-    entries.Add("  \"ui.diag.location\": { \"text\": \"in <{0}> at {1}:{2}\" }");
-    list stages = list.Create();
-    stages.Add("Lexer"); stages.Add("Parser"); stages.Add("Sema"); stages.Add("Project");
-    stages.Add("Driver"); stages.Add("Link"); stages.Add("Native"); stages.Add("KNC");
+    list ui = IO.Kinal.Compiler.Core.DiagnosticCatalog.EnglishUi();
     index = 0;
-    While (index < stages.Count())
+    While (index < ui.Count())
     {
-        string stage = [string](stages.Fetch(index));
-        entries.Add("  \"ui.stage." + IO.Text.ToLower(stage) + "\": { \"text\": \"" + stage + "\" }");
+        LocaleEntry entry = [LocaleEntry](ui.Fetch(index));
+        entries.Add("  " + IO.Kinal.Compiler.Core.Localization.JsonString(entry.Key) + ": { \"text\": " +
+            IO.Kinal.Compiler.Core.Localization.JsonString(entry.Text) + " }");
         index = index + 1;
     }
     Return IO.File.WriteAllText(path, "{\n" + IO.Text.Join(entries, ",\n") + "\n}\n");
@@ -222,46 +344,206 @@ Safe Function void AddWarning(list diagnostics, SourceFile source, string stage,
     AddCore(diagnostics, source, stage, title, detail, line, column, length, true);
 }
 
+Safe Function string TokenColor(TokenKind kind)
+{
+    Return Switch (kind)
+    {
+        Case(TokenKind.KwUnit) { "38;5;39"; }
+        Case(TokenKind.KwGet) { "38;5;39"; }
+        Case(TokenKind.KwSet) { "38;5;39"; }
+        Case(TokenKind.KwBy) { "38;5;39"; }
+        Case(TokenKind.KwProperty) { "38;5;39"; }
+        Case(TokenKind.KwFunction) { "38;5;39"; }
+        Case(TokenKind.KwReturn) { "38;5;39"; }
+        Case(TokenKind.KwIf) { "38;5;39"; }
+        Case(TokenKind.KwElse) { "38;5;39"; }
+        Case(TokenKind.KwElseIf) { "38;5;39"; }
+        Case(TokenKind.KwWhile) { "38;5;39"; }
+        Case(TokenKind.KwFor) { "38;5;39"; }
+        Case(TokenKind.KwSwitch) { "38;5;39"; }
+        Case(TokenKind.KwCase) { "38;5;39"; }
+        Case(TokenKind.KwBreak) { "38;5;39"; }
+        Case(TokenKind.KwContinue) { "38;5;39"; }
+        Case(TokenKind.KwTry) { "38;5;39"; }
+        Case(TokenKind.KwCatch) { "38;5;39"; }
+        Case(TokenKind.KwThrow) { "38;5;39"; }
+        Case(TokenKind.KwConst) { "38;5;39"; }
+        Case(TokenKind.KwVar) { "38;5;39"; }
+        Case(TokenKind.KwSafe) { "38;5;39"; }
+        Case(TokenKind.KwTrusted) { "38;5;39"; }
+        Case(TokenKind.KwUnsafe) { "38;5;39"; }
+        Case(TokenKind.KwExtern) { "38;5;39"; }
+        Case(TokenKind.KwClass) { "38;5;39"; }
+        Case(TokenKind.KwInterface) { "38;5;39"; }
+        Case(TokenKind.KwStruct) { "38;5;39"; }
+        Case(TokenKind.KwEnum) { "38;5;39"; }
+        Case(TokenKind.KwPublic) { "38;5;39"; }
+        Case(TokenKind.KwPrivate) { "38;5;39"; }
+        Case(TokenKind.KwProtected) { "38;5;39"; }
+        Case(TokenKind.KwInternal) { "38;5;39"; }
+        Case(TokenKind.KwStatic) { "38;5;39"; }
+        Case(TokenKind.KwVirtual) { "38;5;39"; }
+        Case(TokenKind.KwOverride) { "38;5;39"; }
+        Case(TokenKind.KwAbstract) { "38;5;39"; }
+        Case(TokenKind.KwSealed) { "38;5;39"; }
+        Case(TokenKind.KwConstructor) { "38;5;39"; }
+        Case(TokenKind.KwNew) { "38;5;39"; }
+        Case(TokenKind.KwThis) { "38;5;39"; }
+        Case(TokenKind.KwBase) { "38;5;39"; }
+        Case(TokenKind.KwBlock) { "38;5;39"; }
+        Case(TokenKind.KwRecord) { "38;5;39"; }
+        Case(TokenKind.KwJump) { "38;5;39"; }
+        Case(TokenKind.KwDelegate) { "38;5;39"; }
+        Case(TokenKind.KwTrue) { "38;5;39"; }
+        Case(TokenKind.KwFalse) { "38;5;39"; }
+        Case(TokenKind.KwIs) { "38;5;39"; }
+        Case(TokenKind.KwDefault) { "38;5;39"; }
+        Case(TokenKind.KwNull) { "38;5;39"; }
+        Case(TokenKind.TypeVoid) { "38;5;45"; }
+        Case(TokenKind.TypeBool) { "38;5;45"; }
+        Case(TokenKind.TypeByte) { "38;5;45"; }
+        Case(TokenKind.TypeChar) { "38;5;45"; }
+        Case(TokenKind.TypeInt) { "38;5;45"; }
+        Case(TokenKind.TypeFloat) { "38;5;45"; }
+        Case(TokenKind.TypeF16) { "38;5;45"; }
+        Case(TokenKind.TypeF32) { "38;5;45"; }
+        Case(TokenKind.TypeF64) { "38;5;45"; }
+        Case(TokenKind.TypeF128) { "38;5;45"; }
+        Case(TokenKind.TypeI8) { "38;5;45"; }
+        Case(TokenKind.TypeI16) { "38;5;45"; }
+        Case(TokenKind.TypeI32) { "38;5;45"; }
+        Case(TokenKind.TypeI64) { "38;5;45"; }
+        Case(TokenKind.TypeU8) { "38;5;45"; }
+        Case(TokenKind.TypeU16) { "38;5;45"; }
+        Case(TokenKind.TypeU32) { "38;5;45"; }
+        Case(TokenKind.TypeU64) { "38;5;45"; }
+        Case(TokenKind.TypeIsize) { "38;5;45"; }
+        Case(TokenKind.TypeUsize) { "38;5;45"; }
+        Case(TokenKind.TypeString) { "38;5;45"; }
+        Case(TokenKind.TypeAny) { "38;5;45"; }
+        Case(TokenKind.Identifier) { "38;5;222"; }
+        Case(TokenKind.LeftParen) { "38;5;177"; }
+        Case(TokenKind.RightParen) { "38;5;177"; }
+        Case(TokenKind.LeftBrace) { "38;5;177"; }
+        Case(TokenKind.RightBrace) { "38;5;177"; }
+        Case(TokenKind.LeftBracket) { "38;5;177"; }
+        Case(TokenKind.RightBracket) { "38;5;177"; }
+        Case(TokenKind.String) { "38;5;114"; }
+        Case(TokenKind.BadString) { "38;5;114"; }
+        Case(TokenKind.Number) { "38;5;114"; }
+        Case(default) { ""; }
+    };
+}
+
+Safe Function string Ansi(string code)
+{
+    Return [string]([char](27)) + "[" + code + "m";
+}
+
+Safe Function string ColoredLine(string text, bool color)
+{
+    If (!color || text == "") Return text;
+    SourceFile source = New SourceFile("<diagnostic>", text);
+    list ignored = list.Create();
+    list tokens = IO.Kinal.Compiler.Lex.Lexer.Tokenize(source, ignored);
+    string result = "";
+    int position = 0;
+    int index = 0;
+    While (index < tokens.Count())
+    {
+        Token token = [Token](tokens.Fetch(index));
+        If (token.Kind == TokenKind.Eof) Break;
+        int start = token.Column - 1;
+        If (start > position) result = result + IO.Text.Slice(text, position, start - position);
+        string code = TokenColor(token.Kind);
+        If (code != "") result = result + Ansi(code);
+        result = result + token.Text;
+        If (code != "") result = result + Ansi("0");
+        position = start + IO.Text.Length(token.Text);
+        index++;
+    }
+    If (position < IO.Text.Length(text)) result = result + IO.Text.Slice(text, position, IO.Text.Length(text) - position);
+    Return result;
+}
+
 Safe Function string Format(Diagnostic diagnostic)
 {
-    string lineText = diagnostic.Source.GetLine(diagnostic.Line);
-    string lineNumber = [string](diagnostic.Line);
-    string prefix = Repeat(" ", IO.Text.Length(lineNumber) + 3 +
-        diagnostic.Column - 1);
     DiagnosticSettings settings = Settings();
     bool warning = diagnostic.Severity == DiagnosticSeverity.Warning && !settings.WarningsAsErrors;
-    string stage = UiText("ui.stage." + IO.Text.ToLower(diagnostic.Stage), diagnostic.Stage);
-    string message = "[" + stage + "]";
-    If (warning)
-    {
-        message = message + "[" + UiText("ui.severity.warning", "warning") + "]";
-    }
-    message = message + " " + TranslatedField(diagnostic, "title");
-    If (!IO.Text.IsEmpty(diagnostic.Detail))
-    {
-        message = message + ": " + TranslatedField(diagnostic, "detail");
-    }
     bool color = settings.Color == "always" ||
-        (settings.Color == "auto" && IO.Kinal.Compiler.Core.ConsoleIO.IsTerminal(1));
-    If (color) message = [string]([char](27)) + (warning ? "[33m" : "[31m") + message + [string]([char](27)) + "[0m";
-    string location = UiText("ui.diag.location", "in <{0}> at {1}:{2}");
-    location = RenderLocation(location, diagnostic.Source.Path, diagnostic.Line, diagnostic.Column);
-    Return message + [string]([char](10)) +
-        location + [string]([char](10)) +
-        [string]([char](10)) + lineNumber + " | " + lineText +
-        [string]([char](10)) + prefix + Repeat("^", diagnostic.Length);
+        (settings.Color == "auto" && IO.Kinal.Compiler.Core.ConsoleIO.DiagnosticColorTerminal());
+    string severityColor = color ? Ansi(warning ? "33" : "31") : "";
+    string reset = color ? Ansi("0") : "";
+    string stage = UiText("ui.stage." + IO.Text.ToLower(diagnostic.Stage), diagnostic.Stage);
+    string message = severityColor + "[" + stage + "][" + Code(diagnostic) + "][" +
+        UiText(warning ? "ui.severity.warning" : "ui.severity.error", warning ? "warning" : "error") + "] " + reset + severityColor;
+    string title = TranslatedField(diagnostic, "title");
+    string detail = TranslatedField(diagnostic, "detail");
+    If (detail == "") message = message + title;
+    ElseIf (title == "" || IO.Text.StartsWith(detail, title)) message = message + detail;
+    Else message = message + title + ": " + detail;
+    If (diagnostic.Got == "<end-of-file>") message = message + UiText("ui.diag.found_eof", " (found end of file)");
+    ElseIf (diagnostic.Got != "") message = message +
+        RenderLocation(UiText("ui.diag.found_token", " (found token '{0}')"), diagnostic.Got, 0, 0);
+    string lineText = diagnostic.Source.GetLine(diagnostic.Line);
+    string lineNumber = [string](diagnostic.Line);
+    char[] chars = lineText.ToChars();
+    int visual = 0;
+    int index = 0;
+    While (index < diagnostic.Column - 1 && index < chars.Length())
+    {
+        visual = visual + (chars[index] == '\t' ? 4 - visual % 4 : 1);
+        index++;
+    }
+    string location = RenderLocation(UiText("ui.diag.location", "in <{0}> at line <{1}>, column <{2}>"),
+        diagnostic.Source.Path, diagnostic.Line, diagnostic.Column);
+    Return message + reset + "\n" + location + "\n\n" + lineNumber + " | " +
+        ColoredLine(lineText, color) + "\n" + Repeat(" ", IO.Text.Length(lineNumber) + 3 + visual) +
+        (color ? Ansi("36") : "") + Repeat("^", diagnostic.Length) + reset;
 }
 
 Safe Function void PrintAll(list diagnostics)
 {
-    int i = 0;
-    While (i < diagnostics.Count())
+    DiagnosticSettings settings = Settings();
+    int index = 0;
+    While (index < diagnostics.Count())
     {
-        Diagnostic diagnostic = [Diagnostic](diagnostics.Fetch(i));
-        If (diagnostic.Severity != DiagnosticSeverity.Warning || Settings().WarningLevel > 0)
-            IO.Console.PrintLine(Format(diagnostic));
-        i = i + 1;
+        Diagnostic diagnostic = [Diagnostic](diagnostics.Fetch(index));
+        If (diagnostic.Severity != DiagnosticSeverity.Warning || settings.WarningLevel > 0)
+        {
+            string position = diagnostic.Stage + ":" +
+                (diagnostic.Severity == DiagnosticSeverity.Warning && !settings.WarningsAsErrors ? "warning" : "error") +
+                ":" + [string](diagnostic.Line) + ":" + [string](diagnostic.Column) + ":";
+            string codeKey = position + "code:" + Code(diagnostic);
+            string titleKey = position + "title:" + diagnostic.Title;
+            If (!settings.Emitted.Contains(codeKey) &&
+                (diagnostic.Title == "" || !settings.Emitted.Contains(titleKey)))
+            {
+                settings.Emitted.Add(codeKey);
+                settings.Emitted.Add(titleKey);
+                IO.Kinal.Compiler.Core.ConsoleIO.Write(2, Format(diagnostic) + "\n");
+                If (diagnostic.Severity == DiagnosticSeverity.Warning && !settings.WarningsAsErrors) settings.Warnings++;
+                Else settings.Errors++;
+                If (settings.Errors >= 128)
+                {
+                    string key = diagnostic.Stage == "Parser" ? "ui.diag.too_many_parser_errors" : "ui.diag.too_many_errors";
+                    string fallback = diagnostic.Stage == "Parser" ? "[Diag] too many parser errors, stopping early" : "[Diag] too many errors, stopping early";
+                    IO.Kinal.Compiler.Core.ConsoleIO.Write(2, UiText(key, fallback) + "\n");
+                    PrintSummary();
+                    IO.System.Exit(1);
+                }
+            }
+        }
+        index++;
     }
+}
+
+Safe Function void PrintSummary()
+{
+    DiagnosticSettings settings = Settings();
+    If (settings.Errors == 0 && settings.Warnings == 0) Return;
+    string template = UiText("ui.diag.summary", "[Diag] {0} error(s), {1} warning(s)");
+    IO.Kinal.Compiler.Core.ConsoleIO.Write(2, RenderLocation(template, [string](settings.Errors), settings.Warnings, 0) + "\n");
 }
 
 Safe Function bool HasAny(list diagnostics)

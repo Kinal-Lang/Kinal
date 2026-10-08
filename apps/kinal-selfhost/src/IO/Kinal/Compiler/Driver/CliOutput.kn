@@ -1,0 +1,29 @@
+Unit IO.Kinal.Compiler.Driver.CliOutput;
+
+Get IO.Kinal.Compiler.Core.ConsoleIO;
+Get IO.Kinal.Compiler.Core.Diagnostics;
+Get IO.Kinal.Compiler.Driver.CliText;
+
+bool MachineOutput = false;
+
+Safe Function void SelectMachineOutput(bool enabled)
+{
+    MachineOutput = enabled;
+}
+
+Safe Function void Write(string text)
+{
+    IO.Kinal.Compiler.Core.ConsoleIO.Write(MachineOutput ? 1 : 2, text);
+}
+
+Safe Function void Line(string text)
+{
+    Write(text + "\n");
+}
+
+Safe Function void Help(string command)
+{
+    string text = IO.Kinal.Compiler.Driver.CliText.Help(command);
+    If (command == "") text = IO.Kinal.Compiler.Core.Diagnostics.UiText("ui.help.full", text);
+    IO.Kinal.Compiler.Core.ConsoleIO.Write(command == "fmt" ? 1 : 2, text);
+}

@@ -319,6 +319,20 @@ Class SemanticCompilation
         Return false;
     }
 
+    Public Safe Function string DiagnosticType(TypeSymbol type)
+    {
+        If (type == null || type.Kind == [int](TypeKind.Unknown)) Return "unknown";
+        If (type.Kind == [int](TypeKind.ListType)) Return "IO.Collection.list";
+        If (type.Kind == [int](TypeKind.DictType)) Return "IO.Collection.dict";
+        If (type.Kind == [int](TypeKind.SetType)) Return "IO.Collection.set";
+        Return This.TypeIdentity(type);
+    }
+
+    Public Safe Function string TypeMismatch(TypeSymbol expected, TypeSymbol actual)
+    {
+        Return "Expected " + This.DiagnosticType(expected) + ", got " + This.DiagnosticType(actual);
+    }
+
     Public Safe Function void Report(SyntaxTree syntax, string title, string detail, int line, int column)
     {
         IO.Kinal.Compiler.Core.Diagnostics.Add(This.Session.Diagnostics, syntax.Source,
@@ -690,7 +704,8 @@ Class SemanticCompilation
         TypeSymbol type = This.ResolveTypeSyntax(syntax, function, null, reference, name);
         If (type != null) Return type;
         This.UnresolvedTypeCount = This.UnresolvedTypeCount + 1;
-        This.Report(syntax, "Unknown Type", This.CanonicalTypeName(name), line, column);
+        This.Report(syntax, "Unknown Type", "Class or interface not found",
+            reference == null ? line : reference.Line, reference == null ? column : reference.Column);
         Return null;
     }
 
@@ -708,7 +723,13 @@ Class SemanticCompilation
         If (expression.Kind == [int](ExpressionKind.Cast) ||
             expression.Kind == [int](ExpressionKind.NewObject))
         {
-            This.CheckType(syntax, expression.Text, expression.Line, expression.Column);
+            If (expression.Kind == [int](ExpressionKind.NewObject) && This.ResolveType(syntax, expression.Text) == null)
+            {
+                This.DeclarationTypeCount++;
+                This.UnresolvedTypeCount++;
+                This.Report(syntax, "Unknown Type", "Class not found", expression.Line, expression.Column);
+            }
+            Else This.CheckType(syntax, expression.Text, expression.Line, expression.Column);
         }
         This.CheckExpression(syntax, expression.Left);
         This.CheckExpression(syntax, expression.Right);
@@ -1188,7 +1209,7 @@ Class SemanticCompilation
         {
             This.ImportCount = This.ImportCount + 1;
             If (import.Kind == 3 && !This.AliasTargetIsVisible(syntax, import))
-                This.Report(syntax, "Invalid Alias Target", import.Target,
+                This.Report(syntax, "Invalid Alias Target", "Alias target is not visible in this file",
                     import.Line, import.Column);
             If (!This.IsKnownImport(This.ExpandImportPath(syntax, import.Target)))
             {
@@ -1506,7 +1527,7 @@ Class SemanticCompilation
                                                   ExpressionNode expression)
     {
         If (function != null && function.Declaration.Safety == 1)
-            This.Report(syntax, "Unsafe Pointer", "Safe function cannot use pointer operation",
+            This.Report(syntax, "Unsafe Pointer", expression.Operator == TokenKind.Star ? "Safe function cannot dereference pointer" : "Safe function cannot take address",
                 expression.Line, expression.Column);
     }
 
@@ -1856,8 +1877,8 @@ Class SemanticCompilation
         {
             If (argument.Kind != [int](ExpressionKind.String))
                 This.Report(syntax, "Invalid Attribute",
-                    "Built-in Meta requires string literal arguments",
-                    line, column);
+                    This.TypeMismatch(This.Primitive("string"), This.BindExpression(syntax, null, New BindingScope(null), argument).Type),
+                    argument.Line, argument.Column);
             argument = argument.Next;
         }
     }
@@ -1870,11 +1891,13 @@ Class SemanticCompilation
         SyntaxAttribute attribute = first;
         While (attribute != null)
         {
+            int attributeLine = attribute.FirstArgument == null ? line : attribute.FirstArgument.Line;
+            int attributeColumn = attribute.FirstArgument == null ? column : attribute.FirstArgument.Column;
             MetaDecl meta = This.FindMeta(syntax, attribute.Name);
             bool builtin = This.IsBuiltinAttribute(attribute.Name);
             If (!builtin && meta == null)
                 This.Report(syntax, "Unknown Attribute", "Meta not declared",
-                    line, column);
+                    attributeLine, attributeColumn);
             Else
             {
                 int targetMask = meta == null ?
@@ -1883,9 +1906,9 @@ Class SemanticCompilation
                     This.Report(syntax, "Invalid Attribute",
                         This.AttributeShortName(attribute.Name) +
                             " is not valid on this declaration",
-                        line, column);
+                        attributeLine, attributeColumn);
                 Else This.ValidateAttributeArguments(
-                    syntax, attribute, meta, line, column);
+                    syntax, attribute, meta, attributeLine, attributeColumn);
                 SyntaxAttribute previous = first;
                 While (previous != attribute)
                 {
@@ -1895,7 +1918,7 @@ Class SemanticCompilation
                     {
                         This.Report(syntax, "Invalid Attribute",
                             "Meta is not Repeatable on this declaration",
-                            line, column);
+                            attributeLine, attributeColumn);
                         Break;
                     }
                     previous = previous.Next;
@@ -2347,44 +2370,51 @@ Class SemanticCompilation
         SyntaxAttribute cast = This.FindAttribute(declaration, "Cast");
         SyntaxAttribute variadic = This.FindAttribute(declaration, "Variadic");
         If (overload != null && symbolName == null)
-            This.Report(syntax, "Invalid Overload", "Overload requires SymbolName",
-                declaration.Line, declaration.Column);
+            This.Report(syntax, "Invalid Overload", "Overloaded function requires SymbolName",
+                declaration.StartLine, declaration.StartColumn);
         If (symbolName != null &&
             (declaration.IsExtern || (declaration.IsDelegate && declaration.Abi != "C") ||
              (overload == null && !(declaration.IsDelegate && declaration.Abi == "C"))))
-            This.Report(syntax, "Invalid Attribute", "SymbolName is not valid on this declaration",
-                declaration.Line, declaration.Column);
+            This.Report(syntax, "Invalid Attribute", "SymbolName is only valid on overloads or Delegate ... By C",
+                declaration.StartLine, declaration.StartColumn);
         If (cast != null && function.OwnerType != null)
         {
             If (declaration.IsConstructor)
                 This.Report(syntax, "Invalid Cast Method",
                     "Cast method cannot be a constructor",
-                    declaration.Line, declaration.Column);
+                    declaration.ReturnTypeSyntax == null ? declaration.Line : declaration.ReturnTypeSyntax.Line,
+                    declaration.ReturnTypeSyntax == null ? declaration.Column : declaration.ReturnTypeSyntax.Column);
             ElseIf (!declaration.IsStatic)
                 This.Report(syntax, "Invalid Cast Method",
                     "Cast method must be static",
-                    declaration.Line, declaration.Column);
+                    declaration.ReturnTypeSyntax == null ? declaration.Line : declaration.ReturnTypeSyntax.Line,
+                    declaration.ReturnTypeSyntax == null ? declaration.Column : declaration.ReturnTypeSyntax.Column);
             ElseIf (declaration.Access != 1)
                 This.Report(syntax, "Invalid Cast Method",
                     "Cast method must be public",
-                    declaration.Line, declaration.Column);
+                    declaration.ReturnTypeSyntax == null ? declaration.Line : declaration.ReturnTypeSyntax.Line,
+                    declaration.ReturnTypeSyntax == null ? declaration.Column : declaration.ReturnTypeSyntax.Column);
             ElseIf (declaration.IsAsync)
                 This.Report(syntax, "Invalid Cast Method",
                     "Cast method cannot be async",
-                    declaration.Line, declaration.Column);
+                    declaration.ReturnTypeSyntax == null ? declaration.Line : declaration.ReturnTypeSyntax.Line,
+                    declaration.ReturnTypeSyntax == null ? declaration.Column : declaration.ReturnTypeSyntax.Column);
             ElseIf (declaration.IsVirtual || declaration.IsOverride ||
                 declaration.IsAbstract || declaration.IsSealed)
                 This.Report(syntax, "Invalid Cast Method",
                     "Cast method cannot be virtual, override, abstract, or sealed",
-                    declaration.Line, declaration.Column);
+                    declaration.ReturnTypeSyntax == null ? declaration.Line : declaration.ReturnTypeSyntax.Line,
+                    declaration.ReturnTypeSyntax == null ? declaration.Column : declaration.ReturnTypeSyntax.Column);
             ElseIf (function.ParameterCount() != 1)
                 This.Report(syntax, "Invalid Cast Method",
                     "Cast method must declare exactly one parameter",
-                    declaration.Line, declaration.Column);
+                    declaration.ReturnTypeSyntax == null ? declaration.Line : declaration.ReturnTypeSyntax.Line,
+                    declaration.ReturnTypeSyntax == null ? declaration.Column : declaration.ReturnTypeSyntax.Column);
             ElseIf (!This.SameType(function.ReturnType, function.OwnerType))
                 This.Report(syntax, "Invalid Cast Method",
                     "Cast method must return its owning class",
-                    declaration.Line, declaration.Column);
+                    declaration.ReturnTypeSyntax == null ? declaration.Line : declaration.ReturnTypeSyntax.Line,
+                    declaration.ReturnTypeSyntax == null ? declaration.Column : declaration.ReturnTypeSyntax.Column);
         }
 
         If (variadic != null)
@@ -2393,15 +2423,15 @@ Class SemanticCompilation
             If (function.OwnerType != null || declaration.IsExtern || declaration.IsDelegate)
             {
                 This.Report(syntax, "Invalid Variadic",
-                    "Variadic requires a top-level Kinal function body",
-                    declaration.Line, declaration.Column);
+                    "Variadic requires a Kinal function body",
+                    declaration.StartLine, declaration.StartColumn);
                 validVariadic = false;
             }
             If (declaration.FirstTypeParameter != null)
             {
                 This.Report(syntax, "Invalid Variadic",
                     "Generic variadic functions are not supported yet",
-                    declaration.Line, declaration.Column);
+                    declaration.StartLine, declaration.StartColumn);
                 validVariadic = false;
             }
             ParameterSymbol lastParameter = function.FirstParameter;
@@ -2412,7 +2442,7 @@ Class SemanticCompilation
             {
                 This.Report(syntax, "Invalid Variadic",
                     "The final parameter of a variadic function must be an array",
-                    declaration.Line, declaration.Column);
+                    declaration.StartLine, declaration.StartColumn);
                 validVariadic = false;
             }
             ParameterSymbol variadicParameter = function.FirstParameter;
@@ -2423,7 +2453,7 @@ Class SemanticCompilation
                 {
                     This.Report(syntax, "Invalid Variadic",
                         "Variadic functions cannot declare default parameters",
-                        declaration.Line, declaration.Column);
+                        declaration.StartLine, declaration.StartColumn);
                     validVariadic = false;
                 }
                 variadicParameter = variadicParameter.Next;
@@ -2434,14 +2464,14 @@ Class SemanticCompilation
         If (declaration.IsExtern || (declaration.IsDelegate && declaration.Abi == "C"))
         {
             If (!This.IsSupportedCAbiType(function.ReturnType))
-                This.Report(syntax, "Unsupported Type", "C ABI return type is not supported",
-                    declaration.Line, declaration.Column);
+                This.Report(syntax, "Unsupported Type", "C ABI return type is not supported by FFI v1; pass aggregates through pointers",
+                    declaration.StartLine, declaration.StartColumn);
             ParameterSymbol parameter = function.FirstParameter;
             While (parameter != null)
             {
                 If (!This.IsSupportedCAbiType(parameter.Type))
-                    This.Report(syntax, "Unsupported Type", "C ABI parameter type is not supported",
-                        declaration.Line, declaration.Column);
+                    This.Report(syntax, "Unsupported Type", "C ABI parameter type is not supported by FFI v1; pass aggregates through pointers",
+                        parameter.Declaration.TypeSyntax.Line, parameter.Declaration.TypeSyntax.Column);
                 parameter = parameter.Next;
             }
         }
@@ -2557,7 +2587,7 @@ Class SemanticCompilation
         {
             If (call.TypeArgumentCount() == 0)
             {
-                This.Report(syntax, "Generic Function", "explicit type arguments are required",
+                This.Report(syntax, "Generic Function", "Generic call requires explicit type arguments",
                     call.Line, call.Column);
                 Return null;
             }
@@ -2674,6 +2704,18 @@ Class SemanticCompilation
                 }
             }
             unit = unit.Next;
+        }
+        Return false;
+    }
+
+    Public Safe Function bool HasUnscopedRuntimeFunction(SyntaxTree syntax, string name)
+    {
+        ImportDecl import = syntax.FirstImport;
+        While (import != null)
+        {
+            If (import.Kind == 2 && import.Name == name) Return true;
+            If (import.Kind == 0 && This.RuntimeCallType(import.Target + "." + name, null) != null) Return true;
+            import = import.Next;
         }
         Return false;
     }
@@ -3036,7 +3078,7 @@ Class SemanticCompilation
                 HirExpression argument = This.BindExpression(syntax, caller, scope, selected);
                 If (argument != null && !This.IsHirAssignable(parameter.Type, argument))
                     This.Report(syntax, "Type Mismatch",
-                        "Argument type does not match parameter",
+                        This.TypeMismatch(parameter.Type, argument.Type),
                         selected.Line, selected.Column);
                 bound.AddArgument(This.ConvertCallArgument(parameter.Type, argument));
             }
@@ -3122,7 +3164,8 @@ Class SemanticCompilation
                 If (defaultValue == null)
                 {
                     This.Report(syntax, selected == null ? "Missing argument" : "Default Argument",
-                        parameter.Name, call.Line, call.Column);
+                        selected == null ? parameter.Name : "Parameter '" + parameter.Name + "' does not have a default value",
+                        selected == null ? call.Line : selected.Line, selected == null ? call.Column : selected.Column);
                     bound.AddArgument(New HirExpression([int](HirExpressionKind.Constant),
                         selected, parameter.Type));
                 }
@@ -3141,7 +3184,7 @@ Class SemanticCompilation
             {
                 HirExpression argument = This.BindExpression(syntax, caller, scope, selected);
                 If (argument != null && !This.IsHirAssignable(parameter.Type, argument))
-                    This.Report(syntax, "Type Mismatch", "Argument type does not match parameter",
+                    This.Report(syntax, "Type Mismatch", This.TypeMismatch(parameter.Type, argument.Type),
                         selected.Line, selected.Column);
                 bound.AddArgument(This.ConvertCallArgument(parameter.Type, argument));
             }
@@ -3251,7 +3294,7 @@ Class SemanticCompilation
         int count = This.ApplicableFunctionCount(syntax, caller, scope, call, initial);
         If (count > 1)
         {
-            This.Report(syntax, "Ambiguous Call", initial.Name, call.Line, call.Column);
+            This.Report(syntax, "Ambiguous Call", "Multiple overloaded functions match this call", call.Line, call.Column);
             Return null;
         }
         Return selected == null ? initial : selected;
@@ -3331,7 +3374,7 @@ Class SemanticCompilation
         int actualCount = expression.ArgumentCount();
         If (expectedCount >= 0 && actualCount != expectedCount)
         {
-            This.Report(syntax, "Argument Count", target,
+            This.Report(syntax, "Argument Count", target + "() takes " + [string](expectedCount) + " argument(s)",
                 expression.Line, expression.Column);
             Return;
         }
@@ -3358,8 +3401,8 @@ Class SemanticCompilation
             (target == "Set" || target == "Fetch" || target == "TryFetch" ||
              target == "Contains" || target == "Remove") && first != null &&
             first.Type.Kind != [int](TypeKind.StringType))
-            This.Report(syntax, "Type Mismatch", "dict key must be string",
-                expression.Line, expression.Column);
+            This.Report(syntax, "Type Mismatch", target + "() key must be string",
+                first.Syntax.Line, first.Syntax.Column);
         If (receiverKind == [int](TypeKind.SetType) &&
             (target == "Add" || target == "Contains" || target == "Remove") &&
             first != null && first.Type.Kind != [int](TypeKind.StringType))
@@ -3369,8 +3412,8 @@ Class SemanticCompilation
             (target == "Fetch" || target == "Set" || target == "Insert" ||
              target == "TryFetch" || target == "RemoveAt") && first != null &&
             first.Type.Kind != [int](TypeKind.IntegerType))
-            This.Report(syntax, "Type Mismatch", "list index must be integer",
-                expression.Line, expression.Column);
+            This.Report(syntax, "Type Mismatch", target + "() index must be integer",
+                first.Syntax.Line, first.Syntax.Column);
         If (target == "IO.Async.Run" && first != null &&
             first.Type.Name != "IO.Async.Task")
             This.Report(syntax, "Async Run", "IO.Async.Run expects IO.Async.Task",
@@ -3425,7 +3468,7 @@ Class SemanticCompilation
             target == "IO.Type.string.Equals" ? 2 : 1;
         If (expression.ArgumentCount() != expectedCount)
         {
-            This.Report(syntax, "Argument Count", target,
+            This.Report(syntax, "Argument Count", target + "() takes " + [string](expectedCount) + " argument(s)",
                 expression.Line, expression.Column);
             Return This.FailedExpression(expression);
         }
@@ -3456,7 +3499,7 @@ Class SemanticCompilation
         string sourcePath = This.ExpressionPath(targetSyntax);
         If (This.PathUsesHiddenAliasTarget(syntax, sourcePath))
         {
-            This.Report(syntax, "Scoped Symbol Required", sourcePath,
+            This.Report(syntax, "Scoped Symbol Required", "Imported module function must be called with module or alias qualifier",
                 expression.Line, expression.Column);
             Return This.FailedExpression(expression);
         }
@@ -3467,7 +3510,7 @@ Class SemanticCompilation
             !IO.Text.StartsWith(sourcePath, "IO.Type.");
         If (namespacePath && !This.QualifiedPathIsVisible(syntax, sourcePath))
         {
-            This.Report(syntax, "Missing Get", sourcePath,
+            This.Report(syntax, "Missing Get", "Standard module not imported; add a Get statement",
                 expression.Line, expression.Column);
             Return This.FailedExpression(expression);
         }
@@ -3582,7 +3625,7 @@ Class SemanticCompilation
                     expression, targetFunction);
                 If (targetFunction == null)
                 {
-                    This.Report(syntax, "Unknown Function", targetSyntax.Text,
+                    This.Report(syntax, "Unknown Function", "Function not found",
                         expression.Line, expression.Column);
                     Return This.FailedExpression(expression);
                 }
@@ -3597,6 +3640,7 @@ Class SemanticCompilation
             Else
             {
                 ValueSymbol dynamic = scope.Find(targetSyntax.Text);
+                If (dynamic != null) dynamic.IsUsed = true;
                 If (dynamic != null && !dynamic.IsParameter &&
                     This.IsFunctionObjectType(dynamic.Type) &&
                     This.IsStringBuiltinReferenceTarget(dynamic.BuiltinReferenceTarget))
@@ -3622,7 +3666,10 @@ Class SemanticCompilation
                 ElseIf (This.HasUnscopedImportedFunction(syntax,
                     targetSyntax.Text, argumentCount))
                 {
-                    This.Report(syntax, "Scoped Symbol Required", targetSyntax.Text,
+                    This.Report(syntax, "Scoped Symbol Required",
+                        This.HasUnscopedRuntimeFunction(syntax, targetSyntax.Text) ?
+                            "Imported symbol must be called with module or alias qualifier" :
+                            "Imported module function must be called with module or alias qualifier",
                         expression.Line, expression.Column);
                     Return This.FailedExpression(expression);
                 }
@@ -3667,8 +3714,7 @@ Class SemanticCompilation
                 Return This.FailedExpression(expression);
             }
             Return This.InvalidExpression(syntax, expression,
-                "Unresolved call",
-                IO.Text.IsEmpty(path) ? targetSyntax.Text : path);
+                "Unknown Function", "Function not found");
         }
 
         If (callKind == [int](HirCallKind.RuntimeBuiltin) &&
@@ -3873,13 +3919,13 @@ Class SemanticCompilation
                 // Check the original spelling, never the expanded alias target.
                 If (This.PathUsesHiddenAliasTarget(syntax, fullPath))
                 {
-                    This.Report(syntax, "Scoped Symbol Required", fullPath,
+                    This.Report(syntax, "Scoped Symbol Required", "Imported module function must be called with module or alias qualifier",
                         expression.Line, expression.Column);
                     Return This.FailedExpression(expression);
                 }
                 If (!This.QualifiedPathIsVisible(syntax, fullPath))
                 {
-                    This.Report(syntax, "Missing Get", fullPath,
+                    This.Report(syntax, "Missing Get", "Standard module not imported; add a Get statement",
                         expression.Line, expression.Column);
                     Return This.FailedExpression(expression);
                 }
@@ -4380,6 +4426,7 @@ Class SemanticCompilation
             ValueSymbol value = scope.Find(expression.Text);
             If (value != null)
             {
+                value.IsUsed = true;
                 HirExpression local = New HirExpression([int](HirExpressionKind.Local), expression, value.Type);
                 local.Target = value.Name;
                 local.Symbol = value;
@@ -4500,7 +4547,7 @@ Class SemanticCompilation
                 named.Target = expression.Text;
                 Return named;
             }
-            Return This.InvalidExpression(syntax, expression, "Unknown Variable", expression.Text);
+            Return This.InvalidExpression(syntax, expression, "Unknown Variable", "Variable not defined");
         }
         If (expression.Kind == [int](ExpressionKind.Member))
             Return This.BindMember(syntax, function, scope, expression);
@@ -4524,7 +4571,7 @@ Class SemanticCompilation
             FunctionSymbol constructor = This.FindMethod(type, "Constructor",
                 This.ArgumentCount(expression));
             If (constructor == null && This.HasConstructor(type))
-                This.Report(syntax, "Constructor not found", type.QualifiedName(),
+                This.Report(syntax, "Constructor", "Constructor not found",
                     expression.Line, expression.Column);
             result.Function = constructor;
             If (constructor != null)
@@ -4549,7 +4596,7 @@ Class SemanticCompilation
             int customCastCount = result.Left == null ? 0 :
                 This.CustomCastCount(type, result.Left);
             If (customCastCount > 1)
-                This.Report(syntax, "Ambiguous Cast", This.TypeIdentity(type),
+                This.Report(syntax, "Ambiguous Cast", "Multiple custom cast methods match this value",
                     expression.Line, expression.Column);
             ElseIf (customCastCount == 1)
                 result.Function = This.FindCustomCast(type, result.Left);
@@ -4560,7 +4607,7 @@ Class SemanticCompilation
             {
                 If (This.FunctionIsSafe(function))
                     This.Report(syntax, "Unsafe Pointer",
-                        "Safe function cannot cast pointer values",
+                        type.Kind == [int](TypeKind.PointerType) ? "Safe function cannot cast integer to pointer" : "Safe function cannot cast pointer to integer",
                         expression.Line, expression.Column);
             }
             bool targetObject = This.IsObjectSchemaType(type);
@@ -4576,7 +4623,7 @@ Class SemanticCompilation
                  type.Name == "Object.Function");
             If (targetObject && sourceObject && !relatedObjects &&
                 customCastCount == 0)
-                This.Report(syntax, "Invalid Cast", "Object types are unrelated",
+                This.Report(syntax, "Invalid Cast", "Cannot cast " + This.DiagnosticType(result.Left.Type) + " to " + This.DiagnosticType(type),
                     expression.Line, expression.Column);
             ElseIf (targetObject && customCastCount != 1 && !relatedObjects &&
                 !rawFunctionPointer && !dynamicObjectCast &&
@@ -4592,9 +4639,19 @@ Class SemanticCompilation
             If (result.Left != null && result.Left.Type.Kind == [int](TypeKind.PackageType) &&
                 (type.Kind != [int](TypeKind.ArrayType) ||
                  !This.PackageCanMaterialize(result.Left.Type, type.ElementType)))
-                This.Report(syntax, "Invalid Cast",
-                    "Package elements are not assignable to the target array element type",
-                    expression.Line, expression.Column);
+            {
+                PackageElementType element = result.Left.Type.FirstPackageElement;
+                While (element != null)
+                {
+                    If (!This.IsAssignable(type.ElementType, element.Type))
+                    {
+                        This.Report(syntax, "Invalid Cast", This.TypeMismatch(type.ElementType, element.Type),
+                            expression.Line, expression.Column);
+                        Break;
+                    }
+                    element = element.Next;
+                }
+            }
             ElseIf (result.Left != null && type.Kind == [int](TypeKind.PackageType) &&
                 result.Left.Type.Kind != [int](TypeKind.PackageType))
                 This.Report(syntax, "Invalid Cast", "Only Package values can convert to Package",
@@ -4871,8 +4928,8 @@ Class SemanticCompilation
                                      right.Type.Name == "Object.Function")));
                 If (delegateTarget && functionReference &&
                     !This.SameFunctionSignature(left.Function, right.Function))
-                    This.Report(syntax, "Type Mismatch", "Delegate signature does not match target",
-                        expression.Line, expression.Column);
+                    This.Report(syntax, "Type Mismatch", "Delegate assignment requires a matching function signature",
+                        expression.Right.Line, expression.Right.Column);
                 ElseIf (delegateTarget && !delegateAssignment)
                     This.Report(syntax, "Type Mismatch",
                         cDelegate ?
@@ -4892,7 +4949,7 @@ Class SemanticCompilation
                   right.Type.Declaration != null &&
                   right.Type.Declaration.Kind == TokenKind.KwEnum)) &&
                 !This.SameType(left.Type, right.Type))
-                This.Report(syntax, "Type Mismatch", "Enum types do not match",
+                This.Report(syntax, "Type Mismatch", This.TypeMismatch(left.Type, right.Type),
                     expression.Line, expression.Column);
             If ((expression.Operator == TokenKind.Equal ||
                  expression.Operator == TokenKind.NotEqual) &&
@@ -4983,6 +5040,21 @@ Class SemanticCompilation
         Return This.InvalidExpression(syntax, expression, "Unsupported expression", expression.Text);
     }
 
+    Public Safe Function void WarnUnusedScope(SyntaxTree syntax, BindingScope scope)
+    {
+        If (IO.Kinal.Compiler.Core.Diagnostics.Settings().WarningLevel < 2 || scope == null) Return;
+        ValueSymbol value = scope.FirstValue;
+        While (value != null)
+        {
+            If (!value.IsParameter && !value.IsUsed && !value.IsCaptured &&
+                value.Declaration != null && !IO.Text.StartsWith(value.Name, "_"))
+                IO.Kinal.Compiler.Core.Diagnostics.AddWarning(This.Session.Diagnostics, syntax.Source,
+                    "Sema", "Unused Variable", "Variable '" + value.Name + "' is never used",
+                    value.Declaration.NameLine, value.Declaration.NameColumn, IO.Text.Length(value.Name));
+            value = value.Next;
+        }
+    }
+
     Public Safe Function HirStatement BindStatement(SyntaxTree syntax, FunctionSymbol function,
                                                      BindingScope scope, StatementNode statement)
     {
@@ -5019,7 +5091,7 @@ Class SemanticCompilation
                     statement.Line, statement.Column);
             ElseIf (result.Expression != null &&
                 !This.IsHirAssignable(function.ReturnType, result.Expression))
-                This.Report(syntax, "Return Type", "Return value does not match function type",
+                This.Report(syntax, "Return Type", This.TypeMismatch(function.ReturnType, result.Expression.Type),
                     statement.Expression.Line, statement.Expression.Column);
             result.Next = This.BindStatement(syntax, function, scope, statement.Next);
             Return result;
@@ -5030,7 +5102,7 @@ Class SemanticCompilation
             If (result.Expression == null ||
                 (result.Expression.Type.Kind != [int](TypeKind.StringType) &&
                  result.Expression.Type.Name != "IO.Error"))
-                This.Report(syntax, "Invalid Throw", "Throw requires string or IO.Error",
+                This.Report(syntax, "Invalid Throw", "Throw expression must be string or IO.Error",
                     statement.Line, statement.Column);
             result.Next = This.BindStatement(syntax, function, scope, statement.Next);
             Return result;
@@ -5050,7 +5122,7 @@ Class SemanticCompilation
         {
             If (!statement.IsUnsafe && This.HasNestedBlockRecord(statement.FirstChild, false))
                 This.Report(syntax, "Unsafe Block",
-                    "Record inside control flow requires Unsafe Block",
+                    "Record inside nested control flow requires Unsafe Block",
                     statement.Line, statement.Column);
             TypeSymbol blockType = New TypeSymbol([int](TypeKind.NamedType), "block");
             ValueSymbol blockValue = New ValueSymbol(statement.Name, blockType, false);
@@ -5069,7 +5141,7 @@ Class SemanticCompilation
                 catchType = This.Primitive("any");
             }
             If (catchType.Kind != [int](TypeKind.StringType) && catchType.Name != "IO.Error")
-                This.Report(syntax, "Invalid Catch", "Catch type must be string or IO.Error",
+                This.Report(syntax, "Invalid Catch", "Catch parameter must be string or IO.Error",
                     statement.Line, statement.Column);
             BindingScope catchScope = New BindingScope(scope);
             result.DeclaredType = catchType;
@@ -5111,6 +5183,7 @@ Class SemanticCompilation
                     "Static class cannot be used as a value type",
                     statement.Line, statement.Column);
             result.DeclaredSymbol = New ValueSymbol(statement.Name, result.DeclaredType, false);
+            result.DeclaredSymbol.Declaration = statement;
             loopScope.Add(result.DeclaredSymbol);
             result.FirstChild = This.BindStatement(syntax, function, loopScope, statement.FirstChild);
             result.Next = This.BindStatement(syntax, function, scope, statement.Next);
@@ -5210,19 +5283,20 @@ Class SemanticCompilation
                     result.Expression.FirstArgument == null;
                 If (!contextualEmptyArray && !result.Expression.HasPrimaryError &&
                     !This.IsHirAssignable(result.DeclaredType, result.Expression))
-                    This.Report(syntax, "Type Mismatch", "Initializer type does not match variable type",
-                        statement.Line, statement.Column);
+                    This.Report(syntax, "Type Mismatch", This.TypeMismatch(result.DeclaredType, result.Expression.Type),
+                        statement.Expression.Line, statement.Expression.Column);
                 If (result.DeclaredType.Name == "byte" && statement.Expression != null)
                 {
                     ConstantIntegerValue byteValue = This.ConstantInteger(
                         syntax, scope, statement.Expression);
                     If (byteValue.IsValid &&
                         (byteValue.Value < 0 || byteValue.Value > 255))
-                        This.Report(syntax, "Byte Overflow", "byte literal is outside 0..255",
-                            statement.Line, statement.Column);
+                        This.Report(syntax, "Byte Overflow", "byte range is 0..255",
+                            statement.Expression.Line, statement.Expression.Column);
                 }
             }
             result.DeclaredSymbol = New ValueSymbol(statement.Name, result.DeclaredType, false);
+            result.DeclaredSymbol.Declaration = statement;
             If (result.Expression != null)
                 result.DeclaredSymbol.AsyncResultType = result.Expression.AsyncResultType;
             result.DeclaredSymbol.IsConst = statement.IsConst;
@@ -5294,11 +5368,13 @@ Class SemanticCompilation
                 }
             }
             result.FirstChild = This.BindStatement(syntax, function, childScope, statement.FirstChild);
+            If (childScope != scope) This.WarnUnusedScope(syntax, childScope);
         }
         If (statement.ElseBranch != null)
         {
             BindingScope elseScope = New BindingScope(scope);
             result.ElseBranch = This.BindStatement(syntax, function, elseScope, statement.ElseBranch);
+            This.WarnUnusedScope(syntax, elseScope);
         }
         result.Next = This.BindStatement(syntax, function, scope, statement.Next);
         Return result;
@@ -5454,9 +5530,10 @@ Class SemanticCompilation
                         function.ReturnType.Kind != [int](TypeKind.VoidType) &&
                         !function.IsLiteral &&
                         !This.StatementAlwaysReturns(function.Declaration.Body))
-                        This.Report(syntax, "Missing Return", function.QualifiedName(),
-                            function.Declaration.Line, function.Declaration.Column);
+                        This.Report(syntax, "Missing Return", "Non-void function must return a value on all paths",
+                            function.Declaration.Body.Line, function.Declaration.Body.Column);
                     hirFunction.Body = This.BindStatement(syntax, function, scope, function.Declaration.Body);
+                    This.WarnUnusedScope(syntax, scope);
                     module.AddFunction(hirFunction);
                 }
             }

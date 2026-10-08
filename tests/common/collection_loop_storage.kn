@@ -1,0 +1,38 @@
+Unit Tests.CollectionLoopStorage;
+
+Get IO.Console;
+
+Safe Function bool RepeatCollections(int iterations)
+{
+    list values = list.Create();
+    dict mapping = dict.Create();
+    int index = 0;
+    While (index < iterations)
+    {
+        values.Add(index);
+        values.Add(index + 1);
+        If ([int](values.Fetch(0)) != index) Return false;
+        If ([int](values.TryFetch(1, -1)) != index + 1) Return false;
+        If ([int](values.TryFetch(2, -1)) != -1) Return false;
+        If ([int](values.Peek()) != index + 1) Return false;
+        If ([int](values.RemoveAt(0)) != index) Return false;
+        If ([int](values.Pop()) != index + 1) Return false;
+
+        mapping.Set("value", index);
+        If ([int](mapping.Fetch("value")) != index) Return false;
+        If ([int](mapping.TryFetch("value", -1)) != index) Return false;
+        If ([int](mapping.TryFetch("missing", -1)) != -1) Return false;
+
+        char[] characters = "ok".ToChars();
+        If (characters.Length() != 2 || characters[0] != 'o' || characters[1] != 'k')
+            Return false;
+        index = index + 1;
+    }
+    Return values.Count() == 0 && mapping.Count() == 1;
+}
+
+Static Function int Main()
+{
+    IO.Console.PrintLine(RepeatCollections(4096));
+    Return 0;
+}

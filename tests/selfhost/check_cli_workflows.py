@@ -100,9 +100,10 @@ Static Function int Main(string[] args)
         assert set(temporary.iterdir()) == before, (label, "run did not clean temporary outputs")
         cases += 1
 
-    kept = invoke("run-keep", [compiler, "run", "--keep-temps", source], text="output=")
-    kept_path = Path(next(line.removeprefix("output=") for line in kept.stdout.splitlines()
-                          if line.startswith("output=")))
+    kept = invoke("run-keep", [compiler, "run", "--keep-temps", source])
+    retained = set(temporary.iterdir()) - before
+    assert len(retained) == 1 and kept.stdout == "cli-ok\n", (retained, kept.stdout)
+    kept_path = next(iter(retained)) / ("program" + suffix)
     assert kept_path.is_file() and Path(str(kept_path) + object_suffix).is_file()
     invoke("run-kept-executable", [kept_path], text="cli-ok")
     # Tests own this retained output; remove exactly the files they created.
@@ -213,8 +214,8 @@ Static Function int Main(string[] args)
     assert set(temporary.iterdir()) == before
     cases += 1
 
-    # Ordinary user mistakes have stable selfhost status classes: malformed CLI
-    # requests return 2, while missing sources, diagnostics and writes return 1.
+    # Preserve the original CLI's status and error wording: unknown/missing
+    # options return 2; invalid values, files and diagnostics return 1.
     bad = out / "Invalid.kn"
     bad.write_text('Unit Tests.Invalid; Static Function int Main() { Return Missing(); }\n', encoding="utf-8")
     before = set(temporary.iterdir())
@@ -235,22 +236,21 @@ Static Function int Main(string[] args)
            text="native link failed")
     assert set(temporary.iterdir()) == before
     invoke("missing-source", [compiler, "build", out / "Missing.kn", "--emit", "check"], code=1,
-           text="Source file not found")
-    invoke("missing-project", [compiler, "build", "--project", out / "missing.knproj"], code=2,
-           text="project file not found")
+           text="failed to read input")
+    invoke("missing-project", [compiler, "build", "--project", out / "missing.knproj"], code=1,
+           text="invalid manifest path")
     invoke("missing-option-value", [compiler, "build", source, "--emit"], code=2,
-           text="missing value")
-    invoke("unsupported-emit", [compiler, "build", source, "--emit", "wrong"], code=2,
-           text="unsupported selfhost emit mode")
+           text="unknown option: --emit")
+    invoke("unsupported-emit", [compiler, "build", source, "--emit", "wrong"], code=1,
+           text="unknown emit mode: wrong")
     invoke("extra-run-input", [compiler, "run", source, helper], code=2,
            text="exactly one input")
     invoke("unsupported-run-option", [compiler, "run", source, "--emit", "obj"], code=2,
-           text="unsupported run option")
-    invoke("profile-without-project", [compiler, "build", source, "--profile", "native"], code=2,
-           text="--profile requires --project")
-    invoke("no-input", [compiler, "build"], code=2, text="requires source files")
+           text="unknown option: --emit")
+    invoke("profile-without-project", [compiler, "build", source, "--profile", "native", "--emit", "check"])
+    invoke("no-input", [compiler, "build"], code=1, text="Usage: kinal build")
     invoke("unknown-profile", [compiler, "build", "--project", project, "--profile", "missing"], code=1,
-           text="Unknown profile")
+           text="requested profile was not found")
     invoke("unwritable-summary", [compiler, "build", source, "--no-module-discovery", "--emit", "check",
                                   "-o", source_dir], code=1,
            text="failed to write semantic summary")
@@ -267,7 +267,7 @@ Static Function int Main(string[] args)
         if mode == "bin":
             invoke("nested-output-execute", [nested], text="cli-ok")
         cases += 1
-    invoke("help", [compiler, "run", "--help"], text="run <source>")
+    invoke("help", [compiler, "run", "--help"], text="Usage: kinal run [options] <file.kn>")
     cases += 16
     result = {"name": "source_project_cli_workflows", "ok": True, "cases": cases,
               "commands": sequence, "stage0_reference": stage0_reference,

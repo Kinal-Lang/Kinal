@@ -55,8 +55,13 @@ def copy_stage_support(source: Path, target: Path) -> None:
 
 def build_next_stage(compiler: Path, destination: Path, project: Path, root: Path) -> None:
     destination.parent.mkdir(parents=True, exist_ok=True)
+    command = [str(compiler), "build", "--project", str(project), "-o", str(destination), "--profile", "stage1"]
+    if compiler.suffix.lower() == ".exe":
+        icon = compiler.parent / "bridge" / "kinal.res"
+        require(icon.is_file(), f"compiler icon resource is missing: {icon}")
+        command.extend(["--link-file", str(icon)])
     process = run(
-        [str(compiler), "build", str(project), str(destination), "stage1"],
+        command,
         cwd=root,
     )
     require(process.returncode == 0, f"{compiler.name} failed to build {destination.name}", process)

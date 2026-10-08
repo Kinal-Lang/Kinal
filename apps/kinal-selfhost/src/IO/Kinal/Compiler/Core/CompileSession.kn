@@ -4,6 +4,7 @@ Get IO.File;
 Get IO.Path;
 Get IO.Text;
 Get IO.Kinal.Compiler.Core.Diagnostics;
+Get IO.Kinal.Compiler.Driver.CliOutput;
 Get IO.Kinal.Compiler.Core.TargetInfo;
 Get IO.Kinal.Compiler.Source.SourceFile;
 Get IO.Kinal.Compiler.Source.SourceManager;
@@ -56,6 +57,7 @@ Class CompileSession
     Public string RequestedTarget;
     Public string RequestedBackend;
     Public string FrontendMode;
+    Public bool Trace;
     Public list SourcePaths;
     Public dict ProjectProbeCache;
     Public CompilationUnit FirstUnit;
@@ -71,6 +73,7 @@ Class CompileSession
         This.RequestedTarget = "";
         This.RequestedBackend = "Native";
         This.FrontendMode = "";
+        This.Trace = false;
         This.SourcePaths = list.Create();
         This.ProjectProbeCache = dict.Create();
         This.FirstUnit = null;
@@ -245,6 +248,8 @@ Class CompileSession
 
     Public Safe Function CompilationUnit ParseFile(string path)
     {
+        If (This.Trace && This.FrontendMode != "build-tokens")
+            IO.Kinal.Compiler.Driver.CliOutput.Line("[Trace] parse:source");
         SourceFile source = This.Sources.Load(path);
         If (!IO.File.Exists(source.Path))
         {
@@ -256,6 +261,7 @@ Class CompileSession
         If (This.HasErrors()) Return null;
         SyntaxTree syntax = This.FrontendMode == "build-tokens" ? New SyntaxTree(source, "") :
             IO.Kinal.Compiler.Syntax.Parser.Build(source, tokens, This.Diagnostics);
+        If (This.Trace) IO.Kinal.Compiler.Core.Diagnostics.PrintAll(This.Diagnostics);
         If (syntax == null) Return null;
         If (This.FrontendMode != "build-tokens" && This.Project != null && This.Profile != null &&
             This.Project.SourceRequiresUnit(This.Profile.Name, source.Path) &&

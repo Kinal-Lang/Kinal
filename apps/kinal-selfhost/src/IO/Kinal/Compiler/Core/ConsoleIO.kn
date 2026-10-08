@@ -20,6 +20,22 @@ Extern Unsafe Function i32 WindowsWrite(i32 descriptor, string text, u32 count) 
 Extern Unsafe Function i32 PosixIsTerminal(i32 descriptor) By C;
 [LinkName("_isatty")]
 Extern Unsafe Function i32 WindowsIsTerminal(i32 descriptor) By C;
+[LinkName("kn_sh_rt_console_mode")]
+Extern Unsafe Function i32 WindowsConsoleMode(i32 descriptor) By C;
+[LinkName("kn_sh_rt_set_console_mode")]
+Extern Unsafe Function i32 WindowsSetConsoleMode(i32 descriptor, u32 mode) By C;
+
+Trusted Function bool DiagnosticColorTerminal()
+{
+    If (IO.Host.OS == IO.Host.OS.Windows)
+    {
+        i32 mode = WindowsConsoleMode([i32](2));
+        If (mode == [i32](-1)) Return false;
+        WindowsSetConsoleMode([i32](2), [u32](mode) | [u32](4));
+        Return true;
+    }
+    Else Return IsTerminal(2);
+}
 
 Trusted Function bool IsTerminal(int descriptor)
 {

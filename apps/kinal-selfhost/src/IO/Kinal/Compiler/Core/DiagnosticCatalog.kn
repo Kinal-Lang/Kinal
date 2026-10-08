@@ -270,17 +270,88 @@ Safe Function list CreateCatalog()
 
 Safe Function string ChineseUi(string key)
 {
-    If (key == "ui.stage.lexer") Return "词法分析";
-    If (key == "ui.stage.project") Return "项目";
-    If (key == "ui.stage.driver") Return "驱动";
-    If (key == "ui.stage.link") Return "链接";
-    If (key == "ui.stage.native") Return "本机代码";
-    If (key == "ui.stage.knc") Return "字节码";
-    If (key == "ui.diag.location") Return "在 <{0}> 第 {1} 行，第 {2} 列";
     If (key == "ui.severity.error") Return "错误";
     If (key == "ui.severity.warning") Return "警告";
+    If (key == "ui.diag.found_eof") Return "（遇到文件末尾）";
+    If (key == "ui.diag.found_token") Return "（遇到 token '{0}'）";
+    If (key == "ui.diag.location") Return "在 <{0}> 第 <{1}> 行，第 <{2}> 列";
+    If (key == "ui.diag.summary") Return "[诊断] {0} 个错误，{1} 个警告";
+    If (key == "ui.diag.too_many_parser_errors") Return "[诊断] 解析错误过多，提前停止";
+    If (key == "ui.diag.too_many_errors") Return "[诊断] 错误过多，提前停止";
+    If (key == "ui.diag.arg_count") Return "参数数量不匹配：{0} 期望 {1} 个参数";
+    If (key == "ui.diag.type_mismatch") Return "类型不匹配：期望 {0}，得到 {1}";
+    If (key == "ui.diag.type_mismatch.must_be") Return "类型不匹配：{0} 必须是 {1}";
+    If (key == "ui.diag.type_mismatch.requires") Return "类型不匹配：{0} 需要 {1}";
+    If (key == "ui.diag.type_mismatch.cast") Return "类型不匹配：无法将 {0} 转换为 {1}";
+    If (key == "ui.diag.unused_var") Return "未使用的变量：{0}";
+    If (key == "ui.diag.unreachable") Return "不可达代码：{0}";
     If (key == "ui.stage.parser") Return "解析器";
     If (key == "ui.stage.sema") Return "语义分析";
     If (key == "ui.stage.codegen") Return "代码生成";
+    If (key == "ui.help.full") Return "Kinal 编译器\n用法：\n  kinal <子命令> [选项] [参数...]\n  kinal build [选项] <输入文件> [文件2 ...]\n  kinal run [选项] <file.kn> [-- 程序参数...]\n\n子命令：\n  build       将源文件编译为本机可执行文件、对象文件、汇编或 IR\n  run         将源文件编译为临时可执行文件并运行\n  fmt         格式化 .kn 源文件\n  vm          字节码操作（build、run、pack）\n  pkg         包管理（build、info、unpack）\n\nBuild 快速参考：\n输出：\n  -o, --output <file>  输出文件路径\n  --emit <bin|obj|asm|ir>  输出类型（默认：bin）\n  --kind <exe|static|shared>  输出产物类型（仅链接模式）\n\n目标：\n  --target <triple|alias>  目标三元组（默认：host）\n                     别名：win86、win64、linux64、linux-arm64、bare64、bare-arm64\n  --freestanding    宿主架构的独立核心模式快捷方式\n  --env <hosted|freestanding>  选择执行环境\n  --runtime <none|alloc|gc>  选择独立运行时配置文件\n  --panic <trap|loop>  独立模式 panic 行为\n  --entry <symbol>   覆盖可执行文件入口符号（默认：Main/KMain）\n\n项目：\n  --project <file|dir>  从项目清单（JSON）构建\n  --pkg-root <dir>  添加本地包根目录\n  --stdpkg-root <dir>  添加官方 stdpkg 根目录覆盖\n\n链接：\n  --crt <auto|dynamic|static>  托管 CRT 选择（默认：auto）\n  -L, --lib-dir <dir>  添加库搜索目录\n  -l, --lib <name>    按名称链接库\n  --link-file <file>  添加精确链接输入（.obj/.lib/.a）\n  --link-root <dir>   将依赖根目录展开为特定目标的搜索目录\n  --link-arg <arg>    向链接器后端传递原始参数\n  --link-script <file>  向独立链接器传递链接脚本\n  --no-crt          不链接 CRT 启动对象\n  --no-default-libs 不注入默认平台库\n  --linker <lld|zig|msvc>  选择链接器后端\n  --linker-path <file>  显式链接器可执行文件路径（需要 --linker）\n  --show-link      打印最终链接器命令\n  --show-link-search  打印展开的库搜索目录\n\n前端：\n  --no-module-discovery  禁用单输入构建的源/模块自动发现\n  --keep-temps     保留链接生成的中间输出\n  --lto[=off|full|thin]  启用链接时优化（默认：off）\n\n诊断：\n  --color <auto|always|never>  诊断颜色模式\n  --lang <en|zh>   诊断语言\n  --locale-file <file>  按代码的外部区域设置 JSON 映射\n  --Werror         将警告视为错误\n  --warn-level <n> 警告级别（0 禁用警告）\n\n开发者：\n  --dump-locale-en <file>  导出英文区域设置模板 JSON\n  --trace          打印编译阶段跟踪\n  --time           打印编译阶段耗时（毫秒）\n\nRun 快速参考：\n  kinal run [选项] <file.kn> [-- 程序参数...]\n  --keep-temps     执行后保留临时可执行文件\n  --pkg-root <dir>  添加本地包根目录\n  --stdpkg-root <dir>  添加官方 stdpkg 根目录覆盖\n  --color <auto|always|never>  诊断颜色模式\n  --lang <en|zh>   诊断语言\n  --locale-file <file>  外部区域设置 JSON 映射\n  --Werror         将警告视为错误\n  --warn-level <n> 警告级别（0 禁用警告）\n  .knc 文件：请使用 \"kinal vm run\"\n\nVM / 包快速参考：\n  kinal vm build <file.kn> -o <file.knc>\n  kinal vm run <file.kn|file.knc> [-- 程序参数...]\n  kinal vm pack <file.kn|file.knc> -o <file>\n  kinal pkg build --manifest <file|dir> -o <file.klib>\n  kinal pkg info <file.klib>\n  kinal pkg unpack <file.klib> -o <dir>\n\n输入类型：\n  .kn/.kinal/.fx   完整前端编译\n  .ll/.s/.asm      从中间文件继续并向前编译\n  .o/.obj          从对象文件继续并链接\n  .knc             使用 \"kinal vm run\" 或 \"kinal vm pack\"\n\n使用 \"kinal <子命令> --help\" 查看子命令的详细帮助。\n";
     Return "";
+}
+
+Safe Function list EnglishUi()
+{
+    list entries = list.Create();
+    LocaleEntry entry = null;
+    entry = New LocaleEntry("ui.severity.error");
+    entry.Text = "error";
+    entries.Add(entry);
+    entry = New LocaleEntry("ui.severity.warning");
+    entry.Text = "warning";
+    entries.Add(entry);
+    entry = New LocaleEntry("ui.diag.found_eof");
+    entry.Text = " (found end of file)";
+    entries.Add(entry);
+    entry = New LocaleEntry("ui.diag.found_token");
+    entry.Text = " (found token '{0}')";
+    entries.Add(entry);
+    entry = New LocaleEntry("ui.diag.location");
+    entry.Text = "in <{0}> at line <{1}>, column <{2}>";
+    entries.Add(entry);
+    entry = New LocaleEntry("ui.diag.summary");
+    entry.Text = "[Diag] {0} error(s), {1} warning(s)";
+    entries.Add(entry);
+    entry = New LocaleEntry("ui.diag.too_many_parser_errors");
+    entry.Text = "[Diag] too many parser errors, stopping early";
+    entries.Add(entry);
+    entry = New LocaleEntry("ui.diag.too_many_errors");
+    entry.Text = "[Diag] too many errors, stopping early";
+    entries.Add(entry);
+    entry = New LocaleEntry("ui.diag.arg_count");
+    entry.Text = "Argument count mismatch: {0} expects {1} argument(s)";
+    entries.Add(entry);
+    entry = New LocaleEntry("ui.diag.type_mismatch");
+    entry.Text = "Type mismatch: expected {0}, got {1}";
+    entries.Add(entry);
+    entry = New LocaleEntry("ui.diag.type_mismatch.must_be");
+    entry.Text = "Type mismatch: {0} must be {1}";
+    entries.Add(entry);
+    entry = New LocaleEntry("ui.diag.type_mismatch.requires");
+    entry.Text = "Type mismatch: {0} requires {1}";
+    entries.Add(entry);
+    entry = New LocaleEntry("ui.diag.type_mismatch.cast");
+    entry.Text = "Type mismatch: cannot cast {0} to {1}";
+    entries.Add(entry);
+    entry = New LocaleEntry("ui.diag.unused_var");
+    entry.Text = "Unused variable: {0}";
+    entries.Add(entry);
+    entry = New LocaleEntry("ui.diag.unreachable");
+    entry.Text = "Unreachable code: {0}";
+    entries.Add(entry);
+    entry = New LocaleEntry("ui.stage.parser");
+    entry.Text = "Parser";
+    entries.Add(entry);
+    entry = New LocaleEntry("ui.stage.sema");
+    entry.Text = "Sema";
+    entries.Add(entry);
+    entry = New LocaleEntry("ui.stage.codegen");
+    entry.Text = "Codegen";
+    entries.Add(entry);
+    entry = New LocaleEntry("ui.help.full");
+    entry.Text = "Kinal Compiler\nUsage:\n  kinal <subcommand> [options] [args...]\n  kinal build [options] <input file> [file2 ...]\n  kinal run [options] <file.kn> [-- program-args...]\n\nSubcommands:\n  build       Compile source files to native executables, objects, assembly, or IR\n  run         Compile a source file to a temporary native executable and run it\n  fmt         Format .kn source files\n  vm          Bytecode operations (build, run, disasm, pack)\n  pkg         Package management (build, info, unpack)\n\nBuild quick reference:\nOutput:\n  -o, --output <file>  Output file path\n  --emit <bin|obj|asm|ir|check>  Output kind (default: bin)\n  --kind <exe|static|shared>  Output artifact kind (link mode only)\n\nTarget:\n  --target <triple|alias>  Target triple (default: host)\n                     aliases: win86, win64, win-arm64, linux64, linux-arm64, bare64, bare-arm64\n  --freestanding    Shortcut for freestanding core mode on the host architecture\n  --env <hosted|freestanding>  Select execution environment\n  --runtime <none|alloc|gc>  Select freestanding runtime profile\n  --panic <trap|loop>  Freestanding panic behavior\n  --entry <symbol>   Override executable entry symbol (Main/KMain by default)\n\nProject:\n  --project <file|dir>  Build from kinal.knproj or a legacy project manifest\n  --profile <name>  Select a profile from kinal.knproj\n  --pkg-root <dir>  Add a local package root\n  --stdpkg-root <dir>  Add an official stdpkg root override\n\nLink:\n  --crt <auto|dynamic|static>  Hosted CRT selection (default: auto)\n  -L, --lib-dir <dir>  Add a library search directory\n  -l, --lib <name>    Link a library by name\n  --link-file <file>  Add an exact link input (.obj/.lib/.a)\n  --link-root <dir>   Expand a dependency root into target-specific search dirs\n  --link-arg <arg>    Pass one raw argument to the linker backend\n  --link-script <file>  Pass linker script to the freestanding linker\n  --no-crt          Do not link CRT startup objects\n  --no-default-libs Do not inject default platform libraries\n  --linker <lld|zig|msvc>  Select linker backend\n  --linker-path <file>  Explicit linker executable path (requires --linker)\n  --show-link      Print the final linker command\n  --show-link-search  Print expanded library search directories\n\nFrontend:\n  --no-module-discovery  Disable source/module auto-discovery for single-input builds\n  --keep-temps     Keep intermediate outputs generated for linking\n  --lto[=off|full|thin]  Enable link-time optimization (default: off)\n\nDiagnostics:\n  --color <auto|always|never>  Diagnostic color mode\n  --lang <en|zh>   Diagnostic language\n  --locale-file <file>  External locale JSON map by code\n  --Werror         Treat warnings as errors\n  --warn-level <n> Warning level (0 disables warnings)\n\nDeveloper:\n  --dump-locale-en <file>  Export English locale template JSON\n  --trace          Print compile phase trace\n  --time           Print compile phase timing (ms)\n\nRun quick reference:\n  kinal run [options] <file.kn> [-- program-args...]\n  --keep-temps     Keep the temporary executable after execution\n  --pkg-root <dir>  Add a local package root\n  --stdpkg-root <dir>  Add an official stdpkg root override\n  --color <auto|always|never>  Diagnostic color mode\n  --lang <en|zh>   Diagnostic language\n  --locale-file <file>  External locale JSON map\n  --Werror         Treat warnings as errors\n  --warn-level <n> Warning level (0 disables warnings)\n  .knc files: use \"kinal vm run\" instead\n\nVM / package quick reference:\n  kinal vm build <file.kn> -o <file.knc>\n  kinal vm run <file.kn|file.knc> [-- program-args...]\n  kinal vm disasm <file.knc>\n  kinal vm pack <file.kn|file.knc> -o <file>\n  kinal pkg build --manifest <file|dir> -o <file.klib>\n  kinal pkg info <file.klib>\n  kinal pkg unpack <file.klib> -o <dir>\n\nInput types:\n  .kn/.kinal/.fx   Full frontend compile\n  .ll/.s/.asm      Continue from intermediate and compile forward\n  .o/.obj          Continue from object and link\n  .knc             Use \"kinal vm run\", \"kinal vm disasm\", or \"kinal vm pack\"\n\nUse \"kinal <subcommand> --help\" for detailed subcommand help.\n";
+    entries.Add(entry);
+    Return entries;
 }

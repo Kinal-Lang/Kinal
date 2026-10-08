@@ -1,6 +1,7 @@
 Unit IO.Kinal.Compiler.Driver.NativeLinker;
 
 Get IO.Console;
+Get IO.Kinal.Compiler.Driver.CliOutput;
 Get IO.Directory;
 Get IO.File;
 Get IO.Host;
@@ -120,12 +121,12 @@ Class NativeLinker
             display = display + " \"" + IO.Text.Replace(value, "\"", "\\\"") + "\"";
             index = index + 1;
         }
-        If (This.Profile.ShowLink) IO.Console.PrintLine(display);
+        If (This.Profile.ShowLink) IO.Kinal.Compiler.Driver.CliOutput.Line(display);
         int result = IO.Kinal.Runtime.ProcessRun(executable, values);
         If (result != 0)
         {
             This.Error = "tool failed: " + executable + " (exit " + [string](result) + ")";
-            IO.Console.PrintLine(This.Error);
+            IO.Kinal.Compiler.Driver.CliOutput.Line(This.Error);
         }
         Return result;
     }
@@ -158,7 +159,7 @@ Class NativeLinker
             (mode == "build-asm" && extension != "ll") || mode == "build-ir")
         {
             This.Error = "input cannot be compiled backward: " + input;
-            IO.Console.PrintLine(This.Error);
+            IO.Kinal.Compiler.Driver.CliOutput.Line(This.Error);
             Return 1;
         }
         list arguments = list.Create();
@@ -223,7 +224,7 @@ Class NativeLinker
         If (seen.Contains(directory)) Return;
         seen.Add(directory);
         arguments.Add(windows ? "/libpath:" + directory : "-L" + directory);
-        If (This.Profile.ShowLinkSearch) IO.Console.PrintLine("  " + directory);
+        If (This.Profile.ShowLinkSearch) IO.Kinal.Compiler.Driver.CliOutput.Line("  " + directory);
     }
 
     Public Safe Function bool IsInjectedBridge(string path)
@@ -277,7 +278,7 @@ Class NativeLinker
         list directories = list.Create();
         list files = list.Create();
         list libraries = list.Create();
-        If (This.Profile.ShowLinkSearch) IO.Console.PrintLine("[LinkSearch]");
+        If (This.Profile.ShowLinkSearch) IO.Kinal.Compiler.Driver.CliOutput.Line("[LinkSearch]");
         // Preserve CLI ordering, notably raw linker flags surrounding archives.
         // Manifest lists follow CLI items in the same fixed order as stage0.
         int index = 0;
@@ -360,7 +361,7 @@ Class NativeLinker
         If (!IO.File.Exists(source))
         {
             This.Error = "runtime input missing for " + This.Target.Triple + ": " + object;
-            IO.Console.PrintLine(This.Error);
+            IO.Kinal.Compiler.Driver.CliOutput.Line(This.Error);
             Return "";
         }
         object = output + "." + name + (pic ? ".pic" : "") + This.Target.ObjectSuffix();
@@ -384,7 +385,7 @@ Class NativeLinker
         arguments.Add(object);
         If (This.Execute(zig ? This.SelectedTool("zig") : This.Tool("clang"), arguments) != 0)
         {
-            IO.Console.PrintLine("unable to prepare " + name + " for " + This.Target.Triple + "; install the target SDK/runtime");
+            IO.Kinal.Compiler.Driver.CliOutput.Line("unable to prepare " + name + " for " + This.Target.Triple + "; install the target SDK/runtime");
             Return "";
         }
         Return object;
@@ -441,7 +442,7 @@ Class NativeLinker
         bool zig = This.Profile.Linker == "zig" && !freestanding;
         bool shared = This.Profile.ArtifactKind == "shared";
         If (This.Profile.Linker == "msvc" && (!windows || freestanding))
-        { IO.Console.PrintLine("msvc linker requires a hosted Windows target"); Return 1; }
+        { IO.Kinal.Compiler.Driver.CliOutput.Line("msvc linker requires a hosted Windows target"); Return 1; }
         string executable = "";
         list arguments = list.Create();
         If (archive)
@@ -516,13 +517,13 @@ Class NativeLinker
             If (This.NeedsBridge("kn_sh_rt_"))
             {
                 string bridge = IO.Path.Combine(This.Root, "bridge/" + (This.Target.IsHost() ? "" : This.Target.Tag() + "/") + "kn_selfhost_runtime.o");
-                If (!IO.File.Exists(bridge)) { IO.Console.PrintLine("target runtime bridge missing: " + bridge); Return 1; }
+                If (!IO.File.Exists(bridge)) { IO.Kinal.Compiler.Driver.CliOutput.Line("target runtime bridge missing: " + bridge); Return 1; }
                 arguments.Add(bridge);
             }
             If (This.NeedsBridge("kn_sh_llvm_"))
             {
                 string bridge = IO.Path.Combine(This.Root, "bridge/" + (This.Target.IsHost() ? "" : This.Target.Tag() + "/") + "kn_selfhost_llvm.o");
-                If (!IO.File.Exists(bridge)) { IO.Console.PrintLine("target LLVM bridge missing: " + bridge); Return 1; }
+                If (!IO.File.Exists(bridge)) { IO.Kinal.Compiler.Driver.CliOutput.Line("target LLVM bridge missing: " + bridge); Return 1; }
                 arguments.Add(bridge);
                 arguments.Add((windows ? "/libpath:" : "-L") + IO.Path.Combine(This.Root, "llvm/lib"));
                 This.AddLibrary(arguments, windows ? "LLVM-C" : "LLVM", windows);

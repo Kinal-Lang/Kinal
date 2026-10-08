@@ -158,6 +158,42 @@ def check_capture_storage(compiler: Path, out_dir: Path) -> None:
         print(f"[OK] stage_capture_storage_{target}")
 
 
+def check_collection_loop_storage(compiler: Path, out_dir: Path) -> None:
+    source = ROOT / "tests" / "common" / "collection_loop_storage.kn"
+    for target in ("win64", "win86", "win-arm64", "linux64", "linux-arm64", "mac64", "macos-arm64"):
+        output = out_dir / f"collection-loop-storage-{target}.ll"
+        result = subprocess.run(
+            [str(compiler), "build", "--no-module-discovery", "--emit", "ir",
+             "--target", target, str(source), "-o", str(output)],
+            cwd=ROOT, text=True, capture_output=True, check=False,
+        )
+        if result.returncode != 0:
+            raise AssertionError(f"{target}: collection IR failed:\n{result.stdout}{result.stderr}")
+        ir = output.read_text(encoding="utf-8")
+        match = re.search(
+            r"^define [^\n]*@Tests\.CollectionLoopStorage\.RepeatCollections\([^\n]*\) \{\n(.*?)^\}",
+            ir, re.MULTILINE | re.DOTALL,
+        )
+        if match is None:
+            raise AssertionError(f"{target}: missing RepeatCollections")
+        body = match[1]
+        if "while.body:" not in body:
+            raise AssertionError(f"{target}: missing collection loop")
+        block = None
+        allocations = 0
+        for line in body.splitlines():
+            label = re.match(r"^([\w.$-]+):", line)
+            if label:
+                block = label[1]
+            if " = alloca " in line:
+                allocations += 1
+                if block != "entry":
+                    raise AssertionError(f"{target}: repeated stack allocation in {block}: {line.strip()}")
+        if not allocations:
+            raise AssertionError(f"{target}: missing collection stack storage")
+        print(f"[OK] stage_collection_loop_storage_{target}")
+
+
 def check_project_source_paths(compiler: Path, out_dir: Path) -> None:
     with tempfile.TemporaryDirectory(prefix="project-paths-", dir=out_dir) as directory:
         project = Path(directory)
@@ -396,6 +432,7 @@ def main() -> int:
         raise AssertionError("unsupported KNC builtin left a stale artifact")
     print("[OK] stage_knc_unregistered_builtin")
     check_capture_storage(compiler, out_dir)
+    check_collection_loop_storage(compiler, out_dir)
     check_project_source_paths(compiler, out_dir)
     return 0
 

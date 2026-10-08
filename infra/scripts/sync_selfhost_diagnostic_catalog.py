@@ -28,15 +28,22 @@ def generate() -> str:
         values = (code, title, detail, translated.get("title", ""), translated.get("detail", ""))
         lines.append("    entries.Add(New DiagnosticTemplate(" + ", ".join(map(quote, values)) + "));")
     lines += ["    Return entries;", "}", "", "Safe Function string ChineseUi(string key)", "{"]
-    ui = {"ui.stage.lexer": "词法分析", "ui.stage.project": "项目", "ui.stage.driver": "驱动",
-          "ui.stage.link": "链接", "ui.stage.native": "本机代码", "ui.stage.knc": "字节码",
-          "ui.diag.location": "在 <{0}> 第 {1} 行，第 {2} 列"}
-    for key, value in chinese.items():
-        if "text" in value and key.startswith(("ui.stage.", "ui.severity.")):
-            ui[key] = value["text"]
+    ui = {key: value["text"] for key, value in chinese.items() if "text" in value}
     for key, value in ui.items():
         lines.append(f"    If (key == {quote(key)}) Return {quote(value)};")
     lines += ['    Return "";', "}", ""]
+    diag = (ROOT / "apps/kinal/src/kn_diag.c").read_text(encoding="utf-8")
+    literal = r'"(?:[^"\\]|\\.)*"'
+    full = re.search(r'g_help_full_en\[\]\s*=\s*(.*?);', diag, re.S)
+    assert full
+    full_help = "".join(json.loads(part) for part in re.findall(literal, full[1]))
+    ui_source = re.search(r'g_ui_templates\[\]\s*=\s*\{(.*?)\n\};', diag, re.S)
+    assert ui_source
+    lines += ["Safe Function list EnglishUi()", "{", "    list entries = list.Create();", "    LocaleEntry entry = null;"]
+    for key, value in re.findall(r'\{\s*(' + literal + r'),\s*(' + literal + r'|g_help_full_en)\s*\}', ui_source[1]):
+        text = full_help if value == 'g_help_full_en' else json.loads(value)
+        lines += [f"    entry = New LocaleEntry({key});", f"    entry.Text = {quote(text)};", "    entries.Add(entry);"]
+    lines += ["    Return entries;", "}", ""]
     return "\n".join(lines)
 
 

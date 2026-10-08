@@ -52,6 +52,18 @@ def selfhost_bridge_object() -> Path:
     return SELFHOST_OUT / "bridge" / "kn_selfhost_llvm.o"
 
 
+def build_selfhost_icon() -> Path | None:
+    if not is_windows():
+        return None
+    output = selfhost_bridge_object().with_name("kinal.res")
+    output.parent.mkdir(parents=True, exist_ok=True)
+    resource = ROOT / "apps/kinal/resources/kinal.rc"
+    # Compile the original resource script, including its original resource ID.
+    run([llvm_bin_dir(detect_llvm_dir()) / "llvm-rc.exe", "/FO", output,
+         resource.name], cwd=resource.parent)
+    return output
+
+
 def build_selfhost_bridge() -> Path:
     llvm_dir = detect_llvm_dir()
     llvm_root = llvm_dir.resolve().parents[2]
@@ -356,7 +368,7 @@ def build_selfhost_stage1(stage0: Path) -> Path:
         bridge_runtime,
     ]
     if is_windows():
-        command.extend(["--link-arg", "/stack:16777216"])
+        command.extend(["--link-arg", "/stack:16777216", "--link-file", build_selfhost_icon()])
     elif host_tag().startswith("macos-"):
         command.extend(
             [

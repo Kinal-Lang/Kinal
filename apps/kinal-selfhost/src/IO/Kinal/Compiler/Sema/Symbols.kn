@@ -218,6 +218,8 @@ Class ValueSymbol
     Public TypeSymbol Type;
     Public TypeSymbol AsyncResultType;
     Public bool IsParameter;
+    Public bool IsUsed;
+    Public StatementNode Declaration;
     Public bool IsConst;
     Public bool IsCaptured;
     Public ExpressionNode ConstantOrigin;
@@ -235,6 +237,8 @@ Class ValueSymbol
         This.Type = type;
         This.AsyncResultType = null;
         This.IsParameter = isParameter;
+        This.IsUsed = false;
+        This.Declaration = null;
         This.IsConst = false;
         This.IsCaptured = false;
         This.ConstantOrigin = null;

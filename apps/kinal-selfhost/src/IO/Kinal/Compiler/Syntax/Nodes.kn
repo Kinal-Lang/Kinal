@@ -215,6 +215,8 @@ Class StatementNode
     Public bool IsUnsafe;
     Public int Line;
     Public int Column;
+    Public int NameLine;
+    Public int NameColumn;
     Public ExpressionNode Expression;
     Public ExpressionNode SecondExpression;
     Public ExpressionNode ThirdExpression;
@@ -235,6 +237,8 @@ Class StatementNode
         This.IsUnsafe = false;
         This.Line = line;
         This.Column = column;
+        This.NameLine = line;
+        This.NameColumn = column;
         This.Expression = null;
         This.SecondExpression = null;
         This.ThirdExpression = null;

@@ -73,9 +73,54 @@ Do not interpret the stage0-only extended-profile tests as selfhost support.
   retain its original storage. Both C stage0 and selfhost follow this rule without
   introducing temporary frames. Ordinary compound assignments read/root the old
   value before RHS effects, matching C stage0 evaluation order.
+- Dictionary `TryFetch` evaluates the fallback argument before reading the
+  collection. Replacement/insertion/removal during that argument is visible to
+  lookup, for both instance and namespace calls.
 
 ## Local evidence (Windows x64, LLVM 21.1.8)
 
+- C stage0 collection-loop repair, **rebuilt and verified**: collection
+  output slots and `ToChars` length storage now use function-entry allocas;
+  per-call initialization is preserved, and dictionary Fetch returns its SSA
+  aggregate directly. The former lowering emitted fixed allocas at the call
+  site, so loop iterations accumulated stack storage until function return.
+  `collection_loop_storage.kn` passes at runtime and all seven target IR
+  checks require entry-only stack storage. Rebuilt `x.py test --release --full`
+  passes 289 enabled manifest cases, 85 Python tests (11 skips), and the
+  driver/package/stage checks. Three C-built token-lifecycle reference modes
+  formerly failed `0xC00000FD` at 120,000 list items; all now pass unchanged
+  inputs for two rounds. The corresponding unchanged-stage3-built programs
+  also pass all three modes. The original compiler access/heap faults remain
+  unresolved; these focused passes do not replace the failed full batches.
+  Evidence: `F:\Kinal-Agent-Temp\gc-entry-root-regression\collection-slots\validation-report.json`.
+- Dictionary fallback follow-up: old selfhost returns `10/99/20/40` when eager
+  fallback arguments mutate dictionary entries and collect; C stage0 and the
+  repaired stage1 return `20/40/99/99`. The extended `collection_runtime` fixture
+  also requires exactly four fallback calls. Its complete C/stage1 output and
+  existing IR checks for Kinal runtime ownership pass; stage2-/stage3-built
+  fixtures each pass three runs. This is an independent semantic fix; no actual
+  TryFetch call occurs in compiler implementation code. Fresh stage2/stage3 PE
+  SHA-256 is `5bab7ebccec6551aa8060f8aa91d0f8b9507386874ecba98598132e21ff7796c`.
+  Both build and pass the large parser input; stage1/2/3 project-AST summaries
+  match. Bootstrap then fails in stage2's compiler-project check (`0xC0000374`),
+  before stage3 check and symbol/IR comparisons. Native stage2 is 191/193:
+  `alias` fails `0xC0000374`, `global_fixed_gc` fails `0xC0000005`, neither emits
+  an object. Stage3 build/runtime is 188/189: `struct_value_semantics` fails
+  during compilation with `0xC0000005`; all 188 built programs pass their expected
+  output/exit checks. These failed runs are retained without retry substitution.
+  Four-worker Native auditing overlaps the late bootstrap comparisons.
+  Evidence: `F:\Kinal-Agent-Temp\gc-entry-root-regression\dictionary-fallback`.
+- Independent legacy-C scanner follow-up: `gc_scan_region` no longer reads a
+  complete pointer from a partial tail; unaligned starts use byte-copy loads.
+  A plain C unit against the actual runtime fails before the change (size 1
+  incorrectly marks an object) and passes afterward for every length from zero
+  through three pointer words, with aligned and unaligned starts. Rebuilt
+  `x.py test --release --full` passes all 288 enabled manifest cases plus
+  driver/package/stage checks; Python discovery runs 96 tests with 85 passing
+  and 11 skips. The initial test invocation selected an outdated debug VM and
+  failed KNC-v3 checks; the successful run explicitly uses the rebuilt release
+  compiler and VM. This does not establish a selfhost stability repair, and the
+  bootstrap hashes below still describe the preceding assignment-storage snapshot.
 - Assignment-storage follow-up: the old pointer-assignment fixture deterministically
   fails heap-ASan with WRITE8 use-after-free. Repaired pointer/Struct-field direct
   and compound assignments pass the complete GC fixture three times under heap-ASan;
@@ -154,13 +199,75 @@ Do not interpret the stage0-only extended-profile tests as selfhost support.
 Full PR acceptance is not claimed. The assignment-storage follow-up builds stage2
 and stage3 with identical executable SHA-256
 `19fcc5a5c3daa93c3b3ff8eee712b7509c18a04f523dfbdcffc2045b82f1d47e`.
-Full bootstrap summaries/IR comparisons are still being evaluated. Its stage2
+Full bootstrap now passes project-AST/check/symbol summaries and stage1/2/3 IR
+comparisons (IR SHA-256
+`5765f653c3faf70f0c69be3d8513347f6823d0b5102a3185c76c92491f1013a0`).
+This establishes convergence only. Its stage2
 Native-object batch fails overall at 185/193: `array_type_contract`, `autolink`,
 `ffi_attr_file`, `knc_f32_rounding`, `pointer_depth`, `recursive_method_static`,
 and `type_modules` fail inside the compiler with `0xC0000005`;
 `unsafe_alias_unicode_keyword` fails with `0xC0000374`. None produces an object.
+Its stage3 runtime batch fails overall at 185/189: `attributes`, `stdlib_more`
+and `type_modules` fail during compilation with `0xC0000005`, while
+`builtin_function_ref` fails during compilation with `0xC0000374`. The 185
+successfully built programs all pass their expected runtime output/exit checks;
+the four compiler failures remain failed cases, not skips.
 The independently reproduced assignment-storage bug is fixed, but is not the
 complete explanation for the remaining compiler instability.
+
+Ordinary CLI follow-up on the unchanged stage2 binary passes 32/32 `check` and
+32/32 `build --emit check` invocations (four processes, eight previously failing
+projects, four rounds). A read-only CFG audit of the saved stage2 IR checks
+1,446 functions with a GC frame and 14,871 reachable return blocks without
+finding an unmatched pop, live-frame return, or invalid frame registration.
+This checks control-flow bookkeeping only; it neither validates every memory
+access nor replaces the failed Native/runtime batches.
+An additional unchanged-stage2 ordinary `build-ir --trace` batch fails 1/32
+(`pointer_depth`, `0xC0000005`); its log stops at `compile:frontend`, before
+`compile:sema`, and no IR file exists. This reproduces a frontend failure without
+requiring object generation or linking. The other 31 passes do not erase it.
+
+An ordinary standalone workload built by the latest stage3 reproduces
+`0xC0000005` while only loading and lexing the 41 compiler source files
+(1,390,061 characters; 244,290 tokens). One of four lexer-mode processes fails;
+the other three match the C reference. File-only and parser modes each pass
+their four processes. That failed mode does not call the parser, project/package
+resolver, Sema, or LLVM backend. It narrows the exercised path but does not prove
+that this failure and the compiler batches share the same first invalid write.
+Reports: `F:\Kinal-Agent-Temp\gc-entry-root-regression\frontend-corpus\compiler-corpus\report.json`.
+An additional ordinary lexer-only project logs each source file and checks
+retained Token kinds, positions and text lengths after collection. Its four
+stage3-built processes each complete five passes of the same corpus and match
+the C reference checksum. This is a different test executable; its success
+does not erase the original lexer-mode failure or locate its first cause.
+Report: `F:\Kinal-Agent-Temp\gc-entry-root-regression\lexer-corpus\report.json`.
+A separate read-only audit of the saved assignment-stage2 IR checks 35,992
+root registrations in 1,381 functions: direct alloca provenance, matching
+storage size, entry placement, prior stores and unique registration all pass.
+These syntactic checks do not prove dynamic memory correctness.
+
+Further localization on unchanged `003d708` reproduces three production faults
+in 24 targeted compilations. LLDB with the Windows debug heap disabled captures
+faults in `GarbageCollector.AddRoot` and `PopFrame` during compiler frontend
+work; a separate run captures a null-root-table write and saves a minidump.
+Diagnostic IR instrumentation independently traps a null root table before the
+write. One later header snapshot differs from the initial loads; another
+preserves the corrupt count/capacity. The first invalid transition is still
+unidentified. Do not replace the
+collector or add a null-table fallback on that evidence alone.
+An ASan build without the extra IR O2 pipeline reports a heap-buffer-overflow
+in `GarbageCollector.ScanRegion` while tracing reachable blocks; other cases
+time out under instrumentation. Different instrumented/debugger variants pass
+their repeats, and a 200,000-iteration standalone frame-lifetime stress passes.
+A subsequent diagnostic lifecycle trace fails once in 80 compilations: a
+`ListHeader` frame is valid after `PushFrame` and at its first `AddRoot`
+entry, then corrupt at the immediately following `PopFrame` entry. The
+registration interval is narrowed; the offending write remains unidentified.
+A later sequential production subset passes 24/24, while instrumented variants
+also pass repeats; none supersede the failed parallel production batches.
+These are localization results, not a repaired production stability gate.
+Reproduction scripts, stacks, minidump and a structured evidence index are in
+`F:\Kinal-Agent-Temp\gc-entry-root-regression\stability-investigation.json`.
 
 The preceding string-builtin follow-up produces stage2
 SHA-256 `f1a819d5f5038133d8e8533963834ec40b081022023897abdf3567bd37dff7a6`,
