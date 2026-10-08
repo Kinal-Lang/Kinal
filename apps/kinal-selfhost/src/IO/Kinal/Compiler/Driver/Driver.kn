@@ -3,6 +3,7 @@ Unit IO.Kinal.Compiler.Driver;
 Get IO.Console;
 Get IO.Kinal.Compiler.Driver.CliOutput;
 Get IO.File;
+Get IO.Kinal.Compiler.Core.NativeIO;
 Get IO.Directory;
 Get IO.Host;
 Get IO.Path;
@@ -34,11 +35,6 @@ Get IO.Kinal.Compiler.Driver.VmTools;
 Get IO.Kinal.Compiler.Driver.PackageCommands;
 Get IO.Kinal.Compiler.Driver.NativeLinker;
 Get IO.Kinal.Compiler.Driver.Formatter;
-
-// The C library supplies only the host environment ABI. CLI temporary-file
-// policy and ownership remain in Kinal, along with the rest of the driver.
-[LinkName("getenv")]
-Extern Unsafe Function char* NativeEnvironment(string name) By C;
 
 Class ProjectBuildRequest
 {
@@ -700,9 +696,9 @@ Trusted Function string ResolveProjectBuildOutput(ProjectBuildRequest request,
 
 Trusted Function string CreateRunDirectory()
 {
-    string root = IO.Kinal.Runtime.CopyNativeText(NativeEnvironment("TMP"));
-    If (IO.Text.IsEmpty(root)) root = IO.Kinal.Runtime.CopyNativeText(NativeEnvironment("TEMP"));
-    If (IO.Text.IsEmpty(root)) root = IO.Kinal.Runtime.CopyNativeText(NativeEnvironment("TMPDIR"));
+    string root = IO.Kinal.Runtime.CopyNativeText(IO.Kinal.Compiler.Core.NativeIO.Environment("TMP"));
+    If (IO.Text.IsEmpty(root)) root = IO.Kinal.Runtime.CopyNativeText(IO.Kinal.Compiler.Core.NativeIO.Environment("TEMP"));
+    If (IO.Text.IsEmpty(root)) root = IO.Kinal.Runtime.CopyNativeText(IO.Kinal.Compiler.Core.NativeIO.Environment("TMPDIR"));
     If (IO.Text.IsEmpty(root)) root = HostIsWindows() ? IO.Path.CurrentDirectory() : "/tmp";
     root = IO.Kinal.Compiler.Source.SourcePath.Canonical(root);
     If (!IO.Directory.Exists(root)) Return "";

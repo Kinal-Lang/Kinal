@@ -1,0 +1,15 @@
+Unit IO.Kinal.Compiler.Core.NativeIO;
+
+// Keep each physical C symbol declared once. Published stage0 does not merge
+// duplicate LinkName declarations and would emit unresolved names like fopen.1.
+// Buffer ownership, archive formats and environment policy stay with callers.
+[LinkName("getenv")]
+Extern Unsafe Function char* Environment(string name) By C;
+[LinkName("fopen")]
+Extern Unsafe Function byte* OpenFile(string path, string mode) By C;
+[LinkName("fclose")]
+Extern Unsafe Function i32 CloseFile(byte* file) By C;
+[LinkName("fread")]
+Extern Unsafe Function usize ReadBytes(byte[] buffer, usize size, usize count, byte* file) By C;
+[LinkName("fwrite")]
+Extern Unsafe Function usize WriteBytes(byte[] buffer, usize size, usize count, byte* file) By C;

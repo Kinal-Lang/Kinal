@@ -1,17 +1,9 @@
 Unit IO.Kinal.Compiler.Driver.VmTools;
 
 Get IO.File;
+Get IO.Kinal.Compiler.Core.NativeIO;
 Get IO.Path;
 Get IO.Kinal.Compiler.Source.SourcePath;
-
-[LinkName("fopen")]
-Extern Unsafe Function byte* NativeOpen(string path, string mode) By C;
-[LinkName("fclose")]
-Extern Unsafe Function i32 NativeClose(byte* file) By C;
-[LinkName("fread")]
-Extern Unsafe Function usize NativeRead(byte[] buffer, usize size, usize count, byte* file) By C;
-[LinkName("fwrite")]
-Extern Unsafe Function usize NativeWrite(byte[] buffer, usize size, usize count, byte* file) By C;
 
 // Byte ownership and the established KNCE container format stay in Kinal.
 // C supplies only buffered file I/O; no host compiler or C KNC emitter is used.
@@ -29,9 +21,9 @@ Class VmPacker
         {
             int amount = expected - total;
             If (amount > 65536) amount = 65536;
-            usize count = NativeRead(buffer, [usize](1), [usize](amount), input);
+            usize count = IO.Kinal.Compiler.Core.NativeIO.ReadBytes(buffer, [usize](1), [usize](amount), input);
             If (count != [usize](amount)) Return false;
-            If (NativeWrite(buffer, [usize](1), count, output) != count) Return false;
+            If (IO.Kinal.Compiler.Core.NativeIO.WriteBytes(buffer, [usize](1), count, output) != count) Return false;
             total = total + amount;
         }
         Return true;
@@ -54,20 +46,20 @@ Class VmPacker
             This.Error = "cannot read VM executable or bytecode size";
             Return false;
         }
-        byte* executableFile = NativeOpen(executable, "rb");
+        byte* executableFile = IO.Kinal.Compiler.Core.NativeIO.OpenFile(executable, "rb");
         If (executableFile == null) { This.Error = "cannot open VM executable"; Return false; }
-        byte* bytecodeFile = NativeOpen(bytecode, "rb");
+        byte* bytecodeFile = IO.Kinal.Compiler.Core.NativeIO.OpenFile(bytecode, "rb");
         If (bytecodeFile == null)
         {
-            NativeClose(executableFile);
+            IO.Kinal.Compiler.Core.NativeIO.CloseFile(executableFile);
             This.Error = "cannot open bytecode";
             Return false;
         }
-        byte* outputFile = NativeOpen(output, "wb");
+        byte* outputFile = IO.Kinal.Compiler.Core.NativeIO.OpenFile(output, "wb");
         If (outputFile == null)
         {
-            NativeClose(bytecodeFile);
-            NativeClose(executableFile);
+            IO.Kinal.Compiler.Core.NativeIO.CloseFile(bytecodeFile);
+            IO.Kinal.Compiler.Core.NativeIO.CloseFile(executableFile);
             This.Error = "cannot create packed output";
             Return false;
         }
@@ -78,10 +70,10 @@ Class VmPacker
             [byte]((bytecodeSize >> 16) & 255), [byte]((bytecodeSize >> 24) & 255),
             [byte]('K'), [byte]('N'), [byte]('C'), [byte]('E')
         };
-        If (ok) ok = NativeWrite(footer, [usize](1), [usize](8), outputFile) == [usize](8);
-        If (NativeClose(outputFile) != 0) ok = false;
-        NativeClose(bytecodeFile);
-        NativeClose(executableFile);
+        If (ok) ok = IO.Kinal.Compiler.Core.NativeIO.WriteBytes(footer, [usize](1), [usize](8), outputFile) == [usize](8);
+        If (IO.Kinal.Compiler.Core.NativeIO.CloseFile(outputFile) != 0) ok = false;
+        IO.Kinal.Compiler.Core.NativeIO.CloseFile(bytecodeFile);
+        IO.Kinal.Compiler.Core.NativeIO.CloseFile(executableFile);
         If (!ok)
         {
             IO.File.DeleteIfExists(output);

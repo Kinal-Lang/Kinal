@@ -4,6 +4,7 @@ Get IO.Console;
 Get IO.Kinal.Compiler.Driver.CliOutput;
 Get IO.Directory;
 Get IO.File;
+Get IO.Kinal.Compiler.Core.NativeIO;
 Get IO.Host;
 Get IO.Path;
 Get IO.Text;
@@ -15,9 +16,6 @@ Get IO.Kinal.Compiler.Sema.SemanticCompilation;
 Get IO.Kinal.Compiler.Sema.Symbols;
 Get IO.Kinal.Compiler.Syntax.Nodes;
 Get IO.Kinal.Compiler.Syntax.SyntaxTree;
-
-[LinkName("getenv")]
-Extern Unsafe Function char* LinkEnvironment(string name) By C;
 
 // This module owns command construction and link policy. External tools receive
 // only LLVM IR, assembly, objects, archives, and the platform runtime's C ABI.
@@ -48,8 +46,8 @@ Class NativeLinker
     {
         If (name == "zig")
         {
-            string configured = IO.Kinal.Runtime.CopyNativeText(LinkEnvironment("KINAL_LINKER_ZIG"));
-            If (IO.Text.IsEmpty(configured)) configured = IO.Kinal.Runtime.CopyNativeText(LinkEnvironment("KINAL_ZIG"));
+            string configured = IO.Kinal.Runtime.CopyNativeText(IO.Kinal.Compiler.Core.NativeIO.Environment("KINAL_LINKER_ZIG"));
+            If (IO.Text.IsEmpty(configured)) configured = IO.Kinal.Runtime.CopyNativeText(IO.Kinal.Compiler.Core.NativeIO.Environment("KINAL_ZIG"));
             If (!IO.Text.IsEmpty(configured)) Return configured;
         }
         string executable = name + (IO.Host.OS == IO.Host.OS.Windows ? ".exe" : "");
@@ -61,10 +59,10 @@ Class NativeLinker
             ((name == "ld.lld" || name == "lld-link") ? "KINAL_LINKER_LLD" : "")));
         If (!IO.Text.IsEmpty(key))
         {
-            string configured = IO.Kinal.Runtime.CopyNativeText(LinkEnvironment(key));
+            string configured = IO.Kinal.Runtime.CopyNativeText(IO.Kinal.Compiler.Core.NativeIO.Environment(key));
             If (!IO.Text.IsEmpty(configured)) Return configured;
         }
-        string toolDirectory = IO.Kinal.Runtime.CopyNativeText(LinkEnvironment("KINAL_LINKER_DIR"));
+        string toolDirectory = IO.Kinal.Runtime.CopyNativeText(IO.Kinal.Compiler.Core.NativeIO.Environment("KINAL_LINKER_DIR"));
         If (!IO.Text.IsEmpty(toolDirectory))
         {
             adjacent = IO.Path.Combine(toolDirectory, executable);
@@ -74,13 +72,13 @@ Class NativeLinker
         If (IO.File.Exists(adjacent)) Return adjacent;
         adjacent = IO.Path.Combine(This.Root, "zig/" + executable);
         If (name == "zig" && IO.File.Exists(adjacent)) Return adjacent;
-        toolDirectory = IO.Kinal.Runtime.CopyNativeText(LinkEnvironment("KN_LLVM_BIN"));
+        toolDirectory = IO.Kinal.Runtime.CopyNativeText(IO.Kinal.Compiler.Core.NativeIO.Environment("KN_LLVM_BIN"));
         If (!IO.Text.IsEmpty(toolDirectory))
         {
             adjacent = IO.Path.Combine(toolDirectory, executable);
             If (IO.File.Exists(adjacent)) Return adjacent;
         }
-        string path = IO.Kinal.Runtime.CopyNativeText(LinkEnvironment("PATH"));
+        string path = IO.Kinal.Runtime.CopyNativeText(IO.Kinal.Compiler.Core.NativeIO.Environment("PATH"));
         list paths = IO.Text.Split(path, IO.Host.OS == IO.Host.OS.Windows ? ";" : ":");
         int pathIndex = 0;
         While (pathIndex < paths.Count())
@@ -398,18 +396,18 @@ Class NativeLinker
         int index = 0;
         While (index < keys.Length())
         {
-            string directory = IO.Kinal.Runtime.CopyNativeText(LinkEnvironment(keys[index]));
+            string directory = IO.Kinal.Runtime.CopyNativeText(IO.Kinal.Compiler.Core.NativeIO.Environment(keys[index]));
             If (!IO.Text.IsEmpty(directory) && IO.Directory.Exists(directory))
                 This.AddDirectory(arguments, directories, directory, windows);
             index = index + 1;
         }
         string architecture = This.Target.Architecture == 3 ? "arm64" : (This.Target.Architecture == 1 ? "x86" : "x64");
-        string vc = IO.Kinal.Runtime.CopyNativeText(LinkEnvironment("VCToolsInstallDir"));
+        string vc = IO.Kinal.Runtime.CopyNativeText(IO.Kinal.Compiler.Core.NativeIO.Environment("VCToolsInstallDir"));
         string vcLib = IO.Path.Combine(vc, "lib/" + architecture);
         If (!IO.Text.IsEmpty(vc) && IO.Directory.Exists(vcLib)) This.AddDirectory(arguments, directories, vcLib, windows);
-        string sdk = IO.Kinal.Runtime.CopyNativeText(LinkEnvironment("WindowsSdkDir"));
-        string version = IO.Kinal.Runtime.CopyNativeText(LinkEnvironment("WindowsSDKLibVersion"));
-        If (IO.Text.IsEmpty(version)) version = IO.Kinal.Runtime.CopyNativeText(LinkEnvironment("WindowsSDKVersion"));
+        string sdk = IO.Kinal.Runtime.CopyNativeText(IO.Kinal.Compiler.Core.NativeIO.Environment("WindowsSdkDir"));
+        string version = IO.Kinal.Runtime.CopyNativeText(IO.Kinal.Compiler.Core.NativeIO.Environment("WindowsSDKLibVersion"));
+        If (IO.Text.IsEmpty(version)) version = IO.Kinal.Runtime.CopyNativeText(IO.Kinal.Compiler.Core.NativeIO.Environment("WindowsSDKVersion"));
         If (!IO.Text.IsEmpty(sdk) && !IO.Text.IsEmpty(version))
         {
             string base = IO.Path.Combine(IO.Path.Combine(sdk, "Lib"), version);
@@ -418,8 +416,8 @@ Class NativeLinker
             If (IO.Directory.Exists(um)) This.AddDirectory(arguments, directories, um, windows);
             If (IO.Directory.Exists(ucrt)) This.AddDirectory(arguments, directories, ucrt, windows);
         }
-        string ucrtSdk = IO.Kinal.Runtime.CopyNativeText(LinkEnvironment("UniversalCRTSdkDir"));
-        string ucrtVersion = IO.Kinal.Runtime.CopyNativeText(LinkEnvironment("UCRTVersion"));
+        string ucrtSdk = IO.Kinal.Runtime.CopyNativeText(IO.Kinal.Compiler.Core.NativeIO.Environment("UniversalCRTSdkDir"));
+        string ucrtVersion = IO.Kinal.Runtime.CopyNativeText(IO.Kinal.Compiler.Core.NativeIO.Environment("UCRTVersion"));
         If (!IO.Text.IsEmpty(ucrtSdk) && !IO.Text.IsEmpty(ucrtVersion))
         {
             string ucrt = IO.Path.Combine(IO.Path.Combine(IO.Path.Combine(ucrtSdk, "Lib"), ucrtVersion), "ucrt/" + architecture);
