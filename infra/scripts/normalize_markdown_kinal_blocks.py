@@ -76,7 +76,8 @@ def normalize_block(lines: list[str]) -> tuple[list[str], BlockStats]:
 
 
 def process_file(path: Path, check_only: bool) -> tuple[bool, BlockStats]:
-    text = path.read_text(encoding="utf-8")
+    with path.open("r", encoding="utf-8", newline="") as handle:
+        text = handle.read()
     eol = detect_eol(text)
     lines = split_lines(text)
     output: list[str] = []
@@ -90,28 +91,26 @@ def process_file(path: Path, check_only: bool) -> tuple[bool, BlockStats]:
             index += 1
             continue
         index += 1
-        block_start = len(output)
         block: list[str] = []
         while index < len(lines) and not is_fence_close(lines[index]):
             block.append(lines[index])
             index += 1
+        if index == len(lines):
+            output.extend(block)
+            continue
         normalized_block, block_stats = normalize_block(block)
         stats.suspicious_runs += block_stats.suspicious_runs
         stats.normalized_runs += block_stats.normalized_runs
         output.extend(normalized_block)
         if block != normalized_block:
             changed = True
-        if index < len(lines):
-            output.append(lines[index])
-            index += 1
-        else:
-            del output[block_start:]
-            output.extend(block)
+        output.append(lines[index])
+        index += 1
     if changed and not check_only:
         new_text = join_lines(output, eol)
-        if text.endswith(("\n", "\r\n")):
-            new_text += eol
-        path.write_text(new_text, encoding="utf-8")
+        # split_lines already retains the trailing empty item for a final EOL.
+        with path.open("w", encoding="utf-8", newline="") as handle:
+            handle.write(new_text)
     return changed, stats
 
 
