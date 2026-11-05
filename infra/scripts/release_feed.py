@@ -70,10 +70,21 @@ def asset_sort_key(asset: dict[str, Any]) -> tuple[int, str]:
 
 
 def fetch_releases(repo: str, limit: int, token: str | None) -> list[dict[str, Any]]:
-    payload = github_request(f"/repos/{repo}/releases?per_page={limit}", token)
-    if not isinstance(payload, list):
-        raise SystemExit("unexpected GitHub releases payload")
-    return payload
+    if limit < 1:
+        raise SystemExit("release limit must be greater than zero")
+    # Keep the page size fixed: changing it shifts the offset of later pages.
+    per_page = min(limit, 100)
+    releases: list[dict[str, Any]] = []
+    page = 1
+    while len(releases) < limit:
+        payload = github_request(f"/repos/{repo}/releases?per_page={per_page}&page={page}", token)
+        if not isinstance(payload, list):
+            raise SystemExit("unexpected GitHub releases payload")
+        releases.extend(payload)
+        if len(payload) < per_page:
+            break
+        page += 1
+    return releases[:limit]
 
 
 def fetch_release_by_tag(repo: str, tag: str, token: str | None) -> dict[str, Any]:
