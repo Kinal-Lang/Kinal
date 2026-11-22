@@ -15,7 +15,7 @@ INSTALLERS = {
 
 
 def matches(driver: Path, arch: str) -> bool:
-    if not driver.is_file():
+    if not all((driver.parent / name).is_file() for name in ("clang-cl.exe", "clang.exe", "clang++.exe")):
         return False
     output = subprocess.check_output([driver, "--version"], text=True)
     version = re.search(r"clang version (\d+)", output)
@@ -49,8 +49,11 @@ def main() -> None:
             raise SystemExit(f"Expected a native {arch} Clang 22+ frontend at {driver}")
     print(f"Host C/C++ frontend: {driver}")
     with Path(os.environ["GITHUB_ENV"]).open("a", encoding="utf-8") as env:
-        for key in ("KINAL_HOST_CLANG", "CC", "CXX"):
-            print(f"{key}={driver}", file=env)
+        # CMake builds the SDK with clang-cl. Standalone probe compiles use
+        # GNU driver options such as -dumpmachine and -luser32.
+        print(f"KINAL_HOST_CLANG={driver}", file=env)
+        print(f"CC={driver.with_name('clang.exe')}", file=env)
+        print(f"CXX={driver.with_name('clang++.exe')}", file=env)
 
 
 if __name__ == "__main__":
