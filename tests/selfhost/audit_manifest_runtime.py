@@ -250,7 +250,10 @@ def run_case(
     try:
         for runtime_file in case.get("runtime_files", []):
             source = asset_dir / Path(str(runtime_file)).name
-            shutil.copy2(source, executable.parent / source.name)
+            try:
+                shutil.copy2(source, executable.parent / source.name)
+            except OSError as error:
+                return False, f"cannot copy runtime fixture {source}: {error}"
         if sys.platform == "win32" and case.get("needs_openssl_runtime"):
             legacy_tests.copy_windows_openssl_runtime(executable.parent)
         fixture_responses: list[tuple[int, str]] | None = None
