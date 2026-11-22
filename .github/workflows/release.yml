@@ -254,6 +254,13 @@ jobs:
         with:
           arch: ${{ matrix.msvc_arch }}
 
+      - name: Select Windows SDK C/C++ frontend
+        if: matrix.family == 'windows'
+        working-directory: Kinal
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python -m infra.scripts.windows_host_compiler
+
       - name: Build release distribution
         working-directory: Kinal
         run: python x.py dist

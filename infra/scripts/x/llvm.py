@@ -74,12 +74,12 @@ def resolve_cmake_env() -> tuple[dict[str, str], Path]:
 def preferred_cmake_compilers(llvm_dir: Path) -> tuple[Path | None, Path | None]:
     llvm_bin = llvm_bin_dir(llvm_dir)
     if is_windows():
-        # Use the C++ frontend paired with the installed MSVC STL. VS 2026
-        # headers require Clang >=22, while Kinal deliberately links LLVM 21.
-        msvc = shutil.which("cl.exe")
-        clang_cl = llvm_bin / "clang-cl.exe"
-        if msvc and clang_cl.is_file():
-            return clang_cl, Path(msvc)
+        host_clang = os.getenv("KINAL_HOST_CLANG")
+        if host_clang:
+            driver = Path(host_clang)
+            if not driver.is_file():
+                raise SystemExit(f"Missing host compiler: {driver}")
+            return driver, driver
         c = llvm_bin / "clang.exe"
         cxx = llvm_bin / "clang++.exe"
     else:
