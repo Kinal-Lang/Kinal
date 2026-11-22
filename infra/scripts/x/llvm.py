@@ -74,6 +74,12 @@ def resolve_cmake_env() -> tuple[dict[str, str], Path]:
 def preferred_cmake_compilers(llvm_dir: Path) -> tuple[Path | None, Path | None]:
     llvm_bin = llvm_bin_dir(llvm_dir)
     if is_windows():
+        # Use the C++ frontend paired with the installed MSVC STL. VS 2026
+        # headers require Clang >=22, while Kinal deliberately links LLVM 21.
+        msvc = shutil.which("cl.exe")
+        clang_cl = llvm_bin / "clang-cl.exe"
+        if msvc and clang_cl.is_file():
+            return clang_cl, Path(msvc)
         c = llvm_bin / "clang.exe"
         cxx = llvm_bin / "clang++.exe"
     else:

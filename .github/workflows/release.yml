@@ -190,6 +190,11 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: Kinal-Lang/Kinal-ThirdParty
+          ref: 31a1b9bf62aa51adef6479d40657fd0d26ecb23a
+          sparse-checkout: |
+            llvm/manifests
+            cjson
+            civetweb
           path: Kinal-ThirdParty
 
       - name: Setup Python
