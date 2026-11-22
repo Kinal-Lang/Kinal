@@ -26,7 +26,7 @@ class VmVersionMetadataTests(unittest.TestCase):
             (root / "VERSION").write_text("kinal=91.2.3\nkinalvm=4.5.6\n")
             output = vm_metadata.generate_kinalvm_build_info(root)
             self.assertIn('Return "4.5.6";', output.read_text())
-            self.assertNotIn("91.2.3", output.read_text())
+            self.assertIn('CompilerVersion()\n{\n    Return "91.2.3";', output.read_text())
             self.assertIn("Generated from VERSION:kinalvm", output.read_text())
             self.assertEqual(vm_metadata.generate_kinalvm_build_info(root, check=True), output)
 
@@ -47,7 +47,7 @@ class VmVersionMetadataTests(unittest.TestCase):
     def test_missing_unit_fails_check_without_writing(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            (root / "VERSION").write_text("kinalvm=4.5.6\n")
+            (root / "VERSION").write_text("kinal=91.2.3\nkinalvm=4.5.6\n")
             with self.assertRaisesRegex(ValueError, "is stale"):
                 vm_metadata.generate_kinalvm_build_info(root, check=True)
             self.assertFalse((root / vm_metadata.BUILD_INFO).exists())
@@ -55,7 +55,7 @@ class VmVersionMetadataTests(unittest.TestCase):
     def test_current_generation_does_not_rewrite_source(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            (root / "VERSION").write_text("kinalvm=4.5.6\n")
+            (root / "VERSION").write_text("kinal=91.2.3\nkinalvm=4.5.6\n")
             output = vm_metadata.generate_kinalvm_build_info(root)
             before = output.stat().st_mtime_ns
             vm_metadata.generate_kinalvm_build_info(root)

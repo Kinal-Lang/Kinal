@@ -1,76 +1,26 @@
-# Release Process
+# Releasing Kinal
 
-This guide describes the C compiler distribution. Read the actual workflow configuration before publishing; creating tags or releases can start builds and production synchronization.
+The public SDK ships the stage3 compiler under the name `kinal`. The last C feature release is v0.10.0. Its maintenance branch, `maintenance/c-0.10`, retains the C compiler and its manually dispatched CI and release workflows.
 
-## Component Versions
+## Prepare the version
 
-The root `VERSION` file is the source of truth:
+Set the compiler and VM component versions independently in `VERSION`. Regenerate both checked-in metadata units and add release notes in `dev/releases/<compiler-version>.md`.
 
-```text
-kinal=0.9.0
-kinalvm=0.8.0
-```
-
-These are component versions, not a requirement that their major/minor numbers match. Change the component whose contract changes. Bytecode format version is a separate value: KNC format 3 is not implied by either semantic version.
-
-CMake generates `kn/version.h` in the build tree; do not edit generated headers. KinalVM's checked-in `BuildInfo.kn` is generated from `VERSION:kinalvm`:
-
-```bash
+```sh
+python -m infra.scripts.x.compiler_metadata
 python -m infra.scripts.x.vm_metadata
-python -m infra.scripts.x.vm_metadata --check
 ```
 
-The checked-in generated Unit allows direct VM project builds with a bootstrap compiler. Keep it synchronized when updating the VM version.
+The KNC wire revision is independent of both components. Revision 4 embeds the producing compiler version.
 
-## Local Validation and Packaging
+## Validate the SDK
 
-```bash
-python x.py doctor
-python x.py dev --release
-python x.py test --release --full
-python x.py dist
-```
+Push the release commit to the default branch. **Selfhost CI** runs on Windows, Linux and macOS on x64 and Arm64. Every host verifies the checksum of its pinned C seed, bootstraps through stage3 and runs the stage3 regression suite. It extracts the public ZIP, checks that its compiler matches the converged binary, and builds and executes Native and KNC programs with the extracted SDK. Pull requests run the same checks. Default-branch pushes also upload the release archives and per-host checksums.
 
-`dist` builds and packages a host release bundle. There is no `x.py release` subcommand. Run platform-specific and LSP checks appropriate to the change in addition to the main suite.
+To reproduce convergence locally, pass an extracted v0.10.0 SDK to `python x.py selfhost-bootstrap --stage0-bundle <sdk>`. To run the suite, use `tests/selfhost/run_selfhost_tests.py` with the stage3 compiler and the frozen stage0. The Linux and macOS linker wrapper uses LLVM 21; `KINAL_CLANG` can select its executable explicitly.
 
-Check the staged tools before packaging:
+## Create a GitHub release
 
-```bash
-kinal --version --verbose
-kinalvm --version
-```
+After all six CI jobs pass, dispatch **Selfhost release** on the same commit. Optionally supply the CI run ID. A matching `v<compiler-version>` tag also triggers draft preparation. The workflow verifies the default branch, commit, workflow, six successful jobs and all archive checksums before assembling the release. It reuses the tested SDKs. Manual dispatch defaults to a draft; explicitly select `publish` to publish after uploading the assets.
 
-Use the executable in `out/stage/host-release/` explicitly when another installation is on `PATH`. Verify compiler version, VM version, packaged `VERSION`, generated VM metadata, and the bundle's `README.txt` agree. A compiler version reported correctly does not prove that an older VM beside it is compatible with newly emitted bytecode.
-
-The distribution includes compiler/LSP/VM executables, LLVM runtime/development files, linker tools, locales, runtime objects/sources, standard packages, and documentation. Preserve the complete layout during relocation. Release standard packages are distributed as `.klib`; their source directories are removed from the release bundle. Packaging outputs live under `artifacts/release/`.
-
-## GitHub Release Workflow
-
-The `Release` workflow triggers on `v*` tags and supports manual dispatch. For a tag-triggered release, `v{VERSION:kinal}` must match the root compiler version exactly. For example, `kinal=0.9.0` corresponds to `v0.9.0`.
-
-The current workflow builds Windows/Linux/macOS x64 and ARM64 bundles. Manual inputs control draft status, prerelease status, and generated release notes; draft defaults to true for manual runs. Inspect the workflow's matrix and uploaded artifacts rather than assuming a locally built host bundle covers every platform.
-
-A VM-only change can update the `kinalvm` component value, but the current release workflow does not define a separate `vm/v*` publishing trigger. Do not document such a tag as an automated release path.
-
-## Documentation, Feed, and Website
-
-- The main repository's `Docs and Scripts Sync` workflow copies `docs/` and install scripts to configured website targets.
-- `Published Release Sync` generates release-feed data and selects the compiler artifact used by the production site. Prerelease events are excluded from production compiler deployment.
-- The website repository has its own deployment workflow for website code/assets.
-- Updating local Markdown does not itself publish it. Publishing a release and deploying website code are separate actions.
-
-Release notes should state language/API changes, runtime dependencies, migration steps, known limitations, and compiler/VM compatibility. Include both documentation languages when user-facing behavior changes. Do not present cross-target compilation as target-host runtime validation.
-
-## Before Publishing
-
-1. Confirm the source commit, component versions, and generated metadata.
-2. Rebuild and run the relevant C compiler, runtime, VM, package, and editor checks.
-3. Inspect the extracted bundle and compile/run a small program from that location.
-4. Check that `.knc` files and packaged executables use a compatible VM.
-5. Review the final documentation, release notes, artifacts, and tag before starting publication.
-
-## See Also
-
-- [Build Guide](build.md)
-- [Testing Guide](testing.md)
-- [KinalVM Compatibility](../docs/cli/vm.md)
+GitHub Release publication and website deployment have separate workflows. The installer and production download feed should continue to point to the latest public release while a newer draft is being reviewed.

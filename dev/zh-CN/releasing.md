@@ -1,76 +1,26 @@
-# 发布流程
+# Kinal 发行流程
 
-本文说明 C 编译器发行版。发布前应阅读实际 workflow 配置；创建标签或 Release 可能触发构建和生产同步。
+公开 SDK 使用 stage3 编译器作为 `kinal` 命令。v0.10.0 是 C 实现的最后一个功能版本。维护分支 `maintenance/c-0.10` 保留 C 编译器及手动触发的 CI 和发行工作流。
 
-## 组件版本
+## 准备版本
 
-根目录 `VERSION` 是唯一版本来源：
+在 `VERSION` 中分别设置编译器和 VM 版本，更新两个已签入的元数据模块，并在 `dev/releases/<编译器版本>.md` 编写发行说明。
 
-```text
-kinal=0.9.0
-kinalvm=0.8.0
-```
-
-这是独立组件版本，不要求二者主版本／次版本一致。根据实际契约变更更新对应组件。字节码格式版本是另一维度：KNC 格式 3 不能由任一组件的语义版本号推导。
-
-CMake 在构建目录生成 `kn/version.h`，不要手工修改生成头文件。KinalVM 已提交的 `BuildInfo.kn` 由 `VERSION:kinalvm` 生成：
-
-```bash
+```sh
+python -m infra.scripts.x.compiler_metadata
 python -m infra.scripts.x.vm_metadata
-python -m infra.scripts.x.vm_metadata --check
 ```
 
-提交生成的 Unit 是为了支持 bootstrap 编译器直接构建 VM 工程。修改 VM 版本时必须保持同步。
+KNC 格式版本独立编号。格式 4 记录生成字节码的编译器版本。
 
-## 本地验证与打包
+## 验证 SDK
 
-```bash
-python x.py doctor
-python x.py dev --release
-python x.py test --release --full
-python x.py dist
-```
+将发行提交推入默认分支。**Selfhost CI** 在 Windows、Linux、macOS 的 x64 和 Arm64 主机运行。各主机核验固定 C 种子的校验和，完成 stage3 自举和回归测试。工作流解压公开 ZIP，核对编译器与收敛产物一致，再用解压后的 SDK 构建并运行 Native 和 KNC 程序。拉取请求执行相同检查。默认分支还上传发行包和各平台校验和。
 
-`dist` 构建并打包当前主机的 Release 工具链。不存在 `x.py release` 子命令。除主测试集外，还应运行与变更相关的平台测试和 LSP 检查。
+本地可以使用解压的 v0.10.0 SDK 运行 `python x.py selfhost-bootstrap --stage0-bundle <sdk>`，再将 stage3 编译器和冻结后的 stage0 传给 `tests/selfhost/run_selfhost_tests.py`。Linux 和 macOS 的原生链接使用 LLVM 21，也可通过 `KINAL_CLANG` 指定 clang 路径。
 
-打包前核对暂存工具：
+## 创建 GitHub Release
 
-```bash
-kinal --version --verbose
-kinalvm --version
-```
+六个平台全部通过后，在同一提交上触发 **Selfhost release**，可指定 CI 运行编号。推送匹配 `v<编译器版本>` 的标签也会准备草稿。发行工作流核对默认分支、提交、工作流、六项成功结果和所有归档校验和，直接使用已验证的 SDK。手动触发默认生成草稿。明确选择 `publish` 时，资产上传完成后才会公开发布。
 
-如果 `PATH` 中还有其他安装，请显式运行 `out/stage/host-release/` 中的工具。编译器版本、VM 版本、包内 `VERSION`、VM 生成元数据和 `README.txt` 应一致。编译器版本正确不代表旁边的旧 VM 能读取新字节码。
-
-发行目录包含编译器／LSP／VM、LLVM 运行及开发文件、链接工具、语言包、运行时对象／源码、标准包与文档。移动安装时应保留完整结构。Release 标准包以 `.klib` 分发，包内源代码目录会从发行目录移除。最终打包产物位于 `artifacts/release/`。
-
-## GitHub Release 工作流
-
-`Release` 工作流由 `v*` 标签触发，也支持手动运行。标签触发时，`v{VERSION:kinal}` 必须与编译器版本完全相符。例如 `kinal=0.9.0` 对应 `v0.9.0`。
-
-当前工作流构建 Windows／Linux／macOS 的 x64、ARM64 包。手动输入控制 draft、prerelease 和自动生成发布说明；手动运行的 draft 默认值为 true。应核对 workflow 矩阵及上传产物，不能用本地主机打包结果代替所有平台。
-
-仅 VM 变更时可以更新 `kinalvm` 组件版本，但当前 Release 工作流没有独立的 `vm/v*` 发布触发器，不应把这种标签写成现成自动发布入口。
-
-## 文档、发行索引与官网
-
-- 主仓库的 `Docs and Scripts Sync` 工作流将 `docs/` 和安装脚本复制到配置的官网目录。
-- `Published Release Sync` 生成发行索引，并选择官网生产环境使用的编译器产物；prerelease 事件不部署生产编译器。
-- 官网仓库另有网站代码／资源部署工作流。
-- 修改本地 Markdown 本身不会发布文档；发布 Release 与部署网站代码也是独立动作。
-
-发布说明应包含语言／API 变化、运行依赖、迁移步骤、已知限制，以及编译器／VM 兼容要求。面向用户的行为变化应同步中英文文档。不要将跨目标编译描述为目标主机运行验证。
-
-## 发布前核对
-
-1. 确认源码提交、组件版本及生成元数据。
-2. 重新构建并运行相关 C 编译器、运行时、VM、包和编辑器检查。
-3. 解压检查最终发行包，从该位置编译并运行小程序。
-4. 核对 `.knc` 和打包可执行文件使用兼容的 VM。
-5. 检查最终文档、发布说明、产物和标签，再启动发布。
-
-## 相关文档
-
-- [构建指南](build.md)
-- [测试指南](testing.md)
-- [KinalVM 兼容性](../../docs/zh-CN/cli/vm.md)
+GitHub 发行和网站部署使用独立工作流。新版仍为草稿时，安装器和网站下载源继续使用最新公开版。

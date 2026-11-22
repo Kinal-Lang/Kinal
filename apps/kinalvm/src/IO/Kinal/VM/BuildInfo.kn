@@ -9,5 +9,5 @@ Safe Function string Version()
 
 Safe Function string CompilerVersion()
 {
-    Return "0.10.0";
+    Return "1.0.0";
 }

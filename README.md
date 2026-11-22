@@ -54,6 +54,8 @@ Kinal's goal is simple --
 
 ---
 
+The primary compiler is written in Kinal. The `kinal` command in the 1.x SDK is the verified stage3 compiler. The final C feature release is [0.10.0](https://github.com/Kinal-Lang/Kinal/releases/tag/v0.10.0). Its source and manual build workflow are maintained on [maintenance/c-0.10](https://github.com/Kinal-Lang/Kinal/tree/maintenance/c-0.10).
+
 ## Quick Start
 
 ### Installation

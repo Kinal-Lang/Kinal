@@ -153,8 +153,19 @@ def write_selfhost_clang_wrapper(stage1_root: Path) -> None:
         return
     wrapper = stage1_root / "linker" / "clang"
     wrapper.parent.mkdir(parents=True, exist_ok=True)
-    escaped = str(clang).replace("'", "'\\''")
-    wrapper.write_text(f"#!/bin/sh\nexec '{escaped}' \"$@\"\n", encoding="utf-8")
+    # Homebrew Cellar and runner-specific paths may change after installation.
+    wrapper.write_text("""#!/bin/sh
+set -eu
+if [ -n "${KINAL_CLANG:-}" ]; then exec "$KINAL_CLANG" "$@"; fi
+if command -v clang-21 >/dev/null 2>&1; then exec clang-21 "$@"; fi
+if command -v brew >/dev/null 2>&1; then
+    clang="$(brew --prefix llvm@21)/bin/clang"
+    if [ -x "$clang" ]; then exec "$clang" "$@"; fi
+fi
+if [ -x /usr/lib/llvm-21/bin/clang ]; then exec /usr/lib/llvm-21/bin/clang "$@"; fi
+echo "Install LLVM 21 or set KINAL_CLANG to its clang executable." >&2
+exit 127
+""", encoding="utf-8", newline="\n")
     wrapper.chmod(0o755)
 
     # Homebrew's LLVM package does not ship ld64.lld.  On macOS the selected

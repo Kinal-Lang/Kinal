@@ -14,13 +14,16 @@ class CiWorkflowTriggerTests(unittest.TestCase):
         body = block.group('body')
         self.assertNotRegex(body, re.compile(r'^    branches(?:-ignore)?:', re.M), 'stacked PR bases must remain eligible')
         self.assertIn('    paths:\n', body)
-        for path in ('apps/**', 'libs/**', 'tests/**', '.github/workflows/ci.yml'):
+        for path in ('apps/**', 'libs/**', 'tests/**', '.github/workflows/**'):
             self.assertIn('"'+path+'"', body)
 
     def test_push_filter_and_dispatch_are_retained(self):
         text = (ROOT / '.github/workflows/ci.yml').read_text(encoding='utf-8')
-        self.assertIn('  push:\n    branches: [ main, dev, "release/**" ]\n', text)
+        self.assertIn('  push:\n    branches: [main, dev, "release/**"]\n', text)
         self.assertIn('  workflow_dispatch:\n', text)
+        self.assertIn('selfhost-bootstrap --stage0-bundle', text)
+        self.assertIn('out/selfhost/stage3/kinal-selfhost', text)
+        self.assertNotIn('python x.py dist', text)
 
 
 if __name__ == '__main__':

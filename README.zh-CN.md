@@ -57,7 +57,9 @@ kinal vm run hello.kn           # 通过 KinalVM 字节码运行
 
 ---
 
-本文面向 C 编译器版本。两条后端共享语言分析，但运行能力存在差异，参见[后端支持](docs/zh-CN/advanced/backend-support.md)。大型程序参见[项目文件](docs/zh-CN/cli/project-files.md)，GC 与所有权参见[内存和生命周期](docs/zh-CN/advanced/memory-management.md)。
+主编译器已使用 Kinal 实现。1.x SDK 的 `kinal` 命令运行通过自举验证的 stage3 编译器。[0.10.0](https://github.com/Kinal-Lang/Kinal/releases/tag/v0.10.0) 是 C 实现的最后一个功能发行版，源码及手动构建工作流保留在[维护分支](https://github.com/Kinal-Lang/Kinal/tree/maintenance/c-0.10)。
+
+两条后端共享语言分析，但运行能力存在差异，参见[后端支持](docs/zh-CN/advanced/backend-support.md)。大型程序参见[项目文件](docs/zh-CN/cli/project-files.md)，GC 与所有权参见[内存和生命周期](docs/zh-CN/advanced/memory-management.md)。
 
 ## 核心特色
 
