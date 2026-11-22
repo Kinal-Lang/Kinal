@@ -253,13 +253,19 @@ jobs:
         working-directory: Kinal
         run: python x.py dist
 
-      - name: Run smoke tests
+      - name: Test the staged release compiler and VM
         working-directory: Kinal
-        run: python x.py test --release
-
-      - name: Run full regression tests
-        working-directory: Kinal
-        run: python x.py test --release --full
+        shell: bash
+        run: |
+          python - <<'PY'
+          import os, subprocess, sys
+          from infra.scripts.x.context import release_dir, exe_name
+          sdk = release_dir()
+          env = dict(os.environ, KINAL_VM_PATH=str(sdk / exe_name("kinalvm")))
+          for options in ([], ["--full"]):
+              subprocess.run([sys.executable, "x.py", "test", "--release", "--compiler",
+                              str(sdk / exe_name("kinal")), *options], env=env, check=True)
+          PY
 
       - name: Prepare release archives and checksums
         working-directory: Kinal
