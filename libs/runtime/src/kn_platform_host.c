@@ -261,9 +261,9 @@ KN_HANDLE KN_STDCALL GetStdHandle(KN_DWORD nStdHandle)
 KN_BOOL KN_STDCALL GetConsoleMode(KN_HANDLE hConsoleHandle, KN_DWORD *lpMode)
 {
     KnHostHandle *h = kn_host_as_handle(hConsoleHandle);
-    if (!h || h->kind != KN_HOST_HANDLE_FD)
+    if (!h || h->kind != KN_HOST_HANDLE_FD || !isatty(h->u.fd))
         return 0;
-    if (lpMode) *lpMode = isatty(h->u.fd) ? 1u : 0u;
+    if (lpMode) *lpMode = 1u;
     return 1;
 }
 

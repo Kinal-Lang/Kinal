@@ -98,7 +98,8 @@ jobs:
         if: matrix.family == 'macos'
         shell: bash
         run: |
-          brew install llvm@21
+          brew install llvm@21 lld@21
+          echo "$(brew --prefix lld@21)/bin" >> "$GITHUB_PATH"
           echo "LLVM_DIR=$(brew --prefix llvm@21)/lib/cmake/llvm" >> "$GITHUB_ENV"
           echo "$(brew --prefix llvm@21)/bin" >> "$GITHUB_PATH"
 

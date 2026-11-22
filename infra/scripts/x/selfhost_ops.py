@@ -168,14 +168,16 @@ exit 127
 """, encoding="utf-8", newline="\n")
     wrapper.chmod(0o755)
 
-    # Homebrew's LLVM package does not ship ld64.lld.  On macOS the selected
-    # clang must use the platform linker supplied by Xcode.  Linux remains
-    # pinned to the adjacent LLVM lld so packaged stages are deterministic.
-    if not host_tag().startswith("macos-"):
-        source = llvm_bin_dir(llvm_dir) / "ld.lld"
-        if not source.is_file():
-            raise SystemExit(f"LLVM linker was not found: {source}")
-        shutil.copy2(source, stage1_root / "linker" / source.name)
+    # Freestanding ELF requires ld.lld even on an Apple host. Homebrew
+    # distributes it separately from clang, in the lld@21 keg.
+    source = llvm_bin_dir(llvm_dir) / "ld.lld"
+    if not source.is_file() and host_tag().startswith("macos-"):
+        installed = shutil.which("ld.lld")
+        if installed:
+            source = Path(installed)
+    if not source.is_file():
+        raise SystemExit(f"LLVM linker was not found: {source}")
+    shutil.copy2(source, stage1_root / "linker" / "ld.lld")
 
 
 def package_selfhost_toolchain(stage0: Path, stage1: Path) -> None:

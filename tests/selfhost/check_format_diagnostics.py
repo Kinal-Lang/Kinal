@@ -147,8 +147,16 @@ def check_diagnostics(compiler: Path, stage0: Path, root: Path, out: Path) -> di
         nonlocal checks
         results = []
         for tool in (stage0, compiler):
+            flags = list(map(str, options))
+            # The 0.10 POSIX console shim reports pipes as consoles. Use its
+            # plain rendering as the expected bytes for auto color on a pipe.
+            if tool == stage0 and os.name != "nt":
+                if "--color" not in flags:
+                    flags[:0] = ["--color", "never"]
+                elif flags[flags.index("--color") + 1] == "auto":
+                    flags[flags.index("--color") + 1] = "never"
             result = subprocess.run([str(tool), "build", "--no-module-discovery", str(source), "--emit", "check",
-                                     "-o", str(out / "summary.kcheck"), *map(str, options)],
+                                     "-o", str(out / "summary.kcheck"), *flags],
                                     cwd=root, capture_output=True, timeout=60)
             results.append((result.returncode, result.stdout, result.stderr))
         checks += 1
