@@ -252,7 +252,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--stage0", type=Path, default=os.getenv("KINAL_STAGE0", REPO / "out/selfhost/stage0-host/kinal.exe"))
     parser.add_argument("--previous", type=Path, help="An earlier stage3 in its complete toolchain directory")
-    parser.add_argument("--stage3", type=Path, default=os.getenv("KINAL_STAGE3", REPO / "out/selfhost/stage3/kinal-selfhost.exe"))
+    parser.add_argument("--stage3", type=Path, default=os.getenv("KINAL_STAGE3", REPO / "out/selfhost/stage3/kinal.exe"))
     parser.add_argument("--projects", action="store_true", help="Include the whole compiler project")
     parser.add_argument("--project", type=Path, help="Include this project in the selected measurements")
     parser.add_argument("--frontend-only", action="store_true",

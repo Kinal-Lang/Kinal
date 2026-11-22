@@ -131,17 +131,17 @@ checks `kinal.knproj`, `kinal.pkg.json`, then `kinal.pkg`. It uses the same comp
 semantic analysis, and typed-HIR backend for both paths:
 
 ```sh
-kinal-selfhost build Main.kn -o app
-kinal-selfhost build Main.kn Helper.kn --no-module-discovery --emit obj -o app.o
-kinal-selfhost build Main.kn --emit asm
-kinal-selfhost build Main.kn --emit check
-kinal-selfhost build Library.kn --kind static -o libExample.a
-kinal-selfhost build Library.kn --kind shared -o libExample.so
-kinal-selfhost build Main.ll --emit obj -o Main.o
-kinal-selfhost build Main.o -o app
-kinal-selfhost build --project . --profile native --emit ir
-kinal-selfhost run Main.kn -- "two words" argument
-kinal-selfhost run --project . --profile native -- argument
+kinal build Main.kn -o app
+kinal build Main.kn Helper.kn --no-module-discovery --emit obj -o app.o
+kinal build Main.kn --emit asm
+kinal build Main.kn --emit check
+kinal build Library.kn --kind static -o libExample.a
+kinal build Library.kn --kind shared -o libExample.so
+kinal build Main.ll --emit obj -o Main.o
+kinal build Main.o -o app
+kinal build --project . --profile native --emit ir
+kinal run Main.kn -- "two words" argument
+kinal run --project . --profile native -- argument
 ```
 
 `--emit bin|obj|asm|ir|check|tokens|ast` defaults to `bin`. Stage0's aliases for those
@@ -246,12 +246,12 @@ pure-Kinal KNC emitter. It writes deterministic version-3 `.knc` files and never
 invokes stage0, LLVM, or a linker to emit bytecode:
 
 ```sh
-kinal-selfhost vm build Main.kn -o app.knc
-kinal-selfhost vm build --project . --profile vm
-kinal-selfhost vm run app.knc
-kinal-selfhost vm run Main.kn
-kinal-selfhost vm disasm app.knc
-kinal-selfhost vm pack app.knc -o app
+kinal vm build Main.kn -o app.knc
+kinal vm build --project . --profile vm
+kinal vm run app.knc
+kinal vm run Main.kn
+kinal vm disasm app.knc
+kinal vm pack app.knc -o app
 ```
 
 The command accepts one source, or a `kinal.knproj` profile with `Backend = VM`.
@@ -340,16 +340,16 @@ points do not acquire hosted argument initialization.
 ```powershell
 python x.py selfhost --test
 python x.py selfhost-bootstrap --clean
-python tests/check_project_packages.py --compiler out/selfhost/stage1/kinal-selfhost.exe --out-dir out/selfhost/package-checks
-python tests/selfhost/check_targets.py --compiler out/selfhost/stage1/kinal-selfhost.exe --stage0 out/selfhost/stage0-host/kinal.exe --out-dir out/selfhost/target-checks
-python tests/selfhost/check_freestanding.py --compiler out/selfhost/stage1/kinal-selfhost.exe --stage0 out/stage/host-release/kinal.exe --out-dir out/selfhost/freestanding-checks
-python tests/selfhost/check_freestanding_profiles.py --compiler out/selfhost/stage1/kinal-selfhost.exe --stage0 out/stage/host-release/kinal.exe --out-dir out/selfhost/freestanding-profile-checks
-python tests/selfhost/check_metadata_artifacts.py --compiler out/selfhost/stage1/kinal-selfhost.exe --stage0 out/stage/host-release/kinal.exe --out-dir out/selfhost/metadata-artifact-checks
-python tests/selfhost/check_array_types.py --compiler out/selfhost/stage1/kinal-selfhost.exe --stage0 out/stage/host-release/kinal.exe --out-dir out/selfhost/array-type-checks
-python tests/selfhost/check_scalar_types.py --compiler out/selfhost/stage1/kinal-selfhost.exe --stage0 out/stage/host-release/kinal.exe --out-dir out/selfhost/scalar-type-checks
-python tests/selfhost/check_package_cli.py --compiler out/selfhost/stage1/kinal-selfhost.exe --stage0 out/stage/host-release/kinal.exe --out-dir out/selfhost/package-cli-checks
-python tests/selfhost/check_cli_workflows.py --compiler out/selfhost/stage1/kinal-selfhost.exe --stage0 out/stage/host-release/kinal.exe --out-dir out/selfhost/cli-workflow-checks
-python tests/selfhost/check_project_probes.py --compiler out/selfhost/stage1/kinal-selfhost.exe --stage0 out/stage/host-release/kinal.exe --out-dir out/selfhost/project-probe-checks
+python tests/check_project_packages.py --compiler out/selfhost/stage1/kinal.exe --out-dir out/selfhost/package-checks
+python tests/selfhost/check_targets.py --compiler out/selfhost/stage1/kinal.exe --stage0 out/selfhost/stage0-host/kinal.exe --out-dir out/selfhost/target-checks
+python tests/selfhost/check_freestanding.py --compiler out/selfhost/stage1/kinal.exe --stage0 out/stage/host-release/kinal.exe --out-dir out/selfhost/freestanding-checks
+python tests/selfhost/check_freestanding_profiles.py --compiler out/selfhost/stage1/kinal.exe --stage0 out/stage/host-release/kinal.exe --out-dir out/selfhost/freestanding-profile-checks
+python tests/selfhost/check_metadata_artifacts.py --compiler out/selfhost/stage1/kinal.exe --stage0 out/stage/host-release/kinal.exe --out-dir out/selfhost/metadata-artifact-checks
+python tests/selfhost/check_array_types.py --compiler out/selfhost/stage1/kinal.exe --stage0 out/stage/host-release/kinal.exe --out-dir out/selfhost/array-type-checks
+python tests/selfhost/check_scalar_types.py --compiler out/selfhost/stage1/kinal.exe --stage0 out/stage/host-release/kinal.exe --out-dir out/selfhost/scalar-type-checks
+python tests/selfhost/check_package_cli.py --compiler out/selfhost/stage1/kinal.exe --stage0 out/stage/host-release/kinal.exe --out-dir out/selfhost/package-cli-checks
+python tests/selfhost/check_cli_workflows.py --compiler out/selfhost/stage1/kinal.exe --stage0 out/stage/host-release/kinal.exe --out-dir out/selfhost/cli-workflow-checks
+python tests/selfhost/check_project_probes.py --compiler out/selfhost/stage1/kinal.exe --stage0 out/stage/host-release/kinal.exe --out-dir out/selfhost/project-probe-checks
 ```
 
 The native and runtime manifest audits run on the current Windows, Linux, or

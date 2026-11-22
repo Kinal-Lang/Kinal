@@ -17,7 +17,7 @@ class ReleasePromotionTests(unittest.TestCase):
                    "GITHUB_REF_TYPE": "branch", "RUN_ID": "17", "GITHUB_OUTPUT": str(output)}
             run = {"id": 17, "head_sha": "abc", "head_branch": "main", "workflow_id": 3,
                    "head_repository": {"full_name": "org/project"}, "conclusion": "success", "event": "push"}
-            jobs = [{"name": host + " selfhost", "conclusion": "success"} for host in release.HOSTS]
+            jobs = [{"name": host, "conclusion": "success"} for host in release.HOSTS]
 
             def api(command):
                 data = {"actions/workflows/ci.yml": {"id": 3}, "actions/runs/17": run,

@@ -19,7 +19,7 @@ spec.loader.exec_module(bootstrap)
 
 class VmPackagingTests(unittest.TestCase):
     def test_runner_is_built_by_the_selfhost_compiler(self):
-        compiler = Path("/isolated/stage/kinal-selfhost")
+        compiler = Path("/isolated/stage/kinal")
         for host in ("win-x64", "win-arm64", "linux-x64", "macos-arm64"):
             with (self.subTest(host=host), patch.object(runtime_build, "host_tag", return_value=host),
                   patch.object(selfhost_ops, "host_tag", return_value=host),
@@ -79,7 +79,7 @@ class VmPackagingTests(unittest.TestCase):
                   patch.object(selfhost_ops, "detect_llvm_dir", return_value=llvm),
                   patch.object(selfhost_ops, "llvm_bin_dir", return_value=llvm),
                   patch.object(selfhost_ops, "write_selfhost_clang_wrapper")):
-                selfhost_ops.package_selfhost_toolchain(source / "kinal", target / "kinal-selfhost")
+                selfhost_ops.package_selfhost_toolchain(source / "kinal", target / "kinal")
             for name, contents in runtime_files.items():
                 self.assertEqual((target / "runtime" / name).read_bytes(), contents)
             for name in ("llvm-ar", "llvm-lib", "lld-link", "ld64.lld"):

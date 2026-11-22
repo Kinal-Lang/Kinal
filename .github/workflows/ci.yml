@@ -1,4 +1,4 @@
-name: Selfhost CI
+name: CI
 
 on:
   push:
@@ -20,7 +20,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: selfhost-${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
@@ -31,7 +31,7 @@ env:
 
 jobs:
   bootstrap:
-    name: ${{ matrix.host_tag }} selfhost
+    name: ${{ matrix.host_tag }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 180
     strategy:
@@ -128,7 +128,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: python -m infra.scripts.windows_host_compiler
 
-      - name: Download verified C bootstrap seed
+      - name: Download verified compiler SDK
         shell: bash
         working-directory: Kinal
         env:
@@ -140,18 +140,18 @@ jobs:
             --pattern "$asset" --pattern "SHA256SUMS-$HOST_TAG.txt"
           python -m infra.scripts.selfhost_release extract-seed ../seed-download "$SEED_TAG" "$HOST_TAG" out/selfhost/stage0-host
 
-      - name: Verify stage1, stage2 and stage3 convergence
+      - name: Verify compiler convergence
         working-directory: Kinal
         run: python x.py selfhost-bootstrap --stage0-bundle out/selfhost/stage0-host --max-stage 3
 
-      - name: Run stage3 regressions
+      - name: Run compiler tests
         working-directory: Kinal
         shell: bash
         run: |
           ext=""
           if [[ "$RUNNER_OS" == Windows ]]; then ext=.exe; fi
           python tests/selfhost/run_selfhost_tests.py --root . --stage0-role bootstrap \
-            --stage0 "out/selfhost/stage0-host/kinal$ext" --compiler "out/selfhost/stage3/kinal-selfhost$ext" --out-dir out/selfhost/tests
+            --stage0 "out/selfhost/stage0-host/kinal$ext" --compiler "out/selfhost/stage3/kinal$ext" --out-dir out/selfhost/tests
           KINAL_VM_PATH="$PWD/out/selfhost/stage3/kinalvm$ext" python -m unittest discover -s tests -p "test_*.py"
 
       - name: Build language server
@@ -176,11 +176,11 @@ jobs:
           compression-level: 0
           retention-days: 5
 
-      - name: Upload selfhost reports
+      - name: Upload test reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: selfhost-reports-${{ matrix.host_tag }}
+          name: test-reports-${{ matrix.host_tag }}
           path: |
             Kinal/out/selfhost/bootstrap-report.json
             Kinal/out/selfhost/tests/results.json

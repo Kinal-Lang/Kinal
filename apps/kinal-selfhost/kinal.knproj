@@ -27,7 +27,7 @@ Project KinalSelfhost
         {
             Backend = Native;
             Environment = Hosted;
-            Output = "../../out/selfhost/stage1/kinal-selfhost.exe";
+            Output = "../../out/selfhost/stage1/kinal.exe";
         }
 
     }

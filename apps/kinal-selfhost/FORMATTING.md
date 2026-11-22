@@ -5,10 +5,10 @@ machine. It invokes neither stage0 nor an external formatting process. The
 only native operations are raw file/console I/O leaves.
 
 ```sh
-kinal-selfhost fmt source.kn src/
-kinal-selfhost fmt --check src/
-kinal-selfhost fmt --stdout source.kn
-kinal-selfhost fmt --stdin --stdin-filepath editor-buffer.kn
+kinal fmt source.kn src/
+kinal fmt --check src/
+kinal fmt --stdout source.kn
+kinal fmt --stdin --stdin-filepath editor-buffer.kn
 ```
 
 Directories are scanned recursively for case-sensitive `.kn` suffixes. Explicit

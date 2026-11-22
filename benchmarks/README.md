@@ -10,7 +10,7 @@ python -X utf8 benchmarks/suite.py --only kinal-c-lto,kinal-self-lto --cases has
 
 The default command times four workloads covering hash collisions, dependent memory reads, sliding-window maxima and an integer Haar transform. The full suite has 22 workloads. Each build includes all 22.
 
-The default compiler paths are `out/selfhost/stage0-host/kinal.exe` and `out/selfhost/stage3/kinal-selfhost.exe`. To measure a particular release and its packaged runtime, set `KINAL_STAGE0` to that bundle's executable. Set `KINAL_STAGE3` to select another self-hosted executable. Each run records the resolved paths and SHA-256 digests. Missing compilers appear as skipped configurations.
+The default compiler paths are `out/selfhost/stage0-host/kinal.exe` and `out/selfhost/stage3/kinal.exe`. To measure a particular release and its packaged runtime, set `KINAL_STAGE0` to that bundle's executable. Set `KINAL_STAGE3` to select another self-hosted executable. Each run records the resolved paths and SHA-256 digests. Missing compilers appear as skipped configurations.
 
 Each run writes a fresh directory under `benchmarks/results/runs/`. Use `--out <new-directory>` for a different location. It contains the source, reference values and harness snapshot, individual samples, a Markdown report and a comparison CSV. Check an existing run with:
 
@@ -42,7 +42,7 @@ had zero. Address-taken and reassigned locals still handle dynamic strings.
 [calls.kn](calls.kn) uses the same integer worker protocol. Case 0 runs a nested helper chain, case 1 uses mutual tail recursion, and case 2 calls a function that can throw. The [Windows stage3 baseline](baselines/20261121-stage3-function-calls.csv) records default and Full LTO medians for these workloads and Fibonacci. The following PowerShell example runs a 50,000-iteration nested chain with seed 7 and prints `60935` after `READY`.
 
 ```powershell
-out/selfhost/stage3/kinal-selfhost.exe build benchmarks/calls.kn --no-module-discovery --lto=full -o out/calls.exe
+out/selfhost/stage3/kinal.exe build benchmarks/calls.kn --no-module-discovery --lto=full -o out/calls.exe
 '1','7','0' | & ./out/calls.exe 0 50000
 ```
 
@@ -55,7 +55,7 @@ result over pipes. The harness verifies every result, discards the first
 round, and shuffles the order of cases and runners in each round.
 
 ```powershell
-python benchmarks/vm_dispatch.py --compiler out/selfhost/stage3/kinal-selfhost.exe --runner before=C:/old-sdk/kinalvm.exe --runner after=out/selfhost/stage3/kinalvm.exe --output out/vm-dispatch.csv
+python benchmarks/vm_dispatch.py --compiler out/selfhost/stage3/kinal.exe --runner before=C:/old-sdk/kinalvm.exe --runner after=out/selfhost/stage3/kinalvm.exe --output out/vm-dispatch.csv
 ```
 
 Windows x64 stage3-built runner, median milliseconds per batch from seven
@@ -129,7 +129,7 @@ See the [compiler-project measurements](baselines/20261122-compiler-type-lookup.
 To measure how Native emission scales with object-valued call arguments:
 
 ```powershell
-python benchmarks/compiler_roots.py --compiler previous=C:/old-sdk/kinal-selfhost.exe --compiler new=out/selfhost/stage3/kinal-selfhost.exe --identical-artifacts --output out/compiler-roots.csv
+python benchmarks/compiler_roots.py --compiler previous=C:/old-sdk/kinal.exe --compiler new=out/selfhost/stage3/kinal.exe --identical-artifacts --output out/compiler-roots.csv
 ```
 
 Each generated function calls a helper with two freshly allocated objects at
@@ -163,7 +163,7 @@ array of repeating digits before starting the timer, measures `ParseValue` and
 `AsList`, and verifies every element before printing elapsed nanoseconds.
 
 ```powershell
-out/selfhost/stage3/kinal-selfhost.exe build benchmarks/json_parse.kn --no-module-discovery -o out/json-parse.exe
+out/selfhost/stage3/kinal.exe build benchmarks/json_parse.kn --no-module-discovery -o out/json-parse.exe
 ./out/json-parse.exe 16000
 ```
 
@@ -181,7 +181,7 @@ quotes, control characters and a backslash. `objects` and `floats` count
 elements in an array. An optional third argument selects `pretty` or `compact`.
 
 ```powershell
-out/selfhost/stage3/kinal-selfhost.exe build benchmarks/json_format.kn --no-module-discovery -o out/json-format.exe
+out/selfhost/stage3/kinal.exe build benchmarks/json_format.kn --no-module-discovery -o out/json-format.exe
 ./out/json-format.exe 8192 array
 ```
 
@@ -194,7 +194,7 @@ The timer surrounds the formatting call. Peak working set and peak commit
 cover the entire process, including input construction.
 
 ```powershell
-python benchmarks/json_format_profile.py --sdk before=C:/old/kinal-selfhost.exe --sdk after=C:/new/kinal-selfhost.exe --samples 9 --output json-format.csv
+python benchmarks/json_format_profile.py --sdk before=C:/old/kinal.exe --sdk after=C:/new/kinal.exe --samples 9 --output json-format.csv
 ```
 
 On Windows x64, formatting the escaped-string workload fell from 7.69 to
@@ -212,7 +212,7 @@ result matches. Pass the number of padding bytes, the operation (`prefix`,
 reported nanoseconds cover the entire loop.
 
 ```powershell
-out/selfhost/stage3/kinal-selfhost.exe build benchmarks/text_ranges.kn --no-module-discovery -o out/text-ranges.exe
+out/selfhost/stage3/kinal.exe build benchmarks/text_ranges.kn --no-module-discovery -o out/text-ranges.exe
 ./out/text-ranges.exe 524288 early
 ```
 
@@ -231,7 +231,7 @@ length and checks the final string. The split case checks the final list
 element by element, including the empty trailing field.
 
 ```powershell
-out/selfhost/stage3/kinal-selfhost.exe build benchmarks/text_search.kn --no-module-discovery -o out/text-search.exe
+out/selfhost/stage3/kinal.exe build benchmarks/text_search.kn --no-module-discovery -o out/text-search.exe
 ./out/text-search.exe periodic 32768 3
 ./out/text-search.exe replace 8192 5
 ```
@@ -253,7 +253,7 @@ the number of repetitions. Every seventh segment is `..`. The benchmark times
 the complete final path outside the timed loop.
 
 ```powershell
-out/selfhost/stage3/kinal-selfhost.exe build benchmarks/path_normalize.kn --no-module-discovery -o out/path-normalize.exe
+out/selfhost/stage3/kinal.exe build benchmarks/path_normalize.kn --no-module-discovery -o out/path-normalize.exe
 ./out/path-normalize.exe 600 50
 ```
 
@@ -271,7 +271,7 @@ iteration. It takes an existing disposable file and a repetition count, checks
 the final byte count and prints the time spent in the append loop in nanoseconds.
 
 ```powershell
-out/selfhost/stage3/kinal-selfhost.exe build benchmarks/file_append.kn --no-module-discovery -o out/file-append.exe
+out/selfhost/stage3/kinal.exe build benchmarks/file_append.kn --no-module-discovery -o out/file-append.exe
 $sample = New-TemporaryFile
 try {
     [IO.File]::WriteAllText($sample.FullName, ('x' * 1048576))
@@ -298,7 +298,7 @@ nanoseconds for the whole loop. This example reads a short header followed by
 4 MiB of text.
 
 ```powershell
-out/selfhost/stage3/kinal-selfhost.exe build benchmarks/file_first_line.kn --no-module-discovery -o out/file-first-line.exe
+out/selfhost/stage3/kinal.exe build benchmarks/file_first_line.kn --no-module-discovery -o out/file-first-line.exe
 $sample = New-TemporaryFile
 try {
     [IO.File]::WriteAllText($sample.FullName, "kinal-header`r`n" + ('x' * 4MB))
@@ -324,9 +324,9 @@ quarters of them in a fixed permutation, then checks every removed and
 remaining key. The duration printed is in nanoseconds.
 
 ```powershell
-out/selfhost/stage3/kinal-selfhost.exe build benchmarks/collection_remove.kn --no-module-discovery -o out/collection-remove.exe
+out/selfhost/stage3/kinal.exe build benchmarks/collection_remove.kn --no-module-discovery -o out/collection-remove.exe
 ./out/collection-remove.exe dict 4096
-out/selfhost/stage3/kinal-selfhost.exe vm build benchmarks/collection_remove.kn --no-module-discovery -o out/collection-remove.knc
+out/selfhost/stage3/kinal.exe vm build benchmarks/collection_remove.kn --no-module-discovery -o out/collection-remove.knc
 out/selfhost/stage3/kinalvm.exe out/collection-remove.knc set 4096
 ```
 
@@ -352,9 +352,9 @@ The timer includes allocation, appending, and the final `Build()`. Each run
 verifies every byte against a separately constructed string outside the timed loop.
 
 ```powershell
-kinal-selfhost build benchmarks/text_builder.kn --no-module-discovery -o out/text-builder.exe
+kinal build benchmarks/text_builder.kn --no-module-discovery -o out/text-builder.exe
 ./out/text-builder.exe 5000 builder
-kinal-selfhost vm build benchmarks/text_builder.kn --no-module-discovery -o out/text-builder.knc
+kinal vm build benchmarks/text_builder.kn --no-module-discovery -o out/text-builder.knc
 kinalvm out/text-builder.knc 5000 reserved
 ```
 
@@ -389,9 +389,9 @@ the VM concatenation time. [Raw samples and toolchain hashes](baselines/20261122
 program. It checks the complete result and checksum before printing nanoseconds.
 
 ```powershell
-kinal-selfhost build benchmarks/time_format.kn -o out/time-format.exe
+kinal build benchmarks/time_format.kn -o out/time-format.exe
 ./out/time-format.exe 30000 stamp
-kinal-selfhost vm build benchmarks/time_format.kn -o out/time-format.knc
+kinal vm build benchmarks/time_format.kn -o out/time-format.knc
 kinalvm out/time-format.knc 800 stamp
 ```
 
@@ -429,7 +429,7 @@ At 8,192 locals the compiler process used 123.25 → 124.03 MiB peak working set
 On the compiler's own project, median check time was 1,108 → 1,098 ms and COFF object generation was 5.312 → 5.323 s. The 22-kernel Full LTO build took 433 → 419 ms. Its executable was byte-identical to the one used in the previous four-language runtime comparison.
 
 ```powershell
-python benchmarks/compiler_roots.py --workload locals --sizes 64 1024 4096 8192 --compiler previous=C:/old-sdk/kinal-selfhost.exe --compiler new=out/selfhost/stage3/kinal-selfhost.exe --identical-artifacts --output out/compiler-locals.csv
+python benchmarks/compiler_roots.py --workload locals --sizes 64 1024 4096 8192 --compiler previous=C:/old-sdk/kinal.exe --compiler new=out/selfhost/stage3/kinal.exe --identical-artifacts --output out/compiler-locals.csv
 ```
 
 [Per-run compiler timings, memory and artifact hashes](baselines/20261122-compiler-lexical-scopes.csv) · [Real-project build samples](baselines/20261122-lexical-projects.csv)
@@ -451,7 +451,7 @@ Windows x64, i7-13700KF. Stage3 `4a34d055` → `4d32ed7b`. Six interleaved build
 
 The Native lexer copies short token spellings into 2 KiB blocks during full scans of larger sources. Each token keeps an interior string pointer. Long spellings have separate storage. Header probes and the VM use their existing paths. The CLI releases its token-list references after dependency resolution, before binding. Metrics and token dumps retain the lists they consume.
 
-Use `python benchmarks/compile_speed.py --projects --only compiler-ir --previous C:/previous/kinal-selfhost.exe --stage3 out/selfhost/stage3/kinal-selfhost.exe --project-rounds 6` for the whole-compiler IR case. [Per-build elapsed time, memory and artifact hashes](baselines/20261122-lexer-storage.csv)
+Use `python benchmarks/compile_speed.py --projects --only compiler-ir --previous C:/previous/kinal.exe --stage3 out/selfhost/stage3/kinal.exe --project-rounds 6` for the whole-compiler IR case. [Per-build elapsed time, memory and artifact hashes](baselines/20261122-lexer-storage.csv)
 
 ## Hosted collector address index
 
@@ -474,7 +474,7 @@ The build table compares complete SDKs over five measured rounds after warm-up. 
 | vm | 2,048 | 0.094 → 0.087 | 0.047 → 0.046 | 5.5 → 5.5 |
 | vm | 16,384 | 1.007 → 0.985 | 0.369 → 0.369 | 13.6 → 13.6 |
 
-Seven measured processes per size, backend and SDK after warm-up. The fixture validates every node between the two collections. Use `python benchmarks/heap_profile.py --workload vm_handles --sdk previous=C:/old-sdk/kinal-selfhost.exe --sdk new=out/selfhost/stage3/kinal-selfhost.exe --count 262144 --vm-count 16384 --repeat 7 --output objects.csv` to repeat the largest case. [Object timings and peak memory](baselines/20261122-native-gc-index-objects.csv)
+Seven measured processes per size, backend and SDK after warm-up. The fixture validates every node between the two collections. Use `python benchmarks/heap_profile.py --workload vm_handles --sdk previous=C:/old-sdk/kinal.exe --sdk new=out/selfhost/stage3/kinal.exe --count 262144 --vm-count 16384 --repeat 7 --output objects.csv` to repeat the largest case. [Object timings and peak memory](baselines/20261122-native-gc-index-objects.csv)
 
 ## Source scanning and literal recovery
 
@@ -495,7 +495,7 @@ The lexer tracks byte positions locally while reading comments and identifiers. 
 To run the parsing and semantic workloads from the compiler repository, use the two complete SDK installations and a fresh results directory.
 
 ```powershell
-python benchmarks/compile_speed.py --frontend-only --projects --only lexer-spans-1200,parser-tokens,compiler-ast,compiler-check --previous C:/previous/kinal-selfhost.exe --stage3 out/selfhost/stage3/kinal-selfhost.exe --rounds 8 --project-rounds 8
+python benchmarks/compile_speed.py --frontend-only --projects --only lexer-spans-1200,parser-tokens,compiler-ast,compiler-check --previous C:/previous/kinal.exe --stage3 out/selfhost/stage3/kinal.exe --rounds 8 --project-rounds 8
 ```
 
 [Times, compiler hashes, peak working sets and artifact hashes](baselines/20261122-lexer-spans.csv)
@@ -565,9 +565,9 @@ integer, keeps the list alive, and checks its contents after collection.
 `remove` repeatedly removes the middle element. To run the native and VM cases:
 
 ```powershell
-out/selfhost/stage3/kinal-selfhost.exe build benchmarks/list_release.kn --no-module-discovery -o out/list-release.exe
+out/selfhost/stage3/kinal.exe build benchmarks/list_release.kn --no-module-discovery -o out/list-release.exe
 ./out/list-release.exe clear 64
-out/selfhost/stage3/kinal-selfhost.exe vm build benchmarks/list_release.kn --no-module-discovery -o out/list-release.knc
+out/selfhost/stage3/kinal.exe vm build benchmarks/list_release.kn --no-module-discovery -o out/list-release.knc
 out/selfhost/stage3/kinalvm.exe out/list-release.knc remove 64
 ```
 
@@ -601,10 +601,10 @@ then verifies every requested row in reverse order. The count is the number of l
 rows to fill and verify. Use the same count for Native and VM when comparing them.
 
 ```powershell
-python benchmarks/heap_profile.py --sdk current=out/selfhost/stage3/kinal-selfhost.exe --output heap.csv
-python benchmarks/heap_profile.py --workload transient_arrays --count 4096 --vm-count 4096 --sdk current=out/selfhost/stage3/kinal-selfhost.exe --output arrays.csv
-python benchmarks/heap_profile.py --workload nested_arrays --count 16384 --vm-count 16384 --sdk current=out/selfhost/stage3/kinal-selfhost.exe --output nested.csv
-python benchmarks/heap_profile.py --workload typed_packages --count 16384 --vm-count 16384 --sdk current=out/selfhost/stage3/kinal-selfhost.exe --output packages.csv
+python benchmarks/heap_profile.py --sdk current=out/selfhost/stage3/kinal.exe --output heap.csv
+python benchmarks/heap_profile.py --workload transient_arrays --count 4096 --vm-count 4096 --sdk current=out/selfhost/stage3/kinal.exe --output arrays.csv
+python benchmarks/heap_profile.py --workload nested_arrays --count 16384 --vm-count 16384 --sdk current=out/selfhost/stage3/kinal.exe --output nested.csv
+python benchmarks/heap_profile.py --workload typed_packages --count 16384 --vm-count 16384 --sdk current=out/selfhost/stage3/kinal.exe --output packages.csv
 ```
 
 The [Windows x64 results](baselines/20261122-heap-objects.csv) contain seven
@@ -647,7 +647,7 @@ peak working sets were 9.28 MiB and 35.02 MiB respectively. [Typed Package sampl
 The phase comparison compiles one guest and interleaves old and new runners:
 
 ```powershell
-python benchmarks/vm_collection_profile.py --workload packages --sizes 1024 4096 16384 --repeat 7 --compiler out/selfhost/stage3/kinal-selfhost.exe --runner previous=C:/old-sdk/kinalvm.exe --runner new=out/selfhost/stage3/kinalvm.exe --output out/package-pages.csv
+python benchmarks/vm_collection_profile.py --workload packages --sizes 1024 4096 16384 --repeat 7 --compiler out/selfhost/stage3/kinal.exe --runner previous=C:/old-sdk/kinalvm.exe --runner new=out/selfhost/stage3/kinalvm.exe --output out/package-pages.csv
 ```
 
 At 16,384 entries the median time to populate, collect and verify fell from
@@ -691,7 +691,7 @@ conversion. The Windows harness compiles the guest once, interleaves both
 runners, drops one warm-up and records fresh-process memory high-water marks.
 
 ```powershell
-python benchmarks/vm_collection_profile.py --compiler out/selfhost/stage3/kinal-selfhost.exe --runner previous=previous/kinalvm.exe --runner updated=out/selfhost/stage3/kinalvm.exe --repeat 7 --output collections.csv
+python benchmarks/vm_collection_profile.py --compiler out/selfhost/stage3/kinal.exe --runner previous=previous/kinalvm.exe --runner updated=out/selfhost/stage3/kinalvm.exe --repeat 7 --output collections.csv
 ```
 
 Windows x64 medians for 16,384 elements, seven runs per runner:
@@ -714,7 +714,7 @@ case stores one shared object per array so object construction cannot dominate
 the array measurement.
 
 ```powershell
-python benchmarks/vm_collection_profile.py --workload array-init --compiler out/selfhost/stage3/kinal-selfhost.exe --runner previous=previous/kinalvm.exe --runner updated=out/selfhost/stage3/kinalvm.exe --arrays 3 --repeat 7 --output array-init.csv
+python benchmarks/vm_collection_profile.py --workload array-init --compiler out/selfhost/stage3/kinal.exe --runner previous=previous/kinalvm.exe --runner updated=out/selfhost/stage3/kinalvm.exe --arrays 3 --repeat 7 --output array-init.csv
 ```
 
 Windows x64 elapsed milliseconds per array, median of seven fresh processes
@@ -739,7 +739,7 @@ checks their values. A second collection runs after the frame that held the
 list has returned.
 
 ```powershell
-python benchmarks/vm_collection_profile.py --workload handles --compiler out/selfhost/stage3/kinal-selfhost.exe --runner previous=previous/kinalvm.exe --runner updated=out/selfhost/stage3/kinalvm.exe --repeat 7 --output handles.csv
+python benchmarks/vm_collection_profile.py --workload handles --compiler out/selfhost/stage3/kinal.exe --runner previous=previous/kinalvm.exe --runner updated=out/selfhost/stage3/kinalvm.exe --repeat 7 --output handles.csv
 ```
 
 Windows x64 medians from seven fresh processes per runner and size, after one

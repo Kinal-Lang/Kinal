@@ -182,7 +182,7 @@ def benchmark(directory, rows, cases, settings):
 def kinal_variants(src, builds):
     stages = ROOT.parent / "out" / "selfhost"
     stage0 = Path(os.environ.get("KINAL_STAGE0", stages / "stage0-host" / "kinal.exe")).resolve()
-    stage3 = Path(os.environ.get("KINAL_STAGE3", stages / "stage3" / "kinal-selfhost.exe")).resolve()
+    stage3 = Path(os.environ.get("KINAL_STAGE3", stages / "stage3" / "kinal.exe")).resolve()
     rows = []
     for name, compiler in (("kinal-c", stage0), ("kinal-self", stage3)):
         for lto in (False, True):

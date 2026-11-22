@@ -22,7 +22,7 @@ class CiWorkflowTriggerTests(unittest.TestCase):
         self.assertIn('  push:\n    branches: [main, dev, "release/**"]\n', text)
         self.assertIn('  workflow_dispatch:\n', text)
         self.assertIn('selfhost-bootstrap --stage0-bundle', text)
-        self.assertIn('out/selfhost/stage3/kinal-selfhost', text)
+        self.assertIn('out/selfhost/stage3/kinal', text)
         self.assertNotIn('python x.py dist', text)
 
 

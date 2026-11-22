@@ -1,4 +1,4 @@
-name: Selfhost release
+name: Release
 
 on:
   push:
@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       run_id:
-        description: Successful Selfhost CI run for this commit (empty selects automatically)
+        description: Successful CI run for this commit (empty selects automatically)
         type: string
         required: false
       publish:
@@ -15,7 +15,7 @@ on:
         default: false
 
 concurrency:
-  group: selfhost-release-${{ github.sha }}
+  group: release-${{ github.sha }}
   cancel-in-progress: false
 
 permissions:

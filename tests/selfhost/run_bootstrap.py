@@ -96,13 +96,13 @@ def main() -> int:
             if directory.exists():
                 shutil.rmtree(directory)
 
-    suffix = ".exe" if (out / "stage1" / "kinal-selfhost.exe").is_file() else ""
+    suffix = ".exe" if (out / "stage1" / "kinal.exe").is_file() else ""
     project = root / "apps" / "kinal-selfhost" / "kinal.knproj"
-    stages: dict[int, Path] = {1: out / "stage1" / f"kinal-selfhost{suffix}"}
+    stages: dict[int, Path] = {1: out / "stage1" / f"kinal{suffix}"}
     require(stages[1].is_file(), f"stage1 compiler is missing: {stages[1]}")
 
     for stage in range(2, args.max_stage + 1):
-        destination = out / f"stage{stage}" / f"kinal-selfhost{suffix}"
+        destination = out / f"stage{stage}" / f"kinal{suffix}"
         print(f"[Bootstrap] build stage{stage} with stage{stage - 1}", flush=True)
         build_next_stage(stages[stage - 1], destination, project, root)
         stages[stage] = destination

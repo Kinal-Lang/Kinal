@@ -86,7 +86,7 @@ class VmVersionMetadataTests(unittest.TestCase):
 
     def test_selfhost_vm_build_refreshes_metadata_without_stage0_callback(self):
         events = []
-        compiler = Path("/isolated/selfhost/kinal-selfhost")
+        compiler = Path("/isolated/selfhost/kinal")
         with patch.object(selfhost_ops, "generate_kinalvm_build_info",
                           side_effect=lambda: events.append("generate")), \
              patch.object(selfhost_ops, "run", side_effect=lambda *a, **kw: events.append("build")) as run:

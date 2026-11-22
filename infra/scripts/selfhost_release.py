@@ -83,7 +83,7 @@ def package() -> None:
     version = read_version()
     stages = ROOT / "out/selfhost"
     stage = stages / "stage3"
-    compiler = stage / exe_name("kinal-selfhost")
+    compiler = stage / exe_name("kinal")
     report = json.loads((stages / "bootstrap-report.json").read_text(encoding="utf-8"))
     check_host_binary(compiler, host)
     digest = sha256_file(compiler)
@@ -96,7 +96,6 @@ def package() -> None:
             shutil.copytree(stage / name, sdk / name, copy_function=link_or_copy)
         for source in (compiler, stage / exe_name("kinalvm"), stage / "VERSION", *stage.glob("*.dll")):
             link_or_copy(source, sdk / source.name)
-        link_or_copy(compiler, sdk / exe_name("kinal"))
         shutil.copy2(find_artifact(ROOT / "out/lsp", exe_name("kinal-lsp-server")), sdk)
         for name in ("LICENSE.txt", "README.md", "README.zh-CN.md"):
             shutil.copy2(ROOT / name, sdk)
@@ -142,11 +141,11 @@ def resolve_run() -> None:
             run_id = run["id"]
             jobs = api(f"actions/runs/{run_id}/jobs?per_page=100")["jobs"]
             passed = {job["name"] for job in jobs if job["conclusion"] == "success"}
-            if all(host + " selfhost" in passed for host in HOSTS):
+            if all(host in passed for host in HOSTS):
                 with Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as out:
                     print(f"run_id={run_id}", f"tag={tag}", sep="\n", file=out)
                 return
-    raise SystemExit(f"No successful six-host Selfhost CI run for {branch} at {sha}")
+    raise SystemExit(f"No successful six-host CI run for {branch} at {sha}")
 
 
 def verify_assets(directory: Path) -> None:

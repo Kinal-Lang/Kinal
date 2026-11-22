@@ -41,7 +41,7 @@ def selfhost_stage1_dir() -> Path:
 
 
 def selfhost_stage1_exe() -> Path:
-    return selfhost_stage1_dir() / exe_name("kinal-selfhost")
+    return selfhost_stage1_dir() / exe_name("kinal")
 
 
 def selfhost_test_dir() -> Path:
