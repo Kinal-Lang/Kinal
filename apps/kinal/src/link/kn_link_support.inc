@@ -132,7 +132,18 @@ static int kn_write_text_file(const char *path, const char *text)
 static int kn_get_exe_path(char *out, size_t cap)
 {
     if (!out || cap == 0) return 0;
-#if !defined(_WIN32) && !defined(_WIN64)
+#if defined(__APPLE__)
+    char raw[PATH_MAX];
+    char resolved[PATH_MAX];
+    uint32_t size = sizeof(raw);
+    if (_NSGetExecutablePath(raw, &size) == 0 && realpath(raw, resolved))
+    {
+        size_t length = kn_strlen(resolved);
+        if (length >= cap) return 0;
+        kn_memcpy(out, resolved, length + 1);
+        return 1;
+    }
+#elif !defined(_WIN32) && !defined(_WIN64)
     {
         long n = readlink("/proc/self/exe", out, cap - 1);
         if (n > 0) { out[n] = 0; return 1; }
