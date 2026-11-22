@@ -1,5 +1,7 @@
 # Build Guide
 
+The 1.x SDK builds from a pinned 0.10.0 seed using `python x.py selfhost-bootstrap --stage0-bundle <sdk>`. The resulting public compiler is stage3. See the [release process](releasing.md) for convergence checks and packaging. The CMake and `x.py dist` commands below also support the C maintenance toolchain.
+
 ## Prerequisites
 
 - Python 3.10+

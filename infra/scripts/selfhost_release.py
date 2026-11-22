@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import struct
 import subprocess
 import tempfile
 
@@ -13,6 +14,24 @@ from .release_assets import prepare_assets
 from .x.context import LOCALES_DIR, ROOT, exe_name, host_tag, read_version
 from .x.release_ops import sha256_file
 from .x.util import extract_zip_safely, find_artifact
+
+
+def check_host_binary(path: Path, host: str) -> None:
+    family, arch = host.split("-")
+    with path.open("rb") as binary:
+        header = binary.read(64)
+        if family == "win" and header[:2] == b"MZ":
+            binary.seek(struct.unpack_from("<I", header, 60)[0])
+            signature, machine = struct.unpack("<4sH", binary.read(6))
+            if signature == b"PE\0\0" and machine == {"x64": 0x8664, "arm64": 0xAA64}[arch]:
+                return
+        elif family == "linux" and header[:6] == b"\x7fELF\x02\x01":
+            if struct.unpack_from("<H", header, 18)[0] == {"x64": 62, "arm64": 183}[arch]:
+                return
+        elif family == "macos" and header[:4] == bytes.fromhex("cffaedfe"):
+            if struct.unpack_from("<I", header, 4)[0] == {"x64": 0x1000007, "arm64": 0x100000C}[arch]:
+                return
+    raise SystemExit(f"Unexpected executable architecture in {path.name} for {host}")
 
 
 def extract_seed(download: Path, tag: str, host: str, destination: Path) -> None:
@@ -29,6 +48,7 @@ def extract_seed(download: Path, tag: str, host: str, destination: Path) -> None
         bundle = Path(tmp) / name
         if not (bundle / exe_name("kinal")).is_file():
             raise SystemExit(f"Missing bootstrap compiler in {archive.name}")
+        check_host_binary(bundle / ("kinal.bin" if host.startswith("linux-") else exe_name("kinal")), host)
         bundle.rename(destination)
 
 
@@ -65,6 +85,7 @@ def package() -> None:
     stage = stages / "stage3"
     compiler = stage / exe_name("kinal-selfhost")
     report = json.loads((stages / "bootstrap-report.json").read_text(encoding="utf-8"))
+    check_host_binary(compiler, host)
     digest = sha256_file(compiler)
     if digest != report["compiler_sha256"]["3"] or digest != report["compiler_sha256"]["2"]:
         raise SystemExit("Stage3 compiler does not match the verified bootstrap")

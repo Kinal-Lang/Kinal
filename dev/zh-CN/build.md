@@ -1,5 +1,7 @@
 # 构建指南
 
+1.x SDK 以固定的 0.10.0 发行包为种子，使用 `python x.py selfhost-bootstrap --stage0-bundle <sdk>` 构建 stage3 编译器。收敛检查和打包步骤见[发行流程](releasing.md)。下文中的 CMake 和 `x.py dist` 命令也用于维护 C 工具链。
+
 ## 前置依赖
 
 - Python 3.10+
