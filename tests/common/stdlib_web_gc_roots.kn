@@ -2,7 +2,6 @@ Unit Tests.StdlibWebGcRoots;
 
 Get IO.Console;
 Get IO.GC;
-Get IO.Time;
 Get IO.Web;
 
 Public Class Controller
@@ -42,14 +41,10 @@ Public Class Controller
 Trusted Static Function int Main()
 {
     IO.Web.Server server = New IO.Web.Server(18084, "127.0.0.1");
-    int waits = 0;
 
     server.RefreshRoutes().UseRoutes().Start();
-    While (Controller.Hits < 2 && waits < 200)
-    {
-        IO.Time.Sleep(10);
-        waits++;
-    }
+    // The test client acknowledges after it has read both response bodies.
+    IO.Console.ReadLine();
     server.Stop();
 
     IO.Console.PrintLine(Controller.Hits == 2);

@@ -3,6 +3,7 @@ Unit IO.Kinal.Compiler.Syntax.SyntaxTree;
 Get IO.Kinal.Compiler.Source.SourceFile;
 Get IO.Kinal.Compiler.Lex.TokenKind;
 Get IO.Kinal.Compiler.Syntax.Nodes;
+Get IO.Text;
 
 Class ImportDecl
 {
@@ -12,6 +13,8 @@ Class ImportDecl
     Public int Column;
     // 0=Get, 1=Get alias, 2=selective Get, 3=Alias declaration.
     Public int Kind;
+    Public string ScopedName;
+    Public string BoundTarget;
     Public ImportDecl Next;
 
     Public Safe Constructor(string name, string target, int line, int column)
@@ -186,6 +189,10 @@ Class FunctionDecl
     Public string Abi;
     Public int Line;
     Public int Column;
+    Public int StartLine;
+    Public int StartColumn;
+    Public int EndLine;
+    Public int EndColumn;
     Public ParameterDecl FirstParameter;
     Public ParameterDecl LastParameter;
     Public TypeParameterDecl FirstTypeParameter;
@@ -213,6 +220,10 @@ Class FunctionDecl
         This.Abi = "Kinal";
         This.Line = line;
         This.Column = column;
+        This.StartLine = line;
+        This.StartColumn = column;
+        This.EndLine = line;
+        This.EndColumn = column;
         This.FirstParameter = null;
         This.LastParameter = null;
         This.FirstTypeParameter = null;
@@ -464,6 +475,8 @@ Class SyntaxTree
     Public string UnitName;
     Public ImportDecl FirstImport;
     Public ImportDecl LastImport;
+    Public dict Aliases;
+    Public bool HasSymbolAliases;
     Public MetaDecl FirstMeta;
     Public MetaDecl LastMeta;
     Public FieldDecl FirstGlobal;
@@ -505,6 +518,12 @@ Class SyntaxTree
 
     Public Safe Function void AddImport(ImportDecl value)
     {
+        If (value.Kind == 1 || value.Kind == 3)
+        {
+            If (This.Aliases == null) This.Aliases = dict.Create();
+            If (!This.Aliases.Contains(value.Name)) This.Aliases.Set(value.Name, value);
+            If (value.Kind == 3) This.HasSymbolAliases = true;
+        }
         If (This.FirstImport == null)
         {
             This.FirstImport = value;
@@ -515,6 +534,32 @@ Class SyntaxTree
             This.LastImport.Next = value;
             This.LastImport = value;
         }
+    }
+
+    // Keep module qualifiers intact for type lookup so ResolveType checks visibility.
+    Public Safe Function string ExpandAliases(string path, bool resolveImports)
+    {
+        If (This.Aliases == null) Return path;
+        int remaining = This.Aliases.Count();
+        While (true)
+        {
+            int dot = IO.Text.IndexOf(path, ".");
+            string head = dot < 0 ? path : IO.Text.Slice(path, 0, dot);
+            ImportDecl alias = [ImportDecl](This.Aliases.TryFetch(head, null));
+            If (alias == null || (!resolveImports && alias.Kind != 3)) Return path;
+            string suffix = dot < 0 ? "" : IO.Text.Slice(path, dot, IO.Text.Length(path) - dot);
+            If (resolveImports && alias.BoundTarget != null) Return alias.BoundTarget + suffix;
+            If (alias.Kind == 1 && alias.Name == alias.Target) Return path;
+            If (IO.Text.StartsWith(alias.Target, alias.Name + "."))
+            {
+                If (path == alias.Target || IO.Text.StartsWith(path, alias.Target + ".")) Return path;
+                Return alias.Target + suffix;
+            }
+            If (remaining == 0) Return "";
+            remaining--;
+            path = alias.Target + suffix;
+        }
+        Return "";
     }
 
     Public Safe Function void AddMeta(MetaDecl value)

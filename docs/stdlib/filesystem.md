@@ -1,218 +1,106 @@
-# IO.File — File Operations
+# IO.File and IO.Directory
 
-`IO.File` provides basic operations for reading, writing, creating, deleting, and copying files. All path parameters are strings.
+These IO.Core units provide text-file operations and directory discovery. Import each Unit you use. Their source implementations are Trusted, and Safe callers may use their public interface. KinalVM follows Native semantics for file append and optional reads, including a null result from `ReadIfExists` when the file is missing.
 
-## Import
+## Complete IO.File API
+
+All paths are string parameters. Text operations use NUL-terminated text, not an arbitrary binary-buffer interface.
+
+| Function | Result | Behavior |
+|----------|--------|----------|
+| `Exists(string path)` | `bool` | Check file existence |
+| `Create(string path)` | `bool` | Create/truncate |
+| `Touch(string path)` | `bool` | Create if needed without truncating existing content |
+| `ReadAllText(string path)` | `string` | Read text; current failure fallback is empty text |
+| `ReadFirstLine(string path)` | `string` | Read through the first LF, NUL, or end of file. Discard the terminator and one trailing CR. Returns an empty string on failure. |
+| `ReadIfExists(string path)` | `string` | Return null when absent; otherwise read |
+| `ReadOrDefault(string path, string fallback)` | `string` | Use fallback when absent |
+| `ReadOr(string path, string fallback)` | `string` | Alias of ReadOrDefault |
+| `WriteAllText(string path, string text)` | `bool` | Overwrite with text |
+| `AppendAllText(string path, string text)` | `bool` | Append at end of file, creating it if missing. Null and empty text append zero bytes. |
+| `AppendLine(string path, string text)` | `bool` | Append the text followed by one LF. Null and empty text each append a bare LF. |
+| `Delete(string path)` | `bool` | Attempt file deletion |
+| `DeleteIfExists(string path)` | `bool` | True if absent or deletion succeeds |
+| `Size(string path)` | `int` | Byte size; -1 on failure |
+| `IsEmpty(string path)` | `bool` | Whether Size is exactly zero |
+| `Copy(string source, string destination)` | `bool` | Copy a file |
+| `Move(string source, string destination)` | `bool` | Move/rename a file |
+| `ReplaceText(string path, string from, string to)` | `bool` | Replace text and rewrite; false if source file is absent |
+| `ReadLines(string path)` | `list` | Read text and apply IO.Text.Lines |
+| `WriteLines(string path, list lines)` | `bool` | Join with LF and write; no implicit final LF |
+
+Check bool results; returning false is not a caught exception. `ReadAllText` returning empty does not distinguish a valid empty file from every failure. `ReadIfExists`/ReadOr only guard existence, not permissions or races after the check. `Size == -1` is not an empty file.
+
+`ReadFirstLine` reads in blocks of up to 4 KiB. Its memory use follows the length of the first line, even when a large file follows it. An interior CR and an initial UTF-8 BOM are preserved. On a pipe, the call can return at LF or NUL while the writer is still open. Bytes following the terminator in the same block have already been consumed from the pipe.
+
+Native and KinalVM use the operating system's append mode. An append preserves every existing byte, including embedded NULs, and needs write access only. Its memory use is independent of the existing file size. On local filesystems that support concurrent append, the OS places each write at the current end of the file. A large payload can require several writes, allowing another writer's data between chunks. A write failure can leave a partial append. To create missing parent directories, call `IO.Directory.Ensure` first.
+
+## Complete IO.Directory API
+
+Native and KinalVM support all six directory operations. `Files(path, recursive)` returns a sorted list of file paths. Pass `true` to include files in subdirectories. Windows directory queries accept UTF-8 paths and drive roots.
 
 ```kinal
-Get IO.File;
+Get IO.Directory;
 ```
 
----
+| Function | Result | Behavior |
+|----------|--------|----------|
+| `Exists(string path)` | `bool` | Check directory existence |
+| `Create(string path)` | `bool` | Create one directory level |
+| `Ensure(string path)` | `bool` | Create the directory and missing parents |
+| `Delete(string path)` | `bool` | Delete an empty directory |
+| `DeleteIfExists(string path)` | `bool` | True if absent or empty-directory deletion succeeds |
+| `Files(string path, bool recursive)` | `list` | Regular file paths in stable ordinal order |
 
-## Function Reference
+Files returns an empty list if the directory cannot be opened. False recursion includes direct regular files; true descends through ordinary subdirectories. Directory symlinks/reparse points are not followed. Empty/unreadable discovery is not a permission-diagnostic API. Delete does not recursively delete a nonempty tree.
 
-### Checking and Metadata
+## Complete Text Round Trip
 
-| Function | Signature | Description |
-|----------|-----------|-------------|
-| `Exists(path)` | `string → bool` | Whether the file exists |
-| `Size(path)` | `string → int` | File size in bytes |
-| `IsEmpty(path)` | `string → bool` | Whether the file content is empty |
-
-```kinal
-If (IO.File.Exists("config.json"))
-{
-    int size = IO.File.Size("config.json");
-    IO.Console.PrintLine(size);
-}
-```
-
-### Creating
-
-| Function | Signature | Description |
-|----------|-----------|-------------|
-| `Create(path)` | `string → void` | Create a file (clears it if it already exists) |
-| `Touch(path)` | `string → void` | Create a file (does not modify content if it already exists) |
+This example uses a dedicated scratch directory in the working directory. Run it where creating these example files is appropriate:
 
 ```kinal
-IO.File.Create("output.txt");        // Clear or create new
-IO.File.Touch("log.txt");            // Just ensure the file exists
-```
-
-### Reading
-
-| Function | Signature | Description |
-|----------|-----------|-------------|
-| `ReadAllText(path)` | `string → string` | Read all content |
-| `ReadFirstLine(path)` | `string → string` | Read the first line |
-| `ReadIfExists(path)` | `string → string` | Read if file exists, otherwise return `null` |
-| `ReadOrDefault(path, default)` | `string, string → string` | Read if file exists, otherwise return the default value |
-| `ReadOr(path, default)` | `string, string → string` | Same as `ReadOrDefault` (alias) |
-| `ReadLines(path)` | `string → list` | Read by lines, returns a `list` |
-
-```kinal
-string content = IO.File.ReadAllText("hello.txt");
-
-string first = IO.File.ReadFirstLine("data.csv");
-
-string cfg = IO.File.ReadOrDefault("config.json", "{}");
-
-list lines = IO.File.ReadLines("names.txt");
-int lineCount = IO.Collection.list.Count(lines);
-```
-
-### Writing
-
-| Function | Signature | Description |
-|----------|-----------|-------------|
-| `WriteAllText(path, text)` | `string, string → void` | Overwrite and write all content |
-| `AppendAllText(path, text)` | `string, string → void` | Append text to end of file |
-| `AppendLine(path, line)` | `string, string → void` | Append a line (automatically adds a newline) |
-| `WriteLines(path, lines)` | `string, list → void` | Write each element in the list as a line |
-
-```kinal
-IO.File.WriteAllText("out.txt", "Hello, Kinal!\n");
-
-IO.File.AppendLine("log.txt", "New event occurred");
-
-list lines = IO.Collection.list.Create();
-IO.Collection.list.Add(lines, "line1");
-IO.Collection.list.Add(lines, "line2");
-IO.File.WriteLines("data.txt", lines);
-```
-
-### Management Operations
-
-| Function | Signature | Description |
-|----------|-----------|-------------|
-| `Delete(path)` | `string → void` | Delete a file (throws an exception if it does not exist) |
-| `DeleteIfExists(path)` | `string → void` | Delete the file if it exists (silent if it does not) |
-| `Copy(src, dst)` | `string, string → void` | Copy a file |
-| `Move(src, dst)` | `string, string → void` | Move/rename a file |
-
-```kinal
-IO.File.Copy("template.txt", "output.txt");
-IO.File.Move("old_name.txt", "new_name.txt");
-IO.File.DeleteIfExists("temp.tmp");
-```
-
----
-
-## IO.Directory
-
-`IO.Directory` provides directory lifecycle operations and deterministic file discovery.
-
-| Function | Signature | Description |
-|----------|-----------|-------------|
-| `Exists(path)` | `string → bool` | Whether the directory exists |
-| `Create(path)` | `string → bool` | Create one directory level |
-| `Ensure(path)` | `string → bool` | Create the directory and missing parents |
-| `Delete(path)` | `string → bool` | Delete an empty directory |
-| `DeleteIfExists(path)` | `string → bool` | Delete an empty directory when present |
-| `Files(path, recursive)` | `string, bool → list` | Return regular file paths in stable ordinal order |
-
-`Files` returns an empty list when the directory cannot be opened. With `recursive = false`, it only includes files directly under `path`; with `true`, it descends into ordinary subdirectories. Directory links and Windows reparse points are not followed.
-
-```kinal
+Unit Docs.Files;
 Get IO.Console;
+Get IO.File;
 Get IO.Directory;
 Get IO.Path;
 
-list files = IO.Directory.Files("src", true);
-int i = 0;
-While (i < files.Count())
-{
-    string file = [string](files.Fetch(i));
-    IO.Console.PrintLine(IO.Path.FileName(file));
-    i = i + 1;
-}
-```
-
----
-
-## Complete Examples
-
-### Read and Process CSV
-
-```kinal
-Unit App.FileDemo;
-
-Get IO.Console;
-Get IO.File;
-Get IO.Text;
-Get IO.Collection;
-
 Static Function int Main()
 {
-    string csvPath = "data.csv";
+    string directory = "docs_files_example";
+    If (!IO.Directory.Ensure(directory)) { Return 1; }
+    string path = IO.Path.Combine(directory, "message.txt");
+    If (!IO.File.WriteAllText(path, "Hello, Kinal!\n")) { Return 2; }
 
-    If (!IO.File.Exists(csvPath))
-    {
-        IO.Console.PrintLine("File not found");
-        Return 1;
-    }
-
-    list lines = IO.File.ReadLines(csvPath);
-    int total = IO.Collection.list.Count(lines);
-    IO.Console.PrintLine([string](total) + " rows of data");
-
-    int i = 0;
-    While (i < total)
-    {
-        string line = [string](IO.Collection.list.Fetch(lines, i));
-        list fields = IO.Text.Split(line, ",");
-        IO.Console.PrintLine(IO.Collection.list.Fetch(fields, 0));
-        i = i + 1;
-    }
-
+    IO.Console.PrintLine(IO.File.ReadFirstLine(path));
+    IO.Console.PrintLine(IO.File.Size(path) > 0);
+    IO.Console.PrintLine(IO.Directory.Files(directory, false).Count());
+    IO.Console.PrintLine(IO.File.DeleteIfExists(path));
+    IO.Directory.Delete(directory);
     Return 0;
 }
 ```
 
-### Write a Log File
+On a fresh scratch directory:
 
-```kinal
-Unit App.Logger;
-
-Get IO.File;
-Get IO.Time;
-
-Static Function void Log(string message)
-{
-    string ts = IO.Time.Format(IO.Time.Now(), "yyyy-MM-dd HH:mm:ss");
-    IO.File.AppendLine("app.log", "[" + ts + "] " + message);
-}
+```text
+Hello, Kinal!
+true
+1
+true
 ```
 
----
+For a text table, ReadLines/Split can help with simple delimiter-separated data. Splitting on commas alone is not a complete CSV parser: quoted commas, escaped quotes and embedded newlines need a real parser.
 
-## Exceptions
+## Paths, Encoding and Backend Limits
 
-The following conditions throw an `IO.Error` exception:
+Relative paths are relative to the program's working directory, not automatically to its source file or `.knproj`. Use IO.Path for target path policy. Native Windows host boundaries currently use ANSI-facing APIs in several paths; UTF-8 source literals do not establish universal Unicode-path support.
 
-- `ReadAllText`/`ReadLines` etc.: File does not exist
-- `Delete`: File does not exist
-- `WriteAllText`/`AppendLine` etc.: Path is not writable (insufficient permissions, directory does not exist)
-
-### Defensive Pattern
-
-```kinal
-Try
-{
-    string content = IO.File.ReadAllText("data.txt");
-    IO.Console.PrintLine(content);
-} Catch IO.Error e
-{
-    IO.Console.PrintLine("Read failed: " + e.Message);
-}
-```
-
----
+In KinalVM, pass the result of `IO.File.ReadLines(path)` directly to `IO.Text.Join(lines, separator)`, or write a list of lines with `IO.File.WriteLines(path, lines)`.
 
 ## See Also
 
-- [IO.Path](path.md) — Path joining and operations
-- [IO.Text](text.md) — Text content processing
-- [IO.System](system.md) — File existence checks and process-level helpers
-- [Exception Handling](../language/exceptions.md) — Try/Catch
+- [IO.Path](path.md)
+- [IO.Text](text.md)
+- [IO.System](system.md)
+- [Memory and Lifetimes](../advanced/memory-management.md)

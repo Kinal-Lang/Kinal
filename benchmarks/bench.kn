@@ -1,0 +1,580 @@
+Unit Bench.Suite;
+Get Console By IO.Console;
+Get IO.Runtime;
+
+Extern Function int fflush(void* stream) By C;
+Extern Function int getchar() By C;
+
+Trusted Function void FlushOutput() {
+    If (!IO.Runtime.IsVM) fflush(null);
+}
+
+Trusted Function int ReadNumber() {
+    If (IO.Runtime.IsVM) Return [int](Console.ReadLine());
+    Else {
+        int ch=getchar();
+        While (ch>=0 && ch<=32) { ch=getchar(); }
+        int sign=1;
+        If (ch==45) { sign=-1; ch=getchar(); }
+        int value=0;
+        While (ch>=48 && ch<=57) { value=value*10+ch-48; ch=getchar(); }
+        Return sign*value;
+    }
+}
+
+Static Function void PrintFloat(f64 value) {
+    string sign="";
+    If (value<0.0) { sign="-"; value=0.0-value; }
+    int whole=[int](value);
+    int fraction=[int]((value-[f64](whole))*1000000000000.0);
+    string digits=[string](fraction);
+    While (digits.Length()<12) { digits="0"+digits; }
+    Console.PrintLine(sign+[string](whole)+"."+digits);
+}
+Static Function int lcg(int n, int seed) {
+    int x = seed;
+    int i = 0;
+    While (i < n) {
+        x = (((x * 25173) + 13849) % 65521);
+        i = (i + 1);
+    }
+    Return x;
+}
+
+Static Function int branch(int n, int seed) {
+    int x = seed;
+    int total = 0;
+    int i = 0;
+    While (i < n) {
+        x = (((x * 25173) + 13849) % 65521);
+        If ((x % 3) == 0) {
+            total = (total + x);
+        } Else {
+            If ((x % 3) == 1) {
+                total = (total - x);
+            } Else {
+                total = (total + (x / 2));
+            }
+        }
+        i = (i + 1);
+    }
+    Return total;
+}
+
+Static Function int gcd_batch(int n, int seed) {
+    int total = 0;
+    int i = 1;
+    While (i <= n) {
+        int a = ((i * 97) + seed);
+        int b = ((i * 31) + 7);
+        While (b != 0) {
+            int temp = (a % b);
+            a = b;
+            b = temp;
+        }
+        total = (total + a);
+        i = (i + 1);
+    }
+    Return total;
+}
+
+Static Function int primes(int n, int seed) {
+    int count = 0;
+    int x = 2;
+    While (x < (n + seed)) {
+        int d = 2;
+        int prime = 1;
+        While ((d * d) <= x) {
+            If ((x % d) == 0) {
+                prime = 0;
+                Break;
+            }
+            d = (d + 1);
+        }
+        count = (count + prime);
+        x = (x + 1);
+    }
+    Return count;
+}
+
+Static Function int fib(int n) {
+    If (n < 2) {
+        Return n;
+    }
+    Return (fib((n - 1)) + fib((n - 2)));
+}
+
+Static Function int fibonacci(int n, int seed) {
+    Return fib((n + (seed % 2)));
+}
+
+Static Function int sieve(int n, int seed) {
+    int[32768] a;
+    int i = 2;
+    While ((i * i) < n) {
+        If (a[i] == 0) {
+            int j = (i * i);
+            While (j < n) {
+                a[j] = 1;
+                j = (j + i);
+            }
+        }
+        i = (i + 1);
+    }
+    int count = seed;
+    i = 2;
+    While (i < n) {
+        If (a[i] == 0) {
+            count = (count + 1);
+        }
+        i = (i + 1);
+    }
+    Return count;
+}
+
+Static Function int array_scan(int n, int seed) {
+    int[32768] a;
+    int i = 0;
+    While (i < n) {
+        a[i] = (((i * 31) + seed) % 1009);
+        i = (i + 1);
+    }
+    int total = 0;
+    int p = 0;
+    While (p < 8) {
+        i = 0;
+        While (i < n) {
+            total = (total + a[i]);
+            i = (i + 1);
+        }
+        p = (p + 1);
+    }
+    Return total;
+}
+
+Static Function int array_stride(int n, int seed) {
+    int[32768] a;
+    int i = 0;
+    While (i < n) {
+        a[i] = (((i * 31) + seed) % 1009);
+        i = (i + 1);
+    }
+    int total = 0;
+    int idx = 0;
+    i = 0;
+    While (i < (n * 8)) {
+        idx = ((idx + 8191) % n);
+        total = (total + a[idx]);
+        i = (i + 1);
+    }
+    Return total;
+}
+
+Static Function int heap_sort(int n, int seed) {
+    int[8192] a;
+    int x = seed;
+    int i = 0;
+    While (i < n) {
+        x = (((x * 25173) + 13849) % 65521);
+        a[i] = x;
+        i = (i + 1);
+    }
+    int start = ((n / 2) - 1);
+    int end = (n - 1);
+    While (end > 0) {
+        int root = 0;
+        If (start >= 0) {
+            root = start;
+            start = (start - 1);
+        } Else {
+            int temp = a[0];
+            a[0] = a[end];
+            a[end] = temp;
+            end = (end - 1);
+        }
+        While (((root * 2) + 1) <= end) {
+            int child = ((root * 2) + 1);
+            If ((child + 1) <= end) {
+                If (a[child] < a[(child + 1)]) {
+                    child = (child + 1);
+                }
+            }
+            If (a[root] < a[child]) {
+                int temp2 = a[root];
+                a[root] = a[child];
+                a[child] = temp2;
+                root = child;
+            } Else {
+                Break;
+            }
+        }
+    }
+    int total = 0;
+    i = 0;
+    While (i < n) {
+        total = ((total + (a[i] * (i + 1))) % 1000000007);
+        i = (i + 1);
+    }
+    Return total;
+}
+
+Static Function int binary_search(int n, int seed) {
+    int[32768] a;
+    int i = 0;
+    While (i < n) {
+        a[i] = (i * 2);
+        i = (i + 1);
+    }
+    int total = 0;
+    int q = 0;
+    int x = seed;
+    While (q < 4000) {
+        x = (((x * 25173) + 13849) % 65521);
+        int lo = 0;
+        int hi = (n - 1);
+        int found = (-1);
+        While (lo <= hi) {
+            int mid = ((lo + hi) / 2);
+            If (a[mid] == x) {
+                found = mid;
+                Break;
+            }
+            If (a[mid] < x) {
+                lo = (mid + 1);
+            } Else {
+                hi = (mid - 1);
+            }
+        }
+        total = (total + found);
+        q = (q + 1);
+    }
+    Return total;
+}
+
+Static Function int matrix_int(int n, int seed) {
+    int[4096] a;
+    int[4096] b;
+    int i = 0;
+    While (i < (n * n)) {
+        a[i] = ((i + seed) % 17);
+        b[i] = (((i * 3) + seed) % 19);
+        i = (i + 1);
+    }
+    int total = 0;
+    i = 0;
+    While (i < n) {
+        int j = 0;
+        While (j < n) {
+            int cell = 0;
+            int k = 0;
+            While (k < n) {
+                cell = (cell + (a[((i * n) + k)] * b[((k * n) + j)]));
+                k = (k + 1);
+            }
+            total = (total + cell);
+            j = (j + 1);
+        }
+        i = (i + 1);
+    }
+    Return total;
+}
+
+Static Function f64 matrix_float(int n, int seed) {
+    f64[4096] a;
+    f64[4096] b;
+    int i = 0;
+    While (i < (n * n)) {
+        a[i] = ([f64](((i + seed) % 17)) / 17.00000000000000000);
+        b[i] = ([f64]((((i * 3) + seed) % 19)) / 19.00000000000000000);
+        i = (i + 1);
+    }
+    f64 total = 0.00000000000000000;
+    i = 0;
+    While (i < n) {
+        int j = 0;
+        While (j < n) {
+            f64 cell = 0.00000000000000000;
+            int k = 0;
+            While (k < n) {
+                cell = (cell + (a[((i * n) + k)] * b[((k * n) + j)]));
+                k = (k + 1);
+            }
+            total = (total + cell);
+            j = (j + 1);
+        }
+        i = (i + 1);
+    }
+    Return total;
+}
+
+Static Function int mandelbrot(int n, int seed) {
+    int total = 0;
+    int y = 0;
+    While (y < n) {
+        int x = 0;
+        While (x < n) {
+            f64 cr = ((([f64](x) * 3.00000000000000000) / [f64](n)) - 2.00000000000000000);
+            f64 ci = ((([f64](y) * 2.00000000000000000) / [f64](n)) - 1.00000000000000000);
+            f64 zr = 0.00000000000000000;
+            f64 zi = 0.00000000000000000;
+            int it = 0;
+            While ((((zr * zr) + (zi * zi)) <= 4.00000000000000000) && (it < (40 + (seed % 3)))) {
+                f64 temp = (((zr * zr) - (zi * zi)) + cr);
+                zi = (((2.00000000000000000 * zr) * zi) + ci);
+                zr = temp;
+                it = (it + 1);
+            }
+            total = (total + it);
+            x = (x + 1);
+        }
+        y = (y + 1);
+    }
+    Return total;
+}
+
+Static Function f64 float_series(int n, int seed) {
+    f64 x = ([f64](seed) / 100.00000000000000000);
+    f64 total = 0.00000000000000000;
+    int i = 0;
+    While (i < n) {
+        x = ((x * 0.99999899999999997) + 0.00000010000000000);
+        total = (total + x);
+        i = (i + 1);
+    }
+    Return total;
+}
+
+Static Function int hash_table(int n, int seed) {
+    int[8192] keys;
+    int[8192] counts;
+    int x = seed;
+    int i = 0;
+    While (i < n) {
+        x = (((x * 25173) + 13849) % 65521);
+        int key = ((x % 4000) + 1);
+        int slot = ((key * 97) % 8192);
+        While ((keys[slot] != 0) && (keys[slot] != key)) {
+            slot = ((slot + 1) % 8192);
+        }
+        keys[slot] = key;
+        counts[slot] = (counts[slot] + 1);
+        i = (i + 1);
+    }
+    int total = 0;
+    i = 0;
+    While (i < 8192) {
+        total = (total + (keys[i] * counts[i]));
+        i = (i + 1);
+    }
+    Return total;
+}
+
+Static Function int string_scan(int n, int seed) {
+    string s = "KinalBenchmark0123456789abcdefghijklmnopqrstuvwxyz";
+    int total = seed;
+    int i = 0;
+    While (i < n) {
+        int j = 0;
+        While (j < s.Length()) {
+            total = (((total * 31) + [int](s[j])) % 1000000007);
+            j = (j + 1);
+        }
+        i = (i + 1);
+    }
+    Return total;
+}
+
+Static Function int int_parse(int n, int seed) {
+    string s = "123456789,987654321,135792468,246813579,112358132,314159265,";
+    int total = seed;
+    int i = 0;
+    While (i < n) {
+        int value = 0;
+        int j = 0;
+        While (j < s.Length()) {
+            int c = [int](s[j]);
+            If (c == 44) {
+                total = ((total + value) % 1000000007);
+                value = 0;
+            } Else {
+                value = (((value * 10) + c) - 48);
+            }
+            j = (j + 1);
+        }
+        i = (i + 1);
+    }
+    Return total;
+}
+
+Static Function int string_concat(int n, int seed) {
+    string s = "";
+    int i = 0;
+    While (i < n) {
+        s = (s + "abcdef0123456789");
+        i = (i + 1);
+    }
+    Return (s.Length() + [int](s[seed]));
+}
+
+Static Function int hash_collisions(int n, int seed) {
+    int[4096] keys;
+    int[4096] counts;
+    int state = seed;
+    int i = 0;
+    While (i < n) {
+        state = (((state * 25173) + 13849) % 65521);
+        int key = ((state % 2048) + 1);
+        int slot = (((key - 1) % 512) * 8);
+        While ((keys[slot] != 0) && (keys[slot] != key)) {
+            slot = (slot + 1);
+        }
+        keys[slot] = key;
+        counts[slot] = (counts[slot] + 1);
+        i = (i + 1);
+    }
+    int checksum = 0;
+    i = 0;
+    While (i < 4096) {
+        checksum = ((checksum + ((keys[i] * counts[i]) * counts[i])) % 1000000007);
+        i = (i + 1);
+    }
+    Return checksum;
+}
+
+Static Function int pointer_chase(int n, int seed) {
+    If (n < 2) {
+        Return 0;
+    }
+    int[32768] links;
+    int state = seed;
+    int i = 1;
+    While (i < n) {
+        state = (((state * 25173) + 13849) % 65521);
+        int parent = (state % i);
+        links[i] = links[parent];
+        links[parent] = i;
+        i = (i + 1);
+    }
+    int cursor = (seed % n);
+    int checksum = 0;
+    i = 0;
+    While (i < (4 * n)) {
+        cursor = links[cursor];
+        checksum = (((checksum * 31) + cursor) % 1000000007);
+        i = (i + 1);
+    }
+    Return checksum;
+}
+
+Static Function int sliding_max(int n, int seed) {
+    int[64] positions;
+    int[64] values;
+    int head = 0;
+    int tail = 0;
+    int state = seed;
+    int checksum = 0;
+    int i = 0;
+    While (i < n) {
+        state = (((state * 25173) + 13849) % 65521);
+        If ((head < tail) && ((positions[(head % 64)] + 64) <= i)) {
+            head = (head + 1);
+        }
+        While (head < tail) {
+            If (values[((tail - 1) % 64)] > state) {
+                Break;
+            }
+            tail = (tail - 1);
+        }
+        positions[(tail % 64)] = i;
+        values[(tail % 64)] = state;
+        tail = (tail + 1);
+        If (i >= 63) {
+            checksum = ((checksum + values[(head % 64)]) % 1000000007);
+        }
+        i = (i + 1);
+    }
+    Return checksum;
+}
+
+Static Function int haar_transform(int n, int seed) {
+    int[4096] work;
+    int state = seed;
+    int i = 0;
+    While (i < n) {
+        state = (((state * 25173) + 13849) % 65521);
+        work[i] = (state % 256);
+        i = (i + 1);
+    }
+    int width = n;
+    int checksum = 0;
+    While (width > 1) {
+        int pairs = (width / 2);
+        int j = 0;
+        While (j < pairs) {
+            int left = work[(2 * j)];
+            int right = work[((2 * j) + 1)];
+            int detail = (left - right);
+            checksum = ((checksum + ((detail * detail) * (j + 1))) % 1000000007);
+            work[j] = (left + right);
+            j = (j + 1);
+        }
+        If ((width % 2) == 1) {
+            work[pairs] = work[(width - 1)];
+        }
+        width = ((width + 1) / 2);
+    }
+    Return (checksum + work[0]);
+}
+
+Static Function f64 Run(int id, int n, int seed) {
+    If (id == 11) { Return matrix_float(n, seed); }
+    If (id == 13) { Return float_series(n, seed); }
+    Return -1.0;
+}
+Static Function int RunInteger(int id, int n, int seed) {
+    If (id == 0) { Return lcg(n, seed); }
+    If (id == 1) { Return branch(n, seed); }
+    If (id == 2) { Return gcd_batch(n, seed); }
+    If (id == 3) { Return primes(n, seed); }
+    If (id == 4) { Return fibonacci(n, seed); }
+    If (id == 5) { Return sieve(n, seed); }
+    If (id == 6) { Return array_scan(n, seed); }
+    If (id == 7) { Return array_stride(n, seed); }
+    If (id == 8) { Return heap_sort(n, seed); }
+    If (id == 9) { Return binary_search(n, seed); }
+    If (id == 10) { Return matrix_int(n, seed); }
+    If (id == 12) { Return mandelbrot(n, seed); }
+    If (id == 14) { Return hash_table(n, seed); }
+    If (id == 15) { Return string_scan(n, seed); }
+    If (id == 16) { Return int_parse(n, seed); }
+    If (id == 17) { Return string_concat(n, seed); }
+    If (id == 18) { Return hash_collisions(n, seed); }
+    If (id == 19) { Return pointer_chase(n, seed); }
+    If (id == 20) { Return sliding_max(n, seed); }
+    If (id == 21) { Return haar_transform(n, seed); }
+    Return -1;
+}
+
+Static Function int Main(string[] args) {
+    If (args.Length()>0 && args[0]=="startup") { Console.PrintLine("42"); Return 0; }
+    int id=[int](args[0]); int n=[int](args[1]);
+    bool floating=id==11 || id==13;
+    Console.PrintLine("READY");
+    FlushOutput();
+    While (true) {
+        int reps=ReadNumber();
+        If (reps<=0) { Break; }
+        int seed=ReadNumber();
+        If (floating) {
+            f64 result=0.0;
+            For (int r=0; r<reps; r=r+1) { result=result+Run(id,n,seed+r%7); }
+            PrintFloat(result);
+        } Else {
+            int result=0;
+            For (int r=0; r<reps; r=r+1) { result=result+RunInteger(id,n,seed+r%7); }
+            Console.PrintLine(result);
+        }
+        FlushOutput();
+    }
+    Return 0;
+}

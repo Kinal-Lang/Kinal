@@ -49,6 +49,7 @@ Class InterfaceTypeLink
 
 Class TypeSymbol
 {
+    Public i32 NativeBindingHint;
     Public int Kind;
     Public string Name;
     Public string UnitName;
@@ -117,8 +118,13 @@ Class TypeSymbol
 
     Public Safe Function string QualifiedName()
     {
-        If (This.UnitName == "") Return This.Name;
-        Return This.UnitName + "." + This.Name;
+        Return TypeSymbol.NameInUnit(This.UnitName, This.Name);
+    }
+
+    Public Static Safe Function string NameInUnit(string unitName, string name)
+    {
+        If (unitName == "") Return name;
+        Return unitName + "." + name;
     }
 
     Public Safe Function void AddPackageElement(TypeSymbol type)

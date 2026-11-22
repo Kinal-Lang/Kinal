@@ -8,6 +8,9 @@
 
 #if defined(_WIN32) || defined(_WIN64)
 #include <process.h>
+#if defined(_MSC_VER)
+#include <corecrt_startup.h>
+#endif
 #endif
 
 #if !defined(_WIN32) && !defined(_WIN64)
@@ -200,6 +203,8 @@ static int rt_atomic_load_i32(volatile int *value);
 
 void *kn_native_runtime_thread_storage(void)
 {
+    /* Native codegen may reuse this address across calls on the same thread.
+       Keep the accessor free of initialization or writes to the storage. */
     return g_kn_runtime_thread_storage;
 }
 
@@ -214,15 +219,54 @@ void kn_native_heap_free(void *memory)
     free(memory);
 }
 
+#if defined(_WIN32) || defined(_WIN64)
+static uint16_t *rt_utf8_to_wide(const char *utf8)
+{
+    if (!utf8) return NULL;
+    int count = MultiByteToWideChar(65001, 0, utf8, -1, NULL, 0);
+    if (count <= 0) return NULL;
+    uint16_t *wide = (uint16_t *)malloc((size_t)count * sizeof(*wide));
+    if (wide && !MultiByteToWideChar(65001, 0, utf8, -1, wide, count)) {
+        free(wide);
+        return NULL;
+    }
+    return wide;
+}
+
+
+static char *rt_wide_to_utf8(const uint16_t *wide)
+{
+    int n = WideCharToMultiByte(65001, 0, wide, -1, NULL, 0, NULL, NULL);
+    char *text = n > 0 ? (char *)malloc((size_t)n) : NULL;
+    if (text && !WideCharToMultiByte(65001, 0, wide, -1, text, n, NULL, NULL)) {
+        free(text);
+        return NULL;
+    }
+    return text;
+}
+
+static KN_HANDLE rt_open_file(const char *path, KN_DWORD access, KN_DWORD share, KN_DWORD disposition)
+{
+    if (!path) return KN_INVALID_HANDLE_VALUE;
+    const unsigned char *p = (const unsigned char *)path;
+    while (*p && *p < 128) ++p;
+    if (!*p)
+        return CreateFileA(path, access, share, NULL, disposition, KN_FILE_ATTRIBUTE_NORMAL, NULL);
+    uint16_t *wide = rt_utf8_to_wide(path);
+    KN_HANDLE h = wide ? CreateFileW(wide, access, share, NULL, disposition, KN_FILE_ATTRIBUTE_NORMAL, NULL)
+                       : KN_INVALID_HANDLE_VALUE;
+    free(wide);
+    return h;
+}
+#endif
+
 /* Raw blocking OS lock. The Kinal caller owns the cache transaction and the
  * lifetime; process termination releases the lock without stale lock state. */
 void *kn_native_file_lock(const char *path)
 {
     if (!path || !path[0]) return 0;
 #if defined(_WIN32) || defined(_WIN64)
-    KN_HANDLE file = CreateFileA(path, KN_GENERIC_READ | KN_GENERIC_WRITE,
-        KN_FILE_SHARE_READ | KN_FILE_SHARE_WRITE, 0, KN_OPEN_ALWAYS,
-        KN_FILE_ATTRIBUTE_NORMAL, 0);
+    KN_HANDLE file = rt_open_file(path, KN_GENERIC_READ | KN_GENERIC_WRITE, KN_FILE_SHARE_READ | KN_FILE_SHARE_WRITE, KN_OPEN_ALWAYS);
     if (!file || file == KN_INVALID_HANDLE_VALUE) return 0;
     KN_OVERLAPPED range = {0};
     if (!LockFileEx(file, 2u /* LOCKFILE_EXCLUSIVE_LOCK */, 0,
@@ -475,6 +519,47 @@ uint64_t __kn_time_tick(void);
 void __kn_time_sleep(int32_t ms);
 const char *__kn_path_normalize(const char *p);
 
+/* On Windows the CRT narrow argv is lossy outside the active code page.
+ * Use the same CRT quoting rules on the wide command line. Return one owned
+ * UTF-8 buffer only for real startup argv that needs conversion. */
+char **kn_native_process_utf8_argv(int32_t argc, const char **argv)
+{
+#if defined(_WIN32) && defined(_MSC_VER)
+    if (argc <= 0 || argv != (const char **)__argv || argc != __argc) return NULL;
+    const uint16_t *command = GetCommandLineW();
+    while (*command && *command < 128) ++command;
+    if (!*command) return NULL;
+    static volatile int wide_argv_lock = 0;
+    rt_spin_lock(&wide_argv_lock);
+    if (!__wargv) _configure_wide_argv(_crt_argv_unexpanded_arguments);
+    rt_spin_unlock(&wide_argv_lock);
+    if (!__wargv || __argc != argc) return NULL;
+    size_t bytes = ((size_t)argc + 1) * sizeof(char *);
+    for (int i = 0; i < argc; ++i) {
+        int n = WideCharToMultiByte(65001, 0, (const uint16_t *)__wargv[i], -1, NULL, 0, NULL, NULL);
+        if (n <= 0 || (size_t)n > SIZE_MAX - bytes) return NULL;
+        bytes += (size_t)n;
+    }
+    char **result = (char **)malloc(bytes);
+    if (!result) return NULL;
+    char *next = (char *)(result + argc + 1);
+    for (int i = 0; i < argc; ++i) {
+        result[i] = next;
+        size_t left = bytes - (size_t)(next - (char *)result);
+        int n = WideCharToMultiByte(65001, 0, (const uint16_t *)__wargv[i], -1, next,
+                                    left > INT_MAX ? INT_MAX : (int)left, NULL, NULL);
+        if (!n) { free(result); return NULL; }
+        next += n;
+    }
+    result[argc] = NULL;
+    return result;
+#else
+    (void)argc;
+    (void)argv;
+    return NULL;
+#endif
+}
+
 #if defined(_WIN32) || defined(_WIN64)
 static KN_HANDLE g_heap = 0;
 #define KN_PATH_SEP '\\'
@@ -591,7 +676,13 @@ void __kn_sys_exit(int code)
 
 const char *__kn_sys_command_line(void)
 {
-    return GetCommandLineA();
+    static volatile int lock = 0;
+    static char *utf8 = NULL;
+    rt_spin_lock(&lock);
+    if (!utf8) utf8 = rt_wide_to_utf8(GetCommandLineW());
+    const char *result = utf8;
+    rt_spin_unlock(&lock);
+    return result ? result : GetCommandLineA();
 }
 
 const char *__kn_sys_executable_path(void)
@@ -599,10 +690,10 @@ const char *__kn_sys_executable_path(void)
     KN_DWORD cap = KN_MAX_PATH;
     for (;;)
     {
-        char *buf = (char *)rt_alloc((size_t)cap);
+        uint16_t *buf = (uint16_t *)rt_alloc((size_t)cap * sizeof(*buf));
         KN_DWORD written = 0;
         if (!buf) return "";
-        written = GetModuleFileNameA(0, buf, cap);
+        written = GetModuleFileNameW(0, buf, cap);
         if (written == 0)
         {
             rt_free(buf);
@@ -612,7 +703,9 @@ const char *__kn_sys_executable_path(void)
         {
             buf[written] = 0;
             {
-                const char *out = __kn_path_normalize(buf);
+                char *utf8 = rt_wide_to_utf8(buf);
+                const char *out = utf8 ? __kn_path_normalize(utf8) : "";
+                free(utf8);
                 rt_free(buf);
                 return out;
             }
@@ -630,19 +723,27 @@ static void rt_store_string_array(KnStringArray value, const char ***out_data, u
     if (out_len) *out_len = value.len;
 }
 
-void __kn_sys_args(const char ***out_data, uint64_t *out_len)
-{
-    rt_store_string_array(rt_parse_windows_args(GetCommandLineA()), out_data, out_len);
-}
-
 void __kn_sys_args_from_argv(int argc, const char **argv, const char ***out_data, uint64_t *out_len)
 {
-    rt_store_string_array(rt_string_array_from_items((char **)argv, argc, 1), out_data, out_len);
+    char **utf8 = kn_native_process_utf8_argv(argc, argv);
+    rt_store_string_array(rt_string_array_from_items(utf8 ? utf8 : (char **)argv, argc, 1), out_data, out_len);
+    free(utf8);
+}
+
+void __kn_sys_args(const char ***out_data, uint64_t *out_len)
+{
+#if defined(_MSC_VER)
+    if (__argv) {
+        __kn_sys_args_from_argv(__argc, (const char **)__argv, out_data, out_len);
+        return;
+    }
+#endif
+    rt_store_string_array(rt_parse_windows_args(__kn_sys_command_line()), out_data, out_len);
 }
 
 int __kn_sys_file_exists(const char *path)
 {
-    KN_HANDLE h = CreateFileA(path, KN_GENERIC_READ, KN_FILE_SHARE_READ, 0, KN_OPEN_EXISTING, KN_FILE_ATTRIBUTE_NORMAL, 0);
+    KN_HANDLE h = rt_open_file(path, KN_GENERIC_READ, KN_FILE_SHARE_READ, KN_OPEN_EXISTING);
     if (h == KN_INVALID_HANDLE_VALUE)
         return 0;
     CloseHandle(h);
@@ -675,20 +776,19 @@ int __kn_sys_exec(const char *command_line)
     return (int)exit_code;
 }
 
-/* Windows argument serialization belongs to the Kinal runtime. This leaf
- * starts one process with an already encoded command line; it never invokes
- * a shell or splits/quotes user arguments. */
+/* Windows argument serialization belongs to Kinal. Convert its completed
+ * UTF-8 argument string to the writable UTF-16 buffer required by Win32. */
 int kn_native_process_run_command_line(const char *executable, const char *command_line)
 {
     if (!executable || !executable[0] || !command_line) return -1;
-    size_t length = (size_t)rt_strlen(command_line);
-    char *mutable_line = (char *)malloc(length + 1);
-    if (!mutable_line) return -1;
-    rt_memcpy(mutable_line, command_line, length + 1);
-    KN_STARTUPINFOA startup = {0};
+    uint16_t *application = rt_utf8_to_wide(executable);
+    uint16_t *mutable_line = rt_utf8_to_wide(command_line);
+    KN_STARTUPINFOW startup = {0};
     KN_PROCESS_INFORMATION process = {0};
     startup.cb = (uint32_t)sizeof(startup);
-    KN_BOOL started = CreateProcessA(executable, mutable_line, 0, 0, 0, 0, 0, 0, &startup, &process);
+    KN_BOOL started = application && mutable_line &&
+        CreateProcessW(application, mutable_line, 0, 0, 0, 0, 0, 0, &startup, &process);
+    free(application);
     free(mutable_line);
     if (!started) return -1;
     WaitForSingleObject(process.hProcess, KN_INFINITE);
@@ -1970,6 +2070,14 @@ static uint64_t rt_hash(const char *s)
     return h;
 }
 
+/* Linear probing may skip home-position entries when closing a deletion gap.
+   Both distances wrap at capacity, including clusters crossing slot zero. */
+static int probe_passes_hole(const char *key, uint64_t mask, uint64_t hole, uint64_t scan)
+{
+    uint64_t home = rt_hash(key) & mask;
+    return ((hole - home) & mask) < ((scan - home) & mask);
+}
+
 static KnDictEntry *dict_find_slot(KnDictEntry *entries, uint64_t cap, const char *key, int *found)
 {
     uint64_t mask = cap - 1;
@@ -2043,13 +2151,18 @@ void __kn_dict_set(void *dict_ptr, const char *key, uint64_t tag, uint64_t paylo
 
     if (d->cap == 0)
         dict_rehash(d, 8);
-    else if ((d->count + 1) * 10 >= d->cap * 7)
-        dict_rehash(d, d->cap << 1);
 
     if (!d->entries || d->cap == 0) return;
 
     int found = 0;
     KnDictEntry *slot = dict_find_slot(d->entries, d->cap, key, &found);
+    if (!found && (d->count + 1) * 10 >= d->cap * 7)
+    {
+        uint64_t previous_cap = d->cap;
+        dict_rehash(d, previous_cap << 1);
+        if (d->cap == previous_cap) return;
+        slot = dict_find_slot(d->entries, d->cap, key, &found);
+    }
     if (!found)
     {
         slot->key = key;
@@ -2096,12 +2209,19 @@ int __kn_dict_remove(void *dict_ptr, const char *key)
     int found = 0;
     KnDictEntry *slot = dict_find_slot(d->entries, d->cap, key, &found);
     if (!found || !slot) return 0;
-    slot->used = 0;
-    slot->key = 0;
-    slot->tag = 0;
-    slot->payload = 0;
-    if (d->count > 0) d->count--;
-    dict_rehash(d, d->cap);
+    uint64_t removed = (uint64_t)(slot - d->entries);
+    uint64_t hole = removed;
+    uint64_t mask = d->cap - 1;
+    for (uint64_t scan = (hole + 1) & mask; scan != removed && d->entries[scan].used; scan = (scan + 1) & mask)
+    {
+        if (probe_passes_hole(d->entries[scan].key, mask, hole, scan))
+        {
+            d->entries[hole] = d->entries[scan];
+            hole = scan;
+        }
+    }
+    rt_memset(&d->entries[hole], 0, sizeof(*slot));
+    d->count--;
     return 1;
 }
 
@@ -2200,7 +2320,10 @@ uint64_t __kn_list_count(void *list_ptr)
 void __kn_list_clear(void *list_ptr)
 {
     KnList *l = (KnList *)list_ptr;
-    if (!l) return;
+    if (!l || !l->count) return;
+    /* The GC traces the whole backing allocation, even past the logical end. */
+    rt_memset(l->tags, 0, (size_t)l->count * sizeof(*l->tags));
+    rt_memset(l->payloads, 0, (size_t)l->count * sizeof(*l->payloads));
     l->count = 0;
 }
 
@@ -2218,6 +2341,8 @@ void __kn_list_remove_at(void *list_ptr, uint64_t index, uint64_t *out_tag, uint
         l->payloads[i - 1] = l->payloads[i];
     }
     l->count--;
+    l->tags[l->count] = 0;
+    l->payloads[l->count] = 0;
 }
 
 void __kn_list_pop(void *list_ptr, uint64_t *out_tag, uint64_t *out_payload)
@@ -2229,7 +2354,9 @@ void __kn_list_pop(void *list_ptr, uint64_t *out_tag, uint64_t *out_payload)
     uint64_t idx = l->count - 1;
     if (out_tag) *out_tag = l->tags[idx];
     if (out_payload) *out_payload = l->payloads[idx];
-    l->count--;
+    l->tags[idx] = 0;
+    l->payloads[idx] = 0;
+    l->count = idx;
 }
 
 int __kn_list_is_empty(void *list_ptr)
@@ -2595,12 +2722,17 @@ void __kn_set_add(void *set_ptr, const char *key)
     if (!s || !key) return;
     if (s->cap == 0)
         set_rehash(s, 8);
-    else if ((s->count + 1) * 10 >= s->cap * 7)
-        set_rehash(s, s->cap << 1);
     if (!s->entries || s->cap == 0) return;
 
     int found = 0;
     KnSetEntry *slot = set_find_slot(s->entries, s->cap, key, &found);
+    if (!found && (s->count + 1) * 10 >= s->cap * 7)
+    {
+        uint64_t previous_cap = s->cap;
+        set_rehash(s, previous_cap << 1);
+        if (s->cap == previous_cap) return;
+        slot = set_find_slot(s->entries, s->cap, key, &found);
+    }
     if (!found)
     {
         slot->key = key;
@@ -2632,10 +2764,19 @@ int __kn_set_remove(void *set_ptr, const char *key)
     int found = 0;
     KnSetEntry *slot = set_find_slot(s->entries, s->cap, key, &found);
     if (!found || !slot) return 0;
-    slot->used = 0;
-    slot->key = 0;
-    if (s->count > 0) s->count--;
-    set_rehash(s, s->cap);
+    uint64_t removed = (uint64_t)(slot - s->entries);
+    uint64_t hole = removed;
+    uint64_t mask = s->cap - 1;
+    for (uint64_t scan = (hole + 1) & mask; scan != removed && s->entries[scan].used; scan = (scan + 1) & mask)
+    {
+        if (probe_passes_hole(s->entries[scan].key, mask, hole, scan))
+        {
+            s->entries[hole] = s->entries[scan];
+            hole = scan;
+        }
+    }
+    rt_memset(&s->entries[hole], 0, sizeof(*slot));
+    s->count--;
     return 1;
 }
 
@@ -2963,17 +3104,20 @@ char *kn_native_current_directory(void)
     KN_DWORD cap = KN_MAX_PATH;
     for (;;)
     {
-        char *buf = (char *)malloc((size_t)cap);
+        uint16_t *buf = (uint16_t *)malloc((size_t)cap * sizeof(*buf));
         KN_DWORD written = 0;
         if (!buf) return 0;
-        written = GetCurrentDirectoryA(cap, buf);
+        written = GetCurrentDirectoryW(cap, buf);
         if (written == 0)
         {
             free(buf);
             return 0;
         }
-        if (written < cap)
-            return buf;
+        if (written < cap) {
+            char *text = rt_wide_to_utf8(buf);
+            free(buf);
+            return text;
+        }
         free(buf);
         if (written >= 65535u)
             return 0;
@@ -3459,13 +3603,10 @@ int __kn_dir_exists(const char *path)
         return 0;
     }
 #if defined(_WIN32) || defined(_WIN64)
-    KN_WIN32_FIND_DATAA data;
-    KN_HANDLE h = FindFirstFileA(norm, &data);
-    if (h != KN_INVALID_HANDLE_VALUE)
-    {
-        ok = (data.dwFileAttributes & KN_FILE_ATTRIBUTE_DIRECTORY) != 0 ? 1 : 0;
-        FindClose(h);
-    }
+    uint16_t *wide = rt_utf8_to_wide(norm);
+    KN_DWORD attributes = wide ? GetFileAttributesW(wide) : KN_INVALID_FILE_ATTRIBUTES;
+    free(wide);
+    ok = attributes != KN_INVALID_FILE_ATTRIBUTES && (attributes & KN_FILE_ATTRIBUTE_DIRECTORY) != 0;
 #else
     struct stat st;
     if (stat(norm, &st) == 0 && S_ISDIR(st.st_mode))
@@ -3485,7 +3626,9 @@ int __kn_dir_create(const char *path)
         return 0;
     }
 #if defined(_WIN32) || defined(_WIN64)
-    ok = CreateDirectoryA(norm, 0) ? 1 : 0;
+    uint16_t *wide = rt_utf8_to_wide(norm);
+    ok = wide && CreateDirectoryW(wide, 0);
+    free(wide);
 #else
     ok = mkdir(norm, 0755) == 0 ? 1 : 0;
 #endif
@@ -3550,7 +3693,9 @@ int __kn_dir_delete(const char *path)
         return 0;
     }
 #if defined(_WIN32) || defined(_WIN64)
-    ok = RemoveDirectoryA(norm) ? 1 : 0;
+    uint16_t *wide = rt_utf8_to_wide(norm);
+    ok = wide && RemoveDirectoryW(wide);
+    free(wide);
 #else
     ok = rmdir(norm) == 0 ? 1 : 0;
 #endif
@@ -3695,15 +3840,18 @@ static void rt_collect_files(const char *directory, int recursive, KnNativePathL
 {
 #if defined(_WIN32) || defined(_WIN64)
     char *pattern = rt_path_join_alloc(directory, "*");
-    KN_WIN32_FIND_DATAA data;
+    KN_WIN32_FIND_DATAW data;
     KN_HANDLE handle = KN_INVALID_HANDLE_VALUE;
     if (!pattern) return;
-    handle = FindFirstFileA(pattern, &data);
+    uint16_t *wide = rt_utf8_to_wide(pattern);
+    if (wide) handle = FindFirstFileW(wide, &data);
+    free(wide);
     rt_free(pattern);
     if (handle == KN_INVALID_HANDLE_VALUE) return;
     do
     {
-        const char *name = data.cFileName;
+        char name[4 * KN_MAX_PATH];
+        if (!WideCharToMultiByte(65001, 0, data.cFileName, -1, name, sizeof(name), NULL, NULL)) continue;
         char *full = 0;
         int is_directory = 0;
         if (rt_streq(name, ".") || rt_streq(name, ".."))
@@ -3719,7 +3867,7 @@ static void rt_collect_files(const char *directory, int recursive, KnNativePathL
         }
         else if (!rt_path_list_push(paths, full))
             rt_free(full);
-    } while (FindNextFileA(handle, &data));
+    } while (FindNextFileW(handle, &data));
     FindClose(handle);
 #else
     DIR *dir = opendir(directory);
@@ -3823,7 +3971,7 @@ int __kn_file_create(const char *path)
 {
     if (!path || !path[0]) return 0;
 #if defined(_WIN32) || defined(_WIN64)
-    KN_HANDLE h = CreateFileA(path, KN_GENERIC_WRITE, KN_FILE_SHARE_READ, 0, KN_CREATE_ALWAYS, KN_FILE_ATTRIBUTE_NORMAL, 0);
+    KN_HANDLE h = rt_open_file(path, KN_GENERIC_WRITE, KN_FILE_SHARE_READ, KN_CREATE_ALWAYS);
     if (h == KN_INVALID_HANDLE_VALUE) return 0;
     CloseHandle(h);
     return 1;
@@ -3839,7 +3987,7 @@ int __kn_file_touch(const char *path)
 {
     if (!path || !path[0]) return 0;
 #if defined(_WIN32) || defined(_WIN64)
-    KN_HANDLE h = CreateFileA(path, KN_GENERIC_WRITE, KN_FILE_SHARE_READ, 0, KN_OPEN_ALWAYS, KN_FILE_ATTRIBUTE_NORMAL, 0);
+    KN_HANDLE h = rt_open_file(path, KN_GENERIC_WRITE, KN_FILE_SHARE_READ, KN_OPEN_ALWAYS);
     if (h == KN_INVALID_HANDLE_VALUE) return 0;
     CloseHandle(h);
     return 1;
@@ -3856,7 +4004,7 @@ static unsigned char *kn_native_file_read_all_bytes_impl(const char *path, uint6
     if (out_size) *out_size = 0;
     if (!path || !path[0]) return 0;
 #if defined(_WIN32) || defined(_WIN64)
-    KN_HANDLE h = CreateFileA(path, KN_GENERIC_READ, KN_FILE_SHARE_READ, 0, KN_OPEN_EXISTING, KN_FILE_ATTRIBUTE_NORMAL, 0);
+    KN_HANDLE h = rt_open_file(path, KN_GENERIC_READ, KN_FILE_SHARE_READ, KN_OPEN_EXISTING);
     if (h == KN_INVALID_HANDLE_VALUE) return 0;
     int64_t fsz = 0;
     if (!GetFileSizeEx(h, &fsz) || fsz < 0)
@@ -3952,26 +4100,88 @@ const char *__kn_file_read_all_text(const char *path)
     return managed ? managed : "";
 }
 
-const char *__kn_file_read_first_line(const char *path)
+/* Return the owned byte prefix before LF, NUL or EOF. No file-size query:
+ * streams may have no size and a short first line may precede a huge tail. */
+char *kn_native_file_read_line_prefix(const char *path, uint64_t *out_length)
 {
-    const char *text = __kn_file_read_all_text(path);
-    if (!text || !text[0]) return "";
+    enum { block_size = 4096 };
+    char *line = NULL;
+    size_t length = 0, capacity = 0;
+    if (out_length) *out_length = 0;
+    if (!path || !path[0]) return NULL;
+#if defined(_WIN32) || defined(_WIN64)
+    KN_HANDLE file = rt_open_file(path, KN_GENERIC_READ,
+        KN_FILE_SHARE_READ | KN_FILE_SHARE_WRITE | KN_FILE_SHARE_DELETE, KN_OPEN_EXISTING);
+    if (file == KN_INVALID_HANDLE_VALUE) return NULL;
+#else
+    int file;
+    do { file = open(path, O_RDONLY); } while (file < 0 && errno == EINTR);
+    if (file < 0) return NULL;
+#endif
+    for (;;)
     {
-        uint64_t len = 0;
-        while (text[len] && text[len] != '\n')
-            len++;
-        if (len > 0 && text[len - 1] == '\r')
-            len--;
-        return rt_slice_gc(text, 0, len);
+        if (length == capacity)
+        {
+            if (capacity > (SIZE_MAX - 1) / 2) goto failed;
+            capacity = capacity ? capacity * 2 : block_size;
+            char *next = (char *)realloc(line, capacity + 1);
+            if (!next) goto failed;
+            line = next;
+        }
+        size_t available = capacity - length;
+        size_t request = available < block_size ? available : block_size;
+#if defined(_WIN32) || defined(_WIN64)
+        KN_DWORD count = 0;
+        if (!ReadFile(file, line + length, (KN_DWORD)request, &count, NULL))
+        {
+            if (GetLastError() == KN_ERROR_BROKEN_PIPE) break;
+            goto failed;
+        }
+#else
+        ssize_t count;
+        do { count = read(file, line + length, request); } while (count < 0 && errno == EINTR);
+        if (count < 0) goto failed;
+#endif
+        if (count == 0) break;
+        size_t end = length + (size_t)count;
+        while (length < end && line[length] != '\n' && line[length] != '\0') length++;
+        if (length != end) break;
     }
+    line[length] = '\0';
+    if (out_length) *out_length = (uint64_t)length;
+    goto close_file;
+failed:
+    free(line);
+    line = NULL;
+close_file:
+#if defined(_WIN32) || defined(_WIN64)
+    CloseHandle(file);
+#else
+    close(file);
+#endif
+    return line;
 }
 
-static int kn_native_file_write_all_bytes_impl(const char *path, const void *data, uint64_t size)
+const char *__kn_file_read_first_line(const char *path)
+{
+    uint64_t length;
+    char *line = kn_native_file_read_line_prefix(path, &length);
+    if (!line) return "";
+    if (length && line[length - 1] == '\r') line[--length] = '\0';
+    char *managed = rt_strdup_gc(line);
+    free(line);
+    return managed ? managed : "";
+}
+
+static int rt_write_file_bytes(const char *path, const void *data, uint64_t size, int append)
 {
     if (!path || !path[0]) return 0;
     if (size > 0 && !data) return 0;
 #if defined(_WIN32) || defined(_WIN64)
-    KN_HANDLE h = CreateFileA(path, KN_GENERIC_WRITE, KN_FILE_SHARE_READ, 0, KN_CREATE_ALWAYS, KN_FILE_ATTRIBUTE_NORMAL, 0);
+    /* FILE_APPEND_DATA alone lets the filesystem select EOF for every write. */
+    KN_HANDLE h = rt_open_file(path, append ? KN_FILE_APPEND_DATA : KN_GENERIC_WRITE,
+                              append ? KN_FILE_SHARE_READ | KN_FILE_SHARE_WRITE : KN_FILE_SHARE_READ,
+                              append ? KN_OPEN_ALWAYS : KN_CREATE_ALWAYS);
     if (h == KN_INVALID_HANDLE_VALUE) return 0;
     const unsigned char *bytes = (const unsigned char *)data;
     uint64_t off = 0;
@@ -3988,10 +4198,12 @@ static int kn_native_file_write_all_bytes_impl(const char *path, const void *dat
         }
         off += (uint64_t)wr;
     }
-    CloseHandle(h);
-    return ok ? 1 : 0;
+    return CloseHandle(h) && ok;
 #else
-    int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    int fd;
+    do {
+        fd = open(path, O_WRONLY | O_CREAT | (append ? O_APPEND : O_TRUNC), 0644);
+    } while (fd < 0 && errno == EINTR);
     if (fd < 0) return 0;
     const unsigned char *bytes = (const unsigned char *)data;
     uint64_t off = 0;
@@ -4000,6 +4212,7 @@ static int kn_native_file_write_all_bytes_impl(const char *path, const void *dat
         uint64_t remaining = size - off;
         size_t chunk = remaining > 0x7ffff000u ? 0x7ffff000u : (size_t)remaining;
         ssize_t w = write(fd, bytes + off, chunk);
+        if (w < 0 && errno == EINTR) continue;
         if (w <= 0)
         {
             close(fd);
@@ -4007,41 +4220,39 @@ static int kn_native_file_write_all_bytes_impl(const char *path, const void *dat
         }
         off += (uint64_t)w;
     }
-    close(fd);
-    return 1;
+    return close(fd) == 0;
 #endif
 }
 
 int kn_native_file_write_all_bytes(const char *path, const void *data, uint64_t size)
 {
-    return kn_native_file_write_all_bytes_impl(path, data, size);
+    return rt_write_file_bytes(path, data, size, 0);
 }
 
 int __kn_file_write_all_text(const char *path, const char *text)
 {
-    if (!text) text = "";
-    return kn_native_file_write_all_bytes_impl(path, text, rt_strlen(text));
+    return rt_write_file_bytes(path, text, rt_strlen(text), 0);
 }
 
 int __kn_file_append_all_text(const char *path, const char *text)
 {
-    const char *old = __kn_file_read_all_text(path);
-    const char *add = text ? text : "";
-    const char *merged = rt_concat_gc(old ? old : "", add);
-    return __kn_file_write_all_text(path, merged);
+    return rt_write_file_bytes(path, text, rt_strlen(text), 1);
 }
 
 int __kn_file_append_line(const char *path, const char *text)
 {
     const char *line = rt_concat_gc(text ? text : "", "\n");
-    return __kn_file_append_all_text(path, line);
+    return line && __kn_file_append_all_text(path, line);
 }
 
 int __kn_file_delete(const char *path)
 {
     if (!path || !path[0]) return 0;
 #if defined(_WIN32) || defined(_WIN64)
-    return DeleteFileA(path) ? 1 : 0;
+    uint16_t *wide = rt_utf8_to_wide(path);
+    int ok = wide && DeleteFileW(wide);
+    free(wide);
+    return ok;
 #else
     return unlink(path) == 0 ? 1 : 0;
 #endif
@@ -4059,7 +4270,7 @@ int64_t __kn_file_size(const char *path)
 {
     if (!path || !path[0]) return -1;
 #if defined(_WIN32) || defined(_WIN64)
-    KN_HANDLE h = CreateFileA(path, KN_GENERIC_READ, KN_FILE_SHARE_READ, 0, KN_OPEN_EXISTING, KN_FILE_ATTRIBUTE_NORMAL, 0);
+    KN_HANDLE h = rt_open_file(path, KN_GENERIC_READ, KN_FILE_SHARE_READ, KN_OPEN_EXISTING);
     if (h == KN_INVALID_HANDLE_VALUE) return -1;
     int64_t fsz = -1;
     if (!GetFileSizeEx(h, &fsz))
@@ -4082,10 +4293,10 @@ int __kn_file_copy(const char *src, const char *dst)
 {
     if (!src || !dst || !src[0] || !dst[0]) return 0;
 #if defined(_WIN32) || defined(_WIN64)
-    KN_HANDLE in = CreateFileA(src, KN_GENERIC_READ, KN_FILE_SHARE_READ, 0, KN_OPEN_EXISTING, KN_FILE_ATTRIBUTE_NORMAL, 0);
+    KN_HANDLE in = rt_open_file(src, KN_GENERIC_READ, KN_FILE_SHARE_READ, KN_OPEN_EXISTING);
     KN_HANDLE out = 0;
     if (in == KN_INVALID_HANDLE_VALUE) return 0;
-    out = CreateFileA(dst, KN_GENERIC_WRITE, KN_FILE_SHARE_READ, 0, KN_CREATE_ALWAYS, KN_FILE_ATTRIBUTE_NORMAL, 0);
+    out = rt_open_file(dst, KN_GENERIC_WRITE, KN_FILE_SHARE_READ, KN_CREATE_ALWAYS);
     if (out == KN_INVALID_HANDLE_VALUE)
     {
         CloseHandle(in);
@@ -4207,7 +4418,17 @@ int kn_native_file_exists(const char *path)
 int kn_native_paths_same_file(const char *left, const char *right)
 {
 #if defined(_WIN32) || defined(_WIN64)
-    return kn_paths_same_file(left, right);
+    KN_DWORD share = KN_FILE_SHARE_READ | KN_FILE_SHARE_WRITE | KN_FILE_SHARE_DELETE;
+    KN_HANDLE first = rt_open_file(left, 0, share, KN_OPEN_EXISTING);
+    if (first == KN_INVALID_HANDLE_VALUE) return 0;
+    KN_HANDLE second = rt_open_file(right, 0, share, KN_OPEN_EXISTING);
+    int same = 0;
+    if (second != KN_INVALID_HANDLE_VALUE) {
+        same = kn_file_handles_same(first, second);
+        CloseHandle(second);
+    }
+    CloseHandle(first);
+    return same;
 #else
     struct stat a, b;
     if (!left || !right || stat(left, &a) != 0 || stat(right, &b) != 0) return 0;
@@ -4511,13 +4732,17 @@ static void gc_mark_ptr(void *p, KnGcBlock **index, int index_count,
 static void gc_scan_region(void *addr, uint64_t size, KnGcBlock **index, int index_count,
                            KnGcBlock **stack, int *sp, int cap)
 {
-    if (!addr || size == 0) return;
-    uintptr_t *cur = (uintptr_t *)addr;
-    uintptr_t *end = (uintptr_t *)((uint8_t *)addr + size);
-    while (cur < end)
+    if (!addr) return;
+    const uint8_t *cur = (const uint8_t *)addr;
+    while (size >= sizeof(uintptr_t))
     {
-        gc_mark_ptr((void *)(*cur), index, index_count, stack, sp, cap);
-        cur++;
+        // Root/object regions can end in a partial word or start unaligned.
+        // Only read complete words within the supplied byte range.
+        uintptr_t value;
+        rt_memcpy(&value, cur, sizeof(value));
+        gc_mark_ptr((void *)value, index, index_count, stack, sp, cap);
+        cur += sizeof(value);
+        size -= sizeof(value);
     }
 }
 

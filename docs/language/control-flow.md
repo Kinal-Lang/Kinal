@@ -40,7 +40,7 @@ If (IO.Target.OS == IO.Target.OS.Windows)
 }
 Else
 {
-    UnknownCall();   // This branch is not compiled on non-Windows, so no error is reported
+    UnknownCall();   // On Windows this branch is inactive; it is not semantically checked
 }
 ```
 
@@ -298,7 +298,7 @@ Static Function int Main()
 ```
 
 > **Note**: The `Case ("Saturday")` and `Case ("Sunday")` above — Kinal currently **does not support** Case stacking (fall-through).  
-> For multi-value matching, use `||` inside a Case, or use the `Is` pattern.
+> For several values, write separate Case bodies or use an If condition with `||`.
 
 ## Next Steps
 
@@ -306,3 +306,5 @@ Static Function int Main()
 - [Exception Handling](exceptions.md)
 - [Block (Code Block Objects)](blocks.md)
 
+
+Compile-time branch elimination still requires syntactically valid inactive code. `Foreach` currently lowers over `Length()` and indexing for arrays/strings; it is not a general list/dict iterator protocol. See [Backend Support](../advanced/backend-support.md) before relying on VM-specific dispatch.

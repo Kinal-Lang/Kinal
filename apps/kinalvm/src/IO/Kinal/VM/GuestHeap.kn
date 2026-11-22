@@ -1,0 +1,337 @@
+Unit IO.Kinal.VM.Context;
+
+Get Bytecode By IO.Kinal.VM.Bytecode;
+
+// A fixed-size page keeps each new handle from copying the entire bookkeeping table.
+Class HeapWords
+{
+    Public int[][] Pages;
+    Public int Count;
+    Public Constructor() { Pages = {}; }
+
+    Public Function void Append(int value)
+    {
+        If ((Count & 255) == 0)
+        {
+            int[256] page;
+            Pages = Pages.Add(page);
+        }
+        Pages[Count >> 8][Count & 255] = value;
+        Count++;
+    }
+
+    Public Function int Read(int index) { Return Pages[index >> 8][index & 255]; }
+    Public Function void Write(int index, int value) { Pages[index >> 8][index & 255] = value; }
+}
+
+// Handles keep their index across a collection. Freed slots link to the next free index.
+Class HeapSlots
+{
+    Private HeapWords State;
+    Private int FirstFree;
+    Private list Directories;
+    Private byte*[] CachedDirectory;
+    Private int CachedNumber;
+    Public int Kind;
+    Public bool HasArrayView;
+    Public byte* Window;
+    Public int WindowStart;
+    Public int WindowEnd;
+    Public any ArrayView;
+    Public int Length;
+
+    Public Constructor(int kind) { Kind = kind; State = New HeapWords(); FirstFree = -1; CachedNumber = -1; }
+
+    // Each address points into a normal host-managed T[256]. The directory
+    // holds these roots under both the C and selfhost native collectors.
+    Public Trusted Function byte* Page(int index)
+    {
+        int directory = index >> 14;
+        If (directory != CachedNumber)
+        {
+            CachedDirectory = [byte*[]](Directories.Fetch(directory));
+            CachedNumber = directory;
+        }
+        Return CachedDirectory[(index >> 8) & 63];
+    }
+
+    Public Trusted Function void AddPage(int index, byte* address)
+    {
+        int directory = index >> 14;
+        If ((index & 16383) == 0)
+        {
+            byte*[64] block;
+            If (Directories == null) Directories = list.Create();
+            Directories.Add(block);
+            CachedDirectory = block;
+            CachedNumber = directory;
+        }
+        Else If (directory != CachedNumber)
+        {
+            CachedDirectory = [byte*[]](Directories.Fetch(directory));
+            CachedNumber = directory;
+        }
+        CachedDirectory[(index >> 8) & 63] = address;
+        Window = address;
+        WindowStart = index;
+        WindowEnd = index;
+    }
+
+    Public Trusted Function void UseArray(any view, int length, byte* data)
+    {
+        Window = data;
+        WindowStart = 0;
+        WindowEnd = length;
+        ArrayView = view;
+        Length = length;
+        HasArrayView = true;
+        Directories = null;
+        CachedDirectory = {};
+        CachedNumber = -1;
+    }
+
+    Public Function any NativeArray()
+    {
+        If (!HasArrayView) RefreshSlotArray(This, false);
+        Return ArrayView;
+    }
+
+    Public Function void ReplaceArray(any view)
+    {
+        ArrayView = view;
+        HasArrayView = true;
+        RefreshSlotArray(This, false);
+    }
+
+    Public Trusted Function byte* Address(int index)
+    {
+        If (index < 0 || index >= Length) Return null;
+        If (index < WindowStart || index >= WindowEnd)
+        {
+            Window = Page(index);
+            WindowStart = index & ~255;
+            WindowEnd = Length < WindowStart + 256 ? Length : WindowStart + 256;
+        }
+        Return [byte*](&([usize*](Window))[index - WindowStart]);
+    }
+
+    Public Trusted Function void Store(int index, IO.Type.Object.Class value)
+    {
+        If (index == Length)
+        {
+            If (HasArrayView) RefreshSlotArray(This, true);
+            Else
+            {
+                If ((index & 255) == 0)
+                {
+                    IO.Type.Object.Class[256] references;
+                    AddPage(index, [byte*](&references[0]));
+                }
+                Length++;
+                If (index == WindowEnd) WindowEnd = Length;
+            }
+        }
+        byte* slot = Address(index);
+        If (slot == null) Throw "Invalid VM handle slot";
+        ([IO.Type.Object.Class*](slot))[0] = value;
+    }
+
+    Public Function int Take()
+    {
+        If (FirstFree < 0) { State.Append(-2); Return State.Count - 1; }
+        int slot = FirstFree;
+        FirstFree = State.Read(slot);
+        State.Write(slot, -2);
+        Return slot;
+    }
+
+    Public Function bool Mark(int index)
+    {
+        If (index < 0 || index >= State.Count) Return false;
+        int[] page = State.Pages[index >> 8];
+        int offset = index & 255;
+        If (page[offset] != -2) Return false;
+        page[offset] = -3;
+        Return true;
+    }
+
+    Public Function bool Sweep(int index)
+    {
+        If (index >= State.Count) Return false;
+        int[] page = State.Pages[index >> 8];
+        int offset = index & 255;
+        If (page[offset] == -3) { page[offset] = -2; Return false; }
+        If (page[offset] != -2) Return false;
+        page[offset] = FirstFree;
+        FirstFree = index;
+        Return true;
+    }
+}
+
+// Keep the historical typed array API for native embedders. After a caller
+// takes a view, writes share that array and append produces a detached copy.
+Trusted Function void RefreshTypedSlotArray<T>(HeapSlots slots, bool append)
+{
+    T[] view = {};
+    If (slots.HasArrayView) view = [T[]](slots.ArrayView);
+    Else
+        For (int i = 0; i < slots.Length; i++) view = view.Add(([T*](slots.Address(i)))[0]);
+    If (append) view = view.Add(null);
+    byte* data = view.Length() == 0 ? null : [byte*](&view[0]);
+    slots.UseArray(view, view.Length(), data);
+}
+
+Function void RefreshSlotArray(HeapSlots slots, bool append)
+{
+    Switch(slots.Kind)
+    {
+        Case([int](Bytecode.ValueKind.Array)) { RefreshTypedSlotArray<HeapArray>(slots, append); }
+        Case([int](Bytecode.ValueKind.Object)) { RefreshTypedSlotArray<HeapObject>(slots, append); }
+        Case([int](Bytecode.ValueKind.Pointer)) { RefreshTypedSlotArray<PointerInfo>(slots, append); }
+        Case(default) { RefreshTypedSlotArray<VMValue>(slots, append); }
+    }
+}
+
+Public Class GuestHeap
+{
+    Public HeapSlots ArraySlots;
+    Public HeapSlots ObjectSlots;
+    Public HeapSlots PointerSlots;
+    Public HeapSlots CellSlots;
+    Private HeapSlots[] Pools;
+    Private int CollectionNumber;
+    Private VMValue[] Roots;
+    Private HeapWords Work;
+    Private int Pending;
+    Private int AllocatedBytes;
+    Private int Threshold;
+
+    Public Constructor()
+    {
+        ArraySlots = New HeapSlots([int](Bytecode.ValueKind.Array)); ObjectSlots = New HeapSlots([int](Bytecode.ValueKind.Object));
+        PointerSlots = New HeapSlots([int](Bytecode.ValueKind.Pointer)); CellSlots = New HeapSlots([int](Bytecode.RegisterKind.CaptureCell));
+        Pools = {ArraySlots, ObjectSlots, PointerSlots, CellSlots};
+        Work = New HeapWords(); Roots = {}; Threshold = 1048576;
+    }
+
+    // An intrinsic can retain a guest value across reentrant calls until it releases this token.
+    Public Function int Pin(VMValue value)
+    {
+        If (value == null) Throw "Expected a guest value to pin";
+        For (int i = 0; i < Roots.Length(); i++)
+            If (Roots[i] == null) { Roots[i] = value; Return i; }
+        Roots = Roots.Add(value);
+        Return Roots.Length() - 1;
+    }
+
+    Public Function void Unpin(int token)
+    {
+        If (token < 0 || token >= Roots.Length() || Roots[token] == null) Throw "Invalid guest root token";
+        Roots[token] = null;
+    }
+
+    Private Function void Mark(int kind, int handle)
+    {
+        int pool = kind - [int](Bytecode.ValueKind.Array);
+        If (pool < 0 || pool >= Pools.Length() || !Pools[pool].Mark(handle)) Return;
+        int entry = (handle << 2) | pool;
+        If (Pending == Work.Count) Work.Append(entry);
+        Else Work.Write(Pending, entry);
+        Pending++;
+    }
+
+    Private Function void MarkValue(VMValue value)
+    {
+        If (value != null && value.Kind >= [int](Bytecode.ValueKind.Array)) Mark(value.Kind, value.IntValue);
+    }
+
+    Public Function void RecordAllocation(int bytes) { AllocatedBytes += bytes; }
+
+    Public Trusted Function void Poll(ExecutionContext ctx)
+    {
+        If (AllocatedBytes >= Threshold) Collect(ctx);
+    }
+
+    Public Trusted Function void Collect(ExecutionContext ctx)
+    {
+        CollectionNumber++;
+        For (int rootIndex = 0; rootIndex < Roots.Length(); rootIndex++) MarkValue(Roots[rootIndex]);
+        For (int globalIndex = 0; globalIndex < ctx.Globals.Length(); globalIndex++) MarkValue(ctx.Globals[globalIndex]);
+        MarkValue(ctx.CurrentException); MarkValue(ctx.LastException);
+        For (int frameIndex = 0; frameIndex < ctx.FrameCount; frameIndex++)
+        {
+            FunctionFrame frame = ctx.Frames[frameIndex];
+            Mark([int](Bytecode.ValueKind.Array), frame.EnvHandle);
+            MarkValue(frame.HostResult);
+            For (int reg = 0; reg < frame.FnInfo.RegisterCount; reg++)
+                Mark(frame.Kinds[reg], frame.IntRegisters[reg]);
+        }
+
+        int liveBytes = 0;
+        While (Pending > 0)
+        {
+            Pending--;
+            int entry = Work.Read(Pending);
+            int handle = entry >> 2;
+            int kind = (entry & 3) + [int](Bytecode.ValueKind.Array);
+            If (kind == [int](Bytecode.ValueKind.Array))
+            {
+                HeapArray array = ctx.ArrayAt(handle);
+                int count = array.PageCount;
+                liveBytes += 128 + (array.RawBuffer == null ? 0 :
+                    array.Length * (array.ElementKind == [int](Bytecode.ValueKind.Bool) ? 1 : 8));
+                liveBytes += count * 16;
+                For (int p = 0; p < count; p++)
+                {
+                    HeapArrayPage page = array.PageAt(p);
+                    If (page == null || page.LastMarked == CollectionNumber) Continue;
+                    page.LastMarked = CollectionNumber;
+                    liveBytes += page.StorageBytes();
+                    If (array.ElementKind != [int](Bytecode.ValueKind.String))
+                        For (int v = 0; v < page.Values.Length(); v++) MarkValue(page.Values[v]);
+                }
+                // Older C-emitted closures store cell indices in a primitive integer vector.
+                If (array.CaptureEnvironment && array.ElementKind == [int](Bytecode.ValueKind.Int))
+                    For (int captureIndex = 0; captureIndex < array.Length; captureIndex++)
+                        Mark([int](Bytecode.RegisterKind.CaptureCell), ([int*](array.RawBuffer))[captureIndex]);
+            }
+            Else If (kind == [int](Bytecode.ValueKind.Object))
+            {
+                HeapObject obj = ctx.ObjectAt(handle);
+                liveBytes += 48 + 48 * obj.Fields.Length();
+                If (obj Is HeapTextBuilder) liveBytes += 40 + [HeapTextBuilder](obj).Text.Capacity;
+                Else If (obj Is HeapSet) liveBytes += 32 * [HeapSet](obj).Members.Count();
+                ElseIf (obj Is HeapValueCollection values)
+                {
+                    int count = values.Count;
+                    liveBytes += 48 * count;
+                    If (obj Is HeapDict) liveBytes += 32 * count;
+                    If (values.MayContainHandles)
+                        For (int i = 0; i < count; i++) MarkValue(values.ValueAt(i));
+                }
+                For (int fieldIndex = 0; fieldIndex < obj.Fields.Length(); fieldIndex++) MarkValue(obj.Fields[fieldIndex]);
+            }
+            Else If (kind == [int](Bytecode.ValueKind.Pointer))
+            {
+                PointerInfo ptr = ctx.PointerAt(handle);
+                liveBytes += 48;
+                If (ptr.Kind == [int](Bytecode.PointerKind.ArrayElem)) Mark([int](Bytecode.ValueKind.Array), ptr.A);
+                Else If (ptr.Kind == [int](Bytecode.PointerKind.ObjectField)) Mark([int](Bytecode.ValueKind.Object), ptr.A);
+                Else If (ptr.Kind == [int](Bytecode.PointerKind.Cell)) Mark([int](Bytecode.RegisterKind.CaptureCell), ptr.A);
+            }
+            Else { liveBytes += 48; MarkValue(ctx.CellAt(handle)); }
+        }
+
+        For (int arrayIndex = 0; arrayIndex < ArraySlots.Length; arrayIndex++)
+            If (ArraySlots.Sweep(arrayIndex))
+            {
+                ctx.ArrayAt(arrayIndex).ReleaseBuffer();
+                ArraySlots.Store(arrayIndex, null);
+            }
+        For (int objectIndex = 0; objectIndex < ObjectSlots.Length; objectIndex++) If (ObjectSlots.Sweep(objectIndex)) ObjectSlots.Store(objectIndex, null);
+        For (int cellIndex = 0; cellIndex < CellSlots.Length; cellIndex++) If (CellSlots.Sweep(cellIndex)) CellSlots.Store(cellIndex, null);
+        For (int pointerIndex = 0; pointerIndex < PointerSlots.Length; pointerIndex++) If (PointerSlots.Sweep(pointerIndex)) PointerSlots.Store(pointerIndex, null);
+        AllocatedBytes = 0;
+        Threshold = liveBytes > 1048576 ? liveBytes : 1048576;
+    }
+}

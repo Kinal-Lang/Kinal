@@ -156,3 +156,71 @@ When the response body is a JSON object, prefer `BodyDict`; `BodyObject` is the 
 
 - [IO.Web](web.md) — Embedded HTTP server package
 - [IO.System](system.md) — Lower-level system and FFI helpers
+
+## Defaults, Errors and Memory
+
+The default method is GET and timeout is 10000 milliseconds. Send is synchronous. Inspect HTTP status using IsSuccess or EnsureSuccess; the latter throws IO.Error for non-2xx status. Configuration, connection and parsing failures may also throw IO.Error. BodyDict reparses the text on access and requires an object root.
+
+Header names are trimmed, but dict keys are not case-folded, and Header(name) queries that key. Use the returned spelling, such as Content-Type. HTTP name semantics and case-sensitive dict storage are separate concerns.
+
+The entire response body is buffered without a response-size limit or streaming API. BodyLength counts bytes, not Unicode characters. The current execution path is hosted Native; native assets and OpenSSL must match the architecture.
+
+## Public Source Signatures
+
+The tables list public fields, constructors, properties and methods from the current package source. Inherited members are listed under their declaring base type. Get/Set identify property accessors; signatures include declared defaults. Native handles and Host/Win32 helpers require their ABI/lifetime contracts; ordinary applications should start with the package high-level objects.
+
+### Enums
+
+- `IO.Request.Method`: `GET = 1`, `POST = 2`, `PUT = 3`, `PATCH = 4`, `DELETE = 5`, `HEAD = 6`, `OPTIONS = 7`
+
+### IO.Request.Response
+
+| Member | Declaration | Accessors |
+|--------|-------------|-----------|
+| `Constructor` | `Public Constructor(int statusCode, string statusText, string bodyText, int bodyLength, dict headers)` | — |
+| `StatusCode` | `Public Property int StatusCode` | Get/Set |
+| `StatusText` | `Public Property string StatusText` | Get/Set |
+| `BodyText` | `Public Property string BodyText` | Get/Set |
+| `BodyJson` | `Public Trusted Property IO.Json.Value BodyJson` | Get |
+| `BodyObject` | `Public Trusted Property IO.Json.Object BodyObject` | Get |
+| `BodyDict` | `Public Trusted Property dict BodyDict` | Get |
+| `BodyLength` | `Public Property int BodyLength` | Get/Set |
+| `Headers` | `Public Property dict Headers` | Get/Set |
+| `IsSuccess` | `Public Safe Function bool IsSuccess()` | — |
+| `Header` | `Public Trusted Function string Header(string name)` | — |
+| `ContentType` | `Public Trusted Property string ContentType` | Get |
+| `EnsureSuccess` | `Public Trusted Function void EnsureSuccess()` | — |
+
+### IO.Request.Options
+
+| Member | Declaration | Accessors |
+|--------|-------------|-----------|
+| `Constructor` | `Public Constructor(string url, IO.Request.Method method = IO.Request.Method.GET)` | — |
+| `Url` | `Public Property string Url` | Get/Set |
+| `Method` | `Public Property IO.Request.Method Method` | Get/Set |
+| `Body` | `Public Property string Body` | Get/Set |
+| `BodyJson` | `Public Trusted Property IO.Json.Value BodyJson` | Get/Set |
+| `BodyObject` | `Public Trusted Property IO.Json.Object BodyObject` | Get/Set |
+| `BodyDict` | `Public Trusted Property dict BodyDict` | Get/Set |
+| `ContentType` | `Public Property string ContentType` | Get/Set |
+| `TimeoutMs` | `Public Property int TimeoutMs` | Get/Set |
+| `Headers` | `Public Property dict Headers` | Get/Set |
+| `SetMethod` | `Public Trusted Function IO.Request.Options SetMethod(IO.Request.Method method)` | — |
+| `SetBody` | `Public Trusted Function IO.Request.Options SetBody(string body, string contentType = "text/plain; charset=utf-8")` | — |
+| `SetTimeout` | `Public Trusted Function IO.Request.Options SetTimeout(int timeoutMs)` | — |
+| `SetHeader` | `Public Trusted Function IO.Request.Options SetHeader(string name, string value)` | — |
+| `RemoveHeader` | `Public Trusted Function IO.Request.Options RemoveHeader(string name)` | — |
+| `HeaderBlock` | `Public Trusted Function string HeaderBlock()` | — |
+| `Validate` | `Public Trusted Function void Validate()` | — |
+
+### IO.Request
+
+| Member | Declaration | Accessors |
+|--------|-------------|-----------|
+| `Send` | `Trusted Function IO.Request.Response Send(IO.Request.Options options)` | — |
+| `Fetch` | `Trusted Function IO.Request.Response Fetch(string url, int timeoutMs = 10000)` | — |
+| `Head` | `Trusted Function IO.Request.Response Head(string url, int timeoutMs = 10000)` | — |
+| `Post` | `Trusted Function IO.Request.Response Post(string url, string body, string contentType = "text/plain; charset=utf-8", int timeoutMs = 10000)` | — |
+| `Put` | `Trusted Function IO.Request.Response Put(string url, string body, string contentType = "text/plain; charset=utf-8", int timeoutMs = 10000)` | — |
+| `Patch` | `Trusted Function IO.Request.Response Patch(string url, string body, string contentType = "text/plain; charset=utf-8", int timeoutMs = 10000)` | — |
+| `DeleteRequest` | `Trusted Function IO.Request.Response DeleteRequest(string url, int timeoutMs = 10000)` | — |

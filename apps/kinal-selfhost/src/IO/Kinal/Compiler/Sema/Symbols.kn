@@ -1,5 +1,6 @@
 Unit IO.Kinal.Compiler.Sema.Symbols;
 
+Get IO.Text;
 Get IO.Kinal.Compiler.Syntax.SyntaxTree;
 Get IO.Kinal.Compiler.Syntax.Nodes;
 Get IO.Kinal.Compiler.Types.TypeSymbol;
@@ -30,6 +31,9 @@ Class FunctionSymbol
     Public TypeSymbol ReturnType;
     Public SyntaxTree Syntax;
     Public ParameterSymbol FirstParameter;
+    Private ParameterSymbol LastParameter;
+    Private int TotalParameters;
+    Private int RequiredParameters;
     Public FunctionDecl Declaration;
     Public ValueSymbol Receiver;
     Public bool IsGenericInstance;
@@ -41,6 +45,10 @@ Class FunctionSymbol
     Public bool IsLiteral;
     Public bool IsBlockLiteral;
     Public string BlockRecords;
+    // Assigned exactly once by SemanticCompilation; stable across late binding.
+    Public int RegistrationIndex;
+    Public FunctionSymbol NextNamed;
+    Public FunctionSymbol NextQualified;
     Public FunctionSymbol Next;
 
     Public Safe Constructor(string unitName, TypeSymbol ownerType, FunctionDecl declaration)
@@ -61,54 +69,40 @@ Class FunctionSymbol
         This.FirstCapture = null;
         This.IsLiteral = false;
         This.IsBlockLiteral = false;
+        This.RegistrationIndex = -1;
+        This.NextNamed = null;
+        This.NextQualified = null;
         This.BlockRecords = "";
         This.Next = null;
     }
 
     Public Safe Function void AddParameter(ParameterSymbol parameter)
     {
-        If (This.FirstParameter == null)
-        {
-            This.FirstParameter = parameter;
-            Return;
-        }
-        ParameterSymbol current = This.FirstParameter;
-        While (current.Next != null) current = current.Next;
-        current.Next = parameter;
+        If (This.FirstParameter == null) This.FirstParameter = parameter;
+        Else This.LastParameter.Next = parameter;
+        This.LastParameter = parameter;
+        This.TotalParameters = This.TotalParameters + 1;
+        If (parameter.Declaration == null || parameter.Declaration.DefaultValue == null)
+            This.RequiredParameters = This.RequiredParameters + 1;
     }
 
     Public Safe Function int ParameterCount()
     {
-        int count = 0;
-        ParameterSymbol current = This.FirstParameter;
-        While (current != null)
-        {
-            count = count + 1;
-            current = current.Next;
-        }
-        Return count;
+        Return This.TotalParameters;
     }
 
     Public Safe Function int RequiredParameterCount()
     {
-        int count = 0;
-        ParameterSymbol current = This.FirstParameter;
-        While (current != null)
-        {
-            If (current.Declaration == null || current.Declaration.DefaultValue == null)
-                count = count + 1;
-            current = current.Next;
-        }
-        Return count;
+        Return This.RequiredParameters;
     }
 
     Public Safe Function bool AcceptsArgumentCount(int count)
     {
         If (This.IsVariadic)
         {
-            Return count >= This.ParameterCount() - 1;
+            Return count >= This.TotalParameters - 1;
         }
-        Return count >= This.RequiredParameterCount() && count <= This.ParameterCount();
+        Return count >= This.RequiredParameters && count <= This.TotalParameters;
     }
 
     Public Safe Function string QualifiedName()
@@ -120,6 +114,15 @@ Class FunctionSymbol
             Return This.OwnerType.QualifiedName() + "." + functionName;
         }
         Return This.UnitName + "." + functionName;
+    }
+
+    Public Safe Function bool MatchesQualifiedName(string name)
+    {
+        // Most candidates have a different final component. Reject them
+        // before allocating the Unit/owner/name concatenation on every scan.
+        // Generic instances append their key and retain the exact comparison.
+        If (!This.IsGenericInstance && !IO.Text.EndsWith(name, This.Name)) Return false;
+        Return This.QualifiedName() == name;
     }
 
     Public Safe Function bool IsGenericTemplate()
@@ -218,8 +221,16 @@ Class ValueSymbol
     Public TypeSymbol Type;
     Public TypeSymbol AsyncResultType;
     Public bool IsParameter;
+    Public bool IsUsed;
+    Public StatementNode Declaration;
     Public bool IsConst;
     Public bool IsCaptured;
+    Public bool AddressTaken;
+    Public bool UnmodifiedStringLiteral;
+    Public bool HasLoopStringAppend;
+    Public int GlobalIndex;
+    Public i32 NativeLocalRootHint;
+    Public bool NativeArrayExposed;
     Public ExpressionNode ConstantOrigin;
     Public string PackageLabels;
     Public string BlockRecords;
@@ -235,6 +246,9 @@ Class ValueSymbol
         This.Type = type;
         This.AsyncResultType = null;
         This.IsParameter = isParameter;
+        This.GlobalIndex = -1;
+        This.IsUsed = false;
+        This.Declaration = null;
         This.IsConst = false;
         This.IsCaptured = false;
         This.ConstantOrigin = null;
@@ -284,12 +298,14 @@ Class FieldSymbol
     Public FieldDecl Declaration;
     Public TypeSymbol Type;
     Public FieldSymbol Next;
+    Public FieldSymbol NextNamed;
 
     Public Safe Constructor(FieldDecl declaration, TypeSymbol type)
     {
         This.Declaration = declaration;
         This.Type = type;
         This.Next = null;
+        This.NextNamed = null;
     }
 }
 
@@ -322,6 +338,8 @@ Class BindingScope
 {
     Public BindingScope Parent;
     Public ValueSymbol FirstValue;
+    Private int Count;
+    Private dict Names;
 
     Public Safe Constructor(BindingScope parent)
     {
@@ -333,6 +351,22 @@ Class BindingScope
     {
         value.Next = This.FirstValue;
         This.FirstValue = value;
+        If (This.Names != null)
+        {
+            If (value.Name != null) This.Names.Set(value.Name, value);
+            Return;
+        }
+        This.Count++;
+        If (This.Count != 16) Return;
+
+        // Preserve newest-first lookup when a scope crosses the indexing threshold.
+        This.Names = dict.Create();
+        ValueSymbol entry = This.FirstValue;
+        While (entry != null)
+        {
+            If (entry.Name != null && !This.Names.Contains(entry.Name)) This.Names.Set(entry.Name, entry);
+            entry = entry.Next;
+        }
     }
 
     Public Safe Function ValueSymbol Find(string name)
@@ -340,11 +374,19 @@ Class BindingScope
         BindingScope scope = This;
         While (scope != null)
         {
-            ValueSymbol current = scope.FirstValue;
-            While (current != null)
+            If (scope.Names != null && name != null)
             {
-                If (current.Name == name) Return current;
-                current = current.Next;
+                ValueSymbol found = [ValueSymbol](scope.Names.TryFetch(name, null));
+                If (found != null) Return found;
+            }
+            Else
+            {
+                ValueSymbol current = scope.FirstValue;
+                While (current != null)
+                {
+                    If (current.Name == name) Return current;
+                    current = current.Next;
+                }
             }
             scope = scope.Parent;
         }

@@ -486,12 +486,58 @@ static Type sema_is_expr(Sema *s, Expr *e)
     return e->type;
 }
 
+static bool bind_property_update(Sema *s, Expr *e, Type value_type)
+{
+    static const char getter_prefix[] = "__propget$";
+    Expr *getter = e->v.unary.expr;
+    if (!getter || getter->kind != EXPR_MEMBER_CALL || !getter->v.member_call.method_owner ||
+        kn_strncmp(getter->v.member_call.name, getter_prefix, sizeof(getter_prefix) - 1) != 0)
+        return false;
+
+    const char *name = getter->v.member_call.name + sizeof(getter_prefix) - 1;
+    Expr *receiver = getter->v.member_call.recv;
+    ClassDecl *owner = NULL;
+    int index = -1;
+    bool is_static = getter->v.member_call.is_static != 0;
+    Method *setter = is_static
+        ? find_property_setter_hierarchy(s, find_class(s, getter->v.member_call.static_type),
+                                         name, 1, &owner, &index)
+        : find_instance_accessor(s, receiver->type.name, name, true, &owner, &index);
+    if (!setter)
+    {
+        sema_error(s, e->line, e->col, 1, "Invalid Assignment", "Property has no setter");
+        return true;
+    }
+    if (!type_equal(value_type, setter->params.items[0].type))
+    {
+        sema_error(s, e->line, e->col, 1, "Type Mismatch", "Property getter and setter have different value types");
+        return true;
+    }
+    if (owner) check_access(s, owner, setter->access, e->line, e->col);
+    check_call_safety(s, setter->safety, e->line, e->col, 1);
+    // Both calls use this receiver. The setter takes the updated value computed
+    // by the unary operator, so its argument must not evaluate the getter again.
+    Expr *call = e->v.unary.property_setter;
+    if (!call)
+    {
+        call = new_expr(EXPR_MEMBER_CALL, e->line, e->col);
+        rewrite_expr_to_property_call(call, receiver, setter->name, getter);
+        e->v.unary.property_setter = call;
+    }
+    call->type = setter->ret_type;
+    call->v.member_call.is_static = is_static;
+    call->v.member_call.static_type = getter->v.member_call.static_type;
+    call->v.member_call.method_index = index;
+    call->v.member_call.method_owner = owner ? class_qname(owner) : getter->v.member_call.method_owner;
+    return true;
+}
+
 static Type sema_unary_expr(Sema *s, Expr *e)
 {
     Type vt = sema_expr(s, e->v.unary.expr);
     if (e->v.unary.op == TOK_PLUSPLUS || e->v.unary.op == TOK_MINUSMINUS)
     {
-        if (!is_lvalue_expr(e->v.unary.expr))
+        if (!bind_property_update(s, e, vt) && !is_lvalue_expr(e->v.unary.expr))
             sema_error(s, e->line, e->col, 1, "Invalid Assignment", "Increment/decrement target must be assignable");
         if (e->v.unary.expr->kind == EXPR_VAR)
         {
@@ -916,27 +962,27 @@ static Type sema_invoke_expr(Sema *s, Expr *e)
             }
             if (v->origin->kind == EXPR_FUNC_REF && v->origin->v.func_ref.qname)
             {
-                FuncSym *fs = functable_find(&s->funcs, v->origin->v.func_ref.qname);
-                if (fs && fs->func)
+                Func *fs = functable_find(&s->funcs, v->origin->v.func_ref.qname);
+                if (fs)
                 {
-                    const char **param_names = alloc_param_names_from_paramlist(&fs->func->params);
+                    const char **param_names = alloc_param_names_from_paramlist(&fs->params);
                     (void)prepare_call_args(s, e->line, e->col, &e->v.invoke.args, &e->v.invoke.arg_names,
-                                            &args, fs->func->is_variadic,
-                                            fs->func->params.items, fs->func->params.count,
-                                            param_names, fs->func->name, 1, 1);
-                    retype_prepared_args(s, &e->v.invoke.args, &args, fs->func->params.items, fs->func->params.count,
+                                            &args, fs->is_variadic,
+                                            fs->params.items, fs->params.count,
+                                            param_names, fs->name, 1, 1);
+                    retype_prepared_args(s, &e->v.invoke.args, &args, fs->params.items, fs->params.count,
                                          "Default literal requires parameter type");
                     if (param_names) kn_free((void *)param_names);
-                    for (int i = 0; i < fs->func->params.count; i++)
+                    for (int i = 0; i < fs->params.count; i++)
                     {
-                        Type pt = fs->func->params.items[i].type;
+                        Type pt = fs->params.items[i].type;
                         Type at = args.items[i].type;
                         check_int_to_ptr_safety(s, pt, at, e->v.invoke.args.items[i]);
                         if (!type_assignable(s, pt, at))
                             sema_error(s, e->v.invoke.args.items[i]->line, e->v.invoke.args.items[i]->col, 1, "Type Mismatch", type_mismatch_detail(pt, at));
                     }
-                    check_call_safety(s, fs->func->safety, e->line, e->col, 1);
-                    ret = fs->func->ret_type;
+                    check_call_safety(s, fs->safety, e->line, e->col, 1);
+                    ret = fs->ret_type;
                 }
             }
             else if (v->origin->kind == EXPR_ANON_FUNC)
@@ -1753,7 +1799,7 @@ static Type sema_call_expr(Sema *s, Expr *e)
         }
     }
 
-    FuncSym *fn = 0;
+    Func *fn = 0;
     int fn_ambiguous = 0;
     if (name_has_dot(resolved_call_name))
     {
@@ -1809,7 +1855,7 @@ static Type sema_call_expr(Sema *s, Expr *e)
         return e->type;
     }
 
-    if (func_is_generic_template(fn->func))
+    if (func_is_generic_template(fn))
     {
         if (e->v.call.type_args.count <= 0)
         {
@@ -1818,14 +1864,14 @@ static Type sema_call_expr(Sema *s, Expr *e)
             return e->type;
         }
         Type *type_args = copy_and_validate_type_args(s, &e->v.call.type_args, e->line, e->col);
-        Func *inst = instantiate_generic_func(s, fn->func, type_args, e->v.call.type_args.count, e->line, e->col);
+        Func *inst = instantiate_generic_func(s, fn, type_args, e->v.call.type_args.count, e->line, e->col);
         if (!inst)
         {
             e->type = type_make(TY_UNKNOWN);
             return e->type;
         }
         fn = functable_find(&s->funcs, inst->qname ? inst->qname : inst->name);
-        if (!fn || !fn->func)
+        if (!fn)
         {
             sema_error(s, e->line, e->col, 1, "Generic Function", "Failed to resolve instantiated generic function");
             e->type = type_make(TY_UNKNOWN);
@@ -1838,30 +1884,30 @@ static Type sema_call_expr(Sema *s, Expr *e)
     }
 
     {
-        const char **param_names = alloc_param_names_from_paramlist(&fn->func->params);
+        const char **param_names = alloc_param_names_from_paramlist(&fn->params);
         (void)prepare_call_args(s, e->line, e->col, &e->v.call.args, &e->v.call.arg_names,
-                                0, fn->func->is_variadic,
-                                fn->func->params.items, fn->func->params.count,
-                                param_names, fn->func->name, 1, 1);
+                                0, fn->is_variadic,
+                                fn->params.items, fn->params.count,
+                                param_names, fn->name, 1, 1);
         if (param_names) kn_free((void *)param_names);
     }
 
-    for (int i = 0; i < fn->func->params.count; i++)
+    for (int i = 0; i < fn->params.count; i++)
     {
         Expr *arg = e->v.call.args.items[i];
-        Type pt = fn->func->params.items[i].type;
+        Type pt = fn->params.items[i].type;
         Type at = sema_expr_with_expected(s, arg, pt, "Default literal requires parameter type");
         check_int_to_ptr_safety(s, pt, at, arg);
         if (!type_assignable(s, pt, at))
             sema_error(s, arg->line, arg->col, 1, "Type Mismatch", type_mismatch_detail(pt, at));
         check_byte_literal_range(s, pt, arg);
     }
-    check_call_safety(s, fn->func->safety, e->line, e->col, 1);
-    if (fn->func->qname)
-        e->v.call.name = fn->func->qname;
-    if (fn->func->is_async)
-        return sema_mark_async_task_expr(e, fn->func->async_result_type);
-    e->type = fn->func->ret_type;
+    check_call_safety(s, fn->safety, e->line, e->col, 1);
+    if (fn->qname)
+        e->v.call.name = fn->qname;
+    if (fn->is_async)
+        return sema_mark_async_task_expr(e, fn->async_result_type);
+    e->type = fn->ret_type;
     return e->type;
 }
 
@@ -1963,58 +2009,29 @@ static Type sema_expr_impl(Sema *s, Expr *e)
         }
 
         const char *resolved_name = expand_local_symbol_alias(s, e->v.var.name);
-        FuncSym *fn = 0;
+        Func *fn = 0;
         int fn_ambiguous = 0;
-        if (name_has_dot(resolved_name))
+        int qualified = name_has_dot(resolved_name);
+        const FuncNameIndex *index = qualified ? &s->funcs.symbols : &s->funcs.names;
+        for (int i = funcindex_first(index, resolved_name); i >= 0; i = index->next[i])
         {
-            for (int i = 0; i < s->funcs.count; i++)
+            Func *candidate = s->funcs.items[i];
+            if (func_is_generic_template(candidate)) continue;
+            if (qualified)
             {
-                FuncSym *cand = &s->funcs.items[i];
-                Func *f = cand->func;
-                if (!f)
-                    continue;
-                if (func_is_generic_template(f))
-                    continue;
-                if (!cand->qname || kn_strcmp(cand->qname, resolved_name) != 0)
-                    continue;
-                if (!module_accessible_by_namespace(s, f->unit))
-                    continue;
-                if (fn)
-                {
-                    fn_ambiguous = 1;
-                    break;
-                }
-                fn = cand;
+                if (!module_accessible_by_namespace(s, candidate->unit)) continue;
             }
-        }
-        else
-        {
-            for (int i = 0; i < s->funcs.count; i++)
+            else if (s->current_unit && s->current_unit[0])
             {
-                FuncSym *cand = &s->funcs.items[i];
-                Func *f = cand->func;
-                if (!f)
-                    continue;
-                if (func_is_generic_template(f))
-                    continue;
-                if (kn_strcmp(f->name, resolved_name) != 0)
-                    continue;
-                if (s->current_unit && s->current_unit[0])
-                {
-                    if (!f->unit || kn_strcmp(f->unit, s->current_unit) != 0)
-                        continue;
-                }
-                else if (f->unit && f->unit[0])
-                {
-                    continue;
-                }
-                if (fn)
-                {
-                    fn_ambiguous = 1;
-                    break;
-                }
-                fn = cand;
+                if (!candidate->unit || kn_strcmp(candidate->unit, s->current_unit) != 0) continue;
             }
+            else if (candidate->unit && candidate->unit[0]) continue;
+            if (fn)
+            {
+                fn_ambiguous = 1;
+                break;
+            }
+            fn = candidate;
         }
         if (fn)
         {
@@ -2024,14 +2041,14 @@ static Type sema_expr_impl(Sema *s, Expr *e)
                 e->type = type_make(TY_UNKNOWN);
                 return e->type;
             }
-            if (func_is_generic_template(fn->func))
+            if (func_is_generic_template(fn))
             {
                 sema_error(s, e->line, e->col, 1, "Generic Function", "Generic function reference requires explicit type arguments");
                 e->type = type_make(TY_UNKNOWN);
                 return e->type;
             }
             e->kind = EXPR_FUNC_REF;
-            e->v.func_ref.qname = fn->func->qname ? fn->func->qname : fn->func->name;
+            e->v.func_ref.qname = fn->qname ? fn->qname : fn->name;
             e->v.func_ref.builtin_id = KN_BUILTIN_NONE;
             e->type = type_class("IO.Type.Object.Function");
             return e->type;
@@ -2133,18 +2150,18 @@ static Type sema_expr_impl(Sema *s, Expr *e)
                 if (sema_try_lower_target_or_host_constant(s, e, qname))
                     return e->type;
 
-                FuncSym *qfn = functable_find_visible_qualified(&s->funcs, s, qname);
+                Func *qfn = functable_find_visible_qualified(&s->funcs, s, qname);
                 if (qfn)
                 {
                     e->kind = EXPR_FUNC_REF;
-                    e->v.func_ref.qname = qfn->func && qfn->func->qname ? qfn->func->qname : qname;
+                    e->v.func_ref.qname = qfn && qfn->qname ? qfn->qname : qname;
                     e->v.func_ref.builtin_id = KN_BUILTIN_NONE;
                     e->type = type_class("IO.Type.Object.Function");
                     return e->type;
                 }
                 {
-                    FuncSym *hidden = functable_find(&s->funcs, qname);
-                    if (hidden && hidden->func && hidden->func->unit && import_has_alias_for_module(s, hidden->func->unit))
+                    Func *hidden = functable_find(&s->funcs, qname);
+                    if (hidden && hidden->unit && import_has_alias_for_module(s, hidden->unit))
                     {
                         sema_error(s, e->line, e->col, 1, "Scoped Symbol Required", "Imported module function must be called with module or alias qualifier");
                         e->type = type_make(TY_UNKNOWN);
@@ -2191,6 +2208,12 @@ static Type sema_expr_impl(Sema *s, Expr *e)
                                     e->v.func_ref.builtin_id = KN_BUILTIN_NONE;
                                     e->type = type_class("IO.Type.Object.Function");
                                     return e->type;
+                                }
+                                Method *getter = find_property_getter_hierarchy(s, qc, fname, 1, NULL, NULL);
+                                if (getter)
+                                {
+                                    rewrite_expr_to_property_call(e, recv, getter->name, NULL);
+                                    return sema_expr(s, e);
                                 }
                                 sema_error(s, e->line, e->col, 1, "Unknown Field", "Field not found");
                                 e->type = type_make(TY_UNKNOWN);
@@ -2364,8 +2387,9 @@ static Type sema_expr_impl(Sema *s, Expr *e)
         if (!c)
         {
             if (find_interface(s, rt.name))
-                sema_error(s, e->line, e->col, 1, "Invalid Member", "Interface members not supported yet");
-            sema_error(s, e->line, e->col, 1, "Unknown Type", "Class not found");
+                sema_error(s, e->line, e->col, 1, "Invalid Member", "Interface has no readable property with this name");
+            else
+                sema_error(s, e->line, e->col, 1, "Unknown Type", "Class not found");
             e->type = type_make(TY_UNKNOWN);
             return e->type;
         }
@@ -2404,7 +2428,7 @@ static Type sema_expr_impl(Sema *s, Expr *e)
             if (!v)
             {
                 // Check if target is a delegate function
-                FuncSym *dfn = 0;
+                Func *dfn = 0;
                 if (name_has_dot(tgt->v.var.name))
                     dfn = functable_find_visible_qualified(&s->funcs, s, tgt->v.var.name);
                 else
@@ -2414,20 +2438,20 @@ static Type sema_expr_impl(Sema *s, Expr *e)
                     else
                         dfn = functable_find_by_name_without_unit(&s->funcs, tgt->v.var.name);
                 }
-                if (dfn && dfn->func && dfn->func->is_delegate)
+                if (dfn && dfn->is_delegate)
                 {
                     // Delegate assignment: RHS must be Object.Function (or ptr for By C)
                     Type rhs = sema_expr(s, e->v.assign.value);
                     if (e->v.assign.value->kind == EXPR_FUNC_REF && e->v.assign.value->v.func_ref.qname)
                     {
-                        FuncSym *rhs_func = functable_find(&s->funcs, e->v.assign.value->v.func_ref.qname);
-                        if (!rhs_func || !rhs_func->func ||
-                            !type_equal(dfn->func->ret_type, rhs_func->func->ret_type) ||
-                            !params_equal(&dfn->func->params, &rhs_func->func->params))
+                        Func *rhs_func = functable_find(&s->funcs, e->v.assign.value->v.func_ref.qname);
+                        if (!rhs_func ||
+                            !type_equal(dfn->ret_type, rhs_func->ret_type) ||
+                            !params_equal(&dfn->params, &rhs_func->params))
                             sema_error(s, e->v.assign.value->line, e->v.assign.value->col, 1,
                                        "Type Mismatch", "Delegate assignment requires a matching function signature");
                     }
-                    if (dfn->func->delegate_abi == KN_DELEGATE_ABI_C)
+                    if (dfn->delegate_abi == KN_DELEGATE_ABI_C)
                     {
                         if (e->v.assign.value->kind != EXPR_FUNC_REF && rhs.kind != TY_NULL && rhs.kind != TY_PTR)
                             sema_error(s, e->v.assign.value->line, e->v.assign.value->col, 1,
@@ -2439,13 +2463,13 @@ static Type sema_expr_impl(Sema *s, Expr *e)
                             sema_error(s, e->v.assign.value->line, e->v.assign.value->col, 1,
                                        "Type Mismatch", "Delegate assignment requires Object.Function or null");
                     }
-                    if (dfn->func->qname)
-                        tgt->v.var.name = dfn->func->qname;
+                    if (dfn->qname)
+                        tgt->v.var.name = dfn->qname;
                     vt = type_class("IO.Type.Object.Function");
                     e->type = vt;
                     return e->type;
                 }
-                else if (dfn && dfn->func && !dfn->func->is_delegate)
+                else if (dfn && !dfn->is_delegate)
                 {
                     sema_error(s, e->line, e->col, 1, "Invalid Assignment",
                                "Cannot assign to a function with body; only Delegate functions are assignable");
@@ -2481,6 +2505,8 @@ static Type sema_expr_impl(Sema *s, Expr *e)
             vt = sema_expr(s, tgt);
             if (tgt->kind == EXPR_MEMBER && tgt->v.member.is_enum_const)
                 sema_error(s, tgt->line, tgt->col, 1, "Invalid Assignment", "Cannot assign to enum constant");
+            if (tgt->kind == EXPR_MEMBER_CALL)
+                sema_error(s, tgt->line, tgt->col, 1, "Invalid Assignment", "Property has no setter");
         }
         else
         {
@@ -2837,10 +2863,10 @@ static Type sema_expr_impl(Sema *s, Expr *e)
                     }
                 }
 
-                FuncSym *qfn = functable_find_visible_qualified(&s->funcs, s, qname);
+                Func *qfn = functable_find_visible_qualified(&s->funcs, s, qname);
                 if (qfn)
                 {
-                    if (func_is_generic_template(qfn->func))
+                    if (func_is_generic_template(qfn))
                     {
                         if (e->v.member_call.type_args.count <= 0)
                         {
@@ -2849,14 +2875,14 @@ static Type sema_expr_impl(Sema *s, Expr *e)
                             return e->type;
                         }
                         Type *type_args = copy_and_validate_type_args(s, &e->v.member_call.type_args, e->line, e->col);
-                        Func *inst = instantiate_generic_func(s, qfn->func, type_args, e->v.member_call.type_args.count, e->line, e->col);
+                        Func *inst = instantiate_generic_func(s, qfn, type_args, e->v.member_call.type_args.count, e->line, e->col);
                         if (!inst)
                         {
                             e->type = type_make(TY_UNKNOWN);
                             return e->type;
                         }
                         qfn = functable_find(&s->funcs, inst->qname ? inst->qname : inst->name);
-                        if (!qfn || !qfn->func)
+                        if (!qfn)
                         {
                             sema_error(s, e->line, e->col, 1, "Generic Function", "Failed to resolve instantiated generic function");
                             e->type = type_make(TY_UNKNOWN);
@@ -2869,35 +2895,35 @@ static Type sema_expr_impl(Sema *s, Expr *e)
                     }
 
                     {
-                        const char **param_names = alloc_param_names_from_paramlist(&qfn->func->params);
+                        const char **param_names = alloc_param_names_from_paramlist(&qfn->params);
                         (void)prepare_call_args(s, e->line, e->col, &e->v.member_call.args, &e->v.member_call.arg_names,
-                                                &args, qfn->func->is_variadic,
-                                                qfn->func->params.items, qfn->func->params.count,
-                                                param_names, qfn->func->name, 1, 1);
-                        retype_prepared_args(s, &e->v.member_call.args, &args, qfn->func->params.items, qfn->func->params.count,
+                                                &args, qfn->is_variadic,
+                                                qfn->params.items, qfn->params.count,
+                                                param_names, qfn->name, 1, 1);
+                        retype_prepared_args(s, &e->v.member_call.args, &args, qfn->params.items, qfn->params.count,
                                              "Default literal requires parameter type");
                         if (param_names) kn_free((void *)param_names);
                     }
 
-                    for (int i = 0; i < qfn->func->params.count; i++)
+                    for (int i = 0; i < qfn->params.count; i++)
                     {
                         Expr *arg = e->v.member_call.args.items[i];
-                        Type pt = qfn->func->params.items[i].type;
+                        Type pt = qfn->params.items[i].type;
                         Type at = args.items[i].type;
                         check_int_to_ptr_safety(s, pt, at, arg);
                         if (!type_assignable(s, pt, at))
                             sema_error(s, arg->line, arg->col, 1, "Type Mismatch", type_mismatch_detail(pt, at));
                         check_byte_literal_range(s, pt, arg);
                     }
-                    check_call_safety(s, qfn->func->safety, e->line, e->col, 1);
+                    check_call_safety(s, qfn->safety, e->line, e->col, 1);
                     e->v.member_call.is_qual_call = 1;
-                    e->v.member_call.qual_name = qfn->func && qfn->func->qname ? qfn->func->qname : qname;
-                    e->type = qfn->func->ret_type;
+                    e->v.member_call.qual_name = qfn && qfn->qname ? qfn->qname : qname;
+                    e->type = qfn->ret_type;
                     return e->type;
                 }
                 {
-                    FuncSym *hidden = functable_find(&s->funcs, qname);
-                    if (hidden && hidden->func && hidden->func->unit && import_has_alias_for_module(s, hidden->func->unit))
+                    Func *hidden = functable_find(&s->funcs, qname);
+                    if (hidden && hidden->unit && import_has_alias_for_module(s, hidden->unit))
                     {
                         sema_error(s, e->line, e->col, 1, "Scoped Symbol Required", "Imported module function must be called with module or alias qualifier");
                         e->type = type_make(TY_UNKNOWN);

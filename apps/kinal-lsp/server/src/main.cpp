@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <cctype>
+#include <charconv>
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
@@ -19,7 +20,6 @@
 #if defined(_WIN32)
 #include <fcntl.h>
 #include <io.h>
-extern "C" __declspec(dllimport) unsigned long __stdcall GetModuleFileNameW(void *hModule, wchar_t *lpFilename, unsigned long nSize);
 #elif defined(__linux__)
 #include <unistd.h>
 #include <climits>
@@ -512,6 +512,7 @@ struct Symbol {
     std::string key;
     Range decl;
     int decl_tok_idx = -1;
+    int scope_end = std::numeric_limits<int>::max();
     bool is_static = false;
     bool has_const_value = false;
     int64_t const_value = 0;
@@ -540,6 +541,7 @@ struct Completion {
     std::string detail;
     std::string insert_text;
     int insert_text_format = 0; // 0=plain, 2=snippet
+    int symbol_index = -1;
 };
 
 static bool is_builtin_meta_attr(std::string_view s) {
@@ -560,6 +562,7 @@ static bool is_string_prefix_name(std::string_view s) {
 }
 
 struct Analysis {
+    std::unordered_map<std::string, std::vector<std::string>> resolved_units;
     std::vector<Tok> toks;
     std::vector<Symbol> syms;
     std::vector<Occ> occs;
@@ -590,6 +593,9 @@ struct DeclInfo {
     std::string container;
     std::string owner_qname;
     std::string type_text;
+    std::string receiver_type;
+    std::string base_class;
+    bool is_private = false;
     std::string ret_text;
     std::vector<std::pair<std::string, std::string>> params;
     SymKind kind = SymKind::Variable;
@@ -601,7 +607,9 @@ struct DeclInfo {
 
 struct DeclDocIndex {
     std::string unit;
+    std::vector<std::string> open_modules;
     std::vector<DeclInfo> decls;
+    std::unordered_map<std::string, size_t> top_by_name;
 };
 
 bool is_hidden_internal_name(std::string_view s);
@@ -1199,11 +1207,11 @@ bool text_starts_with(std::string_view s, std::string_view pfx) {
 }
 
 std::vector<std::string> project_child_unit_segments(std::string_view prefix);
-std::vector<DeclInfo> project_top_level_decls_for_module(const std::string &module);
-std::vector<DeclInfo> project_member_decls_for_owner(const std::string &owner_qname);
-std::optional<DeclInfo> project_top_level_decl(const std::string &module, std::string_view name);
-std::optional<DeclInfo> project_member_decl(const std::string &owner_qname, std::string_view name);
-std::optional<DeclInfo> project_qualified_top_level_decl(std::string_view qualified);
+std::vector<DeclInfo> project_top_level_decls_for_module(const std::string &module, const Analysis *analysis = nullptr);
+std::vector<DeclInfo> project_member_decls_for_owner(const std::string &owner_qname, const Analysis *analysis = nullptr);
+std::optional<DeclInfo> project_top_level_decl(const std::string &module, std::string_view name, const Analysis *analysis = nullptr);
+std::optional<DeclInfo> project_member_decl(const std::string &owner_qname, std::string_view name, const Analysis *analysis = nullptr);
+std::optional<DeclInfo> project_qualified_top_level_decl(std::string_view qualified, const Analysis *analysis = nullptr);
 std::optional<DeclInfo> project_imported_symbol_decl(const Analysis &an, std::string_view local);
 std::optional<DeclInfo> project_visible_top_level_decl_in_analysis(const Analysis &an,
                                                                    std::string_view current_unit,
@@ -1215,10 +1223,6 @@ std::vector<std::string> discover_declaring_unit_uris_from_roots(std::string_vie
 extern std::string g_exe_dir;
 struct Doc;
 const Symbol *sym_by_id(const Analysis &an, int id);
-std::optional<DeclInfo> project_member_decl_via_receiver(const Doc &d,
-                                                         const std::vector<int> &seg_tok_i,
-                                                         const std::vector<std::string> &segs,
-                                                         int seg_idx);
 
 bool parse_qualified_name(const std::vector<Tok> &toks, int &i, std::string &out) {
     out.clear();
@@ -1387,7 +1391,7 @@ void parse_imports_from_tokens(Analysis &an) {
                 an.import_alias_to_module[local] = target;
                 return;
             }
-            if (auto top = project_qualified_top_level_decl(target)) {
+            if (auto top = project_qualified_top_level_decl(target, &an)) {
                 an.import_symbol_to_qualified[local] = top->qname;
                 return;
             }
@@ -1636,9 +1640,12 @@ struct KnprojSourceSet {
 struct KnprojProfileLite {
     std::string name;
     std::string entry;
+    std::string entry_symbol;
+    bool freestanding = false;
     std::vector<std::string> sets;
     std::vector<std::string> package_roots;
     std::vector<std::string> official_package_roots;
+    std::vector<std::string> package_pins;
     KnprojSourceMode mode = KnprojSourceMode::Unset;
     bool has_auto_discovery = false;
     bool auto_discovery = true;
@@ -1656,6 +1663,7 @@ struct KnprojConfigLite {
     std::vector<std::string> workspace_ignore;
     std::vector<std::string> package_roots;
     std::vector<std::string> official_package_roots;
+    std::vector<std::string> package_pins;
     std::vector<KnprojSourceSet> source_sets;
     std::vector<KnprojProfileLite> profiles;
 };
@@ -1664,6 +1672,7 @@ struct KnprojScopeLite {
     KnprojConfigLite config;
     KnprojProfileLite profile;
     std::vector<std::filesystem::path> local_files;
+    std::unordered_map<std::string, size_t> source_order;
     std::unordered_map<std::string, std::vector<std::string>> local_unit_to_uris;
     std::vector<std::filesystem::path> external_roots;
     KnprojSourceMode mode = KnprojSourceMode::Unset;
@@ -1795,7 +1804,8 @@ bool knproj_skip_block(KnprojTokParserLite &p) {
     return depth == 0;
 }
 
-bool knproj_parse_packages_block(KnprojTokParserLite &p, std::vector<std::string> &roots, std::vector<std::string> &official_roots) {
+bool knproj_parse_packages_block(KnprojTokParserLite &p, std::vector<std::string> &roots, std::vector<std::string> &official_roots,
+                                std::vector<std::string> &pins) {
     if (!knproj_expect(p, TOK_LBRACE)) return false;
     while (!p.eof() && p.cur().type != TOK_RBRACE) {
         Tok key = p.cur();
@@ -1806,6 +1816,8 @@ bool knproj_parse_packages_block(KnprojTokParserLite &p, std::vector<std::string
             if (!knproj_parse_string_list(p, roots)) return false;
         } else if (knproj_tok_eq_ci(key, "OfficialRoots")) {
             if (!knproj_parse_string_list(p, official_roots)) return false;
+        } else if (knproj_tok_eq_ci(key, "Pins")) {
+            if (!knproj_parse_string_list(p, pins)) return false;
         } else {
             return false;
         }
@@ -1884,6 +1896,24 @@ bool knproj_parse_source_block(KnprojTokParserLite &p, KnprojProfileLite &profil
     return knproj_expect(p, TOK_RBRACE);
 }
 
+bool knproj_parse_build_block(KnprojTokParserLite &p, KnprojProfileLite &profile) {
+    if (!knproj_expect(p, TOK_LBRACE)) return false;
+    while (!p.eof() && p.cur().type != TOK_RBRACE) {
+        Tok key = p.cur();
+        p.next();
+        if (!knproj_expect(p, TOK_ASSIGN)) return false;
+        if (knproj_tok_eq_ci(key, "EntrySymbol")) {
+            if (!knproj_parse_name(p, profile.entry_symbol)) return false;
+        } else {
+            if (knproj_tok_eq_ci(key, "Environment"))
+                profile.freestanding = knproj_tok_eq_ci(p.cur(), "Freestanding");
+            while (!p.eof() && p.cur().type != TOK_SEMI && p.cur().type != TOK_RBRACE) p.next();
+        }
+        if (!knproj_expect(p, TOK_SEMI)) return false;
+    }
+    return knproj_expect(p, TOK_RBRACE);
+}
+
 bool knproj_parse_profile_block(KnprojTokParserLite &p, KnprojConfigLite &cfg) {
     KnprojProfileLite profile;
     if (!knproj_parse_name(p, profile.name)) return false;
@@ -1895,9 +1925,11 @@ bool knproj_parse_profile_block(KnprojTokParserLite &p, KnprojConfigLite &cfg) {
         if (knproj_tok_eq_ci(sec, "Source")) {
             if (!knproj_parse_source_block(p, profile)) return false;
         } else if (knproj_tok_eq_ci(sec, "Packages")) {
-            if (!knproj_parse_packages_block(p, profile.package_roots, profile.official_package_roots))
+            if (!knproj_parse_packages_block(p, profile.package_roots, profile.official_package_roots, profile.package_pins))
                 return false;
-        } else if (knproj_tok_eq_ci(sec, "Build") || knproj_tok_eq_ci(sec, "Link")) {
+        } else if (knproj_tok_eq_ci(sec, "Build")) {
+            if (!knproj_parse_build_block(p, profile)) return false;
+        } else if (knproj_tok_eq_ci(sec, "Link")) {
             if (!knproj_skip_block(p)) return false;
         } else {
             return false;
@@ -1958,7 +1990,7 @@ std::optional<KnprojConfigLite> parse_knproj_file(const std::filesystem::path &p
             continue;
         }
         if (knproj_tok_eq_ci(key, "Packages")) {
-            if (!knproj_parse_packages_block(p, cfg.package_roots, cfg.official_package_roots)) return std::nullopt;
+            if (!knproj_parse_packages_block(p, cfg.package_roots, cfg.official_package_roots, cfg.package_pins)) return std::nullopt;
             continue;
         }
         if (knproj_tok_eq_ci(key, "Workspace")) {
@@ -2131,15 +2163,15 @@ std::string sanitize_cache_segment(std::string s) {
             break;
         }
     }
-    if (s.empty()) s = "_";
+    if (s.empty() || s == "." || s == "..") s = "_";
     return s;
 }
 
 // ---- klib virtual URI support ----
 // Cache root for klib extraction (system cache directory).
 std::filesystem::path g_klib_cache_base;
-// Set of normalized klib cache source root paths (used to identify klib files).
-std::unordered_set<std::string> g_klib_cache_source_roots;
+// Package source roots selected from manifests, including extracted klibs.
+std::unordered_set<std::string> g_package_source_roots;
 
 std::filesystem::path lsp_system_cache_dir() {
 #if defined(_WIN32)
@@ -2486,16 +2518,83 @@ bool klib_extract_to_dir_lsp(const std::filesystem::path &klib_path, const std::
     return true;
 }
 
-void collect_package_source_roots(const std::filesystem::path &package_root,
-                                  const std::filesystem::path &cache_root,
-                                  std::vector<std::filesystem::path> &out,
-                                  std::unordered_set<std::string> &seen) {
-    std::error_code ec;
-    if (package_root.empty()) return;
-    if (!std::filesystem::exists(package_root, ec) || ec) return;
-    if (!std::filesystem::is_directory(package_root, ec) || ec) return;
+struct LspPackage {
+    std::filesystem::path directory;
+    std::string name;
+    std::string version;
+    std::string source_root;
+    std::string archive;
+};
 
-    auto add = [&](std::filesystem::path p, bool is_klib_cache = false) {
+int compare_package_versions(std::string_view left, std::string_view right) {
+    auto next = [](std::string_view &remaining) {
+        auto dot = remaining.find('.');
+        auto segment = remaining.substr(0, dot);
+        remaining.remove_prefix(dot == std::string_view::npos ? remaining.size() : dot + 1);
+        return segment;
+    };
+    while (!left.empty() || !right.empty()) {
+        auto a = next(left), b = next(right);
+        if (a.find_first_not_of("0123456789") == std::string_view::npos &&
+            b.find_first_not_of("0123456789") == std::string_view::npos) {
+            a.remove_prefix(std::min(a.find_first_not_of('0'), a.size()));
+            b.remove_prefix(std::min(b.find_first_not_of('0'), b.size()));
+            if (a.size() != b.size()) return a.size() < b.size() ? -1 : 1;
+        }
+        if (int order = a.compare(b)) return order;
+    }
+    return 0;
+}
+
+using PackagePins = std::unordered_map<std::string, std::string>;
+
+struct LspPackageCatalog {
+    std::vector<LspPackage> selected;
+    std::unordered_map<std::string, size_t> indices;
+
+    bool scan(const std::filesystem::path &root, const PackagePins &pins, bool official) {
+        std::error_code ec;
+        if (!std::filesystem::is_directory(root, ec)) return false;
+        bool has_manifest = false;
+        for (std::filesystem::recursive_directory_iterator it(root, std::filesystem::directory_options::skip_permission_denied, ec),
+             end; !ec && it != end; it.increment(ec)) {
+            const auto filename = it->path().filename().string();
+            if (it->is_directory(ec)) {
+                if (filename == ".git" || filename == ".kinal-cache" || filename == "build" || filename == "out")
+                    it.disable_recursion_pending();
+                continue;
+            }
+            if (filename != "package.knpkg.json" && filename != "package.knpkg") continue;
+            has_manifest = true;
+            auto manifest = read_json_file(it->path());
+            if (!manifest || manifest->kind != Json::Kind::Object) continue;
+            auto field = [&](const char *key, std::string fallback = {}) {
+                const Json *value = manifest->find(key);
+                return value ? value->str(fallback) : fallback;
+            };
+            if (field("kind") == "project") continue;
+            auto directory = it->path().parent_path();
+            auto name = field("name", directory.filename().string());
+            if (!official && name.rfind("IO.", 0) == 0) continue;
+            auto version = field("version", "0.0.0");
+            if (auto pin = pins.find(name); pin != pins.end() && pin->second != version) continue;
+            auto [index, added] = indices.try_emplace(name, selected.size());
+            if (!added && compare_package_versions(version, selected[index->second].version) <= 0) continue;
+            LspPackage pkg{directory, name, version, field("source_root", "src"), field("klib")};
+            if (added) selected.push_back(std::move(pkg));
+            else selected[index->second] = std::move(pkg);
+        }
+        return has_manifest;
+    }
+};
+
+void append_package_sources(const LspPackage &pkg, const std::filesystem::path &cache_base,
+                            std::vector<std::filesystem::path> &out, std::unordered_set<std::string> &seen) {
+    std::error_code ec;
+    const auto &package_dir = pkg.directory;
+    const auto &source_root = pkg.source_root;
+    const auto &klib_rel = pkg.archive;
+    auto add = [&](std::filesystem::path p) {
         if (p.empty()) return;
         p = p.lexically_normal();
         std::error_code add_ec;
@@ -2505,61 +2604,44 @@ void collect_package_source_roots(const std::filesystem::path &package_root,
         if (key.empty()) return;
         if (!seen.insert(key).second) return;
         out.push_back(std::move(p));
-        if (is_klib_cache) g_klib_cache_source_roots.insert(key);
+        g_package_source_roots.insert(key);
     };
 
-    for (std::filesystem::recursive_directory_iterator it(package_root, ec), end; !ec && it != end; it.increment(ec)) {
-        if (ec) break;
-        if (!it->is_regular_file()) continue;
-        const std::filesystem::path manifest_path = it->path();
-        const std::string filename = manifest_path.filename().string();
-        if (filename != "package.knpkg.json" && filename != "package.knpkg") continue;
-
-        auto manifest = read_json_file(manifest_path);
-        if (!manifest || manifest->kind != Json::Kind::Object) continue;
-        std::string kind = manifest->find("kind") ? manifest->find("kind")->str() : "";
-        if (!kind.empty() && kind != "package") continue;
-
-        const std::filesystem::path package_dir = manifest_path.parent_path();
-        const std::string pkg_name = manifest->find("name") ? manifest->find("name")->str(package_dir.filename().string()) : package_dir.filename().string();
-        const std::string pkg_version = manifest->find("version") ? manifest->find("version")->str("0.0.0") : "0.0.0";
-        const std::string source_root = manifest->find("source_root") ? manifest->find("source_root")->str("src") : "src";
-        const std::string klib_rel = manifest->find("klib") ? manifest->find("klib")->str() : "";
-
-        if (!klib_rel.empty()) {
-            std::filesystem::path klib_path = (package_dir / klib_rel).lexically_normal();
-            std::error_code path_ec;
-            if (std::filesystem::exists(klib_path, path_ec) && !path_ec) {
-                std::filesystem::path cache_dir = cache_root / sanitize_cache_segment(pkg_name) / sanitize_cache_segment(pkg_version);
-                std::filesystem::path cached_manifest = cache_dir / "package.knpkg.json";
-                bool need_extract = true;
-                std::error_code time_ec;
-                if (std::filesystem::exists(cached_manifest, time_ec) && !time_ec) {
-                    auto cache_time = std::filesystem::last_write_time(cached_manifest, time_ec);
-                    auto klib_time = std::filesystem::last_write_time(klib_path, time_ec);
-                    if (!time_ec && cache_time >= klib_time) need_extract = false;
+    if (!klib_rel.empty()) {
+        std::filesystem::path klib_path = (package_dir / klib_rel).lexically_normal();
+        std::error_code path_ec;
+        if (std::filesystem::exists(klib_path, path_ec) && !path_ec) {
+            std::filesystem::path cache_dir = cache_base / ("pkg-" + std::to_string(std::hash<std::string>{}(normalize_fs_path(package_dir.string()))))
+                                             / sanitize_cache_segment(pkg.name) / sanitize_cache_segment(pkg.version);
+            std::filesystem::path cached_manifest = cache_dir / "package.knpkg.json";
+            bool need_extract = true;
+            std::error_code time_ec;
+            if (std::filesystem::exists(cached_manifest, time_ec) && !time_ec) {
+                auto cache_time = std::filesystem::last_write_time(cached_manifest, time_ec);
+                auto klib_time = std::filesystem::last_write_time(klib_path, time_ec);
+                if (!time_ec && cache_time >= klib_time) need_extract = false;
+            }
+            if (need_extract) {
+                std::filesystem::remove_all(cache_dir, ec);
+                ec.clear();
+                if (klib_extract_to_dir_lsp(klib_path, cache_dir)) {
+                    add(cache_dir / source_root);
+                    return;
                 }
-                if (need_extract) {
-                    std::filesystem::remove_all(cache_dir, ec);
-                    ec.clear();
-                    if (klib_extract_to_dir_lsp(klib_path, cache_dir)) {
-                        add(cache_dir / source_root, true);
-                        continue;
-                    }
-                } else {
-                    add(cache_dir / source_root, true);
-                    continue;
-                }
+            } else {
+                add(cache_dir / source_root);
+                return;
             }
         }
-
-        add(package_dir / source_root);
     }
+
+    add(package_dir / source_root);
 }
 
-std::optional<std::string> resolve_package_entry_uri_from_source_root(std::string_view unit,
-                                                                      const std::filesystem::path &root) {
-    if (unit.empty() || root.empty()) return std::nullopt;
+using PackageEntries = std::unordered_map<std::string, std::string>;
+
+PackageEntries read_package_entries(const std::filesystem::path &root) {
+    PackageEntries entries;
 
     const std::filesystem::path package_dir = root.parent_path();
     static constexpr const char *kManifestNames[] = {"package.knpkg.json", "package.knpkg"};
@@ -2570,7 +2652,7 @@ std::optional<std::string> resolve_package_entry_uri_from_source_root(std::strin
         if (!manifest || manifest->kind != Json::Kind::Object) continue;
 
         std::string package_name = manifest->find("name") ? manifest->find("name")->str() : "";
-        if (package_name != unit) continue;
+        if (package_name.empty() || entries.count(package_name)) continue;
 
         const Json *entry = manifest->find("entry");
         if (!entry || entry->kind != Json::Kind::String || entry->s.empty()) continue;
@@ -2581,13 +2663,14 @@ std::optional<std::string> resolve_package_entry_uri_from_source_root(std::strin
         std::error_code ec;
         if (!std::filesystem::exists(entry_path, ec) || ec) continue;
         if (!std::filesystem::is_regular_file(entry_path, ec) || ec) continue;
-        return path_to_uri(entry_path.string());
+        entries.emplace(std::move(package_name), path_to_uri(entry_path.string()));
     }
 
-    return std::nullopt;
+    return entries;
 }
 
-std::vector<std::filesystem::path> stdlib_source_roots() {
+std::vector<std::filesystem::path> stdlib_source_roots(const KnprojConfigLite *cfg = nullptr,
+                                                      const KnprojProfileLite *profile = nullptr) {
     std::vector<std::filesystem::path> out;
     std::unordered_set<std::string> seen;
 
@@ -2615,24 +2698,53 @@ std::vector<std::filesystem::path> stdlib_source_roots() {
     }
     g_klib_cache_base = cache_root;
 
-    if (have_cwd) {
-        collect_package_source_roots(cwd / "stdpkg", cache_root / "stdpkg", out, seen);
-        collect_package_source_roots(cwd / "kpkg", cache_root / "kpkg", out, seen);
-        add(cwd / "stdlib" / "src");
+    PackagePins pins;
+    LspPackageCatalog ordinary, official;
+    std::unordered_set<std::string> scanned;
+    auto scan = [&](const std::filesystem::path &root, bool is_official, bool allow_loose = false) {
+        auto key = normalize_fs_path(root.lexically_normal().string()) + (is_official ? "#std" : "#pkg");
+        if (!scanned.insert(key).second) return;
+        auto &catalog = is_official ? official : ordinary;
+        if (!catalog.scan(root, pins, is_official) && allow_loose) add(root);
+    };
+    const bool auto_discovery = !profile || profile->auto_discovery;
+    if (cfg && profile) {
+        for (const auto *specs : {&cfg->package_pins, &profile->package_pins}) {
+            for (const auto &spec : *specs) {
+                auto at = spec.find('@');
+                if (at != std::string::npos) pins[spec.substr(0, at)] = spec.substr(at + 1);
+            }
+        }
+        if (auto_discovery) {
+            for (const auto &rel : cfg->package_roots) scan(resolve_knproj_path(*cfg, rel), false, true);
+            for (const auto &rel : profile->package_roots) scan(resolve_knproj_path(*cfg, rel), false, true);
+            scan(cfg->project_dir / "kpkg", false);
+        }
+        for (const auto &rel : cfg->official_package_roots) scan(resolve_knproj_path(*cfg, rel), true, true);
+        for (const auto &rel : profile->official_package_roots) scan(resolve_knproj_path(*cfg, rel), true, true);
     }
-
+    if (have_cwd) {
+        scan(cwd / "stdpkg", true);
+        if (!cfg) scan(cwd / "kpkg", false);
+    }
     if (!g_exe_dir.empty()) {
         std::filesystem::path exe_dir(g_exe_dir);
-        collect_package_source_roots(exe_dir / "stdpkg", cache_root / "stdpkg", out, seen);
-        collect_package_source_roots(exe_dir / "kpkg", cache_root / "kpkg", out, seen);
-        add(exe_dir / "stdlib" / "src");
+        scan(exe_dir / "stdpkg", true);
+        scan(exe_dir / "toolchain" / "stdpkg", true);
+        if (!cfg) scan(exe_dir / "kpkg", false);
         if (exe_dir.has_parent_path()) {
-            collect_package_source_roots(exe_dir.parent_path() / "stdpkg", cache_root / "stdpkg-parent", out, seen);
-            collect_package_source_roots(exe_dir.parent_path() / "kpkg", cache_root / "kpkg-parent", out, seen);
-            add(exe_dir.parent_path() / "stdlib" / "src");
+            scan(exe_dir.parent_path() / "stdpkg", true);
+            if (!cfg) scan(exe_dir.parent_path() / "kpkg", false);
         }
     }
-
+    for (const auto *catalog : {&ordinary, &official})
+        for (const auto &pkg : catalog->selected) append_package_sources(pkg, cache_root, out, seen);
+    if (have_cwd) add(cwd / "stdlib" / "src");
+    if (!g_exe_dir.empty()) {
+        std::filesystem::path exe_dir(g_exe_dir);
+        add(exe_dir / "stdlib" / "src");
+        if (exe_dir.has_parent_path()) add(exe_dir.parent_path() / "stdlib" / "src");
+    }
     return out;
 }
 
@@ -2774,22 +2886,7 @@ std::vector<std::filesystem::path> knproj_collect_local_files(const KnprojConfig
 
 std::vector<std::filesystem::path> knproj_collect_external_roots(const KnprojConfigLite &cfg,
                                                                  const KnprojProfileLite &profile) {
-    std::vector<std::filesystem::path> out;
-    std::unordered_set<std::string> seen;
-
-    auto add_resolved = [&](const std::string &rel) {
-        if (rel.empty()) return;
-        knproj_add_unique_path(out, seen, resolve_knproj_path(cfg, rel));
-    };
-
-    for (const std::string &rel : cfg.package_roots) add_resolved(rel);
-    for (const std::string &rel : cfg.official_package_roots) add_resolved(rel);
-    for (const std::string &rel : profile.package_roots) add_resolved(rel);
-    for (const std::string &rel : profile.official_package_roots) add_resolved(rel);
-    for (const std::filesystem::path &root : stdlib_source_roots())
-        knproj_add_unique_path(out, seen, root);
-
-    return out;
+    return stdlib_source_roots(&cfg, &profile);
 }
 
 bool knproj_scope_has_explicit_local_rules(const KnprojScopeLite &scope) {
@@ -2819,11 +2916,16 @@ std::optional<KnprojScopeLite> build_knproj_scope_for_source(const std::string &
 
     const std::string current_norm_path = normalize_fs_path(path);
     const std::string current_norm_uri = canonical_file_uri(current_uri);
+    if (!scope.profile.entry.empty()) {
+        auto entry = resolve_knproj_path(scope.config, scope.profile.entry);
+        scope.source_order.emplace(canonical_file_uri(path_to_uri(entry.string())), 0);
+    }
 
     for (const std::filesystem::path &file : scope.local_files) {
         std::string file_norm_path = normalize_fs_path(file.string());
         std::string file_uri = path_to_uri(file.string());
         std::string canonical_uri = canonical_file_uri(file_uri);
+        scope.source_order.emplace(canonical_uri, scope.source_order.size() + 1);
         UnitDocIndex idx;
 
         if (!current_norm_path.empty() && file_norm_path == current_norm_path) {
@@ -2882,9 +2984,7 @@ std::vector<std::filesystem::path> guess_project_roots_for_source(const std::str
     return out;
 }
 
-std::optional<std::string> resolve_unit_uri_from_roots(std::string_view unit, const std::vector<std::filesystem::path> &roots) {
-    if (unit.empty()) return std::nullopt;
-
+std::filesystem::path unit_relative_path(std::string_view unit) {
     std::filesystem::path rel;
     std::string seg;
     for (char c : unit) {
@@ -2898,99 +2998,84 @@ std::optional<std::string> resolve_unit_uri_from_roots(std::string_view unit, co
         seg.push_back(c);
     }
     if (!seg.empty()) rel /= seg;
-    if (rel.empty()) return std::nullopt;
+    return rel;
+}
 
+using RootPackageEntries = std::unordered_map<std::filesystem::path, PackageEntries>;
+
+std::optional<std::string> resolve_unit_uri_from_root(const std::string &unit,
+                                                      const std::filesystem::path &rel,
+                                                      const std::filesystem::path &root,
+                                                      RootPackageEntries &entries) {
+    if (rel.empty() || root.empty()) return std::nullopt;
     static constexpr const char *kExts[] = {".kn", ".kinal", ".fx"};
     std::error_code ec;
-    for (const std::filesystem::path &root : roots) {
-        if (root.empty()) continue;
-        for (const char *ext : kExts) {
-            std::filesystem::path candidate = root / rel;
-            candidate += ext;
-            if (!std::filesystem::exists(candidate, ec) || ec) {
-                ec.clear();
-                continue;
-            }
-            if (!std::filesystem::is_regular_file(candidate, ec) || ec) {
-                ec.clear();
-                continue;
-            }
+    for (const char *ext : kExts) {
+        std::filesystem::path candidate = root / rel;
+        candidate += ext;
+        if (std::filesystem::is_regular_file(candidate, ec))
             return path_to_uri(candidate.string());
-        }
+    }
+    auto [index, inserted] = entries.try_emplace(root);
+    if (inserted) index->second = read_package_entries(root);
+    auto found = index->second.find(unit);
+    if (found != index->second.end()) return found->second;
+    return std::nullopt;
+}
 
-        if (auto entry_uri = resolve_package_entry_uri_from_source_root(unit, root)) {
-            return entry_uri;
+std::optional<std::string> resolve_unit_uri_from_roots(std::string_view unit, const std::vector<std::filesystem::path> &roots) {
+    const std::string name(unit);
+    const auto rel = unit_relative_path(unit);
+    RootPackageEntries entries;
+    for (const auto &root : roots)
+        if (auto uri = resolve_unit_uri_from_root(name, rel, root, entries)) return uri;
+    return std::nullopt;
+}
+
+using FilesByUnit = std::unordered_map<std::string, std::vector<std::string>>;
+
+FilesByUnit index_units_under_root(const std::filesystem::path &root, std::string_view filter = {}) {
+    FilesByUnit files;
+    if (root.empty()) return files;
+    std::error_code ec;
+    bool touched = false;
+    std::filesystem::recursive_directory_iterator it(root, std::filesystem::directory_options::skip_permission_denied, ec), end;
+    for (; !ec && it != end; it.increment(ec)) {
+        const auto &entry = *it;
+        const auto &path = entry.path();
+        if (entry.is_directory(ec)) {
+            if (should_skip_index_dir(path.filename().string())) it.disable_recursion_pending();
+            continue;
+        }
+        if (!entry.is_regular_file(ec) || !is_indexable_source_path(path)) continue;
+        std::string uri = canonical_file_uri(path_to_uri(path.string()));
+        if (uri.empty()) continue;
+        auto known = g_unit_docs.find(uri);
+        if (known == g_unit_docs.end()) {
+            auto text = read_file_text(path);
+            if (!text) continue;
+            known = g_unit_docs.emplace(uri, index_units_from_tokens(lex_all(*text))).first;
+            g_decl_doc_cache.erase(uri);
+            touched = true;
+        }
+        for (const auto &item : known->second.items) {
+            if (!item.decl || item.unit.empty() || (!filter.empty() && item.unit != filter)) continue;
+            auto &members = files[item.unit];
+            if (members.empty() || members.back() != uri) members.push_back(uri);
         }
     }
-    return std::nullopt;
+    if (touched) rebuild_known_units();
+    return files;
 }
 
 std::vector<std::string> discover_declaring_unit_uris_from_roots(std::string_view unit,
                                                                  const std::vector<std::filesystem::path> &roots) {
-    std::vector<std::string> out;
-    if (unit.empty()) return out;
-
-    std::unordered_set<std::string> seen;
-    bool touched = false;
-    std::error_code ec;
-
-    auto matches_declaring_unit = [&](const UnitDocIndex &idx) {
-        for (const UnitIndexItem &it : idx.items) {
-            if (it.decl && it.unit == unit) return true;
-        }
-        return false;
-    };
-
-    for (const std::filesystem::path &root : roots) {
-        if (root.empty()) continue;
-        if (!std::filesystem::exists(root, ec) || ec) {
-            ec.clear();
-            continue;
-        }
-
-        std::vector<std::string> root_hits;
-        std::filesystem::recursive_directory_iterator it(root, std::filesystem::directory_options::skip_permission_denied, ec);
-        std::filesystem::recursive_directory_iterator end;
-        for (; it != end && !ec; it.increment(ec)) {
-            const std::filesystem::directory_entry &de = *it;
-            const std::filesystem::path &pp = de.path();
-
-            if (de.is_directory(ec)) {
-                if (should_skip_index_dir(pp.filename().string())) it.disable_recursion_pending();
-                continue;
-            }
-            if (!de.is_regular_file(ec)) continue;
-            if (!is_indexable_source_path(pp)) continue;
-
-            std::string dep_uri = canonical_file_uri(path_to_uri(pp.string()));
-            if (dep_uri.empty() || !seen.insert(dep_uri).second) continue;
-
-            UnitDocIndex idx;
-            auto known = g_unit_docs.find(dep_uri);
-            if (known != g_unit_docs.end()) {
-                idx = known->second;
-            } else {
-                auto txt = read_file_text(pp);
-                if (!txt) continue;
-                idx = index_units_from_tokens(lex_all(*txt));
-                g_unit_docs[dep_uri] = idx;
-                g_decl_doc_cache.erase(dep_uri);
-                touched = true;
-            }
-
-            if (!matches_declaring_unit(idx)) continue;
-            root_hits.push_back(dep_uri);
-        }
-        ec.clear();
-
-        if (!root_hits.empty()) {
-            out.insert(out.end(), root_hits.begin(), root_hits.end());
-            break;
-        }
+    if (unit.empty()) return {};
+    for (const auto &root : roots) {
+        auto files = index_units_under_root(root, unit);
+        if (!files.empty()) return std::move(files.begin()->second);
     }
-
-    if (touched) rebuild_known_units();
-    return out;
+    return {};
 }
 
 struct ProjectSource {
@@ -3019,6 +3104,7 @@ void merge_program_lists(const MetaList &src_metas, const FuncList &src_funcs, c
 void index_workspace(void) {
     g_unit_docs.clear();
     g_known_units.clear();
+    g_package_source_roots.clear();
     g_decl_doc_cache.clear();
 
     struct WsFile {
@@ -3685,7 +3771,12 @@ Analysis build_symbols(const std::string &path, const std::string &uri, const st
             continue;
         }
         if (t.type == TOK_RBRACE) {
-            if (scopes.size() > 1) scopes.pop_back();
+            if (scopes.size() > 1) {
+                const auto &scope = scopes.back();
+                if (scope.owner_sym_idx >= 0) an.syms[scope.owner_sym_idx].scope_end = i;
+                for (const auto &binding : scope.names) an.syms[binding.second].scope_end = i;
+                scopes.pop_back();
+            }
             continue;
         }
 
@@ -3892,6 +3983,7 @@ Analysis build_symbols(const std::string &path, const std::string &uri, const st
                              an.toks[(size_t)(j + 3)].type == TOK_SEMI ||
                              an.toks[(size_t)(j + 3)].type == TOK_COMMA ||
                              an.toks[(size_t)(j + 3)].type == TOK_RPAREN);
+                        if (j > first_non_prefix && an.toks[j-1].type == TOK_DOT) continue;
                         if (nx == TOK_ASSIGN || nx == TOK_SEMI || nx == TOK_COMMA || legacy_array_name) {
                             name_idx = j;
                             break;
@@ -4049,7 +4141,7 @@ void build_semantic_and_completion(Analysis &an, const std::string &text) {
                 auto mark_imported_symbol = [&](int s, int e, const std::string &qname, bool has_list) {
                     GetQualifiedInfo info = classify_get_qualified(qname, has_list);
                     if (!info.symbol_import) return;
-                    auto top = project_top_level_decl(info.module, info.member);
+                    auto top = project_top_level_decl(info.module, info.member, &an);
                     if (!top) return;
                     int tok_idx = -1;
                     for (int k = s; k <= e; ++k) {
@@ -4122,7 +4214,7 @@ void build_semantic_and_completion(Analysis &an, const std::string &text) {
         // Aliased symbols from Get/Alias should inherit the target symbol kind.
         for (const auto &kv : an.import_symbol_to_qualified) {
             const std::string &alias = kv.first;
-            auto top = project_qualified_top_level_decl(kv.second);
+            auto top = project_qualified_top_level_decl(kv.second, &an);
             if (!top) continue;
             int mods = top->is_static ? (1 << 1) : 0;
             for (const Tok &t : an.toks) {
@@ -4208,14 +4300,16 @@ void build_semantic_and_completion(Analysis &an, const std::string &text) {
             }
 
             if (!module.empty() && module_seg_count > 0) {
-                for (int k = 0; k < module_seg_count; ++k) force(seg_tok_idxs[(size_t)k], 0, 0);
+                // Indexing a Unit after didOpen must preserve its declaration and library modifiers.
+                for (int k = 0; k < module_seg_count; ++k)
+                    force_style.try_emplace(seg_tok_idxs[(size_t)k], 0, 0);
                 if (module_seg_count < (int)seg_texts.size()) {
-                    auto top = project_top_level_decl(module, seg_texts[(size_t)module_seg_count]);
+                    auto top = project_top_level_decl(module, seg_texts[(size_t)module_seg_count], &an);
                     if (top) {
                         int mods = top->is_static ? (1 << 1) : 0;
                         force(seg_tok_idxs[(size_t)module_seg_count], sem_type_for_kind(top->kind), mods);
                         if (module_seg_count + 1 < (int)seg_texts.size()) {
-                            auto mem = project_member_decl(top->qname, seg_texts[(size_t)(module_seg_count + 1)]);
+                            auto mem = project_member_decl(top->qname, seg_texts[(size_t)(module_seg_count + 1)], &an);
                             if (mem) {
                                 int mm = mem->is_static ? (1 << 1) : 0;
                                 force(seg_tok_idxs[(size_t)(module_seg_count + 1)], sem_type_for_kind(mem->kind), mm);
@@ -4229,7 +4323,7 @@ void build_semantic_and_completion(Analysis &an, const std::string &text) {
                     int mods = top->is_static ? (1 << 1) : 0;
                     force_if_unbound(seg_tok_idxs[0], sem_type_for_kind(top->kind), mods);
                     if ((int)seg_texts.size() > 1) {
-                        auto mem = project_member_decl(top->qname, seg_texts[1]);
+                        auto mem = project_member_decl(top->qname, seg_texts[1], &an);
                         if (mem) {
                             int mm = mem->is_static ? (1 << 1) : 0;
                             force_if_unbound(seg_tok_idxs[1], sem_type_for_kind(mem->kind), mm);
@@ -4432,7 +4526,8 @@ void build_semantic_and_completion(Analysis &an, const std::string &text) {
         case SymKind::Variable: c.detail = "variable"; break;
         case SymKind::Parameter: c.detail = "parameter"; break;
         }
-        if (seen.insert({c.label, c.kind}).second) an.completions.push_back(std::move(c));
+        c.symbol_index = static_cast<int>(&s - an.syms.data());
+        an.completions.push_back(std::move(c));
     }
 }
 
@@ -4564,7 +4659,11 @@ struct Doc {
     std::string path;
     std::string text;
     int version = 0;
+    bool needs_validation = false;
     Analysis an;
+    std::string semantic_result_id;
+    std::vector<uint32_t> sent_tokens;
+    bool semantic_dirty = true;
 };
 
 std::unordered_map<std::string, Doc> g_docs;
@@ -4573,19 +4672,19 @@ ServerConfig g_cfg;
 std::string g_exe_dir;
 bool g_shutdown = false;
 
-std::optional<DeclInfo> project_qualified_top_level_decl(std::string_view qualified) {
+std::optional<DeclInfo> project_qualified_top_level_decl(std::string_view qualified, const Analysis *analysis) {
     if (qualified.empty()) return std::nullopt;
     std::string q(qualified);
     std::string module = prefix_before_last_segment(q);
     std::string member = last_segment(q);
     if (module.empty() || member.empty()) return std::nullopt;
-    return project_top_level_decl(module, member);
+    return project_top_level_decl(module, member, analysis);
 }
 
 std::optional<DeclInfo> project_imported_symbol_decl(const Analysis &an, std::string_view local) {
     auto it = an.import_symbol_to_qualified.find(std::string(local));
     if (it == an.import_symbol_to_qualified.end()) return std::nullopt;
-    return project_qualified_top_level_decl(it->second);
+    return project_qualified_top_level_decl(it->second, &an);
 }
 
 std::optional<DeclInfo> project_visible_top_level_decl_in_analysis(const Analysis &an,
@@ -4593,12 +4692,12 @@ std::optional<DeclInfo> project_visible_top_level_decl_in_analysis(const Analysi
                                                                    std::string_view name) {
     if (name.empty()) return std::nullopt;
     if (!current_unit.empty()) {
-        if (auto top = project_top_level_decl(std::string(current_unit), name)) return top;
+        if (auto top = project_top_level_decl(std::string(current_unit), name, &an)) return top;
     }
     if (auto top = project_imported_symbol_decl(an, name)) return top;
     std::optional<DeclInfo> unique;
     for (const std::string &mod : an.import_open_modules) {
-        if (auto top = project_top_level_decl(mod, name)) {
+        if (auto top = project_top_level_decl(mod, name, &an)) {
             if (unique && unique->qname != top->qname) return std::nullopt;
             unique = top;
         }
@@ -4652,10 +4751,20 @@ std::string first_declared_unit_name(const UnitDocIndex &idx) {
     return {};
 }
 
-DeclDocIndex build_decl_doc_index(const std::string &path, const std::string &uri, const std::string &text) {
-    Analysis an = build_symbols(path, uri, text);
+static std::string expand_type_alias(const Analysis &an, std::string type) {
+    size_t dot = type.find('.');
+    if (dot == std::string::npos) {
+        auto symbol = an.import_symbol_to_qualified.find(type);
+        return symbol == an.import_symbol_to_qualified.end() ? type : symbol->second;
+    }
+    auto alias = an.import_alias_to_module.find(type.substr(0, dot));
+    return alias == an.import_alias_to_module.end() ? type : alias->second + type.substr(dot);
+}
+
+DeclDocIndex build_decl_doc_index(const std::string &uri, const Analysis &an) {
     DeclDocIndex out;
     out.unit = first_declared_unit_name(index_units_from_tokens(an.toks));
+    out.open_modules = an.import_open_modules;
     out.decls.reserve(an.syms.size());
     for (const Symbol &s : an.syms) {
         if (!keep_decl_symbol(s)) continue;
@@ -4665,6 +4774,26 @@ DeclDocIndex build_decl_doc_index(const std::string &path, const std::string &ur
         d.name = s.name;
         d.container = s.container;
         d.type_text = s.type_text;
+        d.receiver_type = expand_type_alias(an, normalize_base_type(s.type_text));
+        if (s.kind == SymKind::Class && s.decl_tok_idx >= 0) {
+            int i = s.decl_tok_idx + 1;
+            if (i < (int)an.toks.size() && an.toks[i].type == TOK_LT) {
+                int end = find_matching(an.toks, i, TOK_LT, TOK_GT);
+                if (end >= i) i = end + 1;
+            }
+            if (i < (int)an.toks.size() && an.toks[i].type == TOK_BY) {
+                ++i;
+                std::string base;
+                if (parse_qualified_name(an.toks, i, base)) d.base_class = expand_type_alias(an, base);
+            }
+        }
+        if (!s.container.empty()) {
+            for (int i = s.decl_tok_idx - 1; i >= 0; --i) {
+                TokenType t = an.toks[i].type;
+                if (t == TOK_PRIVATE) { d.is_private = true; break; }
+                if (t == TOK_SEMI || t == TOK_RBRACE || t == TOK_LBRACE) break;
+            }
+        }
         d.ret_text = s.ret_text;
         d.params = s.params;
         d.kind = s.kind;
@@ -4687,6 +4816,7 @@ DeclDocIndex build_decl_doc_index(const std::string &path, const std::string &ur
             d.qname = d.name;
         }
 
+        if (d.container.empty()) out.top_by_name.emplace(d.name, out.decls.size());
         out.decls.push_back(std::move(d));
     }
     return out;
@@ -4708,23 +4838,20 @@ const DeclDocIndex *decl_doc_index_for_uri(const std::string &uri) {
         }
     };
 
+    auto it = g_decl_doc_cache.find(key);
+    if (it != g_decl_doc_cache.end()) return &it->second;
     auto dit = g_docs.find(uri);
     if (dit == g_docs.end() && key != uri) dit = g_docs.find(key);
     if (dit != g_docs.end()) {
-        static thread_local DeclDocIndex live;
-        BuildGuard guard(&building, key);
-        live = build_decl_doc_index(dit->second.path, dit->second.uri, dit->second.text);
-        return &live;
+        auto live = build_decl_doc_index(dit->second.uri, dit->second.an);
+        return &g_decl_doc_cache.emplace(key, std::move(live)).first->second;
     }
-
-    auto it = g_decl_doc_cache.find(key);
-    if (it != g_decl_doc_cache.end()) return &it->second;
 
     auto text = load_doc_text_for_uri(key);
     if (!text) return nullptr;
 
     BuildGuard guard(&building, key);
-    DeclDocIndex idx = build_decl_doc_index(uri_to_path(key), key, *text);
+    DeclDocIndex idx = build_decl_doc_index(key, build_symbols(uri_to_path(key), key, *text));
     auto ins = g_decl_doc_cache.emplace(key, std::move(idx));
     return &ins.first->second;
 }
@@ -4747,20 +4874,31 @@ std::vector<std::string> project_child_unit_segments(std::string_view prefix) {
     return std::vector<std::string>(segs.begin(), segs.end());
 }
 
-std::vector<DeclInfo> project_top_level_decls_for_module(const std::string &module) {
-    std::vector<DeclInfo> out;
-    if (module.empty()) return out;
-    std::set<std::string> seen;
+// Resolve a multi-file Unit using the same package selection as this document's semantic pass.
+std::vector<std::string> declaration_sources(const std::string &module, const Analysis *analysis) {
+    if (analysis) {
+        auto unit = analysis->resolved_units.find(module);
+        if (unit != analysis->resolved_units.end()) return unit->second;
+    }
+    std::vector<std::string> uris;
     for (const auto &kv : g_unit_docs) {
-        bool matches = false;
-        for (const UnitIndexItem &it : kv.second.items) {
-            if (it.decl && it.unit == module) {
-                matches = true;
+        for (const UnitIndexItem &item : kv.second.items) {
+            if (item.decl && item.unit == module) {
+                uris.push_back(kv.first);
                 break;
             }
         }
-        if (!matches) continue;
-        const DeclDocIndex *idx = decl_doc_index_for_uri(kv.first);
+    }
+    std::sort(uris.begin(), uris.end());
+    return uris;
+}
+
+std::vector<DeclInfo> project_top_level_decls_for_module(const std::string &module, const Analysis *analysis) {
+    std::vector<DeclInfo> out;
+    if (module.empty()) return out;
+    std::set<std::string> seen;
+    for (const std::string &uri : declaration_sources(module, analysis)) {
+        const DeclDocIndex *idx = decl_doc_index_for_uri(uri);
         if (!idx) continue;
         for (const DeclInfo &d : idx->decls) {
             if (d.unit != module || !d.container.empty()) continue;
@@ -4771,41 +4909,58 @@ std::vector<DeclInfo> project_top_level_decls_for_module(const std::string &modu
     return out;
 }
 
-std::optional<DeclInfo> project_top_level_decl(const std::string &module, std::string_view name) {
-    for (const DeclInfo &d : project_top_level_decls_for_module(module)) {
-        if (d.name == name) return d;
+std::optional<DeclInfo> project_top_level_decl(const std::string &module, std::string_view name, const Analysis *analysis) {
+    if (module.empty()) return std::nullopt;
+    const std::string key(name);
+    for (const auto &uri : declaration_sources(module, analysis)) {
+        const auto *index = decl_doc_index_for_uri(uri);
+        if (!index || index->unit != module) continue;
+        auto found = index->top_by_name.find(key);
+        if (found != index->top_by_name.end()) return index->decls[found->second];
     }
     return std::nullopt;
 }
 
-std::vector<DeclInfo> project_member_decls_for_owner(const std::string &owner_qname) {
+static std::string indexed_type_owner(const DeclInfo &decl, const std::string &type, const Analysis *analysis) {
+    if (type.empty() || type.find('.') != std::string::npos) return type;
+    if (auto local = project_top_level_decl(decl.unit, type, analysis); local && kind_is_type(local->kind))
+        return local->qname;
+    const DeclDocIndex *index = decl_doc_index_for_uri(decl.uri);
+    if (index) {
+        auto imports = index->open_modules;
+        for (const auto &module : imports) {
+            if (auto found = project_top_level_decl(module, type, analysis); found && kind_is_type(found->kind))
+                return found->qname;
+        }
+    }
+    return type;
+}
+
+std::vector<DeclInfo> project_member_decls_for_owner(const std::string &owner_qname, const Analysis *analysis) {
     std::vector<DeclInfo> out;
-    if (owner_qname.empty()) return out;
-    std::string module = prefix_before_last_segment(owner_qname);
-    if (module.empty()) return out;
-    std::set<std::string> seen;
-    for (const auto &kv : g_unit_docs) {
-        bool matches = false;
-        for (const UnitIndexItem &it : kv.second.items) {
-            if (it.decl && it.unit == module) {
-                matches = true;
-                break;
+    std::set<std::string> owners, members;
+    std::string owner = owner_qname;
+    while (!owner.empty() && owners.insert(owner).second) {
+        std::string module = prefix_before_last_segment(owner);
+        if (module.empty()) break;
+        std::optional<DeclInfo> derived;
+        for (const auto &uri : declaration_sources(module, analysis)) {
+            const DeclDocIndex *idx = decl_doc_index_for_uri(uri);
+            if (!idx) continue;
+            for (const auto &d : idx->decls) {
+                if (d.qname == owner && !d.base_class.empty()) derived = d;
+                if (d.owner_qname != owner) continue;
+                if (owner != owner_qname && (d.is_private || d.name == "Constructor")) continue;
+                if (members.insert(d.name).second) out.push_back(d);
             }
         }
-        if (!matches) continue;
-        const DeclDocIndex *idx = decl_doc_index_for_uri(kv.first);
-        if (!idx) continue;
-        for (const DeclInfo &d : idx->decls) {
-            if (d.owner_qname != owner_qname) continue;
-            if (!seen.insert(d.qname).second) continue;
-            out.push_back(d);
-        }
+        owner = derived ? indexed_type_owner(*derived, derived->base_class, analysis) : std::string{};
     }
     return out;
 }
 
-std::optional<DeclInfo> project_member_decl(const std::string &owner_qname, std::string_view name) {
-    for (const DeclInfo &d : project_member_decls_for_owner(owner_qname)) {
+std::optional<DeclInfo> project_member_decl(const std::string &owner_qname, std::string_view name, const Analysis *analysis) {
+    for (const DeclInfo &d : project_member_decls_for_owner(owner_qname, analysis)) {
         if (d.name == name) return d;
     }
     return std::nullopt;
@@ -4847,19 +5002,17 @@ std::string decl_completion_detail(const DeclInfo &d) {
 }
 
 std::vector<ProjectSource> collect_project_sources(const std::string &uri, const std::string &path, const std::string &text,
-                                                   const std::vector<Tok> &current_toks) {
+                                                   const UnitDocIndex &current_index, const KnprojScopeLite *scope) {
     std::vector<ProjectSource> out;
 
     ProjectSource cur;
     cur.uri = canonical_file_uri(uri);
     cur.path = path;
     cur.text = text;
-    cur.idx = index_units_from_tokens(current_toks);
+    cur.idx = current_index;
     cur.current = true;
     out.push_back(cur);
 
-    std::optional<KnprojScopeLite> scope_opt = build_knproj_scope_for_source(path, cur.uri, cur.idx);
-    const KnprojScopeLite *scope = scope_opt ? &*scope_opt : nullptr;
     const bool has_explicit_local_rules = scope && knproj_scope_has_explicit_local_rules(*scope);
     const bool use_knproj_local_scope = has_explicit_local_rules && scope->current_in_scope;
     const bool suppress_legacy_local_scope = has_explicit_local_rules && scope->strict_project_scope && !scope->current_in_scope;
@@ -4915,34 +5068,42 @@ std::vector<ProjectSource> collect_project_sources(const std::string &uri, const
     }
     bool added_workspace_units = false;
 
+    std::unordered_map<std::string, std::vector<std::string>> external_units;
+    RootPackageEntries package_entries;
+    std::unordered_map<std::string, FilesByUnit> root_units;
+    auto root_members = [&](const std::filesystem::path &root, const std::string &name)
+            -> const std::vector<std::string> * {
+        auto [index, inserted] = root_units.try_emplace(normalize_fs_path(root.string()));
+        if (inserted) index->second = index_units_under_root(root);
+        auto members = index->second.find(name);
+        return members == index->second.end() ? nullptr : &members->second;
+    };
+    auto find_declaring_files = [&](const std::string &name, const std::vector<std::filesystem::path> &roots) {
+        for (const auto &root : roots)
+            if (auto members = root_members(root, name)) return *members;
+        return std::vector<std::string>{};
+    };
     auto resolve_external_unit_uris = [&](std::string_view unit) -> std::vector<std::string> {
+        const std::string name(unit);
+        if (auto found = external_units.find(name); found != external_units.end()) return found->second;
         std::vector<std::string> out_uris;
-
-        if (auto fallback = resolve_unit_uri_from_roots(unit, fallback_roots)) {
-            const std::string dep_uri = canonical_file_uri(*fallback);
-            auto dep_text = load_doc_text_for_uri(dep_uri);
-            if (dep_text) {
-                UnitDocIndex idx = index_units_from_tokens(lex_all(*dep_text));
-                g_unit_docs[dep_uri] = idx;
-                g_decl_doc_cache.erase(dep_uri);
-                for (const UnitIndexItem &item : idx.items) {
-                    if (!item.decl || item.unit.empty()) continue;
-                    add_unit_uri(item.unit, dep_uri);
+        const auto rel = unit_relative_path(name);
+        for (const auto &root : fallback_roots) {
+            if (auto entry = resolve_unit_uri_from_root(name, rel, root, package_entries)) {
+                // A package can split any exported Unit across several files,
+                // including subunits whose name differs from the package name.
+                std::string key = normalize_fs_path(root.string());
+                if (g_package_source_roots.count(key)) {
+                    if (auto members = root_members(root, name)) out_uris = *members;
                 }
-                added_workspace_units = true;
+                if (out_uris.empty()) out_uris.push_back(canonical_file_uri(*entry));
+                break;
             }
-            out_uris.push_back(dep_uri);
         }
-
-        if (out_uris.empty()) {
-            for (const std::string &dep_uri : discover_declaring_unit_uris_from_roots(unit, fallback_roots)) {
-                add_unit_uri(unit, dep_uri);
-                if (std::find(out_uris.begin(), out_uris.end(), dep_uri) == out_uris.end())
-                    out_uris.push_back(dep_uri);
-            }
-            if (!out_uris.empty()) added_workspace_units = true;
-        }
-
+        if (out_uris.empty()) out_uris = find_declaring_files(name, fallback_roots);
+        external_units.emplace(name, out_uris);
+        for (const auto &dep_uri : out_uris) add_unit_uri(unit, dep_uri);
+        if (!out_uris.empty()) added_workspace_units = true;
         return out_uris;
     };
     auto resolve_unit_uris = [&](std::string_view unit) -> std::vector<std::string> {
@@ -4980,7 +5141,7 @@ std::vector<ProjectSource> collect_project_sources(const std::string &uri, const
 
         bool only_current = out_uris.size() == 1 && canonical_file_uri(out_uris.front()) == cur.uri;
         if (out_uris.empty() || only_current) {
-            for (const std::string &dep_uri : discover_declaring_unit_uris_from_roots(unit, same_unit_roots)) {
+            for (const std::string &dep_uri : find_declaring_files(std::string(unit), same_unit_roots)) {
                 add_unit_uri(unit, dep_uri);
                 if (std::find(out_uris.begin(), out_uris.end(), dep_uri) == out_uris.end())
                     out_uris.push_back(dep_uri);
@@ -5051,6 +5212,18 @@ std::vector<ProjectSource> collect_project_sources(const std::string &uri, const
 
     if (added_workspace_units) rebuild_known_units();
 
+    // All open documents must agree on which declaration came second.
+    if (out.size() > 1) {
+        auto rank = [&](const std::string &source_uri) -> size_t {
+            if (!scope || !scope->current_in_scope) return 0;
+            auto it = scope->source_order.find(source_uri);
+            return it == scope->source_order.end() ? scope->source_order.size() + 1 : it->second;
+        };
+        std::sort(out.begin(), out.end(), [&](const ProjectSource &a, const ProjectSource &b) {
+            auto ar = rank(a.uri), br = rank(b.uri);
+            return ar != br ? ar < br : a.uri < b.uri;
+        });
+    }
     return out;
 }
 
@@ -5112,7 +5285,14 @@ Analysis analyze_doc(const std::string &uri, const std::string &path, const std:
     StructList structs{};
     EnumList enums{};
     StmtList globals{};
-    std::vector<ProjectSource> sources = collect_project_sources(uri, path, text, an.toks);
+    auto current_index = index_units_from_tokens(an.toks);
+    auto scope = build_knproj_scope_for_source(path, canonical_file_uri(uri), current_index);
+    std::vector<ProjectSource> sources = collect_project_sources(uri, path, text, current_index, scope ? &*scope : nullptr);
+    for (const ProjectSource &source : sources) {
+        for (const UnitIndexItem &item : source.idx.items) {
+            if (item.decl) an.resolved_units[item.unit].push_back(source.uri);
+        }
+    }
     std::vector<KnSource> parsed_sources;
     parsed_sources.reserve(sources.size());
 
@@ -5168,7 +5348,6 @@ Analysis analyze_doc(const std::string &uri, const std::string &path, const std:
     }
     kn_diag_set_sink(nullptr, nullptr);
 
-    int require_main = 0;
     int sema_crashed = 0;
     if (current_parse_errors == 0) {
         // Mirror the CLI driver: parser errors mean the AST is incomplete, so
@@ -5176,23 +5355,20 @@ Analysis analyze_doc(const std::string &uri, const std::string &path, const std:
         configure_diag_capture(&cap);
         kn_inject_builtins(&classes);
 
-        for (int i = 0; i < funcs.count; ++i) {
-            const Func &f = funcs.items[i];
-            if (!f.name) continue;
-            if (std::string_view(f.name) != "Main") continue;
-            if (f.type_param_count > 0) continue;
-            if (f.is_generic_instance) continue;
-            require_main = 1;
-            break;
-        }
+        KnSemaOptions sema_opts{};
+        bool freestanding = scope && scope->current_in_scope && scope->profile.freestanding;
+        sema_opts.env_kind = freestanding ? KN_ENV_FREESTANDING : KN_ENV_HOSTED;
+        sema_opts.entry_name = scope && scope->current_in_scope && !scope->profile.entry_symbol.empty()
+            ? scope->profile.entry_symbol.c_str() : (freestanding ? "KMain" : "Main");
+        for (int i = 0; i < funcs.count; ++i)
+            if (func_matches_entry(&funcs.items[i], sema_opts.entry_name)) {
+                sema_opts.require_entry = 1;
+                break;
+            }
         const KnSource *first_src = parsed_sources.empty() ? nullptr : &parsed_sources.front();
 #if defined(_MSC_VER)
         __try
         {
-            KnSemaOptions sema_opts{};
-            sema_opts.require_entry = require_main;
-            sema_opts.env_kind = KN_ENV_HOSTED;
-            sema_opts.entry_name = "Main";
             (void)kn_sema_check(first_src, &metas, &funcs, &imports, &classes, &interfaces, &structs, &enums, &globals, &sema_opts);
         }
         __except (1)
@@ -5200,10 +5376,6 @@ Analysis analyze_doc(const std::string &uri, const std::string &path, const std:
             sema_crashed = 1;
         }
 #else
-        KnSemaOptions sema_opts{};
-        sema_opts.require_entry = require_main;
-        sema_opts.env_kind = KN_ENV_HOSTED;
-        sema_opts.entry_name = "Main";
         (void)kn_sema_check(first_src, &metas, &funcs, &imports, &classes, &interfaces, &structs, &enums, &globals, &sema_opts);
 #endif
     }
@@ -5257,6 +5429,7 @@ Analysis analyze_doc(const std::string &uri, const std::string &path, const std:
         an.diags.push_back(std::move(di));
     }
 
+    g_decl_doc_cache[canonical_file_uri(uri)] = build_decl_doc_index(uri, an);
     build_semantic_and_completion(an, text);
     for (KnSource &src : parsed_sources) kn_source_free(&src);
     kn_compile_session_leave(compile_session);
@@ -5264,11 +5437,41 @@ Analysis analyze_doc(const std::string &uri, const std::string &path, const std:
     return an;
 }
 
-void update_analysis(Doc &d) { d.an = analyze_doc(d.uri, d.path, d.text); }
+void update_analysis(Doc &d) {
+    d.an = analyze_doc(d.uri, d.path, d.text);
+    d.semantic_dirty = true;
+    d.needs_validation = false;
+}
+
+// Bind symbols and color the current buffer immediately while typing. A dependency
+// change still requires full graph resolution before member queries are answered.
+static void update_edit_symbols(Doc &d) {
+    Analysis next = build_symbols(d.path, d.uri, d.text);
+    auto before = index_units_from_tokens(d.an.toks);
+    auto after = index_units_from_tokens(next.toks);
+    if (before.items.size() != after.items.size() ||
+        !std::equal(before.items.begin(), before.items.end(), after.items.begin(),
+                    [](const auto &a, const auto &b){ return a.unit == b.unit && a.decl == b.decl; })) {
+        update_analysis(d);
+        return;
+    }
+    next.comment_ranges = scan_comment_ranges(d.text);
+    next.resolved_units = std::move(d.an.resolved_units);
+    g_decl_doc_cache[canonical_file_uri(d.uri)] = build_decl_doc_index(d.uri, next);
+    build_semantic_and_completion(next, d.text);
+    d.an = std::move(next);
+    d.semantic_dirty = true;
+    d.needs_validation = true;
+}
+
+static void index_open_document(const Doc &doc) {
+    update_unit_index_for_uri(doc.uri, doc.an.toks);
+    g_decl_doc_cache[canonical_file_uri(doc.uri)] = build_decl_doc_index(doc.uri, doc.an);
+}
 
 std::string diag_params_json(const Doc &d) {
     std::ostringstream oss;
-    oss << "{\"uri\":\"" << esc(d.uri) << "\",\"diagnostics\":[";
+    oss << "{\"uri\":\"" << esc(d.uri) << "\",\"version\":" << d.version << ",\"diagnostics\":[";
     for (size_t i = 0; i < d.an.diags.size(); ++i) {
         if (i) oss << ",";
         const Diag &x = d.an.diags[i];
@@ -5536,10 +5739,25 @@ std::optional<Loc> stdlib_loc_for(std::string_view module, std::string_view symb
     return Loc{stdlib_uri_for_module(m), r};
 }
 
-std::vector<Loc> unit_defs_for_name(const std::string &unit) {
+std::vector<Loc> unit_defs_for_name(const std::string &unit, const Analysis &analysis) {
     std::vector<Loc> out;
     if (!unit.empty() && (kn_std_module_has(unit.c_str()) || std_prefix_has_children(unit) || builtin_object_namespace_has_children(unit))) {
         if (auto l = stdlib_loc_for(unit, "")) out.push_back(*l);
+        return out;
+    }
+    if (auto files = analysis.resolved_units.find(unit); files != analysis.resolved_units.end()) {
+        for (const auto &uri : files->second) {
+            auto index = g_unit_docs.find(uri);
+            UnitDocIndex from_disk;
+            if (index == g_unit_docs.end()) {
+                auto text = load_doc_text_for_uri(uri);
+                if (!text) continue;
+                from_disk = index_units_from_tokens(lex_all(*text));
+            }
+            const auto &items = index == g_unit_docs.end() ? from_disk.items : index->second.items;
+            for (const auto &item : items)
+                if (item.decl && item.unit == unit) out.push_back({uri, item.range});
+        }
         return out;
     }
     for (const auto &kv : g_unit_docs) {
@@ -5726,14 +5944,14 @@ std::vector<Loc> project_definition_at(const Doc &d, int line, int ch) {
 
     auto it_alias = d.an.import_alias_to_module.find(segs[0]);
     if (it_alias != d.an.import_alias_to_module.end()) {
-        if (seg_idx == 0) return unit_defs_for_name(it_alias->second);
-        if (auto top = project_top_level_decl(it_alias->second, segs[(size_t)1])) {
+        if (seg_idx == 0) return unit_defs_for_name(it_alias->second, d.an);
+        if (auto top = project_top_level_decl(it_alias->second, segs[(size_t)1], &d.an)) {
             if (seg_idx == 1) {
                 out.push_back(Loc{top->uri, top->decl});
                 return out;
             }
             if (seg_idx == 2) {
-                if (auto mem = project_member_decl(top->qname, segs[(size_t)2])) {
+                if (auto mem = project_member_decl(top->qname, segs[(size_t)2], &d.an)) {
                     out.push_back(Loc{mem->uri, mem->decl});
                     return out;
                 }
@@ -5748,7 +5966,7 @@ std::vector<Loc> project_definition_at(const Doc &d, int line, int ch) {
     for (int i = 0; i < (int)segs.size(); ++i) {
         if (!pfx.empty()) pfx.push_back('.');
         pfx += segs[(size_t)i];
-        if (unit_decl_exists(pfx)) {
+        if (d.an.resolved_units.count(pfx) || unit_decl_exists(pfx)) {
             module = pfx;
             module_seg_count = i + 1;
         }
@@ -5761,15 +5979,11 @@ std::vector<Loc> project_definition_at(const Doc &d, int line, int ch) {
                 return out;
             }
             if (seg_idx == 1) {
-                if (auto mem = project_member_decl(top->qname, segs[(size_t)seg_idx])) {
+                if (auto mem = project_member_decl(top->qname, segs[(size_t)seg_idx], &d.an)) {
                     out.push_back(Loc{mem->uri, mem->decl});
                     return out;
                 }
             }
-        }
-        if (auto mem = project_member_decl_via_receiver(d, seg_tok_i, segs, seg_idx)) {
-            out.push_back(Loc{mem->uri, mem->decl});
-            return out;
         }
 
         // If clicking a namespace prefix, jump to the longest unit that extends it.
@@ -5779,24 +5993,24 @@ std::vector<Loc> project_definition_at(const Doc &d, int line, int ch) {
                 if (i) cand.push_back('.');
                 cand += segs[(size_t)i];
             }
-            if (unit_decl_exists(cand)) return unit_defs_for_name(cand);
+            if (unit_decl_exists(cand)) return unit_defs_for_name(cand, d.an);
         }
         return out;
     }
 
-    if (seg_idx < module_seg_count) return unit_defs_for_name(module);
+    if (seg_idx < module_seg_count) return unit_defs_for_name(module, d.an);
 
     if (seg_idx == module_seg_count) {
-        if (auto top = project_top_level_decl(module, segs[(size_t)seg_idx])) {
+        if (auto top = project_top_level_decl(module, segs[(size_t)seg_idx], &d.an)) {
             out.push_back(Loc{top->uri, top->decl});
         }
         return out;
     }
 
     if (seg_idx == module_seg_count + 1) {
-        auto top = project_top_level_decl(module, segs[(size_t)module_seg_count]);
+        auto top = project_top_level_decl(module, segs[(size_t)module_seg_count], &d.an);
         if (!top) return out;
-        if (auto mem = project_member_decl(top->qname, segs[(size_t)seg_idx])) {
+        if (auto mem = project_member_decl(top->qname, segs[(size_t)seg_idx], &d.an)) {
             out.push_back(Loc{mem->uri, mem->decl});
         }
     }
@@ -5851,10 +6065,10 @@ std::optional<std::string> project_hover_text_at(const Doc &d, int line, int ch)
     auto it_alias = d.an.import_alias_to_module.find(segs[0]);
     if (it_alias != d.an.import_alias_to_module.end()) {
         if (seg_idx == 0) return std::nullopt;
-        if (auto top = project_top_level_decl(it_alias->second, segs[(size_t)1])) {
+        if (auto top = project_top_level_decl(it_alias->second, segs[(size_t)1], &d.an)) {
             if (seg_idx == 1) return decl_sig(*top);
             if (seg_idx == 2) {
-                if (auto mem = project_member_decl(top->qname, segs[(size_t)2]))
+                if (auto mem = project_member_decl(top->qname, segs[(size_t)2], &d.an))
                     return decl_sig(*mem);
             }
         }
@@ -5877,23 +6091,21 @@ std::optional<std::string> project_hover_text_at(const Doc &d, int line, int ch)
         if (auto top = project_visible_top_level_decl(d, segs[0])) {
             if (seg_idx == 0) return decl_sig(*top);
             if (seg_idx == 1) {
-                if (auto mem = project_member_decl(top->qname, segs[(size_t)seg_idx]))
+                if (auto mem = project_member_decl(top->qname, segs[(size_t)seg_idx], &d.an))
                     return decl_sig(*mem);
             }
         }
-        if (auto mem = project_member_decl_via_receiver(d, seg_tok_i, segs, seg_idx))
-            return decl_sig(*mem);
         return std::nullopt;
     }
     if (seg_idx < module_seg_count) return std::nullopt;
     if (seg_idx == module_seg_count) {
-        if (auto top = project_top_level_decl(module, segs[(size_t)seg_idx])) return decl_sig(*top);
+        if (auto top = project_top_level_decl(module, segs[(size_t)seg_idx], &d.an)) return decl_sig(*top);
         return std::nullopt;
     }
     if (seg_idx == module_seg_count + 1) {
-        auto top = project_top_level_decl(module, segs[(size_t)module_seg_count]);
+        auto top = project_top_level_decl(module, segs[(size_t)module_seg_count], &d.an);
         if (!top) return std::nullopt;
-        if (auto mem = project_member_decl(top->qname, segs[(size_t)seg_idx])) return decl_sig(*mem);
+        if (auto mem = project_member_decl(top->qname, segs[(size_t)seg_idx], &d.an)) return decl_sig(*mem);
     }
     return std::nullopt;
 }
@@ -6036,14 +6248,16 @@ std::string tok_prefix_at(const Tok &t, int line0, int ch0) {
     return t.text.substr(0, (size_t)rel);
 }
 
+static bool receiver_segment(TokenType type);
+
 std::string qualifier_before_dot(const std::vector<Tok> &toks, int dot_i) {
     if (dot_i <= 0 || dot_i >= (int)toks.size()) return {};
     std::vector<std::string> segs;
     int i = dot_i - 1;
-    if (!qual_segment_tok(toks[(size_t)i].type)) return {};
+    if (!receiver_segment(toks[(size_t)i].type)) return {};
     segs.push_back(toks[(size_t)i].text);
     i--;
-    while (i >= 1 && toks[(size_t)i].type == TOK_DOT && qual_segment_tok(toks[(size_t)(i - 1)].type)) {
+    while (i >= 1 && toks[(size_t)i].type == TOK_DOT && receiver_segment(toks[(size_t)(i - 1)].type)) {
         segs.push_back(toks[(size_t)(i - 1)].text);
         i -= 2;
     }
@@ -6087,7 +6301,7 @@ std::string resolve_owner_qname_in_doc(const Doc &d, std::string owner) {
 
     std::string cur_unit = first_declared_unit_name(index_units_from_tokens(d.an.toks));
     if (!cur_unit.empty()) {
-        if (auto top = project_top_level_decl(cur_unit, owner))
+        if (auto top = project_top_level_decl(cur_unit, owner, &d.an))
             return top->qname;
     }
 
@@ -6096,12 +6310,12 @@ std::string resolve_owner_qname_in_doc(const Doc &d, std::string owner) {
         return it_symbol->second;
 
     for (const auto &kv : d.an.import_alias_to_module) {
-        if (auto top = project_top_level_decl(kv.second, owner))
+        if (auto top = project_top_level_decl(kv.second, owner, &d.an))
             return top->qname;
     }
 
     for (const std::string &mod : d.an.import_open_modules) {
-        if (auto top = project_top_level_decl(mod, owner))
+        if (auto top = project_top_level_decl(mod, owner, &d.an))
             return top->qname;
     }
 
@@ -6127,7 +6341,7 @@ std::vector<Loc> project_defs_for_hit(const Doc &d, const Hit &h) {
     if (!s->container.empty()) {
         std::string owner_qname = resolve_owner_qname_in_doc(d, s->container);
         if (!owner_qname.empty()) {
-            if (auto mem = project_member_decl(owner_qname, s->name))
+            if (auto mem = project_member_decl(owner_qname, s->name, &d.an))
                 out.push_back(Loc{mem->uri, mem->decl});
         }
         return out;
@@ -6135,34 +6349,107 @@ std::vector<Loc> project_defs_for_hit(const Doc &d, const Hit &h) {
 
     std::string cur_unit = first_declared_unit_name(index_units_from_tokens(d.an.toks));
     if (!cur_unit.empty()) {
-        if (auto top = project_top_level_decl(cur_unit, s->name))
+        if (auto top = project_top_level_decl(cur_unit, s->name, &d.an))
             out.push_back(Loc{top->uri, top->decl});
     }
     return out;
 }
 
-std::optional<DeclInfo> project_member_decl_via_receiver(const Doc &d,
-                                                         const std::vector<int> &seg_tok_i,
-                                                         const std::vector<std::string> &segs,
-                                                         int seg_idx) {
-    if (seg_idx <= 0 || seg_idx >= (int)segs.size() || seg_idx >= (int)seg_tok_i.size())
-        return std::nullopt;
-
-    int recv_tok_i = seg_tok_i[(size_t)(seg_idx - 1)];
-    if (recv_tok_i < 0 || recv_tok_i >= (int)d.an.toks.size())
-        return std::nullopt;
-
-    const Symbol *recv_sym = sym_for_token(d.an, d.an.toks[(size_t)recv_tok_i].idx);
-    std::string base;
-    if (recv_sym) {
-        if (kind_is_type(recv_sym->kind)) base = recv_sym->name;
-        else if (!recv_sym->type_text.empty()) base = normalize_base_type(recv_sym->type_text);
+static const Symbol *enclosing_class(const Analysis &an, int pos) {
+    const Symbol *owner = nullptr;
+    for (const auto &s : an.syms) {
+        if (s.kind == SymKind::Class && s.decl_tok_idx < pos && pos < s.scope_end &&
+            (!owner || s.decl_tok_idx > owner->decl_tok_idx)) owner = &s;
     }
-    if (base.empty()) return std::nullopt;
+    return owner;
+}
 
-    std::string owner_qname = resolve_owner_qname_in_doc(d, base);
-    if (owner_qname.empty()) owner_qname = base;
-    return project_member_decl(owner_qname, segs[(size_t)seg_idx]);
+static bool lexical_value(const Symbol *symbol) {
+    return symbol && symbol->key.rfind("l|", 0) == 0;
+}
+
+static std::optional<DeclInfo> enclosing_type(const Doc &doc, int pos) {
+    const auto *owner = enclosing_class(doc.an, pos);
+    return owner ? project_visible_top_level_decl(doc, owner->name) : std::nullopt;
+}
+
+// Name expressions bind in order: lexical value, visible unit variable, instance
+// member. An unqualified method call also considers inherited methods before
+// the unit's free functions. The per-document occurrence table cannot see all
+// class bases and also contains best-effort matches from unrelated classes.
+static std::optional<DeclInfo> implicit_member(const Doc &doc, const Symbol *symbol, int pos) {
+    const auto &tokens = doc.an.toks;
+    if (lexical_value(symbol) || (symbol && symbol->decl_tok_idx == pos)) return std::nullopt;
+    auto owner = enclosing_type(doc, pos);
+    if (!owner) return std::nullopt;
+    const auto &name = tokens[pos].text;
+    bool call = pos + 1 < (int)tokens.size() && tokens[pos+1].type == TOK_LPAREN;
+    if (!call) {
+        if (auto visible = project_visible_top_level_decl(doc, name); visible && visible->kind == SymKind::Variable)
+            return visible;
+        if (symbol && kind_is_type(symbol->kind)) return std::nullopt;
+    }
+    auto member = project_member_decl(owner->qname, name, &doc.an);
+    if (member && call && member->kind != SymKind::Method) return std::nullopt;
+    if (member && !member->is_static) {
+        for (const auto &s : doc.an.syms) {
+            if (s.kind == SymKind::Method && s.is_static && s.decl_tok_idx < pos && pos < s.scope_end)
+                return std::nullopt;
+        }
+    }
+    return member;
+}
+
+static std::string receiver_owner(const Doc &d, const Symbol *symbol, const std::string &name, int pos = -1) {
+    if (pos >= 0) {
+        if (name == "This" || name == "Base") {
+            if (auto type = enclosing_type(d, pos))
+                return name == "This" ? type->qname : indexed_type_owner(*type, type->base_class, &d.an);
+            return {};
+        }
+        if (!lexical_value(symbol)) {
+            if (auto field = implicit_member(d, symbol, pos))
+                return indexed_type_owner(*field, field->receiver_type, &d.an);
+        }
+    }
+    std::string base = name;
+    if (symbol) {
+        if (kind_is_type(symbol->kind)) base = symbol->name;
+        else if (!symbol->type_text.empty()) base = normalize_base_type(symbol->type_text);
+    } else if (auto decl = project_visible_top_level_decl(d, name)) {
+        if (kind_is_type(decl->kind)) return decl->qname;
+        if (!decl->receiver_type.empty()) return indexed_type_owner(*decl, decl->receiver_type, &d.an);
+    }
+    base = expand_type_alias(d.an, base);
+    if (base.find('.') == std::string::npos) {
+        if (auto type = project_visible_top_level_decl(d, base); type && kind_is_type(type->kind)) return type->qname;
+    }
+    return base;
+}
+
+static bool receiver_segment(TokenType type) {
+    return qual_segment_tok(type) || type == TOK_THIS || type == TOK_BASE;
+}
+
+static int receiver_start(const std::vector<Tok> &tokens, int last) {
+    while (last >= 2 && tokens[last-1].type == TOK_DOT && receiver_segment(tokens[last-2].type)) last -= 2;
+    return last;
+}
+
+static std::optional<DeclInfo> project_receiver_member_at(const Doc &doc, int line, int ch) {
+    const auto &tokens = doc.an.toks;
+    int end = tok_at_pos(tokens, line, ch);
+    if (end < 0 || tokens[end].type != TOK_ID) return std::nullopt;
+    int start = receiver_start(tokens, end);
+    const auto *symbol = sym_for_token(doc.an, tokens[start].idx);
+    if (end == start) return implicit_member(doc, symbol, start);
+    auto owner = receiver_owner(doc, symbol, tokens[start].text, start);
+    for (int i = start + 2; !owner.empty() && i <= end; i += 2) {
+        auto member = project_member_decl(owner, tokens[i].text, &doc.an);
+        if (!member || i == end) return member;
+        owner = indexed_type_owner(*member, member->receiver_type, &doc.an);
+    }
+    return std::nullopt;
 }
 
 std::string typekind_text(TypeKind k) {
@@ -6674,8 +6961,28 @@ static std::optional<std::pair<std::string, std::string>> interpolation_prefix_a
 static void add_global_completion_items(const Analysis &an,
                                         std::vector<Completion> &out,
                                         std::set<std::pair<std::string, int>> &seen,
-                                        std::string_view label_prefix) {
+                                        std::string_view label_prefix, int pos) {
+    const Symbol *owner = enclosing_class(an, pos);
+    // Rank in-scope locals and parameters ahead of unit names and snippets.
+    for (auto it = an.syms.rbegin(); it != an.syms.rend(); ++it) {
+        if (it->key.rfind("l|", 0) != 0 || it->decl_tok_idx > pos || pos >= it->scope_end) continue;
+        if (!starts_with(it->name, label_prefix) || is_hidden_internal_name(it->name)) continue;
+        Completion c; c.label = it->name; c.detail = it->type_text; c.kind = completion_kind_for(it->kind);
+        add_unique(out, seen, std::move(c));
+    }
+    std::string cur_unit = first_declared_unit_name(index_units_from_tokens(an.toks));
+    if (owner) {
+        for (const auto &member : project_member_decls_for_owner(cur_unit + "." + owner->name, &an)) {
+            if (is_hidden_internal_name(member.name) || !starts_with(member.name, label_prefix)) continue;
+            Completion c; c.label = member.name; c.kind = completion_kind_for(member.kind); c.detail = decl_completion_detail(member);
+            add_unique(out, seen, std::move(c));
+        }
+    }
     for (const Completion &c0 : an.completions) {
+        if (c0.symbol_index >= 0) {
+            const auto &s = an.syms[c0.symbol_index];
+            if (s.key.rfind("l|", 0) == 0 || !s.container.empty()) continue;
+        }
         if (!starts_with(c0.label, label_prefix)) continue;
         add_unique(out, seen, c0);
     }
@@ -6693,7 +7000,7 @@ static void add_global_completion_items(const Analysis &an,
         if (!starts_with(kv.first, label_prefix)) continue;
         Completion c;
         c.label = kv.first;
-        if (auto top = project_qualified_top_level_decl(kv.second)) {
+        if (auto top = project_qualified_top_level_decl(kv.second, &an)) {
             c.kind = completion_kind_for(top->kind);
             c.detail = decl_completion_detail(*top);
         } else {
@@ -6703,8 +7010,7 @@ static void add_global_completion_items(const Analysis &an,
         add_unique(out, seen, std::move(c));
     }
 
-    std::string cur_unit = first_declared_unit_name(index_units_from_tokens(an.toks));
-    for (const DeclInfo &dcl : project_top_level_decls_for_module(cur_unit)) {
+    for (const DeclInfo &dcl : project_top_level_decls_for_module(cur_unit, &an)) {
         if (is_hidden_internal_name(dcl.name)) continue;
         if (!starts_with(dcl.name, label_prefix)) continue;
         Completion c;
@@ -6797,7 +7103,7 @@ static void add_type_completion_items(const Doc & /*d*/,
 
     for (const auto &kv : an.import_symbol_to_qualified) {
         if (!starts_with(kv.first, label_prefix)) continue;
-        if (auto top = project_qualified_top_level_decl(kv.second)) {
+        if (auto top = project_qualified_top_level_decl(kv.second, &an)) {
             if (!(top->kind == SymKind::Class || top->kind == SymKind::Struct || top->kind == SymKind::Interface || top->kind == SymKind::Enum)) continue;
             Completion c;
             c.label = kv.first;
@@ -7079,17 +7385,14 @@ std::vector<Completion> completion_items_at(const Doc &d, int line, int ch) {
             }
             if (!out.empty()) return out;
 
-            std::string base = qual;
+            const Symbol *receiver = nullptr;
             for (const Symbol &s : an.syms) {
                 if (s.name == qual) {
-                    if (kind_is_type(s.kind)) base = s.name;
-                    else if (!s.type_text.empty()) base = normalize_base_type(s.type_text);
+                    receiver = &s;
                     break;
                 }
             }
-            if (base.find('.') == std::string::npos) {
-                if (auto top = project_visible_top_level_decl(d, base)) base = top->qname;
-            }
+            std::string base = receiver_owner(d, receiver, qual);
 
             std::string std_m = std_module_for_receiver(base);
             if (kn_std_module_has(std_m.c_str())) {
@@ -7101,8 +7404,9 @@ std::vector<Completion> completion_items_at(const Doc &d, int line, int ch) {
                 return out;
             }
 
-            for (const DeclInfo &dcl : project_member_decls_for_owner(base)) {
+            for (const DeclInfo &dcl : project_member_decls_for_owner(base, &an)) {
                 if (is_hidden_internal_name(dcl.name)) continue;
+                if (dcl.is_private && canonical_file_uri(dcl.uri) != canonical_file_uri(d.uri)) continue;
                 if (!starts_with(dcl.name, label_prefix)) continue;
                 Completion c;
                 c.label = dcl.name;
@@ -7113,7 +7417,7 @@ std::vector<Completion> completion_items_at(const Doc &d, int line, int ch) {
             if (!out.empty()) return out;
         }
 
-        add_global_completion_items(an, out, seen, label_prefix);
+        add_global_completion_items(an, out, seen, label_prefix, tok_before_pos(an.toks, line, ch));
         return out;
     }
 
@@ -7206,17 +7510,18 @@ std::vector<Completion> completion_items_at(const Doc &d, int line, int ch) {
         }
         if (!out.empty()) return out;
 
-        // Receiver/member completion based on local symbol type.
         const Tok &recv_tok = an.toks[(size_t)std::max(0, dot_i - 1)];
         const Symbol *recv_sym = sym_for_token(an, recv_tok.idx);
-        std::string base;
-        if (recv_sym) {
-            if (kind_is_type(recv_sym->kind)) base = recv_sym->name;
-            else if (!recv_sym->type_text.empty()) base = normalize_base_type(recv_sym->type_text);
-        }
-        if (base.empty()) base = qual;
-        if (base.find('.') == std::string::npos) {
-            if (auto top = project_visible_top_level_decl(d, base)) base = top->qname;
+        std::string base = receiver_owner(d, recv_sym, qual, dot_i - 1);
+        // Follow instance properties across aliased/sibling files, e.g. Input1.Owner.Palette.
+        if (qual.find('.') != std::string::npos) {
+            int start = receiver_start(an.toks, dot_i - 1);
+            auto chain = receiver_owner(d, sym_for_token(an, an.toks[start].idx), an.toks[start].text, start);
+            for (int i = start + 2; !chain.empty() && i < dot_i; i += 2) {
+                auto member = project_member_decl(chain, an.toks[i].text, &an);
+                chain = member ? indexed_type_owner(*member, member->receiver_type, &an) : std::string{};
+            }
+            if (!chain.empty()) base = std::move(chain);
         }
 
         std::string std_m = std_module_for_receiver(base);
@@ -7229,13 +7534,14 @@ std::vector<Completion> completion_items_at(const Doc &d, int line, int ch) {
             return out;
         }
 
-        for (const DeclInfo &d : project_member_decls_for_owner(base)) {
-            if (is_hidden_internal_name(d.name)) continue;
-            if (!starts_with(d.name, label_prefix)) continue;
+        for (const DeclInfo &member : project_member_decls_for_owner(base, &an)) {
+            if (is_hidden_internal_name(member.name)) continue;
+            if (member.is_private && canonical_file_uri(member.uri) != canonical_file_uri(d.uri)) continue;
+            if (!starts_with(member.name, label_prefix)) continue;
             Completion c;
-            c.label = d.name;
-            c.kind = completion_kind_for(d.kind);
-            c.detail = decl_completion_detail(d);
+            c.label = member.name;
+            c.kind = completion_kind_for(member.kind);
+            c.detail = decl_completion_detail(member);
             add_unique(out, seen, std::move(c));
         }
         if (!out.empty()) return out;
@@ -7274,7 +7580,7 @@ std::vector<Completion> completion_items_at(const Doc &d, int line, int ch) {
         if (r.el == line && r.ec == ch) label_prefix = an.toks[(size_t)before].text;
     }
 
-    add_global_completion_items(an, out, seen, label_prefix);
+    add_global_completion_items(an, out, seen, label_prefix, at >= 0 ? at : before);
 
     return out;
 }
@@ -7381,7 +7687,8 @@ static std::string hover_markdown_codeblock(std::string_view code) {
 }
 
 std::string hover_json_at(const Doc &d, int line, int ch) {
-    // 1) Prefer resolved user symbols.
+    if (auto member = project_receiver_member_at(d, line, ch))
+        return hover_markdown_codeblock(decl_sig(*member));
     if (auto h = hit_at(d, line, ch)) {
         if (const Symbol *s = sym_by_id(d.an, h->sym_id)) {
             return hover_markdown_codeblock(sym_sig(*s));
@@ -7426,15 +7733,55 @@ std::string hover_json_at(const Doc &d, int line, int ch) {
     return "null";
 }
 
-std::string sem_json(const Doc &d) {
-    std::ostringstream oss;
-    oss << "{\"data\":[";
-    for (size_t i = 0; i < d.an.sem_data.size(); ++i) {
-        if (i) oss << ",";
-        oss << d.an.sem_data[i];
+static void append_token_data(std::string &out, const std::vector<uint32_t> &data, size_t first, size_t end) {
+    out.push_back('[');
+    for (size_t i = first; i < end; ++i) {
+        if (i != first) out.push_back(',');
+        char digits[10];
+        auto result = std::to_chars(digits, digits + sizeof(digits), data[i]);
+        out.append(digits, result.ptr);
     }
-    oss << "]}";
-    return oss.str();
+    out.push_back(']');
+}
+
+std::string sem_json(Doc &doc, const std::string &previous_id) {
+    static uint64_t next_id = 0;
+    const bool delta = !previous_id.empty() && previous_id == doc.semantic_result_id;
+    const auto &old = doc.sent_tokens;
+    const auto &current = doc.semantic_dirty ? doc.an.sem_data : old;
+    if (doc.semantic_dirty) doc.semantic_result_id = std::to_string(++next_id);
+    std::string out = "{\"resultId\":\"" + doc.semantic_result_id + "\"";
+    if (delta) {
+        size_t start = 0, old_end = old.size(), new_end = current.size();
+        if (doc.semantic_dirty) {
+            while (start < old_end && start < new_end && old[start] == current[start]) ++start;
+            while (old_end > start && new_end > start && old[old_end - 1] == current[new_end - 1]) {
+                --old_end;
+                --new_end;
+            }
+        } else {
+            start = old_end;
+        }
+        out += ",\"edits\":[";
+        if (start != old_end || start != new_end) {
+            out += "{\"start\":" + std::to_string(start) + ",\"deleteCount\":" + std::to_string(old_end - start);
+            if (start != new_end) {
+                out += ",\"data\":";
+                append_token_data(out, current, start, new_end);
+            }
+            out.push_back('}');
+        }
+        out.push_back(']');
+    } else {
+        out += ",\"data\":";
+        append_token_data(out, current, 0, current.size());
+    }
+    if (doc.semantic_dirty) {
+        doc.sent_tokens = std::move(doc.an.sem_data);
+        doc.semantic_dirty = false;
+    }
+    out.push_back('}');
+    return out;
 }
 
 std::string init_json() {
@@ -7455,6 +7802,7 @@ std::string init_json() {
     oss << "\"definitionProvider\":true,";
     oss << "\"referencesProvider\":true,";
     oss << "\"documentSymbolProvider\":true,";
+    oss << "\"experimental\":{\"kinalDeferredDiagnostics\":true},";
     oss << "\"semanticTokensProvider\":{";
     oss << "\"legend\":{";
     oss << "\"tokenTypes\":[";
@@ -7467,7 +7815,7 @@ std::string init_json() {
         if (i) oss << ",";
         oss << "\"" << mods[i] << "\"";
     }
-    oss << "]},\"full\":true}";
+    oss << "]},\"full\":{\"delta\":true}}";
     oss << "},";
     oss << "\"serverInfo\":{\"name\":\"kinal-lsp-server\",\"version\":\"" << KN_VERSION_STRING << "\"}";
     oss << "}";
@@ -7670,7 +8018,7 @@ int main() {
         if (g_exe_dir.empty()) {
 #if defined(_WIN32)
             wchar_t buf[1024] = {};
-            unsigned long len = GetModuleFileNameW(nullptr, buf, 1023);
+            auto len = GetModuleFileNameW(nullptr, reinterpret_cast<uint16_t *>(buf), 1023);
             if (len > 0 && len < 1023) {
                 std::filesystem::path ep(buf);
                 if (ep.has_parent_path()) g_exe_dir = ep.parent_path().string();
@@ -7764,7 +8112,7 @@ int main() {
             if (g_cfg.diag_lang != prev_lang || g_cfg.locale_file != prev_locale) {
                 for (auto &kv : g_docs) {
                     update_analysis(kv.second);
-                    update_unit_index_for_uri(kv.second.uri, kv.second.an.toks);
+                    index_open_document(kv.second);
                     publish_diags(kv.second);
                 }
             }
@@ -7773,6 +8121,7 @@ int main() {
 
         if (method == "workspace/didChangeWatchedFiles") {
             bool touched = false;
+            std::set<std::filesystem::path> project_dirs;
             if (params && params->kind == Json::Kind::Object) {
                 const Json *chs = params->find("changes");
                 if (chs && chs->kind == Json::Kind::Array) {
@@ -7782,13 +8131,17 @@ int main() {
                         int ty = c.find("type") ? c.find("type")->i32(0) : 0; // 1=create, 2=change, 3=delete
                         if (uri.empty()) continue;
                         if (uri.rfind("file://", 0) == 0) uri = path_to_uri(uri_to_path(uri));
+                        std::filesystem::path p(uri_to_path(uri));
+                        if (p.filename() == "kinal.knproj") {
+                            project_dirs.insert(p.parent_path());
+                            continue;
+                        }
                         if (ty == 3) {
                             g_unit_docs.erase(uri);
                             g_decl_doc_cache.erase(uri);
                             touched = true;
                             continue;
                         }
-                        std::filesystem::path p(uri_to_path(uri));
                         auto txt = read_file_text(p);
                         if (!txt) continue;
                         g_unit_docs[uri] = index_units_from_tokens(lex_all(*txt));
@@ -7798,6 +8151,19 @@ int main() {
                 }
             }
             if (touched) rebuild_known_units();
+            if (!project_dirs.empty()) {
+                for (auto &[uri, doc] : g_docs) {
+                    if (uri.rfind("file://", 0) != 0) continue;
+                    bool affected = std::any_of(project_dirs.begin(), project_dirs.end(), [&](const auto &dir) {
+                        return path_is_within(dir, doc.path);
+                    });
+                    if (affected) {
+                        update_analysis(doc);
+                        index_open_document(doc);
+                        publish_diags(doc);
+                    }
+                }
+            }
             continue;
         }
 
@@ -7813,7 +8179,7 @@ int main() {
                         d.text = td->find("text") ? td->find("text")->str() : "";
                         d.version = td->find("version") ? td->find("version")->i32(0) : 0;
                         update_analysis(d);
-                        update_unit_index_for_uri(uri, d.an.toks);
+                        index_open_document(d);
                         g_docs[uri] = std::move(d);
                         publish_diags(g_docs[uri]);
                     }
@@ -7834,15 +8200,28 @@ int main() {
                             if (chg.kind == Json::Kind::Object) apply_change(it->second.text, chg);
                         }
                         it->second.version = td->find("version") ? td->find("version")->i32(it->second.version) : it->second.version;
-                        update_analysis(it->second);
-                        update_unit_index_for_uri(uri, it->second.an.toks);
-                        publish_diags(it->second);
+                        bool fast = params->find("kinalDeferDiagnostics") && params->find("kinalDeferDiagnostics")->bval();
+                        if (fast) update_edit_symbols(it->second);
+                        else update_analysis(it->second);
+                        index_open_document(it->second);
+                        if (!it->second.needs_validation) publish_diags(it->second);
                     }
                 }
             }
             continue;
         }
 
+        if (method == "kinal/validateDocument") {
+            const Json *uri = params ? params->find("uri") : nullptr;
+            const Json *version = params ? params->find("version") : nullptr;
+            auto doc = uri ? g_docs.find(uri->str()) : g_docs.end();
+            if (doc != g_docs.end() && version && version->i32(-1) == doc->second.version && doc->second.needs_validation) {
+                update_analysis(doc->second);
+                index_open_document(doc->second);
+                publish_diags(doc->second);
+            }
+            continue;
+        }
         if (method == "textDocument/didSave") {
             if (params && params->kind == Json::Kind::Object) {
                 const Json *td = params->find("textDocument");
@@ -7853,7 +8232,7 @@ int main() {
                         const Json *tv = params->find("text");
                         if (tv && tv->kind == Json::Kind::String) it->second.text = tv->s;
                         update_analysis(it->second);
-                        update_unit_index_for_uri(uri, it->second.an.toks);
+                        index_open_document(it->second);
                         publish_diags(it->second);
                     }
                 }
@@ -7868,6 +8247,7 @@ int main() {
                     std::string uri = td->find("uri") ? td->find("uri")->str() : "";
                     if (!uri.empty()) {
                         g_docs.erase(uri);
+                        g_decl_doc_cache.erase(canonical_file_uri(uri));
                         clear_diags(uri);
                     }
                 }
@@ -7931,14 +8311,18 @@ int main() {
             continue;
         }
 
-        if (method == "textDocument/semanticTokens/full") {
+        if (method == "textDocument/semanticTokens/full" || method == "textDocument/semanticTokens/full/delta") {
             std::string rs = "{\"data\":[]}";
             if (params && params->kind == Json::Kind::Object) {
                 const Json *td = params->find("textDocument");
                 if (td && td->kind == Json::Kind::Object) {
                     std::string uri = td->find("uri") ? td->find("uri")->str() : "";
                     auto it = g_docs.find(uri);
-                    if (it != g_docs.end()) rs = sem_json(it->second);
+                    if (it != g_docs.end()) {
+                        const Json *previous = params->find("previousResultId");
+                        rs = sem_json(it->second, method == "textDocument/semanticTokens/full/delta" && previous
+                            ? previous->str() : std::string{});
+                    }
                 }
             }
             write_message(response(id, rs));
@@ -7958,8 +8342,10 @@ int main() {
                         int ch = utf8_byte_col_from_utf16_col(
                             it->second.text, line, pv->find("character") ? pv->find("character")->i32(0) : 0);
                         auto h = hit_at(it->second, line, ch);
-                        if (h) {
-                            if (is_unit_key(h->key)) rs = locs_json(unit_defs_for_name(unit_name_from_key(h->key)));
+                        if (auto member = project_receiver_member_at(it->second, line, ch)) {
+                            rs = locs_json({Loc{member->uri, member->decl}});
+                        } else if (h) {
+                            if (is_unit_key(h->key)) rs = locs_json(unit_defs_for_name(unit_name_from_key(h->key), it->second.an));
                             else {
                                 std::vector<Loc> locs = defs_for(h->key);
                                 if (locs.empty()) locs = project_defs_for_hit(it->second, *h);

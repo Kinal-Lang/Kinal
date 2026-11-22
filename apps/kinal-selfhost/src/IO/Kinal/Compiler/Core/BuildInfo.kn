@@ -4,10 +4,10 @@ Unit IO.Kinal.Compiler.Core.BuildInfo;
 
 Safe Function string Version()
 {
-    Return "0.9.0";
+    Return "0.10.0";
 }
 
 Safe Function string VMVersion()
 {
-    Return "0.8.0";
+    Return "0.9.0";
 }

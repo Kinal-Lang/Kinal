@@ -2,7 +2,7 @@
 
 类型推断、类型匹配、数组类型和转换相关诊断。
 
-本文中的示例都是最小复现片段，用来说明该错误码最常见的触发方式；少数更偏内部的诊断会使用最接近用户代码的表面写法来说明。
+本页记录预注册模板。正确示例展示支持的写法；触发形态用于说明规则或解析状态，可能依赖外围声明，或在当前 C 编译器中先报告其他诊断。
 
 ---
 
@@ -35,6 +35,8 @@
 错误示例：
 
 ```kinal
+Get IO.Console;
+
 IO.Type.Object.Function fn = IO.Console.PrintLine;
 int value = [int](fn);
 ```
@@ -42,6 +44,8 @@ int value = [int](fn);
 正确示例：
 
 ```kinal
+Get IO.Console;
+
 IO.Type.Object.Function fn = IO.Console.PrintLine;
 IO.Type.Object.Class obj = fn;
 string text = obj.ToString();
@@ -68,6 +72,8 @@ IO.Type.Object.Class obj = [IO.Type.Object.Class](42);
 正确示例：
 
 ```kinal
+Get IO.Console;
+
 IO.Type.Object.Function fn = IO.Console.PrintLine;
 IO.Type.Object.Class obj = fn;
 ```
@@ -126,7 +132,7 @@ Dog dog = [Dog](value);
 - 默认详情：Array element name missing
 - 说明：数组声明缺少变量名或元素名。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
 int[] = { 1, 2, 3 };
@@ -150,7 +156,7 @@ int[] values = { 1, 2, 3 };
 - 默认详情：Array element type unknown
 - 说明：数组元素类型无法解析。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
 MissingType[] values = {};
@@ -174,7 +180,7 @@ int[] values = {};
 - 默认详情：Type not specified
 - 说明：当前位置需要一个明确类型，但没有给出。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
 Function Add(a, b)
@@ -224,25 +230,10 @@ int value;
 
 ## E-TYP-00007 — Invalid Type
 
-- 级别：错误
 - 默认详情：any[] requires explicit length
-- 说明：未初始化的 `any[]` 需要显式长度。
+- 兼容目录条目：当前 C 前端接受 `any[] values;`，该声明不再是此错误的复现。需要固定长度时显式写 `any[2] values;`；需要现成元素时使用 `any[] values = {1, "two"};`。
 
-错误示例：
-
-```kinal
-any[] values;
-```
-
-正确示例：
-
-```kinal
-any values[2];
-```
-
-原因：`any[]` 没有元素初始化器时，编译器无法推导出需要分配多大存储。
-
-修复方式：改成定长 `any[n]`，或直接提供初始化器。
+更多规则见[类型系统](../../language/types.md)。
 
 ---
 
@@ -348,7 +339,7 @@ int value = [int]("42");
 - 默认详情：Type not supported yet
 - 说明：当前类型形式尚未被编译器支持。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
 // 这里使用了当前版本尚未支持的类型形式

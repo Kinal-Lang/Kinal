@@ -1,0 +1,86 @@
+Unit Benchmarks.VmArrayInit;
+
+Get IO.Console;
+Get IO.Time;
+
+Class Entry { Public int Code; }
+
+Function int Floats(bool dense)
+{
+    float[8192] values;
+    If (dense)
+    {
+        For (int i = 0; i < values.Length(); i++) { If (values[i] != 0.0) Return -1; values[i] = -0.25; }
+        For (int j = 0; j < values.Length(); j++) If (values[j] != -0.25) Return -1;
+        Return values.Length();
+    }
+    If (values[0] != 0.0 || values[4096] != 0.0 || values[8191] != 0.0) Return -1;
+    values[4096] = -0.25;
+    Return values[4096] == -0.25 ? values.Length() : -1;
+}
+
+Function int Flags(bool dense)
+{
+    bool[8192] values;
+    If (dense)
+    {
+        For (int i = 0; i < values.Length(); i++) { If (values[i]) Return -1; values[i] = (i & 1) == 0; }
+        For (int j = 0; j < values.Length(); j++) If (values[j] != ((j & 1) == 0)) Return -1;
+        Return values.Length();
+    }
+    If (values[0] || values[4096] || values[8191]) Return -1;
+    values[4096] = true;
+    Return values[4096] ? values.Length() : -1;
+}
+
+Function int Strings(bool dense)
+{
+    string[8192] values;
+    If (dense)
+    {
+        For (int i = 0; i < values.Length(); i++) { If (values[i] != "") Return -1; values[i] = "Kinal"; }
+        For (int j = 0; j < values.Length(); j++) If (values[j] != "Kinal") Return -1;
+        Return values.Length();
+    }
+    If (values[0] != "" || values[4096] != "" || values[8191] != "") Return -1;
+    values[4096] = "Kinal";
+    Return values[4096] == "Kinal" ? values.Length() : -1;
+}
+
+Function int Objects(bool dense)
+{
+    Entry[8192] values;
+    Entry item = New Entry();
+    item.Code = 42;
+    If (dense)
+    {
+        For (int i = 0; i < values.Length(); i++) { If (values[i] != null) Return -1; values[i] = item; }
+        For (int j = 0; j < values.Length(); j++) If (values[j] != item) Return -1;
+        Return values.Length();
+    }
+    If (values[0] != null || values[4096] != null || values[8191] != null) Return -1;
+    values[4096] = item;
+    Return values[4096].Code == 42 ? values.Length() : -1;
+}
+
+Static Function int Main(string[] args)
+{
+    If (args.Length() != 3) Return 2;
+    string kind = args[0];
+    int repetitions = [int](args[1]);
+    bool dense = args[2] == "dense";
+    If ((!dense && args[2] != "sparse") || repetitions < 1 || repetitions > 100000) Return 2;
+    int start = IO.Time.GetNanoTick();
+    For (int i = 0; i < repetitions; i++)
+    {
+        int length;
+        If (kind == "float") length = Floats(dense);
+        Else If (kind == "bool") length = Flags(dense);
+        Else If (kind == "string") length = Strings(dense);
+        Else If (kind == "object") length = Objects(dense);
+        Else Return 2;
+        If (length != 8192) Return 1;
+    }
+    IO.Console.PrintLine(IO.Time.GetNanoTick() - start);
+    Return 0;
+}

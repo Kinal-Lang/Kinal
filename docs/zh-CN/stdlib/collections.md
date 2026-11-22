@@ -1,217 +1,131 @@
-# IO.Collection — 集合类型
+# IO.Collection：list、dict 与 set
 
-Kinal 内置三种集合类型：`list`（有序列表）、`dict`（键值字典）、`set`（无重复集合）。它们均为引用类型，需要先创建再使用。
+Native 和 KinalVM 均支持下列全部 `list`、`dict` 和 `set` 操作，包括字典字面量和键值快照。参见[后端支持](../advanced/backend-support.md)。
 
-语言层面提供了 `list`、`dict`、`set` 作为对应模块的内置别名，可直接作为类型名使用。
+这些内建引用类型可直接写作 list、dict、set。赋值共享集合，不克隆内容；使用前应创建集合。可以显式 `Get IO.Collection;`，内建别名无需另行导入包。
 
-## 导入
-
-集合类型由编译器内置注入，无需手动导入。也可以显式引入命名空间：
+## 调用形式与创建
 
 ```kinal
-Get IO.Collection;
+list names = list.Create();
+dict settings = dict.Create();
+set tags = set.Create();
 ```
 
----
+接收者和命名空间形式等价：`names.Add("Kinal")` 对应 `IO.Collection.list.Add(names, "Kinal")`。命名空间形式的首参数是接收者。以下表格列出接收者形式参数。
 
-## list — 有序列表
-
-`list` 是动态大小的有序集合，等价于其他语言的数组列表（ArrayList / Vec）。
-
-### 创建
+数组使用 `{ ... }` 字面量，与 list 不同；`list numbers = [1, 2, 3];` 不是支持的 list 字面量。使用 Create／Add。Dict 字面量采用字符串键和值：
 
 ```kinal
-list names = IO.Collection.list.Create();
+dict options = { "name": "Kinal", "enabled": true };
 ```
 
-或字面量方式（如果语言版本支持）：
+## list：有序 any 值
 
-```kinal
-list nums = [1, 2, 3];
-```
-
-### 函数参考
-
-| 函数 | 签名 | 说明 |
+| 方法 | 结果 | 行为 |
 |------|------|------|
-| `Create()` | `→ list` | 创建空列表 |
-| `Add(l, value)` | `list, any → void` | 末尾追加元素 |
-| `Fetch(l, index)` | `list, int → any` | 按索引获取（越界抛出异常） |
-| `TryFetch(l, index)` | `list, int → any` | 按索引获取（越界返回 `null`） |
-| `Set(l, index, value)` | `list, int, any → void` | 按索引设置值 |
-| `Insert(l, index, value)` | `list, int, any → void` | 在指定位置插入 |
-| `RemoveAt(l, index)` | `list, int → void` | 删除指定位置元素 |
-| `Pop(l)` | `list → any` | 移除并返回最后一个元素 |
-| `Peek(l)` | `list → any` | 返回最后一个元素（不移除） |
-| `Contains(l, value)` | `list, any → bool` | 是否包含指定值 |
-| `IndexOf(l, value)` | `list, any → int` | 首次出现索引（-1 表示不存在） |
-| `Count(l)` | `list → int` | 元素数量 |
-| `IsEmpty(l)` | `list → bool` | 是否为空 |
-| `Clear(l)` | `list → void` | 清空列表 |
+| `Add(any value)` | `void` | 追加 |
+| `Fetch(int index)` | `any` | 读取元素，越界时返回 null。 |
+| `TryFetch(int index, any fallback)` | `any` | 读取或返回显式后备值 |
+| `Set(int index, any value)` | `void` | 替换已有元素 |
+| `Insert(int index, any value)` | `void` | 按索引插入 |
+| `RemoveAt(int index)` | `any` | 移除并返回元素 |
+| `Pop()` | `any` | 移除并返回末元素 |
+| `Peek()` | `any` | 查看末元素，不移除 |
+| `Contains(any value)` | `bool` | 使用集合值相等规则查询 |
+| `IndexOf(any value)` | `int` | 首个匹配索引，缺失为 -1 |
+| `Count()` | `int` | 元素数 |
+| `IsEmpty()` | `bool` | 元素数是否为零 |
+| `Clear()` | `void` | 清空元素 |
 
-### 示例
+索引从零开始。`Fetch`、`RemoveAt` 越界时返回 null，空列表的 `Pop`、`Peek` 也返回 null。`TryFetch(index, fallback)` 只在索引不存在时返回后备值，已存入的 null 会原样返回。`Set` 更新已有元素，`Add` 和 `Insert` 可以增加元素。
 
-```kinal
-list fruits = IO.Collection.list.Create();
-IO.Collection.list.Add(fruits, "apple");
-IO.Collection.list.Add(fruits, "banana");
-IO.Collection.list.Add(fruits, "cherry");
+`Clear`、`Pop` 和 `RemoveAt` 会释放列表对已删除元素的引用。当其他引用也消失后，GC 就可以回收该对象。调用方保留的返回值仍然有效。原生后端的列表在 `Clear` 后保留容量，后续添加元素时可以复用。
 
-int count = IO.Collection.list.Count(fruits);  // 3
+在 KinalVM 上，向列表末尾追加一个元素的均摊耗时为常数。在列表中间插入或删除时，后续元素仍需移动。字典扩容时也会为后续条目预留空间。已有的 `.knc` 换用新版 VM 即可受益，独立 VM 可执行文件需重新打包才能使用新版运行时。
 
-string first = [string](IO.Collection.list.Fetch(fruits, 0));  // "apple"
+## dict：字符串键、any 值
 
-IO.Collection.list.Set(fruits, 1, "blueberry");
-// fruits = ["apple", "blueberry", "cherry"]
-
-IO.Collection.list.RemoveAt(fruits, 0);
-// fruits = ["blueberry", "cherry"]
-
-bool has = IO.Collection.list.Contains(fruits, "cherry");  // true
-```
-
----
-
-## dict — 键值字典
-
-`dict` 是哈希映射，存储键值对，键和值均为 `any` 类型。
-
-### 创建
-
-```kinal
-dict config = IO.Collection.dict.Create();
-```
-
-### 函数参考
-
-| 函数 | 签名 | 说明 |
+| 方法 | 结果 | 行为 |
 |------|------|------|
-| `Create()` | `→ dict` | 创建空字典 |
-| `Set(d, key, value)` | `dict, any, any → void` | 设置键值（不存在则新增，已存在则更新） |
-| `Fetch(d, key)` | `dict, any → any` | 获取指定键的值（键不存在时抛出异常） |
-| `TryFetch(d, key)` | `dict, any → any` | 获取值（键不存在时返回 `null`） |
-| `Contains(d, key)` | `dict, any → bool` | 是否包含指定键 |
-| `Remove(d, key)` | `dict, any → void` | 删除指定键 |
-| `Count(d)` | `dict → int` | 条目数量 |
-| `IsEmpty(d)` | `dict → bool` | 是否为空 |
-| `Keys(d)` | `dict → list` | 所有键的列表 |
-| `Values(d)` | `dict → list` | 所有值的列表 |
+| `Set(string key, any value)` | `void` | 插入或替换 |
+| `Fetch(string key)` | `any` | 读取值，键不存在时返回 null。 |
+| `TryFetch(string key, any fallback)` | `any` | 读取或返回显式后备值 |
+| `Contains(string key)` | `bool` | 查询键是否存在 |
+| `Remove(string key)` | `bool` | 是否移除了键 |
+| `Count()` | `int` | 条目数 |
+| `IsEmpty()` | `bool` | 条目数是否为零 |
+| `Keys()` | `list` | 创建包含键的列表 |
+| `Values()` | `list` | 创建包含值的列表 |
 
-### 示例
+键是 string，不是任意 any。TryFetch 必须有后备实参，例如 `settings.TryFetch("missing", "default")`。存储 null 与缺失键不同，需要区分时使用 Contains。键／值枚举顺序不构成公开排序保证。
 
-```kinal
-dict scores = IO.Collection.dict.Create();
-IO.Collection.dict.Set(scores, "Alice", 95);
-IO.Collection.dict.Set(scores, "Bob",   82);
-IO.Collection.dict.Set(scores, "Carol", 90);
+## set：唯一字符串
 
-int alice = [int](IO.Collection.dict.Fetch(scores, "Alice"));  // 95
-
-bool hasDave = IO.Collection.dict.Contains(scores, "Dave");  // false
-
-any bob = IO.Collection.dict.TryFetch(scores, "Bob");  // 82 or null
-
-IO.Collection.dict.Remove(scores, "Carol");
-
-list keys = IO.Collection.dict.Keys(scores);
-// ["Alice", "Bob"]
-```
-
----
-
-## set — 无重复集合
-
-`set` 存储唯一元素，重复添加同一值不会产生重复项。
-
-### 创建
-
-```kinal
-set tags = IO.Collection.set.Create();
-```
-
-### 函数参考
-
-| 函数 | 签名 | 说明 |
+| 方法 | 结果 | 行为 |
 |------|------|------|
-| `Create()` | `→ set` | 创建空集合 |
-| `Add(s, value)` | `set, any → void` | 添加元素（已存在则忽略） |
-| `Contains(s, value)` | `set, any → bool` | 是否包含指定值 |
-| `Remove(s, value)` | `set, any → void` | 删除指定元素 |
-| `Count(s)` | `set → int` | 元素数量 |
-| `IsEmpty(s)` | `set → bool` | 是否为空 |
-| `Clear(s)` | `set → void` | 清空集合 |
-| `Values(s)` | `set → list` | 返回所有元素的列表 |
+| `Add(string value)` | `void` | 添加，重复字符串不增加数量 |
+| `Contains(string value)` | `bool` | 查询成员 |
+| `Remove(string value)` | `bool` | 是否移除了元素 |
+| `Count()` | `int` | 元素数 |
+| `IsEmpty()` | `bool` | 是否为空 |
+| `Clear()` | `void` | 清空 |
+| `Values()` | `list` | 创建包含字符串的列表 |
 
-### 示例
+Set 元素限定为字符串，不是覆盖所有 Kinal 类型的泛型数学集合。不要依赖 Values 顺序；排序和深层语义比较由应用负责。
 
-```kinal
-set seen = IO.Collection.set.Create();
-IO.Collection.set.Add(seen, "apple");
-IO.Collection.set.Add(seen, "banana");
-IO.Collection.set.Add(seen, "apple");   // 重复，被忽略
+在 Native 和 KinalVM 上，删除字典键或集合成员会保留现有哈希表及其容量。删除时只需检查相邻的连续条目，移动查找路径经过空位的条目。对固定长度的键，散列均匀时预期耗时为常数，大量键碰撞时最坏可达线性。覆盖已有字典键、向集合重复添加成员也会复用当前表。
 
-int count = IO.Collection.set.Count(seen);  // 2
-
-bool hasApple = IO.Collection.set.Contains(seen, "apple");  // true
-
-list all = IO.Collection.set.Values(seen);  // ["apple", "banana"]
-```
-
----
-
-## 综合示例
+## 完整示例
 
 ```kinal
-Unit App.CollectionDemo;
-
+Unit Docs.Collections;
 Get IO.Console;
-Get IO.Collection;
 
 Static Function int Main()
 {
-    // list：统计单词
-    list words = IO.Collection.list.Create();
-    IO.Collection.list.Add(words, "hello");
-    IO.Collection.list.Add(words, "world");
-    IO.Collection.list.Add(words, "hello");
+    list names = list.Create();
+    names.Add("Kinal");
+    names.Insert(0, "Hello");
+    IO.Console.PrintLine(names.Fetch(0));
+    IO.Console.PrintLine(names.TryFetch(10, "fallback"));
+    IO.Console.PrintLine(names.Pop());
+    IO.Console.PrintLine(names.Count());
 
-    IO.Console.PrintLine(IO.Collection.list.Count(words));  // 3
+    dict settings = { "name": "Kinal" };
+    settings.Set("mode", "native");
+    IO.Console.PrintLine(settings.TryFetch("mode", "unknown"));
+    IO.Console.PrintLine(settings.TryFetch("missing", "default"));
+    IO.Console.PrintLine(settings.Remove("missing"));
 
-    // dict：单词计数
-    dict counts = IO.Collection.dict.Create();
-    int i = 0;
-    While (i < IO.Collection.list.Count(words))
-    {
-        string w = [string](IO.Collection.list.Fetch(words, i));
-        If (IO.Collection.dict.Contains(counts, w))
-        {
-            int c = [int](IO.Collection.dict.Fetch(counts, w));
-            IO.Collection.dict.Set(counts, w, c + 1);
-        } else
-        {
-            IO.Collection.dict.Set(counts, w, 1);
-        }
-        i = i + 1;
-    }
-    IO.Console.PrintLine(IO.Collection.dict.Fetch(counts, "hello"));  // 2
-
-    // set：去重
-    set unique = IO.Collection.set.Create();
-    int j = 0;
-    While (j < IO.Collection.list.Count(words))
-    {
-        IO.Collection.set.Add(unique, IO.Collection.list.Fetch(words, j));
-        j = j + 1;
-    }
-    IO.Console.PrintLine(IO.Collection.set.Count(unique));  // 2
-
+    set tags = set.Create();
+    tags.Add("language");
+    tags.Add("language");
+    IO.Console.PrintLine(tags.Count());
+    IO.Console.PrintLine(tags.Contains("language"));
     Return 0;
 }
 ```
 
-## 相关
+```text
+Hello
+fallback
+Kinal
+1
+native
+default
+false
+1
+true
+```
 
-- [类型系统](../language/types.md) — `list`/`dict`/`set` 作为内置类型别名
-- [异常处理](../language/exceptions.md) — `Fetch` 越界和键不存在时抛出异常
-- [IO.Text](text.md) — `Split`、`Join` 等常见 `list` 生产/消费接口
+此示例可以在 Native 和 KinalVM 上运行。`list.Fetch` 和 `dict.Fetch` 均返回 `any`。读取已存入的整数可以写作 `[int](items.Fetch(index))`。
 
+Foreach 当前面向数组／字符串，不是通用集合迭代协议。List 使用 Count／Fetch 遍历；Dict／set 可先取 Keys／Values。遍历时不要随意修改同一集合，除非算法明确定义索引变化。
+
+## 相关文档
+
+- [类型系统](../language/types.md)
+- [JSON](json.md)
+- [内存与生命周期](../advanced/memory-management.md)
+- [后端支持](../advanced/backend-support.md)

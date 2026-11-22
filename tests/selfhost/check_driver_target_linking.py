@@ -20,7 +20,13 @@ def check_driver_target_linking(compiler: Path, stage0: Path, root: Path,
     logs = out / 'logs'
     logs.mkdir(exist_ok=True)
     source = out / 'Main.kn'
-    source.write_text('Unit Tests.DriverTargetLinking; Static Function int Main() { Return 42; }\n')
+    # LTO must discard unreferenced declarations and constant-dead calls before
+    # symbol resolution. Neither symbol is provided by any link input.
+    source.write_text('''Unit Tests.DriverTargetLinking;
+[LinkName("missing_unused_lto_declaration")] Extern Function i32 Unused() By C;
+[LinkName("missing_dead_lto_branch")] Extern Function i32 DeadBranch() By C;
+Trusted Static Function int Main() { If (false) Return DeadBranch(); Return 42; }
+''')
     cases: list[dict[str, object]] = []
     sequence = 0
 
@@ -41,10 +47,11 @@ def check_driver_target_linking(compiler: Path, stage0: Path, root: Path,
         return allow_missing_toolchain and any(message in text for message in messages)
 
     versions = dict(line.split('=', 1) for line in (root / 'VERSION').read_text().splitlines() if '=' in line)
-    for option in ('version', '--version', '-V'):
+    for option in ('--version', '-V'):
         result = run('selfhost-version-' + option.lstrip('-'), [compiler, option, '--verbose'])
         assert result.returncode == 0, (option, result.stdout, result.stderr)
-        assert result.stdout.splitlines() == ['Kinal selfhost ' + versions['kinal'], 'kinalvm ' + versions['kinalvm']]
+        assert (result.stdout + result.stderr).splitlines() == [
+            'Kinal ' + versions['kinal'], 'kinalvm ' + versions['kinalvm']]
     cases.append(dict(name='verbose_component_versions', status='passed', executed=True))
 
     suffix = '.exe' if os.name == 'nt' else ''
@@ -79,8 +86,48 @@ Static Function int Main() { Return 42; }
         assert result.returncode == 42, (mode, 'reference executable', result)
         actual = out / ('selfhost-lto-' + mode + suffix)
         result = run('selfhost-lto-' + mode, [compiler, 'build', source,
-                     '--no-module-discovery', '--lto=' + mode, '-o', actual])
+                     '--no-module-discovery', '--show-link', '--lto=' + mode, '-o', actual])
         assert result.returncode == 0, (mode, result.stdout, result.stderr)
+        commands = [line for line in (result.stdout + result.stderr).splitlines()
+                    if line.startswith('[Trace] link cmd:')]
+        assert commands, (mode, result.stdout, result.stderr)
+        if mode == 'full' and '"/machine:x64"' in commands[-1].lower():
+            assert len(commands) == 1 and '"/ltcg"' in commands[0].lower(), commands
+            assert '"/opt:lldltopartitions=4"' in commands[0].lower(), commands
+            retained = out / ('retained-lto' + suffix)
+            retained_ir = Path(str(retained) + '.backend.ll')
+            retained_ir.unlink(missing_ok=True)
+            kept = run('selfhost-lto-keep-temps', [compiler, 'build', source, '--no-module-discovery',
+                       '--lto=full', '--keep-temps', '-o', retained])
+            assert kept.returncode == 0, (kept.stdout, kept.stderr)
+            assert retained_ir.is_file()
+            assert run('selfhost-lto-keep-temps-execute', [retained]).returncode == 42
+            # Only the extra native object references this Kinal runtime body.
+            # The bitcode supplied to lld must still define it.
+            helper_ir = out / 'runtime-caller.ll'
+            helper_ir.write_text(r'''@digits = private constant [3 x i8] c"42\00"
+declare i64 @__kn_sh_IO_Kinal_Runtime_StringToInt64_1(ptr)
+define i32 @call_runtime() {
+  %number = call i64 @__kn_sh_IO_Kinal_Runtime_StringToInt64_1(ptr @digits)
+  %result = trunc i64 %number to i32
+  ret i32 %result
+}
+''')
+            helper_obj = out / 'runtime-caller.obj'
+            built = run('runtime-caller-object', [compiler, 'build', helper_ir, '--emit', 'object', '-o', helper_obj])
+            assert built.returncode == 0, (built.stdout, built.stderr)
+            caller = out / 'CallNative.kn'
+            caller.write_text('''Unit Tests.CallNative;
+[LinkName("call_runtime")] Extern Function i32 CallRuntime() By C;
+Trusted Static Function int Main() { Return CallRuntime(); }
+''')
+            binary = out / 'custom-input-lto.exe'
+            linked = run('custom-input-lto', [compiler, 'build', caller, '--no-module-discovery',
+                         '--lto=full', '--link-file', helper_obj, '--show-link', '-o', binary])
+            assert linked.returncode == 0, (linked.stdout, linked.stderr)
+            commands = [s for s in (linked.stdout + linked.stderr).splitlines() if s.startswith('[Trace] link cmd:')]
+            assert len(commands) == 1 and '"/ltcg"' in commands[0].lower(), commands
+            assert run('custom-input-lto-execute', [binary]).returncode == 42
         result = run('selfhost-lto-' + mode + '-execute', [actual])
         assert result.returncode == 42, (mode, 'selfhost executable', result)
         cases.append(dict(name='lto_' + mode, status='passed', executed=True))

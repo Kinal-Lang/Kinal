@@ -2,7 +2,7 @@
 
 Diagnostics related to type inference, type matching, array types, and conversions.
 
-The examples in this document are minimal reproductions of the most common way each diagnostic code is triggered. A few diagnostics that are more implementation-oriented use the closest surface-level form that user code can express.
+This page records the registered templates. Corrected examples show the supported form. A trigger sketch illustrates a rule or parser state and may require surrounding declarations or report an earlier/different diagnostic in the current C compiler.
 
 ---
 
@@ -35,6 +35,8 @@ The examples in this document are minimal reproductions of the most common way e
 Incorrect Example:
 
 ```kinal
+Get IO.Console;
+
 IO.Type.Object.Function fn = IO.Console.PrintLine;
 int value = [int](fn);
 ```
@@ -42,6 +44,8 @@ int value = [int](fn);
 Correct Example:
 
 ```kinal
+Get IO.Console;
+
 IO.Type.Object.Function fn = IO.Console.PrintLine;
 IO.Type.Object.Class obj = fn;
 string text = obj.ToString();
@@ -68,6 +72,8 @@ IO.Type.Object.Class obj = [IO.Type.Object.Class](42);
 Correct Example:
 
 ```kinal
+Get IO.Console;
+
 IO.Type.Object.Function fn = IO.Console.PrintLine;
 IO.Type.Object.Class obj = fn;
 ```
@@ -126,7 +132,7 @@ Fix: Cast only between related classes/interfaces, or redesign the conversion as
 - Default Detail: Array element name missing
 - Description: Array declaration is missing a variable name or element name.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
 int[] = { 1, 2, 3 };
@@ -150,7 +156,7 @@ Fix: Add the variable name after the array type.
 - Default Detail: Array element type unknown
 - Description: Array element type could not be resolved.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
 MissingType[] values = {};
@@ -174,7 +180,7 @@ Fix: Define the element type first, or change it to an existing type name.
 - Default Detail: Type not specified
 - Description: The current location requires an explicit type, but it is not given.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
 Function Add(a, b)
@@ -224,25 +230,10 @@ Fix: Change to a specific data type, or change the location to a declaration tha
 
 ## E-TYP-00007 — Invalid Type
 
-- Severity: Error
-- Default Detail: any[] requires explicit length
-- Description: Uninitialized `any[]` requires an explicit length.
+- Default detail: any[] requires explicit length
+- Compatibility catalog entry: the current C frontend accepts `any[] values;`, so that declaration no longer reproduces this error. Use `any[2] values;` for an explicit fixed length or `any[] values = {1, "two"};` to supply elements.
 
-Incorrect Example:
-
-```kinal
-any[] values;
-```
-
-Correct Example:
-
-```kinal
-any values[2];
-```
-
-Reason: Without an element initializer, the compiler cannot infer how much storage `any[]` should allocate.
-
-Fix: Change it to a fixed-length `any[n]`, or provide the initializer directly.
+See [Types](../../language/types.md) for current rules.
 
 ---
 
@@ -348,7 +339,7 @@ Fix: Modify the expression type, adjust the target type, or explicitly do a lega
 - Default Detail: Type not supported yet
 - Description: The current type form is not yet supported by the compiler.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
 // This example uses a type form that is not supported yet.

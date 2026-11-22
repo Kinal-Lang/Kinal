@@ -6,8 +6,8 @@
 
 ```kinal
 Get IO.Console;
-// 或
-Get IO.Console;
+// 或使用模块别名
+Get Console By IO.Console;
 ```
 
 ## 函数参考
@@ -100,10 +100,12 @@ Static Function int Main()
 
 - `PrintLine` 和 `Print` 会自动将参数转换为字符串（通过 `any.ToString()`）
 - 输出 `null` 会打印 `"null"`
-- 多参数时各参数通过空格或无分隔符连接（取决于实现）
+- 多个参数之间加入一个空格；需要精确间距时使用单个插值字符串
 
 ## 相关
 
 - [IO.Text](text.md) — 字符串处理
 - [IO.Core](core.md) — `IO.Char` 与 `IO.Math`
 - [字符串特性](../language/strings.md)
+
+ReadLine 是阻塞读取。浮点输出使用运行时格式化，可能出现 2.7000000000000002 等 binary64 往返位数，不是固定小数位格式化 API。控制台文本面向字节，仍受主机编码边界约束。

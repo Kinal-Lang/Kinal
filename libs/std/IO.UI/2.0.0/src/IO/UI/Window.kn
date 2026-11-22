@@ -1,0 +1,419 @@
+Unit IO.UI;
+
+Get Native By IO.__UI;
+
+Public Class Window
+{
+    Private string _Title;
+    Private int _Width;
+    Private int _Height;
+    Private int _X;
+    Private int _Y;
+    Public byte* Handle;
+    Private Component[] _Components;
+    Public Property Component[] Components { Get { Return __UI_ChildSnapshot(_Components); } }
+    Public Property int ChildCount { Get { Return _Components.Length(); } }
+    Public Function Component ChildAt(int index) { Return _Components[index]; }
+    Public Function bool Remove(Component child)
+    {
+        Component[] kept={};bool found=false;int i=0;
+        While(i<_Components.Length()){If(_Components[i]==child)found=true;Else kept=kept.Add(_Components[i]);i++;}
+        If(!found)Return false;
+        child.Detach();_Components=kept;RequestLayout();Return true;
+    }
+    Private Event[] _Events;
+    Public Property Event[] Events { Get { Return __UI_EventSnapshot(_Events); } }
+    Private Color _BackColor;
+    Private Color _ForeColor;
+    Private Font _Font;
+    Public bool DarkTitle;
+    Public ControlPalette Palette;
+    Public Component Focused; Private Component _Over; Private Component _Capture;
+    Private Canvas[] _Frames; Public ComboBox Popup;
+    Public int ClientWidth; Public int ClientHeight;
+
+    Private bool _LayoutPending;
+    Public bool UseClientSize;
+
+    Public Constructor(string title = "Kinal Window", int width = 640, int height = 480, int x = 100, int y = 100)
+    {
+        Palette=New ControlPalette();
+        _Title = title;
+        _Width = width;
+        _Height = height;
+        _X = x;
+        _Y = y;
+        Handle = null;
+        _Components = {};
+        _Events = {};
+        _BackColor = default;
+        _ForeColor = default;
+        _Font = New Font("Segoe UI", 14);
+        _Frames={};
+    }
+
+    Public Property string Title
+    {
+        Get
+        {
+            Return _Title;
+        }
+        Set
+        {
+            _Title = value;
+            If (Handle != null)
+            {
+                SyncTitle();
+            }
+        }
+    }
+
+    Private Trusted Function void SyncTitle(){Native.SetTitle(Handle,Title);}
+    Public Property int Width
+    {
+        Get
+        {
+            Return _Width;
+        }
+        Set
+        {
+            _Width = value;
+        }
+    }
+
+    Public Property int Height
+    {
+        Get
+        {
+            Return _Height;
+        }
+        Set
+        {
+            _Height = value;
+        }
+    }
+
+    Public Property int X
+    {
+        Get
+        {
+            Return _X;
+        }
+        Set
+        {
+            _X = value;
+        }
+    }
+
+    Public Property int Y
+    {
+        Get
+        {
+            Return _Y;
+        }
+        Set
+        {
+            _Y = value;
+        }
+    }
+
+    Public Property Color BackColor
+    {
+        Get
+        {
+            Return _BackColor;
+        }
+        Set
+        {
+            _BackColor = value;
+            Invalidate();
+        }
+    }
+
+    Public Property Color ForeColor
+    {
+        Get
+        {
+            Return _ForeColor;
+        }
+        Set
+        {
+            _ForeColor = value;
+            Invalidate();
+        }
+    }
+
+    Public Property Font Font
+    {
+        Get
+        {
+            Return _Font;
+        }
+        Set
+        {
+            _Font = value;
+            Invalidate();
+        }
+    }
+
+    Public Function Window SetBackColor(Color color)
+    {
+        BackColor = color;
+        Return This;
+    }
+
+    Public Function Window SetForeColor(Color color)
+    {
+        ForeColor = color;
+        Return This;
+    }
+
+    Public Function Window SetFont(Font font)
+    {
+        Font = font;
+        Return This;
+    }
+
+    Public Function Window Add(Component component)
+    {
+        If (component == null)
+        {
+            Throw New IO.Error("IO.UI", "Component cannot be null");
+        }
+        component.AttachTo(null, This);
+        _Components = _Components.Add(component);
+        RequestLayout();
+        Return This;
+    }
+
+    Private Function Component FindNamed(IO.UI.Component[] children, string name)
+    {
+        int i = 0;
+        While (i < children.Length())
+        {
+            Component child = children[i];
+            If (child.Name == name) Return child;
+            If (child Is GroupBox group)
+            {
+                Component found = FindNamed(group.Children, name);
+                If (found != null) Return found;
+            }
+            i++;
+        }
+        Return default;
+    }
+
+    Public Function Component FindControl(string name)
+    {
+        If (name == null || name == "") Return default;
+        Return FindNamed(_Components, name);
+    }
+
+    Public Safe Function bool SupportsEvent(IO.UI.EventKind kind)
+    {
+        Return kind == EventKind.OnClosing || kind == EventKind.OnClose || kind == EventKind.OnShown ||
+               kind == EventKind.OnResize || kind == EventKind.OnMove ||
+               kind == EventKind.OnKeyDown ||
+               kind == EventKind.OnKeyUp;
+    }
+
+    Public Function Window AddEvent(Event event)
+    {
+        If (event == null)
+        {
+            Throw New IO.Error("IO.UI", "Event cannot be null");
+        }
+        If (!SupportsEvent(event.Kind))
+        {
+            __UI_ThrowUnsupportedEvent("IO.UI.Window", event.Kind);
+        }
+        _Events = _Events.Add(event);
+        Return This;
+    }
+
+    Public Function Window RemoveEvent(Event event)
+    {
+        If (event == null)
+        {
+            Return This;
+        }
+
+        Event[] kept = {};
+        int i = 0;
+        While (i < _Events.Length())
+        {
+            Event current = _Events[i];
+            If (current != event)
+            {
+                kept = kept.Add(current);
+            }
+            i++;
+        }
+        _Events = kept;
+        Return This;
+    }
+
+    Public Trusted Function bool TriggerEvent(EventKind kind, usize wParam = 0, isize lParam = 0)
+    {
+        If (_Events.Length()==0) Return false;
+        EventArgs args = New EventArgs(kind, wParam, lParam);
+        Event[] listeners=_Events;
+        int i = 0;
+        While (i < listeners.Length())
+        {
+            Event current = listeners[i];
+            If (current.Kind == kind)
+            {
+                current.Invoke(This, args);
+            }
+            i++;
+        }
+        Return args.Handled;
+    }
+
+
+    Public Trusted Function void Invalidate()
+    {
+        If(Handle!=null)Native.Repaint(Handle);
+    }
+    Public Trusted Function void RequestLayout()
+    {
+        If(Handle!=null && !_LayoutPending){_LayoutPending=Native.RequestLayout(Handle);}
+    }
+    Public Function void Arrange(int w,int h)
+    {
+        ClientWidth=w;ClientHeight=h;
+        int i=0;
+        While(i<ChildCount)
+        {
+            Component c=ChildAt(i);
+            If(c.FillWindow)c.Arrange(0,0,w,h);Else c.Arrange(c.X,c.Y,c.Width,c.Height);
+            i++;
+        }
+    }
+    Public Trusted Function void LayoutChildren()
+    {
+        _LayoutPending=false;
+        If(Handle==null)Return;
+        Arrange(Native.ClientExtent(Handle,false),Native.ClientExtent(Handle,true));Invalidate();
+    }
+    Public Function void DrawInto(IO.UI.DrawingContext context)
+    {
+        context.PushClip(0,0,ClientWidth,ClientHeight);
+        context.Box(0,0,ClientWidth,ClientHeight,__UI_Color(BackColor,Palette!=null?Palette.Canvas:__UI_DefaultPalette.Canvas));
+        int i=0;While(i<ChildCount){__UI_DrawTree(ChildAt(i),context);i++;}
+        If(Popup!=null)__UI_DrawPopup(Popup,context);
+        context.PopClip();
+    }
+    Public Function Component HitTest(int x,int y)
+    {
+        int i=ChildCount;
+        While(i>0){i--;Component hit=__UI_Hit(ChildAt(i),x,y);If(hit!=null)Return hit;}
+        Return default;
+    }
+    Public Function void FocusControl(Component c)
+    {
+        If(c==Focused)Return;
+        Component old=Focused;Focused=c;
+        If(old!=null){old.HasFocus=false;old.OnSurfaceEvent(New SurfaceInput(SurfaceEvent.Blur,0,0));}
+        If(c!=null){c.HasFocus=true;c.OnSurfaceEvent(New SurfaceInput(SurfaceEvent.Focus,0,0));}
+        Invalidate();
+    }
+    Public Function void Forget(Component c)
+    {
+        If(c Is GroupBox group){int i=0;While(i<group.ChildCount){Forget(group.ChildAt(i));i++;}}
+        If(c Is Canvas canvas)SetFrames(canvas,false);
+        If(Focused==c)FocusControl(null);If(_Over==c)_Over=default;If(_Capture==c)_Capture=default;
+        If(c Is ComboBox combo){If(Popup==combo)Popup=default;}
+    }
+    Public Trusted Function void SetFrames(Canvas c,bool enabled)
+    {
+        int i=0;While(i<_Frames.Length()&&_Frames[i]!=c)i++;
+        If(enabled && i==_Frames.Length())_Frames=_Frames.Add(c);
+        Else If(!enabled && i<_Frames.Length())
+        {Canvas[] keep={};int j=0;While(j<_Frames.Length()){If(j!=i)keep=keep.Add(_Frames[j]);j++;}_Frames=keep;}
+        Else Return;
+        If(Handle!=null)Native.kn_ui_timer(Handle,[i32](_Frames.Length()>0?1:0));
+    }
+    Public Function void Route(IO.UI.SurfaceInput input)
+    {
+        SurfaceEvent k=input.Kind;int x=input.First;int y=input.Second;
+        If(k==SurfaceEvent.Frame)
+        {
+            Canvas[] active=_Frames;int i=0;While(i<active.Length()){active[i].OnSurfaceEvent(input);i++;}
+            Return;
+        }
+        If(k==SurfaceEvent.PointerMove||k==SurfaceEvent.PointerDown||k==SurfaceEvent.PointerUp||k==SurfaceEvent.DoubleClick||k==SurfaceEvent.MiddleDown||k==SurfaceEvent.MiddleUp||k==SurfaceEvent.ContextMenu)
+        {
+            If(k==SurfaceEvent.PointerDown && Popup!=null)
+            {
+                ComboBox combo=Popup;Popup=default;int row=__UI_PopupRow(combo,x,y);
+                If(row>=0){combo.SelectedIndex=row;combo.TriggerEvent(EventKind.OnSelectedChanged);Invalidate();Return;}
+                Invalidate();
+            }
+            Component hit=HitTest(x,y);
+            If(hit!=_Over)
+            {
+                Component old=_Over;_Over=hit;
+                If(old!=null)old.OnSurfaceEvent(New SurfaceInput(SurfaceEvent.PointerLeave,0,0));
+            }
+            If(k==SurfaceEvent.PointerDown || k==SurfaceEvent.DoubleClick||k==SurfaceEvent.MiddleDown){_Capture=hit;FocusControl(hit);}
+            Component recipient=_Capture!=null?_Capture:hit;
+            If(k==SurfaceEvent.PointerUp||k==SurfaceEvent.MiddleUp)_Capture=default;
+            If(recipient!=null)recipient.OnSurfaceEvent(New SurfaceInput(k,x-__UI_Left(recipient),y-__UI_Top(recipient)));
+            Return;
+        }
+        If(k==SurfaceEvent.CaptureLost){Component held=_Capture;_Capture=default;If(held!=null)held.OnSurfaceEvent(input);Return;}
+        If(k==SurfaceEvent.PointerLeave){Component old=_Over;_Over=default;If(old!=null)old.OnSurfaceEvent(input);Return;}
+        If(k==SurfaceEvent.KeyDown && x==9 && (Focused==null || !Focused.AcceptsTab))
+        {
+            Component[] nodes={};int i=0;While(i<ChildCount){nodes=__UI_TabNodes(ChildAt(i),nodes);i++;}
+            If(nodes.Length()>0){i=0;While(i<nodes.Length()&&nodes[i]!=Focused)i++;
+                int next=__UI_Key(16)?i-1:i+1;If(i==nodes.Length())next=__UI_Key(16)?nodes.Length()-1:0;
+                FocusControl(nodes[(next+nodes.Length())%nodes.Length()]);}Return;
+        }
+        If(k==SurfaceEvent.Blur){If(Focused!=null)Focused.OnSurfaceEvent(input);Return;}
+        If(k==SurfaceEvent.Focus){If(Focused!=null)Focused.OnSurfaceEvent(input);Return;}
+        Component target=Focused;
+        If(k==SurfaceEvent.Wheel&&_Over!=null)target=_Over;
+        If(target==null&&ChildCount==1)target=ChildAt(0);
+        If(target!=null)target.OnSurfaceEvent(input);
+    }
+    Public Trusted Function byte* Create()
+    {
+        If(Handle!=null)Return Handle;
+        Handle=Native.OpenSurface(Title,X,Y,Width,Height,&__UI_Dispatch);
+        __UI_Windows=__UI_Windows.Add(This);
+        If(UseClientSize)Native.kn_ui_client_size(Handle,[i32](Width),[i32](Height));
+        Native.kn_ui_dark_title(Handle,[i32](DarkTitle?1:0));
+        LayoutChildren();Return Handle;
+    }
+    Public Trusted Function void Close(){If(Handle!=null)Native.CloseSurface(Handle);}
+    Public Trusted Function void Show(){Create();Native.ShowSurface(Handle);TriggerEvent(EventKind.OnShown);}
+    Public Trusted Function int Run()
+    {
+        Show();Return Native.RunMessages();
+    }
+}
+
+Window[] __UI_Windows={};
+Trusted Function isize __UI_Dispatch(byte* handle,u32 message,usize first,isize second)
+{
+    int i=0;While(i<__UI_Windows.Length()&&__UI_Windows[i].Handle!=handle)i++;
+    If(i>=__UI_Windows.Length())Return 0;
+    Window w=__UI_Windows[i];SurfaceEvent k=[SurfaceEvent]([int](message));
+    If(k==SurfaceEvent.Paint){w.DrawInto(New DrawingContext(handle));}
+    Else If(k==SurfaceEvent.Closing){Return w.TriggerEvent(EventKind.OnClosing)?1:0;}
+    Else If(k==SurfaceEvent.Destroyed)
+    {
+        Window[] keep={};int j=0;While(j<__UI_Windows.Length()){If(j!=i)keep=keep.Add(__UI_Windows[j]);j++;}
+        __UI_Windows=keep;w.Handle=null;w.FocusControl(null);w.TriggerEvent(EventKind.OnClose);
+        If(keep.Length()==0)Native.QuitLoop();
+    }
+    Else If(k==SurfaceEvent.Layout){w.LayoutChildren();}
+    Else If(k==SurfaceEvent.Resize){w.LayoutChildren();w.TriggerEvent(EventKind.OnResize,first,second);w.Route(New SurfaceInput(k,[int](first),[int](second)));}
+    Else If(k==SurfaceEvent.Moved){w.TriggerEvent(EventKind.OnMove,first,second);}
+    Else {w.Route(New SurfaceInput(k,[int](first),[int](second)));}
+    Return 0;
+}
+

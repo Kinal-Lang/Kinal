@@ -240,7 +240,7 @@ kinal build bare_main.kn \
 
 仍可使用的特性：
 
-- `Struct` 和 `Enum`（值类型，栈分配）
+- `Struct` 和 `Enum`（值类型，存储位置取决于所属变量）
 - 原始类型（`int`、`float`、`bool` 等）
 - 固定大小数组（`int[16]` 等）
 - 函数、基础算术与位操作
@@ -263,3 +263,21 @@ kinal build bare_main.kn \
 - [FFI](../language/ffi.md) — 硬件驱动接口
 - [安全级别](../language/safety.md) — Unsafe 上下文
 - [IO.Runtime 常量](runtime-environment-constants.md) — 区分原生与 VM 执行后端
+
+## Volatile 与 Panic 接口
+
+以下为 Trusted 编译器内建；普通 Safe 函数可以调用 Trusted 接口，但取得和操作原始指针仍受安全级别约束。
+
+| 签名 | 用途 |
+|------|------|
+| `u8 IO.Volatile.Read8(u8* address)` | 易失读取；地址必须有效且满足目标对齐要求 |
+| `void IO.Volatile.Write8(u8* address, u8 value)` | 易失写入 |
+| `u16 IO.Volatile.Read16(u16* address)` | 易失读取；地址必须有效且满足目标对齐要求 |
+| `void IO.Volatile.Write16(u16* address, u16 value)` | 易失写入 |
+| `u32 IO.Volatile.Read32(u32* address)` | 易失读取；地址必须有效且满足目标对齐要求 |
+| `void IO.Volatile.Write32(u32* address, u32 value)` | 易失写入 |
+| `u64 IO.Volatile.Read64(u64* address)` | 易失读取；地址必须有效且满足目标对齐要求 |
+| `void IO.Volatile.Write64(u64* address, u64 value)` | 易失写入 |
+| `void IO.Panic.Abort()` / `void IO.Panic.Halt()` | 不可恢复终止接口；不要用于异常恢复 |
+
+Volatile 不提供原子性、线程同步或设备内存屏障。必须由目标平台协议决定这些操作；不要把任意整数地址示例直接用于真实设备。

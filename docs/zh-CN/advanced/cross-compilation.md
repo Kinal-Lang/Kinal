@@ -1,284 +1,94 @@
 # 交叉编译
 
+原生交叉编译为另一 OS／架构生成代码。Triple 只是完整目标工具链的一部分，不会自动提供 SDK、所有运行库或在主机执行产物的能力。
 
-
-Kinal 基于 LLVM 后端，天然支持交叉编译——在一台机器上为另一平台编译可执行文件。
-
-
-
----
-
-
-
-## 核心选项
-
-
+## 选择目标与输出阶段
 
 ```bash
-
-kinal --target <三元组> [其他选项] <文件.kn> -o <输出>
-
+kinal build main.kn --target linux-arm64 --emit ir -o out/main-aarch64.ll
+kinal build main.kn --target linux-arm64 --emit obj -o out/main-aarch64.o
 ```
 
+目标链接尚未配置时，可先检查 IR／对象发射。生成可运行程序还需要匹配链接器、目标启动／CRT／系统库及包原生资产。命令以 kinal build 开始，不能把构建选项直接放在 kinal 后代替子命令接口。
 
+## 主要目标别名
 
----
+| 别名 | Triple |
+|------|--------|
+| `win86` | `i686-pc-windows-msvc` |
+| `win64` | `x86_64-pc-windows-msvc` |
+| `win-arm64` | `aarch64-pc-windows-msvc` |
+| `linux64` | `x86_64-pc-linux-gnu` |
+| `linux-arm64` | `aarch64-unknown-linux-gnu` |
+| `mac64` | `x86_64-apple-darwin` |
+| `macos-arm64` | `aarch64-apple-darwin` |
+| `bare64` | `x86_64-unknown-none-elf` |
+| `bare-arm64` | `aarch64-unknown-none-elf` |
 
+也可传入受支持完整 triple。别名只规范平台拼写，不增加目标库；产物后缀和 ABI 随目标变化，不随编译主机变化。
 
-
-## 内置平台别名
-
-
-
-Kinal 提供一套平台快捷别名，无需记忆完整的 LLVM 三元组：
-
-
-
-| 别名 | 等效三元组 | 说明 |
-
-|------|-----------|------|
-
-| `win86` | `i686-windows-msvc` | Windows 32 位 |
-
-| `win64` | `x86_64-windows-msvc` | Windows 64 位 |
-
-| `linux64` | `x86_64-linux-gnu` | Linux x86_64 |
-
-| `linux-arm64` | `aarch64-linux-gnu` | Linux ARM64 |
-
-| `bare64` | `x86_64-unknown-none` | 裸机 x86_64 |
-
-| `bare-arm64` | `aarch64-unknown-none` | 裸机 ARM64 |
-
-
-
----
-
-
-
-## 常见交叉编译场景
-
-
-
-### 在 Linux 上编译 Windows 程序
-
-
+## 链接外来目标
 
 ```bash
-
-kinal --target win64 main.kn -o main.exe --linker zig
-
+kinal build main.kn --target linux-arm64 --linker zig -o out/app-linux-arm64
+kinal build main.kn --target win64 --linker lld -o out/app-windows.exe
 ```
 
+以上命令要求对应目标依赖已经就绪。Zig 可提供部分跨工具链，但不能保证所有厂商 SDK、Windows MSVC 库、Apple SDK 和第三方依赖。LLD／MSVC 也需要相应输入。Hosted Linux／macOS 默认优先可用 Zig，否则警告并回退 LLD；显式选择会覆盖该默认。
 
+当前没有通用 sysroot CLI 选项。目标库目录使用 -L／项目 Link 字段，必要时通过 link-arg 传对应后端参数。单个 -L 不提供头文件、启动文件或完整 SDK。外部 FFI 库要匹配架构和 ABI，不只是扩展名。
 
-> 推荐使用 `--linker zig` 进行 Windows 交叉编译，zig 工具链包含 Windows 目标的 C 运行时头文件。
+## Target、Host 与 Runtime 常量
 
+| 常量族 | 含义 |
+|--------|------|
+| `IO.Target.OS`、`.Arch`、`.Env` | 编译产物的 OS、架构、hosted／freestanding 环境 |
+| `IO.Host.OS`、`.Arch`、`.Env` | 编译器主机相应属性 |
+| `IO.Target.PointerBits`／`IO.Host.PointerBits` | 相应机器的指针宽度 |
+| `.PathSeparator`、`.NewLine`、`.ExeSuffix`、`.ObjectSuffix`、`.DynamicLibrarySuffix`、`.StaticLibrarySuffix` | 对应族的平台拼写 |
+| `IO.Runtime.*` | Native／VM 输出后端，独立于环境／内存配置 |
 
-
-### 在 Windows 上编译 Linux 程序
-
-
-
-```bash
-
-kinal --target linux64 main.kn -o main --linker zig
-
-```
-
-
-
-### 编译 ARM64 Linux 程序
-
-
-
-```bash
-
-kinal --target linux-arm64 main.kn -o main
-
-```
-
-
-
----
-
-
-
-## 链接器选择
-
-
-
-| 链接器 | 选项 | 适用场景 |
-
-|--------|------|---------|
-
-| `lld` | `--linker lld`（默认） | 本机编译，速度最快 |
-
-| `zig` | `--linker zig` | 交叉编译，自带 cross 工具链 |
-
-| `msvc` | `--linker msvc` | Windows 原生，需安装 MSVC |
-
-
-
-zig 工具链（`zig cc`）是最推荐的交叉编译选项，因为它内置了各平台的 sysroot，无需单独安装交叉编译工具链：
-
-
-
-```bash
-
-# 安装 zig（用作 clang 前端 + 交叉链接器）
-
-# 然后直接使用：
-
-kinal --target linux-arm64 main.kn -o myapp --linker zig
-
-```
-
-
-
----
-
-
-
-## 系统根目录（Sysroot）
-
-
-
-编译需要系统头文件和库时，可能需要指定 sysroot：
-
-
-
-```bash
-
-kinal --target linux-arm64 \
-
-      -L /path/to/arm64-sysroot/lib \
-
-      main.kn -o myapp
-
-```
-
-
-
----
-
-
-
-## 静态链接（推荐用于发布）
-
-
-
-交叉编译时推荐静态链接，避免目标平台上的动态库版本问题：
-
-
-
-```bash
-
-kinal --target linux64 \
-
-      --linker zig \
-
-      -o myapp-linux \
-
-      main.kn
-
-```
-
-
-
----
-
-
-
-## 构建矩阵示例
-
-
-
-同时为多个平台构建的脚本：
-
-
-
-```bash
-
-#!/bin/bash
-
-TARGETS=(
-
-    "win64:main-windows.exe"
-
-    "linux64:main-linux"
-
-    "linux-arm64:main-linux-arm64"
-
-)
-
-
-
-for entry in "${TARGETS[@]}"; do
-
-    target="${entry%%:*}"
-
-    output="${entry##*:}"
-
-    echo "编译 $target -> $output ..."
-
-    kinal --target "$target" --linker zig main.kn -o "dist/$output"
-
-done
-
-```
-
-
-
----
-
-
-
-## 注意事项
-
-
-
-### 平台相关代码
-
-
-
-使用 `IO.Target.OS` 条件来处理平台差异：
+OS 常量包括 Windows／Linux／MacOS／Unknown，Arch 包括 X86／X64／Arm64／Unknown，Env 包括 Hosted／Freestanding／Unknown。比较常量，不要硬编码内部整数值。
 
 ```kinal
-Static Function string GetConfigPath()
+Unit Docs.Platform;
+Get IO.Console;
+
+Static Function int Main()
 {
     If (IO.Target.OS == IO.Target.OS.Windows)
     {
-        Return IO.Path.Combine(IO.System.GetEnv("APPDATA"), "myapp");
+        IO.Console.PrintLine("Windows target");
     }
-    Return IO.Path.Combine(IO.System.GetEnv("HOME"), ".config/myapp");
+    Else
+    {
+        IO.Console.PrintLine("non-Windows target");
+    }
+    IO.Console.PrintLine(IO.Target.PointerBits);
+    IO.Console.PrintLine(IO.Target.DynamicLibrarySuffix);
+    Return 0;
 }
-
 ```
 
+编译期非活动分支仍要语法有效，但不参与语义绑定。程序路径／ABI 策略使用目标属性，编译器主机不是部署平台。交叉编译不会修复 Windows 原生 argv／文件系统编码边界。
 
+## Freestanding 目标
 
-### C 标准库函数的可用性
+```bash
+kinal build kernel.kn --target bare-arm64 --freestanding --runtime none \
+    --panic trap --no-crt --link-script board.ld -o out/kernel.elf
+```
 
+目标需要真实启动／引导契约和链接脚本；Alloc／GC 还需要目标运行时 hook。生成 ELF 不能证明硬件可启动，参见[Freestanding](freestanding.md)。
 
+## 静态链接与部署
 
-交叉编译时，`Extern` FFI 调用的 C 函数必须在目标平台上存在。使用 `--linker zig` 时，zig 负责提供目标平台的 C 运行时。
+选择 Zig 或启用 LTO 不会自动使 GNU Linux 目标完全静态化，也不会消除包／系统依赖。kind static 创建静态库，不是完全静态可执行文件开关。crt static 选择受支持 CRT 模式，不是任意 CRT 文件或无依赖分发策略。
 
+应在目标平台检查最终二进制和实际链接库，按最终发行目录核对运行资产、搜索路径及系统兼容。参见[链接](linking.md)。
 
+## 验证
 
----
+建议依次验证语义、目标 IR／对象、目标链接和目标主机执行，分别记录结果。Hosted CI 与七目标阶段发射检查提供不同证据，均不能代替应用自身依赖和行为验证。
 
-
-
-## 相关
-
-
-
-- [编译器 CLI](../cli/compiler.md) — `--target`、`--linker` 选项
-
-- [链接](linking.md) — 链接器后端详解
-
-- [裸机开发](freestanding.md) — 无 OS 目标
-
-- [FFI](../language/ffi.md) — 平台特定 C 接口
-
+矩阵构建为各目标使用不同目录／名称，避免互相覆盖。项目 Profile 可保存目标／链接／源码选择，参见[项目文件](../cli/project-files.md)。

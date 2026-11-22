@@ -16,11 +16,14 @@ def check_project_probes(compiler: Path, stage0: Path, root: Path, out: Path,
     sys.path.insert(0, str(root / "tests"))
     from run_stage_tests import check_project_source_paths
     check_project_source_paths(compiler, out)
+    from check_source_discovery import check_source_discovery
+    discovery = check_source_discovery(compiler, stage0, root, out / "discovery",
+                                       stage0_reference=stage0_reference)
     samples = out / "samples"
     samples.mkdir(exist_ok=True)
     first = samples / "First.kn"
     second = samples / "Second.kn"
-    first.write_text("Unit Tests.Probes.First; Static Function int Main() { Return 0; }\n", encoding="utf-8")
+    first.write_text("Unit Tests.Probes.First; Static Function int Main() { Return 0; }\n", encoding="utf-8-sig")
     second.write_text("Unit Tests.Probes.Second; Static Function void Broken( {\n", encoding="utf-8")
     sample_project = samples / "kinal.knproj"
     sample_project.write_text('Project Samples { DefaultProfile = "test"; '
@@ -31,9 +34,19 @@ def check_project_probes(compiler: Path, stage0: Path, root: Path, out: Path,
     source = out / "Main.kn"
     source.write_text('''Unit Tests.Selfhost.ProjectProbes;
 Get IO.Kinal.Compiler.Core.CompileSession;
+Get IO.Kinal.Compiler.Lex.Lexer;
+Get IO.Kinal.Compiler.Source.SourceFile;
 Static Function int Main() {
+    SourceFile header = New SourceFile("header.kn",
+        " /* prefix */ Unit Tests /* comment */ . Header ; Broken( {");
+    If (IO.Kinal.Compiler.Lex.Lexer.ProbeUnitName(header) != "Tests.Header") Return 9;
+    header = New SourceFile("alias.kn", "Unsafe Alias U = Unit; U Tests.Header;");
+    If (IO.Kinal.Compiler.Lex.Lexer.ProbeUnitName(header) != null) Return 10;
+    header = New SourceFile("broken.kn", "Unit Tests.Header Function int Main() {}");
+    If (IO.Kinal.Compiler.Lex.Lexer.ProbeUnitName(header) != null) Return 11;
     CompileSession session = New CompileSession();
     ProjectSourceProbe first = session.ProbeProjectSource(FIRST);
+    If (IO.Kinal.Compiler.Lex.Lexer.ProbeUnitName(session.Sources.Load(FIRST)) != "Tests.Probes.First") Return 12;
     ProjectSourceProbe same = session.ProbeProjectSource(FIRST);
     ProjectSourceProbe normalized = session.ProbeProjectSource(ALTERNATE);
     If (first == null || first != same || first != normalized) Return 1;
@@ -45,6 +58,8 @@ Static Function int Main() {
     If (!other.LoadProject(PROJECT, "test")) Return 5;
     If (other.ProbeProjectSource(FIRST) == first || other.ProjectProbeCache.Count() != 2) Return 6;
     If (!other.ParseProject() || other.UnitCount() != 1 || other.HasErrors()) Return 7;
+    ProjectSourceProbe cached = other.ProbeProjectSource(FIRST);
+    If (other.FirstUnit.Syntax != cached.Syntax || other.FirstUnit.Tokens != cached.Tokens) Return 8;
     Return 0;
 }
 '''.replace("FIRST", json.dumps(str(first))).replace("ALTERNATE", json.dumps(str(alternate)))
@@ -61,7 +76,12 @@ Static Function int Main() {
     compilers.append(("selfhost", compiler))
     for label, tool in compilers:
         output = out / (label + (".exe" if os.name == "nt" else ""))
-        built = subprocess.run([str(tool), "build", "--project", str(project), "-o", str(output)],
+        command = [str(tool), "build", "--project", str(project), "-o", str(output)]
+        # Compiler API consumers include ConsoleIO's thin terminal-mode leaves.
+        # The C reference does not discover selfhost-private bridges itself.
+        if label == "stage0":
+            command += ["--link-file", str(compiler.parent / "bridge/kn_selfhost_runtime.o")]
+        built = subprocess.run(command,
                                cwd=root, text=True, capture_output=True, timeout=240)
         (out / f"{label}.build.log").write_text(built.stdout + built.stderr, encoding="utf-8")
         assert built.returncode == 0, (label, built.stdout, built.stderr)
@@ -71,7 +91,8 @@ Static Function int Main() {
         print(f"[OK] {label} project probe canonical reuse/isolation", flush=True)
     return {"name": "project_probe_contract", "ok": True, "runtime_compilers": len(compilers),
             "unique_cached_sources": 2, "repeated_probe_requests": 3,
-            "unreachable_body_diagnostics_isolated": True}
+            "unreachable_body_diagnostics_isolated": True, "parsed_tree_reused": True,
+            "source_discovery": discovery}
 
 
 if __name__ == "__main__":

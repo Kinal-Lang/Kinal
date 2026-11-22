@@ -25,5 +25,8 @@ Static Function int Main()
     Console.PrintLine(IO.File.ReadFirstLine(path));
     Console.PrintLine(IO.File.DeleteIfExists(path));
     Console.PrintLine(IO.File.Exists(path));
+    If (IO.File.ReadIfExists(missing) != null || IO.File.ReadOrDefault(missing, null) != null) Return 1;
+    If (IO.File.ReadOr(null, null) != null || IO.File.ReadOr(missing, "") != "") Return 2;
+    If (IO.File.Exists(null) || IO.File.Size(null) != -1 || IO.File.AppendLine(null, "x")) Return 3;
     Return 0;
 }

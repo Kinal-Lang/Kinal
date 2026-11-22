@@ -135,7 +135,7 @@ Safe Function string CanonicalDetail(string title, string detail)
     If (title == "Duplicate Named Argument") Return "Duplicate named argument";
     If (title == "Unused Variable") Return "Variable is never used";
     If (title == "Unreachable Code") Return "Unreachable code";
-    If (title == "Invalid Cast" && IO.Text.StartsWith(detail, "Cannot cast ") && IO.Text.Contains(detail, " to "))
+    If (title == "Invalid Cast" && IO.Text.StartsWith(detail, "Cannot cast ") && IO.Text.IndexOf(detail, " to ") >= 12)
         Return "Cannot cast value to target type";
     If (title == "Invalid Named Argument")
     {

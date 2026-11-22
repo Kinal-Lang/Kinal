@@ -1,0 +1,19 @@
+Project KinalVMDesktop
+{
+    DefaultProfile = "windows";
+    SourceSet "vm" { Roots = ["src", "windows"]; Include = ["**/*.kn"]; RequireUnit = true; }
+    SourceSet "surface" {
+        Files = [
+            "../../libs/std/IO.UI/2.0.0/src/IO/UI/Native.Win32.kn",
+            "../../libs/std/IO.UI/2.0.0/src/IO/UI/Native.Surface.kn",
+            "../../libs/std/IO.UI/2.0.0/src/IO/UI/SurfaceHost.kn",
+            "../../libs/std/IO.UI/2.0.0/src/IO/UI/TextGeometry.kn",
+            "../../libs/std/IO.UI/2.0.0/src/IO/UI/Motion.kn"
+        ];
+    }
+    Profile "windows"
+    {
+        Source { Entry = "windows/Main.kn"; Sets = ["vm", "surface"]; Mode = ReachableUnits; }
+        Build { Backend = Native; Environment = Hosted; Output = "../../out/kinalvm/kinalvm-desktop.exe"; }
+    }
+}

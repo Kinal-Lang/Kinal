@@ -9,7 +9,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
-from infra.scripts.x import selfhost_ops
+from infra.scripts.x import runtime_build, selfhost_ops
 
 spec = importlib.util.spec_from_file_location("selfhost_bootstrap", ROOT / "tests/selfhost/run_bootstrap.py")
 bootstrap = importlib.util.module_from_spec(spec)
@@ -20,15 +20,24 @@ spec.loader.exec_module(bootstrap)
 class VmPackagingTests(unittest.TestCase):
     def test_runner_is_built_by_the_selfhost_compiler(self):
         compiler = Path("/isolated/stage/kinal-selfhost")
-        with patch.object(selfhost_ops, "run") as invoke:
-            output = selfhost_ops.build_selfhost_vm_runner(compiler)
-        self.assertEqual(output.parent, compiler.parent)
-        command = invoke.call_args.args[0]
-        self.assertEqual(command[0], compiler)
-        self.assertEqual(command[1:3], ["build", "--project"])
-        self.assertEqual(command[3], ROOT / "apps/kinalvm")
-        self.assertEqual(command[4:6], ["--profile", "release"])
-        self.assertEqual(command[-1], output)
+        for host in ("win-x64", "win-arm64", "linux-x64", "macos-arm64"):
+            with (self.subTest(host=host), patch.object(runtime_build, "host_tag", return_value=host),
+                  patch.object(selfhost_ops, "host_tag", return_value=host),
+                  patch.object(runtime_build, "build_io_ui_native_assets") as assets,
+                  patch.object(selfhost_ops, "run") as invoke):
+                output = selfhost_ops.build_selfhost_vm_runner(compiler)
+                self.assertEqual(output.parent, compiler.parent)
+                project = ROOT / "apps/kinalvm"
+                if host.startswith("win-"):
+                    project /= "windows.knproj"
+                    assets.assert_called_once_with(ROOT / "libs/std")
+                else:
+                    project /= "kinal.knproj"
+                    assets.assert_not_called()
+                expected = [compiler, "build", "--project", project, "-o", output]
+                if host == "win-x64":
+                    expected.append("--lto=thin")
+                invoke.assert_called_once_with(expected)
 
     def test_later_stage_keeps_runner_and_version(self):
         with tempfile.TemporaryDirectory() as temporary:

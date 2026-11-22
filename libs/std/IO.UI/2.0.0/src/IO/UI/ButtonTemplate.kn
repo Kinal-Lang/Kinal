@@ -1,0 +1,146 @@
+Unit IO.UI;
+
+Get Native By IO.__UI;
+
+Public Class ButtonTemplate
+{
+    Public u32 Background;
+    Public u32 HoverBackground;
+    Public u32 PressedBackground;
+    Public u32 DisabledBackground;
+    Public u32 Foreground;
+    Public u32 DisabledForeground;
+    Public u32 Border;
+    Public u32 FocusRing;
+    Public int Radius;
+    Public int FontSize;
+    Public int Weight;
+    Public int Duration;
+    Public int Delay;
+    Public Easing Curve;
+
+    Public Constructor()
+    {
+        Background = 0xffffffff;
+        HoverBackground = 0xffe6ebef;
+        PressedBackground = 0xff87939e;
+        DisabledBackground = 0xffffffff;
+        Foreground = 0xff20252b;
+        DisabledForeground = 0xff68737c;
+        Border = 0xff87939e;
+        FocusRing = 0xff0067a8;
+        Radius = 4;
+        FontSize = 14;
+        Weight = 400;
+        Duration = 130;
+        Curve = Easing.EaseOut;
+    }
+
+    Public Virtual Function void Draw(IO.UI.DrawingContext context, IO.UI.TemplateButton button, u32 fill)
+    {
+        int w = button.ActualWidth; int h = button.ActualHeight;
+        int radius=button.StyleRadius(Radius);int stroke=button.BorderWidth;
+        context.Box(0,0,w,h,fill,radius);
+        If(stroke>0)context.Box(0,0,w,h,button.StyleBorder(Border),radius,stroke);
+        If (button.Focused) context.Box(2,2,w-4,h-4,FocusRing,radius,1);
+        Font font=button.Font;
+        context.Write(button.Text,4,0,w-8,h,button.Enabled ? button.StyleText(Foreground) : DisabledForeground,
+                      font==null?FontSize:font.Size,font==null?Weight:[int](font.Weight),false,TextAlignment.Center);
+    }
+}
+
+Public Class TemplateButton By Canvas
+{
+    Private bool _Enabled;
+    Private ButtonTemplate _Template;
+    Private Transition _Fade;
+    Private u32 _From;
+    Private u32 _To;
+    Private bool _KeyboardPress;
+    Private bool _Painted;
+    Public bool Focused;
+
+    Public Constructor(string text, int x=0, int y=0, int width=100, int height=32)
+    {
+        _Text=text; _X=x; _Y=y; _Width=width; _Height=height; _Events={};
+        _Template=New ButtonTemplate(); _Fade=New Transition(1.0); _Enabled=true;
+        _From=_Template.Background; _To=_From;
+    }
+    Public Property ButtonTemplate Template
+    {
+        Get { Return _Template; }
+        Set { If(value!=null) { _Template=value; RefreshVisual(); } }
+    }
+    Public Property bool Enabled
+    {
+        Get { Return _Enabled; }
+        Set
+        {
+            _Enabled=value;
+
+            If(!value){Pressed=false;Hovered=false;_KeyboardPress=false;}
+            RefreshVisual();
+        }
+    }
+
+    Public Trusted Function void RefreshVisual()
+    {
+        u32 next=VisualFill();
+        If(next!=_To)
+        {
+            _From=BlendColor(_From,_To,_Fade.Current()); _To=next;
+            _Fade.Duration=_Template.Duration;_Fade.Delay=_Template.Delay;_Fade.Curve=_Template.Curve;
+            _Fade.Snap(0.0);_Fade.To(1.0);RequestFrames(_Fade.Running);
+        }
+        Invalidate();
+    }
+    Private Function u32 VisualFill(){
+        Return _Enabled?StyleFill(_Template.Background,_Template.HoverBackground,_Template.PressedBackground):_Template.DisabledBackground;
+    }
+    Protected Override Safe Function bool SupportsEventCode(int code)
+    {
+        EventKind kind = [EventKind](code);
+        Return kind==EventKind.OnClick||kind==EventKind.OnMouseEnter||kind==EventKind.OnMouseLeave||
+               kind==EventKind.OnMouseDown||kind==EventKind.OnMouseUp||kind==EventKind.OnFocus||kind==EventKind.OnBlur;
+    }
+    Public Override Trusted Function void Draw(IO.UI.DrawingContext context)
+    {
+        If(!_Painted||Owner==null||Owner.Handle==null){_From=VisualFill();_To=_From;_Painted=true;}
+        Else If(VisualFill()!=_To)RefreshVisual();
+        _Template.Draw(context,This,BlendColor(_From,_To,_Fade.Current()));
+        If(!_Fade.Running)RequestFrames(false);
+    }
+    Public Override Trusted Function void OnSurfaceEvent(IO.UI.SurfaceInput input)
+    {
+        SurfaceEvent kind=input.Kind;
+        If(kind==SurfaceEvent.Frame){Invalidate();Return;}
+        If(kind==SurfaceEvent.Focus||kind==SurfaceEvent.Blur)
+        {
+            Focused=kind==SurfaceEvent.Focus;
+            If(!Focused){Pressed=false;_KeyboardPress=false;}
+            TriggerEvent(Focused?EventKind.OnFocus:EventKind.OnBlur,0,0);RefreshVisual();Return;
+        }
+        If(!_Enabled)Return;
+        bool inside=input.First>=0&&input.Second>=0&&input.First<ActualWidth&&input.Second<ActualHeight;
+        If(kind==SurfaceEvent.PointerMove||kind==SurfaceEvent.PointerLeave)
+        {
+            bool over=kind==SurfaceEvent.PointerMove&&inside;
+            If(Hovered==over)Return;
+            Hovered=over;TriggerEvent(over?EventKind.OnMouseEnter:EventKind.OnMouseLeave,0,0);
+        }
+        Else If(kind==SurfaceEvent.PointerDown){Pressed=true;TriggerEvent(EventKind.OnMouseDown,0,0);}
+        Else If(kind==SurfaceEvent.PointerUp)
+        {
+            bool click=Pressed&&inside;Pressed=false;
+            TriggerEvent(EventKind.OnMouseUp,0,0);If(click)TriggerEvent(EventKind.OnClick,0,0);
+        }
+        Else If(kind==SurfaceEvent.CaptureLost){Pressed=false;}
+        Else If(kind==SurfaceEvent.KeyDown && (input.First==32||input.First==13))
+        {If(_KeyboardPress)Return;_KeyboardPress=true;Pressed=true;}
+        Else If(kind==SurfaceEvent.KeyUp && (input.First==32||input.First==13) && _KeyboardPress)
+        {_KeyboardPress=false;Pressed=false;TriggerEvent(EventKind.OnClick,0,0);}
+        Else Return;
+        RefreshVisual();
+    }
+}
+

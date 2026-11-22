@@ -1,4 +1,4 @@
-﻿<p align="right">
+<p align="right">
   <strong>English</strong> | <a href="README.zh-CN.md">简体中文</a>
 </p>
 
@@ -45,11 +45,11 @@ Kinal's goal is simple --
 - **Statically typed** -- compile-time type checking with Var inference for concise, safe code
 - **Three-tier safety** -- Safe / Trusted / Unsafe precisely bound dangerous operations
 - **Native OOP** -- classes, interfaces, virtual methods, generics, with clean syntax
-- **Dual backends** -- LLVM native compilation and KinalVM bytecode, same code both ways
-- **Block objects** -- a unique suspendable code-block mechanism with Record labels and Jump transfers
-- **First-class async** -- Async/Await with a built-in event loop
-- **C interop** -- zero-overhead Extern/Delegate calls into C libraries
-- **Meta annotations** -- custom attribute system queryable at compile time or runtime
+- **Dual backends** -- LLVM native compilation and KinalVM bytecode, with explicit backend support limits
+- **Block objects** -- code-block objects with Record labels and explicit range/jump execution
+- **First-class async** -- Native Async/Await with Task runtime support
+- **C interop** -- Extern/Delegate calls with explicit C ABI and ownership rules
+- **Meta annotations** -- custom attributes with runtime-retained IO.Meta records
 - **Complete toolchain** -- compiler, VM, formatter, package manager, LSP server
 
 ---
@@ -61,12 +61,12 @@ Kinal's goal is simple --
 Option 1: use the install script (recommended, it handles the toolchain layout and PATH setup for you)
 
 ```bash
-curl -sSL https://kinal.org/install.sh | bash
+curl -fsSL https://kinal.org/install.sh | bash
 ```
 
 Option 2: install manually
 
-Download the pre-built package for your platform from [Releases](https://github.com/Kinal-Lang/Kinal/releases) and place kinal (and optionally kinalvm) on your PATH.
+Download the matching bundle from [Releases](https://github.com/Kinal-Lang/Kinal/releases), extract it completely, and add its tool directory to PATH. Preserve LLVM libraries, runtime files, linker tools and standard packages beside the executables.
 
 Then verify the installation:
 
@@ -76,9 +76,25 @@ kinal --version
 
 ### Your First Program
 
-Create hello.kn and run:
+Create `hello.kn`:
 
-    kinal run hello.kn
+```kinal
+Unit Hello;
+Get IO.Console;
+
+Static Function int Main()
+{
+    IO.Console.PrintLine("Hello, Kinal!");
+    Return 0;
+}
+```
+
+```bash
+kinal run hello.kn
+kinal vm run hello.kn
+```
+
+The two backends share language analysis but have different runtime capabilities; see [Backend Support](docs/advanced/backend-support.md). For larger programs start with [Project Files](docs/cli/project-files.md), and for ownership/GC see [Memory and Lifetimes](docs/advanced/memory-management.md).
 
 ---
 
@@ -90,7 +106,10 @@ Create hello.kn and run:
     docs/  zh-CN/
     dev/
     tests/
+    benchmarks/
     infra/
+
+Compare stage0 and stage3 build time, startup time, and runtime on Windows with the [Kinal benchmark suite](benchmarks/README.md).
 
 ---
 
@@ -101,7 +120,7 @@ Requirements: Python 3.10+ CMake 3.20+ Ninja LLVM/Clang
     python x.py fetch llvm-prebuilt
     python x.py dev
     python x.py test
-    python x.py release
+    python x.py dist
 
 See [Build Guide](dev/build.md) for details.
 
@@ -125,7 +144,7 @@ See [Build Guide](dev/build.md) for details.
 | kinal vm build/run/disasm/pack | KinalVM bytecode build, inspection, run, and pack |
 | kinal fmt | Code formatter |
 | kinal pkg build/info/unpack | Package management |
-| kinal-lsp | LSP server for editor completion and diagnostics |
+| kinal-lsp-server | LSP server for editor completion and diagnostics |
 
 ---
 

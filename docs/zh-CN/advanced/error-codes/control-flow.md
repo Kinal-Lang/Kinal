@@ -2,7 +2,7 @@
 
 与 return、throw、break、continue 等控制流规则有关的诊断。
 
-本文中的示例都是最小复现片段，用来说明该错误码最常见的触发方式；少数更偏内部的诊断会使用最接近用户代码的表面写法来说明。
+本页记录预注册模板。正确示例展示支持的写法；触发形态用于说明规则或解析状态，可能依赖外围声明，或在当前 C 编译器中先报告其他诊断。
 
 ---
 
@@ -221,7 +221,7 @@ Class Counter
 - 默认详情：Return not allowed here
 - 说明：函数或方法外部不能直接写 `Return`。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
 Return 0;
@@ -308,7 +308,7 @@ Function void Log()
 - 默认详情：Throw not allowed here
 - 说明：函数或方法外部不能直接写 `Throw`。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
 Throw "boom";

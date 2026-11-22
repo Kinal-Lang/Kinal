@@ -55,3 +55,21 @@ Static Function int Main()
 
 - [Standard Library Overview](overview.md)
 - [IO.Console](console.md)
+
+## Package Identity
+
+The current source package version is 2020.8.31 and its Unit is IO.Cat. Package and compiler versions are independent. Rommy is a teaching class; its constructor, properties and printing methods are listed below. Other packages have their own lifetime and error contracts.
+
+## Public Source Signatures
+
+The tables list public fields, constructors, properties and methods from the current package source. Inherited members are listed under their declaring base type. Get/Set identify property accessors; signatures include declared defaults. Native handles and Host/Win32 helpers require their ABI/lifetime contracts; ordinary applications should start with the package high-level objects.
+
+### IO.Cat.Rommy
+
+| Member | Declaration | Accessors |
+|--------|-------------|-----------|
+| `Constructor` | `Public Constructor(bool i_know_this_is_just_a_clone_of_Rommy,bool i_will_be_good_to_Rommy)` | — |
+| `Speak` | `Public Function string Speak(string something)` | — |
+| `Touch` | `Public Function string Touch()` | — |
+| `Feed` | `Public Function string Feed()` | — |
+| `Play` | `Public Function string Play()` | — |

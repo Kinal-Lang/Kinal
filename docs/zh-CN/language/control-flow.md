@@ -40,7 +40,7 @@ If (IO.Target.OS == IO.Target.OS.Windows)
 }
 Else
 {
-    UnknownCall();   // 非 Windows 时此分支不被编译，不会报错
+    UnknownCall();   // Windows 下此分支不活动，不参与语义检查
 }
 ```
 
@@ -298,7 +298,7 @@ Static Function int Main()
 ```
 
 > **注意**：上面的 `Case ("Saturday") Case ("Sunday")` — Kinal 目前**不支持** Case 叠加（fall-through）。  
-> 若需要多值匹配，请在 Case 内用 `||` 判断，或使用 `Is` 模式。
+> 多个值可分别编写 Case，或改用包含 `||` 的 If 条件。
 
 ## 下一步
 
@@ -306,3 +306,5 @@ Static Function int Main()
 - [异常处理](exceptions.md)
 - [Block（代码块对象）](blocks.md)
 
+
+编译期条件分支仍要求非活动代码语法有效。Foreach 当前基于数组／字符串的 Length() 与索引展开，不是通用 list／dict 迭代协议。VM 分派限制参见[后端支持](../advanced/backend-support.md)。

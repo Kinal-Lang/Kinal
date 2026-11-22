@@ -380,22 +380,12 @@ static const BuiltinMetaSpec g_builtin_metas[] = {
     { "Cast",       KN_META_TARGET_METHOD,            KN_META_KEEP_COMPILE, 0, KN_BUILTIN_META_CAST }
 };
 
-static const char *meta_short_name(const char *name)
-{
-    if (!name) return 0;
-    const char *last = name;
-    for (const char *p = name; *p; p++)
-        if (*p == '.')
-            last = p + 1;
-    return last;
-}
-
 static bool attr_is_named(const Attribute *a, const char *name)
 {
     if (!a || !name)
         return false;
-    const char *resolved = a->resolved_name ? meta_short_name(a->resolved_name) : 0;
-    const char *raw = a->name ? meta_short_name(a->name) : 0;
+    const char *resolved = a->resolved_name ? qname_last_component(a->resolved_name) : 0;
+    const char *raw = a->name ? qname_last_component(a->name) : 0;
     return (resolved && kn_strcmp(resolved, name) == 0) ||
            (raw && kn_strcmp(raw, name) == 0);
 }
@@ -441,19 +431,6 @@ static bool attr_list_has_named(const AttrList *attrs, const char *name)
         if (attr_is_named(&attrs->items[i], name))
             return true;
     return false;
-}
-
-static const char *func_symbol_identity(const Func *f)
-{
-    if (!f)
-        return 0;
-    if (f->symbol_name && f->symbol_name[0])
-        return f->symbol_name;
-    if (f->delegate_symbol_name && f->delegate_symbol_name[0])
-        return f->delegate_symbol_name;
-    if (f->extern_symbol && f->extern_symbol[0])
-        return f->extern_symbol;
-    return 0;
 }
 
 static const char *method_symbol_identity(const Method *m)
@@ -512,7 +489,7 @@ static bool meta_param_type_supported(Type t)
 
 static const BuiltinMetaSpec *find_builtin_meta(const char *name)
 {
-    const char *short_name = meta_short_name(name);
+    const char *short_name = qname_last_component(name);
     if (!short_name || short_name != name)
         return 0;
     for (int i = 0; i < (int)(sizeof(g_builtin_metas) / sizeof(g_builtin_metas[0])); i++)
@@ -525,7 +502,7 @@ static MetaDecl *find_user_meta(Sema *s, const char *name)
 {
     if (!s || !s->metas || !name) return 0;
 
-    const char *short_name = meta_short_name(name);
+    const char *short_name = qname_last_component(name);
     int has_qualifier = short_name != name;
     if (has_qualifier)
     {
@@ -636,7 +613,9 @@ static void validate_meta_decl(Sema *s, MetaDecl *m)
 {
     if (!s || !m) return;
     const KnSource *prev_src = s->src;
+    const char *prev_unit = s->current_unit;
     s->src = m->src ? m->src : prev_src;
+    s->current_unit = m->unit;
 
     if (find_builtin_meta(m->name))
         sema_error(s, m->line, m->col, 1, "Invalid Meta", "Built-in Meta names cannot be redefined");
@@ -660,6 +639,7 @@ static void validate_meta_decl(Sema *s, MetaDecl *m)
             validate_meta_constant_expr(s, m->src, m->line, m->col, 0, pr->default_value, pr->type, m->name);
     }
 
+    s->current_unit = prev_unit;
     s->src = prev_src;
 }
 
@@ -1030,6 +1010,18 @@ static bool class_interface_seen_before(Sema *s, ClassDecl *root,
     return false;
 }
 
+// Declaration storage pads nested literals, while value expressions keep
+// their supplied descriptor lengths. Never reshape an existing array value.
+static void bind_array_storage(Expr *literal, Type type)
+{
+    if (!literal || literal->kind != EXPR_ARRAY || type.kind != TY_ARRAY) return;
+    if (type.array_len >= 0) literal->type = type;
+    if (type.elem != TY_ARRAY) return;
+    Type elem = type_immediate_elem(type);
+    for (int i = 0; i < literal->v.array.items.count; i++)
+        bind_array_storage(literal->v.array.items.items[i], elem);
+}
+
 static void validate_class_decl(Sema *s, ClassDecl *c)
 {
     if (!c) return;
@@ -1091,12 +1083,16 @@ static void validate_class_decl(Sema *s, ClassDecl *c)
         {
             int prev_field_static = s->current_is_static;
             s->current_is_static = f->is_static ? 1 : 0;
-            Type init_t = sema_expr(s, f->init);
+            Type init_t = f->init->kind == EXPR_ARRAY && f->type.kind == TY_ARRAY
+                ? sema_array_literal(s, f->init, type_immediate_elem(f->type), true)
+                : sema_expr(s, f->init);
             s->current_is_static = prev_field_static;
             if (!f->is_static)
                 sema_error(s, f->line, f->col, 1, "Field Initializer", "Only static field initializers are supported");
             else if (!type_assignable(s, f->type, init_t))
                 sema_error(s, f->init->line, f->init->col, 1, "Type Mismatch", type_mismatch_detail(f->type, init_t));
+            else
+                bind_array_storage(f->init, f->type);
         }
         for (int j = 0; j < i; j++)
             if (kn_strcmp(c->fields.items[j].name, f->name) == 0)
@@ -1933,61 +1929,66 @@ static void warn_unused_scope(Sema *s, Scope *sc)
         sema_warn_unused_var(s, v);
 }
 
-static void functable_add(FuncTable *t, FuncSym s)
+static void functable_index(FuncTable *t, int i)
 {
-    if (t->count + 1 > t->cap)
-    {
-        int new_cap = t->cap ? t->cap * 2 : 16;
-        FuncSym *n = (FuncSym *)kn_malloc(sizeof(FuncSym) * (size_t)new_cap);
-        if (t->items)
-        {
-            kn_memcpy(n, t->items, sizeof(FuncSym) * (size_t)t->count);
-            kn_free(t->items);
-        }
-        t->items = n;
-        t->cap = new_cap;
-    }
-    t->items[t->count++] = s;
+    Func *f = t->items[i];
+    funcindex_add(&t->names, f->name, i);
+    funcindex_add(&t->symbols, f->qname ? f->qname : f->name, i);
 }
 
-static FuncSym *functable_find(FuncTable *t, const char *name)
+static void functable_reserve(FuncTable *t, int count)
 {
+    if (count <= t->cap) return;
+    int capacity = funcindex_capacity(count);
+    t->items = (Func **)kn_realloc(t->items, sizeof(Func *) * (size_t)capacity);
+    if (!t->items) kn_die("out of memory");
+    funcindex_resize(&t->names, capacity);
+    funcindex_resize(&t->symbols, capacity);
+    t->cap = capacity;
     for (int i = 0; i < t->count; i++)
-        if (kn_strcmp(t->items[i].qname, name) == 0) return &t->items[i];
+        functable_index(t, i);
+}
+
+static void functable_add(FuncTable *t, Func *f)
+{
+    functable_reserve(t, t->count + 1);
+    t->items[t->count] = f;
+    functable_index(t, t->count);
+    t->count++;
+}
+
+static Func *functable_find(FuncTable *t, const char *name)
+{
+    int i = funcindex_first(&t->symbols, name);
+    return i >= 0 ? t->items[i] : 0;
+}
+
+static Func *functable_find_by_name_in_unit(FuncTable *t, const char *name, const char *unit)
+{
+    if (!t || !unit) return 0;
+    for (int i = funcindex_first(&t->names, name); i >= 0; i = t->names.next[i])
+    {
+        Func *f = t->items[i];
+        if (f->unit && kn_strcmp(f->unit, unit) == 0) return f;
+    }
     return 0;
 }
 
-static FuncSym *functable_find_by_name_in_unit(FuncTable *t, const char *name, const char *unit)
+static Func *functable_find_by_name_without_unit(FuncTable *t, const char *name)
 {
-    if (!t || !name || !unit) return 0;
-    for (int i = 0; i < t->count; i++)
+    if (!t) return 0;
+    Func *best = 0;
+    for (int i = funcindex_first(&t->names, name); i >= 0; i = t->names.next[i])
     {
-        Func *f = t->items[i].func;
-        if (!f) continue;
-        if (!f->unit || kn_strcmp(f->unit, unit) != 0) continue;
-        if (kn_strcmp(f->name, name) == 0)
-            return &t->items[i];
-    }
-    return 0;
-}
-
-static FuncSym *functable_find_by_name_without_unit(FuncTable *t, const char *name)
-{
-    if (!t || !name) return 0;
-    FuncSym *best = 0;
-    for (int i = 0; i < t->count; i++)
-    {
-        Func *f = t->items[i].func;
-        if (!f) continue;
+        Func *f = t->items[i];
         if (f->unit && f->unit[0]) continue;
-        if (kn_strcmp(f->name, name) != 0) continue;
         if (best) return 0;
-        best = &t->items[i];
+        best = f;
     }
     return best;
 }
 
-static FuncSym *functable_find_visible_qualified(FuncTable *t, Sema *s, const char *name)
+static Func *functable_find_visible_qualified(FuncTable *t, Sema *s, const char *name)
 {
     if (!t || !s || !name || !qname_has_dot(name)) return 0;
 
@@ -1999,11 +2000,11 @@ static FuncSym *functable_find_visible_qualified(FuncTable *t, Sema *s, const ch
     }
 
     {
-        FuncSym *fn = functable_find(t, name);
-        if (!fn || !fn->func || !fn->func->unit)
+        Func *fn = functable_find(t, name);
+        if (!fn || !fn->unit)
             return 0;
-        return (module_accessible_by_namespace(s, fn->func->unit) ||
-                import_has_module_symbol(s, fn->func->unit, fn->func->name)) ? fn : 0;
+        return (module_accessible_by_namespace(s, fn->unit) ||
+                import_has_module_symbol(s, fn->unit, fn->name)) ? fn : 0;
     }
 }
 
@@ -2013,8 +2014,7 @@ static const char *find_required_namespace_module_for_func(Sema *s, const char *
     for (int i = 0; i < s->imports->count; i++)
     {
         ImportMap *m = &s->imports->items[i];
-        if (m->unit && m->unit[0] && s->current_unit && s->current_unit[0] &&
-            kn_strcmp(m->unit, s->current_unit) != 0)
+        if (!import_in_current_unit(s, m))
             continue;
         if (m->kind != IMPORT_OPEN || !m->module) continue;
         if (functable_find_by_name_in_unit(&s->funcs, name, m->module))
@@ -2075,6 +2075,29 @@ static int type_param_index(const Func *f, const char *name)
             return i;
     }
     return -1;
+}
+
+/* Bind the declared parts once, leaving type parameters for the caller's substitution. */
+static void validate_template_type(Sema *s, Type *t, int line, int col, int allow_void)
+{
+    if (t->kind == TY_ARRAY)
+    {
+        resolve_array_len_expr(s, t, line, col);
+        Type elem = type_immediate_elem(*t);
+        validate_template_type(s, &elem, line, col, 0);
+        type_set_array_elem(t, elem);
+        return;
+    }
+    if (t->kind == TY_PACKAGE && t->package_count > 0)
+    {
+        for (int i = 0; i < t->package_count; i++)
+            validate_template_type(s, &t->package_elems[i], line, col, 0);
+        return;
+    }
+    if ((t->kind == TY_CLASS || (t->kind == TY_PTR && t->elem == TY_CLASS)) &&
+        type_param_index(s->current, t->name) >= 0)
+        return;
+    validate_type_ref(s, t, line, col, allow_void);
 }
 
 static void append_char(char *buf, size_t cap, size_t *off, char c)
@@ -3224,19 +3247,17 @@ static int call_args_shape_match_params(Sema *s, int call_line, int call_col, co
     return ok;
 }
 
-static FuncSym *functable_find_call_match(FuncTable *t, Sema *s, const char *name,
+static Func *functable_find_call_match(FuncTable *t, Sema *s, const char *name,
                                           const ExprList *raw_args, const NameList *raw_names,
                                           const ParamList *arg_types, const char *unit,
                                           int require_no_unit, int *ambiguous_out)
 {
-    FuncSym *best = 0;
+    Func *best = 0;
     if (ambiguous_out) *ambiguous_out = 0;
     if (!t || !name) return 0;
-    for (int i = 0; i < t->count; i++)
+    for (int i = funcindex_first(&t->names, name); i >= 0; i = t->names.next[i])
     {
-        FuncSym *cand = &t->items[i];
-        Func *f = cand->func;
-        if (!f) continue;
+        Func *f = t->items[i];
         if (require_no_unit)
         {
             if (f->unit && f->unit[0])
@@ -3247,8 +3268,6 @@ static FuncSym *functable_find_call_match(FuncTable *t, Sema *s, const char *nam
             if (!f->unit || kn_strcmp(f->unit, unit) != 0)
                 continue;
         }
-        if (kn_strcmp(f->name, name) != 0)
-            continue;
         if (func_is_generic_template(f))
         {
             if (!call_args_shape_match_params(s, 0, 0, raw_args, raw_names, arg_types,
@@ -3263,12 +3282,12 @@ static FuncSym *functable_find_call_match(FuncTable *t, Sema *s, const char *nam
             if (ambiguous_out) *ambiguous_out = 1;
             return 0;
         }
-        best = cand;
+        best = f;
     }
     return best;
 }
 
-static FuncSym *functable_find_call_by_name_in_unit(FuncTable *t, Sema *s, const char *name,
+static Func *functable_find_call_by_name_in_unit(FuncTable *t, Sema *s, const char *name,
                                                     const ExprList *raw_args, const NameList *raw_names,
                                                     const ParamList *arg_types, const char *unit,
                                                     int *ambiguous_out)
@@ -3276,14 +3295,14 @@ static FuncSym *functable_find_call_by_name_in_unit(FuncTable *t, Sema *s, const
     return functable_find_call_match(t, s, name, raw_args, raw_names, arg_types, unit, 0, ambiguous_out);
 }
 
-static FuncSym *functable_find_call_by_name_without_unit(FuncTable *t, Sema *s, const char *name,
+static Func *functable_find_call_by_name_without_unit(FuncTable *t, Sema *s, const char *name,
                                                          const ExprList *raw_args, const NameList *raw_names,
                                                          const ParamList *arg_types, int *ambiguous_out)
 {
     return functable_find_call_match(t, s, name, raw_args, raw_names, arg_types, 0, 1, ambiguous_out);
 }
 
-static FuncSym *functable_find_visible_qualified_call(FuncTable *t, Sema *s, const char *name,
+static Func *functable_find_visible_qualified_call(FuncTable *t, Sema *s, const char *name,
                                                       const ExprList *raw_args, const NameList *raw_names,
                                                       const ParamList *arg_types, int *ambiguous_out)
 {
@@ -3297,17 +3316,14 @@ static FuncSym *functable_find_visible_qualified_call(FuncTable *t, Sema *s, con
         name = expand_imported_symbol_qualified_name(s, expanded);
     }
 
-    FuncSym *best = 0;
-    for (int i = 0; i < t->count; i++)
+    Func *best = 0;
+    for (int i = funcindex_first(&t->symbols, name); i >= 0; i = t->symbols.next[i])
     {
-        FuncSym *cand = &t->items[i];
-        Func *f = cand->func;
-        if (!f || !f->unit)
+        Func *f = t->items[i];
+        if (!f->unit)
             continue;
         if (!alias_authorized && !module_accessible_by_namespace(s, f->unit) &&
             !import_has_module_symbol(s, f->unit, f->name))
-            continue;
-        if (!cand->qname || kn_strcmp(cand->qname, name) != 0)
             continue;
         if (func_is_generic_template(f))
         {
@@ -3323,7 +3339,7 @@ static FuncSym *functable_find_visible_qualified_call(FuncTable *t, Sema *s, con
             if (ambiguous_out) *ambiguous_out = 1;
             return 0;
         }
-        best = cand;
+        best = f;
     }
     return best;
 }
@@ -3389,13 +3405,12 @@ static Func *instantiate_generic_func(Sema *s, Func *tmpl, Type *type_args, int 
     inst.line = tmpl->line;
     inst.col = tmpl->col;
 
-    funclist_push(s->func_list, inst);
-    Func *out = &s->func_list->items[s->func_list->count - 1];
-
-    FuncSym sym;
-    sym.qname = out->qname ? out->qname : out->name;
-    sym.func = out;
-    functable_add(&s->funcs, sym);
+    // Keep live declaration pointers stable throughout analysis. The flat AST is
+    // extended after the last body has been checked.
+    Func *out = (Func *)kn_malloc(sizeof(Func));
+    if (!out) kn_die("out of memory");
+    *out = inst;
+    functable_add(&s->funcs, out);
 
     GenericInst gi;
     gi.key = key;
@@ -3428,13 +3443,14 @@ static bool name_has_dot(const char *name)
 
 static ClassDecl *find_class(Sema *s, const char *name)
 {
-    if (!s || !s->classes || !name) return 0;
+    if (!s || !name || !s->classes || !s->classes->count) return 0;
     ClassDecl *best = 0;
     int best_score = 0;
-    for (int i = 0; i < s->classes->count; i++)
+    TypeNameQuery query = type_name_query(s, name);
+    for (int slot = funcindex_first(&s->class_names, query.leaf); slot >= 0; slot = s->class_names.next[slot])
     {
-        ClassDecl *c = &s->classes->items[i];
-        int score = named_decl_match_score(s, name,
+        ClassDecl *c = &s->classes->items[slot / 2];
+        int score = named_decl_match_score(s, &query,
                                            type_decl_lookup_name(c->name, c->qname, c->owner_type_qname),
                                            c->unit, c->qname);
         if (score > best_score)
@@ -3448,13 +3464,14 @@ static ClassDecl *find_class(Sema *s, const char *name)
 
 static InterfaceDecl *find_interface(Sema *s, const char *name)
 {
-    if (!s || !s->interfaces || !name) return 0;
+    if (!s || !name || !s->interfaces || !s->interfaces->count) return 0;
     InterfaceDecl *best = 0;
     int best_score = 0;
-    for (int i = 0; i < s->interfaces->count; i++)
+    TypeNameQuery query = type_name_query(s, name);
+    for (int slot = funcindex_first(&s->interface_names, query.leaf); slot >= 0; slot = s->interface_names.next[slot])
     {
-        InterfaceDecl *it = &s->interfaces->items[i];
-        int score = named_decl_match_score(s, name,
+        InterfaceDecl *it = &s->interfaces->items[slot / 2];
+        int score = named_decl_match_score(s, &query,
                                            type_decl_lookup_name(it->name, it->qname, it->owner_type_qname),
                                            it->unit, it->qname);
         if (score > best_score)
@@ -3468,13 +3485,14 @@ static InterfaceDecl *find_interface(Sema *s, const char *name)
 
 static StructDecl *find_struct(Sema *s, const char *name)
 {
-    if (!s || !s->structs || !name) return 0;
+    if (!s || !name || !s->structs || !s->structs->count) return 0;
     StructDecl *best = 0;
     int best_score = 0;
-    for (int i = 0; i < s->structs->count; i++)
+    TypeNameQuery query = type_name_query(s, name);
+    for (int slot = funcindex_first(&s->struct_names, query.leaf); slot >= 0; slot = s->struct_names.next[slot])
     {
-        StructDecl *st = &s->structs->items[i];
-        int score = named_decl_match_score(s, name,
+        StructDecl *st = &s->structs->items[slot / 2];
+        int score = named_decl_match_score(s, &query,
                                            type_decl_lookup_name(st->name, st->qname, st->owner_type_qname),
                                            st->unit, st->qname);
         if (score > best_score)
@@ -3488,13 +3506,14 @@ static StructDecl *find_struct(Sema *s, const char *name)
 
 static EnumDecl *find_enum(Sema *s, const char *name)
 {
-    if (!s || !s->enums || !name) return 0;
+    if (!s || !name || !s->enums || !s->enums->count) return 0;
     EnumDecl *best = 0;
     int best_score = 0;
-    for (int i = 0; i < s->enums->count; i++)
+    TypeNameQuery query = type_name_query(s, name);
+    for (int slot = funcindex_first(&s->enum_names, query.leaf); slot >= 0; slot = s->enum_names.next[slot])
     {
-        EnumDecl *en = &s->enums->items[i];
-        int score = named_decl_match_score(s, name,
+        EnumDecl *en = &s->enums->items[slot / 2];
+        int score = named_decl_match_score(s, &query,
                                            type_decl_lookup_name(en->name, en->qname, en->owner_type_qname),
                                            en->unit, en->qname);
         if (score > best_score)
@@ -3777,6 +3796,26 @@ static Method *find_property_setter_hierarchy(Sema *s, ClassDecl *c, const char 
 {
     return find_method_named_arity_hierarchy(s, c, property_setter_name(name), 1,
                                              is_static, owner_out, index_out);
+}
+
+static Method *find_instance_accessor(Sema *s, const char *type, const char *property, bool setter,
+                                      ClassDecl **owner, int *index)
+{
+    ClassDecl *c = find_class(s, type);
+    InterfaceDecl *iface = c ? NULL : find_interface(s, type);
+    if (!c && !iface) return NULL;
+    const char *name = setter ? property_setter_name(property) : property_getter_name(property);
+    if (c) return find_method_named_arity_hierarchy(s, c, name, setter ? 1 : 0, 0, owner, index);
+    for (int i = 0; i < iface->methods.count; i++)
+    {
+        Method *m = &iface->methods.items[i];
+        if (!m->is_static && kn_strcmp(m->name, name) == 0)
+        {
+            if (index) *index = i;
+            return m;
+        }
+    }
+    return NULL;
 }
 
 static ClassDecl *class_from_type(Sema *s, Type t)
@@ -4188,8 +4227,7 @@ static const KnStdFunc *resolve_std_by_local(Sema *s, const char *local)
         for (int i = 0; i < s->imports->count; i++)
         {
             ImportMap *m = &s->imports->items[i];
-            if (m->unit && m->unit[0] && s->current_unit && s->current_unit[0] &&
-                kn_strcmp(m->unit, s->current_unit) != 0)
+            if (!import_in_current_unit(s, m))
                 continue;
             if (m->kind != IMPORT_LOCAL_ALIAS || !m->local || !m->remote) continue;
             if (kn_strcmp(m->local, local) == 0)
@@ -4204,8 +4242,7 @@ static const KnStdFunc *resolve_std_by_local(Sema *s, const char *local)
     for (int i = 0; i < s->imports->count; i++)
     {
         ImportMap *m = &s->imports->items[i];
-        if (m->unit && m->unit[0] && s->current_unit && s->current_unit[0] &&
-            kn_strcmp(m->unit, s->current_unit) != 0)
+        if (!import_in_current_unit(s, m))
             continue;
         if (m->kind == IMPORT_SYMBOL && m->global && kn_strcmp(m->local, local) == 0)
             return kn_std_find(m->module, m->remote);
@@ -4219,8 +4256,7 @@ static const char *find_scoped_symbol_module(Sema *s, const char *local)
     for (int i = 0; i < s->imports->count; i++)
     {
         ImportMap *m = &s->imports->items[i];
-        if (m->unit && m->unit[0] && s->current_unit && s->current_unit[0] &&
-            kn_strcmp(m->unit, s->current_unit) != 0)
+        if (!import_in_current_unit(s, m))
             continue;
         if (m->kind != IMPORT_SYMBOL) continue;
         if (m->global) continue;
@@ -4236,8 +4272,7 @@ static const char *resolve_std_symbol_in_module(Sema *s, const char *module, con
     for (int i = 0; i < s->imports->count; i++)
     {
         ImportMap *m = &s->imports->items[i];
-        if (m->unit && m->unit[0] && s->current_unit && s->current_unit[0] &&
-            kn_strcmp(m->unit, s->current_unit) != 0)
+        if (!import_in_current_unit(s, m))
             continue;
         if (m->kind != IMPORT_SYMBOL) continue;
         if (m->global) continue;
@@ -4281,8 +4316,7 @@ static bool std_module_accessible(Sema *s, const char *module, const char *name)
     for (int i = 0; i < s->imports->count; i++)
     {
         ImportMap *m = &s->imports->items[i];
-        if (m->unit && m->unit[0] && s->current_unit && s->current_unit[0] &&
-            kn_strcmp(m->unit, s->current_unit) != 0)
+        if (!import_in_current_unit(s, m))
             continue;
         if (!m->module || kn_strcmp(m->module, module) != 0)
             continue;
@@ -4311,8 +4345,7 @@ static const KnStdFunc *resolve_std_by_alias(Sema *s, const char *alias, const c
     for (int i = 0; i < s->imports->count; i++)
     {
         ImportMap *m = &s->imports->items[i];
-        if (m->unit && m->unit[0] && s->current_unit && s->current_unit[0] &&
-            kn_strcmp(m->unit, s->current_unit) != 0)
+        if (!import_in_current_unit(s, m))
             continue;
         if (m->kind == IMPORT_ALIAS && kn_strcmp(m->local, alias) == 0)
         {
@@ -4448,10 +4481,10 @@ static const char *resolve_builtin_symbol_arg_name(Sema *s, Expr *arg)
         arg->v.func_ref.builtin_id != KN_BUILTIN_NONE)
         return 0;
     {
-        FuncSym *fs = functable_find(&s->funcs, arg->v.func_ref.qname);
-        if (!fs || !fs->func)
+        Func *fs = functable_find(&s->funcs, arg->v.func_ref.qname);
+        if (!fs)
             return 0;
-        return func_runtime_symbol_name(fs->func);
+        return func_runtime_symbol_name(fs);
     }
 }
 
@@ -4461,10 +4494,10 @@ static const char *resolve_builtin_owner_arg_name(Sema *s, Expr *arg)
         arg->v.func_ref.builtin_id != KN_BUILTIN_NONE)
         return 0;
     {
-        FuncSym *fs = functable_find(&s->funcs, arg->v.func_ref.qname);
-        if (!fs || !fs->func)
+        Func *fs = functable_find(&s->funcs, arg->v.func_ref.qname);
+        if (!fs)
             return 0;
-        return fs->func->qname ? fs->func->qname : fs->func->name;
+        return fs->qname ? fs->qname : fs->name;
     }
 }
 
@@ -4690,13 +4723,9 @@ static int sema_try_rewrite_property_member_expr(Sema *s, Expr *e, Type *out_typ
     if (rt.kind != TY_CLASS)
         return 0;
 
-    ClassDecl *c = find_class(s, rt.name);
-    if (!c)
-        return 0;
-    if (!find_property_getter_hierarchy(s, c, e->v.member.name, 0, 0, 0))
-        return 0;
-
-    rewrite_expr_to_property_call(e, recv, property_getter_name(e->v.member.name), 0);
+    Method *getter = find_instance_accessor(s, rt.name, e->v.member.name, false, NULL, NULL);
+    if (!getter) return 0;
+    rewrite_expr_to_property_call(e, recv, getter->name, 0);
     if (out_type) *out_type = sema_expr(s, e);
     return 1;
 }
@@ -4782,14 +4811,10 @@ static int sema_try_rewrite_property_assign_expr(Sema *s, Expr *e, Type *out_typ
     if (rt.kind != TY_CLASS)
         return 0;
 
-    ClassDecl *c = find_class(s, rt.name);
-    if (!c)
-        return 0;
-    if (!find_property_setter_hierarchy(s, c, target->v.member.name, 0, 0, 0))
-        return 0;
-
+    Method *setter = find_instance_accessor(s, rt.name, target->v.member.name, true, NULL, NULL);
+    if (!setter) return 0;
     int is_compound = e->v.assign.is_compound;
-    rewrite_expr_to_property_call(e, recv, property_setter_name(target->v.member.name), value);
+    rewrite_expr_to_property_call(e, recv, setter->name, value);
     /* A compound setter's sole argument is getter(receiver) op rhs. Backends
        must bind receiver once and reuse it for that getter and the setter. */
     e->v.member_call.is_property_compound = is_compound;

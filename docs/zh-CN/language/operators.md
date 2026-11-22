@@ -25,6 +25,12 @@ float result = x / y;  // 3.333...
 
 最终整数类型为无符号类型时，`/` 与 `%` 在 Native 和 VM 构建中都使用无符号
 除法与取余语义。
+有符号整数相除时向零取整。例如，`-7 / 3` 得到 `-2`，`-7 % 3` 得到 `-1`。
+
+在 `hash = (hash * 31 + [int](bytes[i])) % 1000000007` 这样的 Native 循环中，
+当累积值位于零到模数减一之间，且编译器能证明合并后的运算不会溢出时，
+可以把连续几次更新合并后再取余。负数种子、超出该范围的初值，以及末尾不足一组的元素，
+都按源码逐次计算。
 
 ### 字符串拼接
 
@@ -58,7 +64,8 @@ n %= 4;   // 2
 所有比较运算符返回 `bool`：
 
 ```kinal
-int a = 5, b = 3;
+int a = 5;
+int b = 3;
 bool eq = a == b;   // false
 bool ne = a != b;   // true
 bool lt = a < b;    // false
@@ -91,7 +98,8 @@ aggregate 值（包括数组、结构体和 Package）以及 `any` 不支持直�
 | `!` | 逻辑非 | 翻转布尔值 |
 
 ```kinal
-bool a = true, b = false;
+bool a = true;
+bool b = false;
 
 bool and_result = a && b;   // false
 bool or_result  = a || b;   // true
@@ -101,7 +109,7 @@ bool not_result = !a;       // false
 **短路求值**：`&&` 若左侧为 `false` 则不求值右侧；`||` 若左侧为 `true` 则不求值右侧。
 
 ```kinal
-bool safeCheck(string s)
+Function bool SafeCheck(string s)
 {
     Return s != null && s.Length() > 0;  // s 为 null 时不会调用 Length()
 }
@@ -149,7 +157,7 @@ any a = 3.14;
 float pi = [float](a);
 
 // 字符串到字符数组
-char[] chars = [c]("abc");   // ['a', 'b', 'c']
+char[] chars = [c]"abc";   // ['a', 'b', 'c']
 ```
 
 使用 `IO.Type.*` 前缀也可用于转换（等价于 `[type](...)`）：
@@ -226,6 +234,19 @@ If (a Is Dog d)
 }
 ```
 
+## 条件表达式
+
+支持三元和 If 表达式，只求值所选结果分支：
+
+```kinal
+int left = 3;
+int right = 7;
+int maximum = left > right ? left : right;
+int same = If (left > right) { left } Else { right };
+```
+
+条件为 bool，结果分支需要类型兼容。问号／冒号条件表达式优先级低于普通二元运算、高于赋值，嵌套时建议加括号。旧文档中“不支持三元运算符”的说法已过时。
+
 ## 运算符优先级
 
 从高到低（同级从左到右）：
@@ -243,7 +264,8 @@ If (a Is Dog d)
 | 9 | `\|` |
 | 10 | `&&` |
 | 11 | `\|\|` |
-| 12（最低） | `=`、`+=`、`-=`、`*=`、`/=`、`%=` |
+| 12 | `? :` |
+| 13（最低） | `=`、`+=`、`-=`、`*=`、`/=`、`%=` |
 
 建议使用括号明确优先级：
 

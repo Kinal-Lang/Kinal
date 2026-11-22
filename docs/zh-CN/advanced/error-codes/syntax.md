@@ -2,7 +2,7 @@
 
 缺少关键字、分隔符、括号、标识符或结构体边界时触发。
 
-本文中的示例都是最小复现片段，用来说明该错误码最常见的触发方式；少数更偏内部的诊断会使用最接近用户代码的表面写法来说明。
+本页记录预注册模板。正确示例展示支持的写法；触发形态用于说明规则或解析状态，可能依赖外围声明，或在当前 C 编译器中先报告其他诊断。
 
 ---
 
@@ -119,6 +119,7 @@
 | `E-SYN-00105` | Expected '}' | Unexpected end of file while parsing block |
 | `E-SYN-00106` | Unexpected Top-Level Token | Expected a top-level declaration (Function/Class/Struct/Enum/Interface/variable declaration) |
 | `E-SYN-00107` | Invalid Global Modifier | Top-level global variables cannot use function modifiers like Static/Extern/Delegate/Safe/Trusted/Unsafe/Async |
+| `E-SYN-00108` | Statement Too Deep | Statement nesting exceeds parser recursion limit |
 
 ---
 
@@ -244,7 +245,7 @@ Class Counter
 - 默认详情：Missing '('
 - 说明：当前位置的 token 序列不符合当前语法规则。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
 // 当前写法无法组成合法语法
@@ -303,7 +304,7 @@ Struct Pair By Align(8)
 - 默认详情：Missing '(' after Constructor
 - 说明：构造函数参数列表前缺少左括号。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
 Public Constructor int value)
@@ -314,8 +315,9 @@ Public Constructor int value)
 正确示例：
 
 ```kinal
-Public Constructor(int value)
+Class User
 {
+    Public Constructor(int value) {}
 }
 ```
 
@@ -331,7 +333,7 @@ Public Constructor(int value)
 - 默认详情：Missing '(' after If
 - 说明：`If` 条件前缺少左括号。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
 If true)
@@ -361,7 +363,7 @@ If (true)
 - 默认详情：Missing '(' after cast type
 - 说明：显式转换在闭合类型方括号后缺少左括号。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
 int value = [int]42);
@@ -394,6 +396,8 @@ User user = New User;
 正确示例：
 
 ```kinal
+Class User {}
+
 User user = New User();
 ```
 
@@ -409,7 +413,7 @@ User user = New User();
 - 默认详情：Missing '(' after function name
 - 说明：函数或方法调用缺少左括号。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
 PrintLine "hello");
@@ -418,6 +422,8 @@ PrintLine "hello");
 正确示例：
 
 ```kinal
+Get PrintLine By IO.Console.PrintLine;
+
 PrintLine("hello");
 ```
 
@@ -433,7 +439,7 @@ PrintLine("hello");
 - 默认详情：Missing '(' after function return type
 - 说明：函数声明在返回类型后缺少参数列表左括号。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
 Function int Add int a, int b)
@@ -463,7 +469,7 @@ Function int Add(int a, int b)
 - 默认详情：Missing '(' after method name
 - 说明：函数或方法调用缺少左括号。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
 PrintLine "hello");
@@ -472,6 +478,8 @@ PrintLine "hello");
 正确示例：
 
 ```kinal
+Get PrintLine By IO.Console.PrintLine;
+
 PrintLine("hello");
 ```
 
@@ -487,7 +495,7 @@ PrintLine("hello");
 - 默认详情：Missing ')'
 - 说明：当前位置的 token 序列不符合当前语法规则。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
 // 当前写法无法组成合法语法
@@ -546,7 +554,7 @@ Struct Pair By Align(8)
 - 默认详情：Missing ')' after If condition
 - 说明：`If` 条件结尾缺少右括号。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
 If (value > 0
@@ -558,6 +566,7 @@ If (value > 0
 正确示例：
 
 ```kinal
+int value = 1;
 If (value > 0)
 {
     Return 1;
@@ -576,7 +585,7 @@ If (value > 0)
 - 默认详情：Missing ')' after catch parameter
 - 说明：`Catch` 参数列表缺少右括号。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
 Catch (IO.Error err
@@ -587,6 +596,12 @@ Catch (IO.Error err
 正确示例：
 
 ```kinal
+Get IO.Error;
+
+Try
+{
+    Throw New IO.Error("Example", "message");
+}
 Catch (IO.Error err)
 {
 }
@@ -662,7 +677,7 @@ Function int Add(int a, int b)
 - 默认详情：Missing ')' in attribute
 - 说明：属性参数列表缺少右括号。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
 [Route("/ping"]
@@ -671,7 +686,22 @@ Function int Add(int a, int b)
 正确示例：
 
 ```kinal
+Meta Route(string path)
+{
+    On @function;
+    Keep @runtime;
+}
+
 [Route("/ping")]
+Function void Ping()
+{
+}
+
+Static Function int Main()
+{
+    Ping();
+    Return 0;
+}
 ```
 
 原因：属性调用和普通调用一样需要完整括号对。
@@ -695,6 +725,8 @@ PrintLine("hello";
 正确示例：
 
 ```kinal
+Get PrintLine By IO.Console.PrintLine;
+
 PrintLine("hello");
 ```
 
@@ -734,7 +766,7 @@ int value = [int]("42");
 - 默认详情：Missing ')' in constructor call
 - 说明：调用参数列表缺少右括号。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
 PrintLine("hello";
@@ -743,6 +775,8 @@ PrintLine("hello";
 正确示例：
 
 ```kinal
+Get PrintLine By IO.Console.PrintLine;
+
 PrintLine("hello");
 ```
 
@@ -758,7 +792,7 @@ PrintLine("hello");
 - 默认详情：Missing ')' in member call
 - 说明：调用参数列表缺少右括号。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
 PrintLine("hello";
@@ -767,6 +801,8 @@ PrintLine("hello";
 正确示例：
 
 ```kinal
+Get PrintLine By IO.Console.PrintLine;
+
 PrintLine("hello");
 ```
 
@@ -847,6 +883,7 @@ int value = ok ? 1 0;
 正确示例：
 
 ```kinal
+bool ok = true;
 int value = ok ? 1 : 0;
 ```
 
@@ -890,7 +927,7 @@ Block Demo</
 - 默认详情：Missing '<' before generic type arguments
 - 说明：泛型调用缺少左尖括号。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
 Identity int>(1);
@@ -899,7 +936,12 @@ Identity int>(1);
 正确示例：
 
 ```kinal
-Identity<int>(1);
+Function T Identity<T>(T value)
+{
+    Return value;
+}
+
+int result = Identity<int>(1);
 ```
 
 原因：显式类型参数必须完整包在尖括号里。
@@ -942,7 +984,7 @@ Block Demo</
 - 默认详情：Missing '>' after generic type arguments
 - 说明：泛型类型参数列表缺少右尖括号。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
 Identity<int(1);
@@ -951,7 +993,12 @@ Identity<int(1);
 正确示例：
 
 ```kinal
-Identity<int>(1);
+Function T Identity<T>(T value)
+{
+    Return value;
+}
+
+int result = Identity<int>(1);
 ```
 
 原因：尖括号必须成对闭合。
@@ -966,7 +1013,7 @@ Identity<int>(1);
 - 默认详情：Missing '>' after generic type parameter list
 - 说明：泛型类型参数列表缺少右尖括号。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
 Identity<int(1);
@@ -975,7 +1022,12 @@ Identity<int(1);
 正确示例：
 
 ```kinal
-Identity<int>(1);
+Function T Identity<T>(T value)
+{
+    Return value;
+}
+
+int result = Identity<int>(1);
 ```
 
 原因：尖括号必须成对闭合。
@@ -990,7 +1042,7 @@ Identity<int>(1);
 - 默认详情：Missing '[' in cast expression
 - 说明：显式转换缺少左方括号。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
 int value = int](1);
@@ -1014,7 +1066,7 @@ int value = [int](1);
 - 默认详情：Missing ']'
 - 说明：当前方括号结构缺少右方括号。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
 int[] values = { 1, 2;
@@ -1038,7 +1090,7 @@ int[] values = { 1, 2 };
 - 默认详情：Missing ']' after attribute
 - 说明：属性缺少右方括号。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
 [Route("/ping")
@@ -1047,7 +1099,22 @@ int[] values = { 1, 2 };
 正确示例：
 
 ```kinal
+Meta Route(string path)
+{
+    On @function;
+    Keep @runtime;
+}
+
 [Route("/ping")]
+Function void Ping()
+{
+}
+
+Static Function int Main()
+{
+    Ping();
+    Return 0;
+}
 ```
 
 原因：属性声明必须被 `[` 和 `]` 包裹。
@@ -1071,6 +1138,7 @@ int first = values[0;
 正确示例：
 
 ```kinal
+int[] values = {1, 2};
 int first = values[0];
 ```
 
@@ -1086,7 +1154,7 @@ int first = values[0];
 - 默认详情：Missing ']' in cast expression
 - 说明：显式转换缺少右方括号。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
 int value = [int(1);
@@ -1106,29 +1174,10 @@ int value = [int](1);
 
 ## E-SYN-00036 — Expected '{'
 
-- 级别：错误
 - 默认详情：Missing '{'
-- 说明：当前位置缺少左花括号。
+- 通用解析模板：需要花括号的上下文缺少开始括号。普通 If 可以使用单条无花括号语句，这不触发该错误。Switch、类声明等具体结构可能报告各自的花括号错误码。
 
-错误示例：
-
-```kinal
-If (true)
-    Return 1;
-```
-
-正确示例：
-
-```kinal
-If (true)
-{
-    Return 1;
-}
-```
-
-原因：该结构要求使用花括号包裹主体。
-
-修复方式：补上 `{` 并补全块体。
+检查当前语法位置与首条诊断，见[控制流](../../language/control-flow.md)。
 
 ---
 
@@ -1147,6 +1196,7 @@ int value = If (ok) { 1 } Else 0 };
 正确示例：
 
 ```kinal
+bool ok = true;
 int value = If (ok) { 1 } Else { 0 };
 ```
 
@@ -1171,6 +1221,7 @@ int value = If (ok) 1 } Else { 0 };
 正确示例：
 
 ```kinal
+bool ok = true;
 int value = If (ok) { 1 } Else { 0 };
 ```
 
@@ -1215,7 +1266,7 @@ Class User
 - 默认详情：Missing '{' in enum
 - 说明：枚举声明缺少左花括号。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
 Enum State
@@ -1302,7 +1353,7 @@ Struct Pair
 - 默认详情：Missing '}'
 - 说明：当前位置缺少右花括号。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
 If (true)
@@ -1331,7 +1382,7 @@ If (true)
 - 默认详情：Missing '}' in Else expression
 - 说明：If 表达式中的某个分支缺少右花括号。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
 int value = If (ok) { 1 Else { 0 };
@@ -1340,6 +1391,7 @@ int value = If (ok) { 1 Else { 0 };
 正确示例：
 
 ```kinal
+bool ok = true;
 int value = If (ok) { 1 } Else { 0 };
 ```
 
@@ -1364,6 +1416,7 @@ int value = If (ok) { 1 Else { 0 };
 正确示例：
 
 ```kinal
+bool ok = true;
 int value = If (ok) { 1 } Else { 0 };
 ```
 
@@ -1434,7 +1487,7 @@ Enum State
 - 默认详情：Unexpected end of file while parsing expression
 - 说明：表达式尚未结束时文件就提前结束了。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
 int value = (1 +
@@ -1458,7 +1511,7 @@ int value = (1 + 2);
 - 默认详情：Unexpected end of file while parsing variable declaration
 - 说明：变量声明尚未写完整时文件结束。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
 int value =
@@ -1506,7 +1559,7 @@ string text = "hello";
 - 默认详情：Expected 'Block' keyword
 - 说明：这里应该写 `Block` 关键字。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
 Demo</
@@ -1567,7 +1620,7 @@ Catch (string msg)
 - 默认详情：Expected 'Class' keyword
 - 说明：这里应该是类声明。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
 Public User
@@ -1595,7 +1648,7 @@ Public Class User
 - 默认详情：Expected 'Constructor' keyword
 - 说明：这里应该写 `Constructor`。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
 Public Build(int value)
@@ -1606,8 +1659,9 @@ Public Build(int value)
 正确示例：
 
 ```kinal
-Public Constructor(int value)
+Class User
 {
+    Public Constructor(int value) {}
 }
 ```
 
@@ -1632,6 +1686,7 @@ int value = If (ok) { 1 };
 正确示例：
 
 ```kinal
+bool ok = true;
 int value = If (ok) { 1 } Else { 0 };
 ```
 
@@ -1647,7 +1702,7 @@ int value = If (ok) { 1 } Else { 0 };
 - 默认详情：Expected 'Enum' keyword
 - 说明：这里应该写 `Enum`。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
 State
@@ -1677,7 +1732,7 @@ Enum State
 - 默认详情：Expected 'For' keyword
 - 说明：这里应该写 `For`。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
 (int i = 0; i < 10; i = i + 1)
@@ -1705,7 +1760,7 @@ For (int i = 0; i < 10; i = i + 1)
 - 默认详情：Expected 'Function' keyword
 - 说明：这里应该写 `Function`。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
 int Add(int a, int b)
@@ -1735,7 +1790,7 @@ Function int Add(int a, int b)
 - 默认详情：Expected 'Get' keyword
 - 说明：这里应该写 `Get` 导入。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
 IO.Console;
@@ -1759,7 +1814,7 @@ Get IO.Console;
 - 默认详情：Expected block name
 - 说明：Block 声明缺少名字。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
 Block </
@@ -1787,7 +1842,7 @@ Block Demo</
 - 默认详情：Expected block variable name
 - 说明：Block 变量声明缺少变量名。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
 IO.Type.Object.Block = Block</
@@ -1815,7 +1870,7 @@ IO.Type.Object.Block flow = Block</
 - 默认详情：Expected catch variable name
 - 说明：Catch 参数缺少变量名。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
 Catch (IO.Error)
@@ -1826,6 +1881,12 @@ Catch (IO.Error)
 正确示例：
 
 ```kinal
+Get IO.Error;
+
+Try
+{
+    Throw New IO.Error("Example", "message");
+}
 Catch (IO.Error err)
 {
 }
@@ -2089,7 +2150,7 @@ Class User
 - 默认详情：Expected name
 - 说明：当前位置缺少标识符。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
 int = 1;
@@ -2143,7 +2204,7 @@ Function int Add(int a, int b)
 - 默认详情：Expected record name
 - 说明：`Record` 缺少标签名。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
 Record;
@@ -2152,7 +2213,10 @@ Record;
 正确示例：
 
 ```kinal
-Record Exit;
+Block Flow
+</
+    Record Exit;
+/>
 ```
 
 原因：Block 标签必须具名。
@@ -2167,7 +2231,7 @@ Record Exit;
 - 默认详情：Expected remote name
 - 说明：远程名或重绑定名缺少标识符。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
 Get Console By IO.Console.;
@@ -2299,7 +2363,7 @@ Extern Function int puts(string text) By C;
 - 默认详情：Expected 'If' keyword
 - 说明：这里应该写 `If`。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
 (ok)
@@ -2311,6 +2375,7 @@ Extern Function int puts(string text) By C;
 正确示例：
 
 ```kinal
+bool ok = true;
 If (ok)
 {
     Return 1;
@@ -2329,7 +2394,7 @@ If (ok)
 - 默认详情：Expected 'If' keyword in expression
 - 说明：这里期待的是 If 表达式。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
 int value = (ok) { 1 } Else { 0 };
@@ -2338,6 +2403,7 @@ int value = (ok) { 1 } Else { 0 };
 正确示例：
 
 ```kinal
+bool ok = true;
 int value = If (ok) { 1 } Else { 0 };
 ```
 
@@ -2353,7 +2419,7 @@ int value = If (ok) { 1 } Else { 0 };
 - 默认详情：Expected 'Interface' keyword
 - 说明：这里应该写 `Interface`。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
 IValue
@@ -2383,7 +2449,7 @@ Interface IValue
 - 默认详情：Expected 'Jump' keyword
 - 说明：这里应该写 `Jump`。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
 Record Exit;
@@ -2393,8 +2459,11 @@ Go Exit;
 正确示例：
 
 ```kinal
-Record Exit;
-Jump Exit;
+Block Flow
+</
+    Record Exit;
+    Jump Exit;
+/>
 ```
 
 原因：Block 跳转语义只认识 `Jump`。
@@ -2469,7 +2538,7 @@ Enum State
 - 默认详情：Expected 'Record' keyword
 - 说明：这里应该写 `Record`。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
 Mark A;
@@ -2478,7 +2547,10 @@ Mark A;
 正确示例：
 
 ```kinal
-Record A;
+Block Flow
+</
+    Record A;
+/>
 ```
 
 原因：Block 内的标签声明必须用 `Record`。
@@ -2496,7 +2568,7 @@ Record A;
 错误示例：
 
 ```kinal
-Class Base
+Class ParentClass
 {
     Public Abstract Function int Value()
 }
@@ -2505,7 +2577,7 @@ Class Base
 正确示例：
 
 ```kinal
-Class Base
+Abstract Class ParentClass
 {
     Public Abstract Function int Value();
 }
@@ -2523,7 +2595,7 @@ Class Base
 - 默认详情：Extern function requires ';'
 - 说明：当前语句缺少结尾分号。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
 Extern Function int puts(string text) By C
@@ -2547,7 +2619,7 @@ Extern Function int puts(string text) By C;
 - 默认详情：Missing ';' after Get
 - 说明：当前语句缺少结尾分号。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
 Get IO.Console
@@ -2571,7 +2643,7 @@ Get IO.Console;
 - 默认详情：Missing ';' after Jump
 - 说明：当前语句缺少结尾分号。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
 Jump Exit
@@ -2580,7 +2652,11 @@ Jump Exit
 正确示例：
 
 ```kinal
-Jump Exit;
+Block Flow
+</
+    Jump Exit;
+    Record Exit;
+/>
 ```
 
 原因：Jump 语句和普通语句一样需要显式结束符。
@@ -2619,7 +2695,7 @@ Throw "boom";
 - 默认详情：Missing ';' after Unit
 - 说明：当前语句缺少结尾分号。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
 Unit App.Main
@@ -2652,7 +2728,10 @@ Break
 正确示例：
 
 ```kinal
-Break;
+While (true)
+{
+    Break;
+}
 ```
 
 原因：`Break` 是完整语句，需要结束符。
@@ -2676,7 +2755,10 @@ Continue
 正确示例：
 
 ```kinal
-Continue;
+For (int i = 0; i < 1; i++)
+{
+    Continue;
+}
 ```
 
 原因：`Continue` 是完整语句，需要结束符。
@@ -2724,6 +2806,8 @@ PrintLine("hello")
 正确示例：
 
 ```kinal
+Get PrintLine By IO.Console.PrintLine;
+
 PrintLine("hello");
 ```
 
@@ -2780,6 +2864,7 @@ For (i = 0; i < 10 i = i + 1)
 正确示例：
 
 ```kinal
+int i = 0;
 For (i = 0; i < 10; i = i + 1)
 {
 }
@@ -2821,7 +2906,7 @@ Return 0;
 - 默认详情：Missing ';' after variable declaration
 - 说明：当前语句缺少结尾分号。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
 Var value = 1
@@ -2845,7 +2930,7 @@ Var value = 1;
 - 默认详情：Missing ';' in for initializer
 - 说明：当前位置的 token 序列不符合当前语法规则。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
 // 当前写法无法组成合法语法
@@ -2874,7 +2959,7 @@ Function int Main()
 - 默认详情：Expected 'Struct' keyword
 - 说明：这里应该写 `Struct`。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
 Pair
@@ -2904,7 +2989,7 @@ Struct Pair
 - 默认详情：Expected 'Throw' keyword
 - 说明：这里应该写 `Throw`。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
 Raise "boom";
@@ -2928,7 +3013,7 @@ Throw "boom";
 - 默认详情：Expected 'Try' keyword
 - 说明：这里应该写 `Try`。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
 Test
@@ -2964,7 +3049,7 @@ Catch (string msg)
 - 默认详情：Expected 'While' keyword
 - 说明：这里应该写 `While`。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
 (true)
@@ -3050,7 +3135,7 @@ Function int Main()
 - 默认详情：Top-level global variables cannot use function modifiers like Static/Extern/Delegate/Safe/Trusted/Unsafe/Async
 - 说明：顶层全局变量不能带函数修饰符。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
 Static int counter = 0;
@@ -3065,3 +3150,28 @@ int counter = 0;
 原因：`Static`、`Extern`、`Safe` 等修饰符属于函数语义，不适用于顶层变量。
 
 修复方式：移除这些修饰符。
+
+## E-SYN-00108 — Statement Too Deep
+
+- 级别：错误
+- 默认详情：Statement nesting exceeds parser recursion limit
+- 触发：语句递归嵌套超过解析器保护上限，例如生成器不断生成嵌套 If／Block。
+- 修复：将深层逻辑拆成函数或顺序语句，检查代码生成器是否意外重复嵌套；增加缩进不会改变限制。
+
+下面展示应采用的分解方式，而不是故意生成上千行递归输入：
+
+```kinal
+Function bool Ready(bool enabled)
+{
+    Return enabled;
+}
+
+Static Function int Main()
+{
+    If (Ready(true))
+    {
+        Return 0;
+    }
+    Return 1;
+}
+```

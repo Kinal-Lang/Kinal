@@ -136,6 +136,7 @@ Class ProjectPackageResolver
     Public ProjectConfig Project;
     Public ProjectProfileConfig Profile;
     Public string CacheRoot;
+    Public dict Pins;
     Public PackageSelection First;
     Public PackageSelection Last;
     Public string Error;
@@ -168,6 +169,32 @@ Class ProjectPackageResolver
         Return null;
     }
 
+    Public Safe Function void ReadPins(list specs)
+    {
+        If (specs.Count() == 0) Return;
+        If (This.Pins == null) This.Pins = dict.Create();
+        set names = set.Create();
+        For (int i = 0; i < specs.Count(); i++)
+        {
+            string spec = [string](specs.Fetch(i));
+            int separator = IO.Text.IndexOf(spec, "@");
+            If (separator <= 0 || separator == IO.Text.Length(spec) - 1 ||
+                separator != IO.Text.LastIndexOf(spec, "@"))
+            {
+                This.Fail("invalid package pin (expected name@version): " + spec);
+                Return;
+            }
+            string name = IO.Text.Slice(spec, 0, separator);
+            If (names.Contains(name))
+            {
+                This.Fail("duplicate package pin: " + name);
+                Return;
+            }
+            names.Add(name);
+            This.Pins.Set(name, IO.Text.Slice(spec, separator + 1, IO.Text.Length(spec) - separator - 1));
+        }
+    }
+
     Public Safe Function void Consider(PackageManifestConfig manifest, bool official)
     {
         If (IO.Text.ToLower(manifest.Kind) == "project") Return;
@@ -176,6 +203,11 @@ Class ProjectPackageResolver
             This.Fail("reserved package namespace 'IO.*' is only allowed in stdpkg: " +
                 manifest.Name);
             Return;
+        }
+        If (This.Pins != null)
+        {
+            string pinned = [string](This.Pins.TryFetch(manifest.Name, ""));
+            If (pinned != "" && manifest.Version != pinned) Return;
         }
         PackageSelection selected = This.Find(manifest.Name, official);
         If (selected == null)
@@ -195,18 +227,20 @@ Class ProjectPackageResolver
         If (!IO.Text.IsEmpty(This.Error) || IO.Text.IsEmpty(root) ||
             !IO.Directory.Exists(root)) Return;
         list files = IO.Directory.Files(root, true);
+        int rootLength = IO.Text.Length(root);
         int index = 0;
         While (index < files.Count())
         {
             string path = [string](files.Fetch(index));
+            index = index + 1;
             string name = IO.Text.ToLower(IO.Path.FileName(path));
-            string relative = IO.Text.Slice(path, IO.Text.Length(root),
-                IO.Text.Length(path) - IO.Text.Length(root));
+            If (name != "package.knpkg.json" && name != "package.knpkg") Continue;
+            string relative = IO.Text.Slice(path, rootLength, IO.Text.Length(path) - rootLength);
             relative = IO.Text.Replace(relative, "\\", "/");
             bool ignored = IO.Text.Contains(relative, "/.git/") ||
                 IO.Text.Contains(relative, "/.kinal-cache/") ||
                 IO.Text.Contains(relative, "/build/") || IO.Text.Contains(relative, "/out/");
-            If (!ignored && (name == "package.knpkg.json" || name == "package.knpkg"))
+            If (!ignored)
             {
                 PackageManifestConfig manifest =
                     IO.Kinal.Compiler.Project.PackageManifest.ReadPackageManifest(path);
@@ -219,7 +253,6 @@ Class ProjectPackageResolver
                 This.Consider(manifest, official);
                 If (!IO.Text.IsEmpty(This.Error)) Return;
             }
-            index = index + 1;
         }
     }
 
@@ -316,6 +349,8 @@ Class ProjectPackageResolver
     Public Safe Function PackageSourceCatalog Resolve(string defaultOfficialRoot)
     {
         PackageSourceCatalog catalog = New PackageSourceCatalog();
+        This.ReadPins(This.Project.PackagePins);
+        This.ReadPins(This.Profile.PackagePins);
         If (This.Profile.AutoDiscovery)
         {
             This.ScanConfiguredRoots(This.Project.PackageRoots, false);
@@ -325,6 +360,16 @@ Class ProjectPackageResolver
         This.ScanConfiguredRoots(This.Project.OfficialPackageRoots, true);
         This.ScanConfiguredRoots(This.Profile.OfficialPackageRoots, true);
         This.ScanRoot(defaultOfficialRoot, true);
+        If (This.Pins != null && This.Error == "")
+        {
+            list names = This.Pins.Keys();
+            For (int i = 0; i < names.Count(); i++)
+            {
+                string name = [string](names.Fetch(i));
+                If (This.Find(name, false) == null && This.Find(name, true) == null)
+                    This.Fail("pinned package not found: " + name + "@" + [string](This.Pins.Fetch(name)));
+            }
+        }
         If (!IO.Text.IsEmpty(This.Error))
         {
             catalog.Error = This.Error;

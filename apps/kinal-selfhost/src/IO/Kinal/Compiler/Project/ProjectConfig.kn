@@ -88,6 +88,7 @@ Class ProjectProfileConfig
     Public bool ShowLink;
     Public bool ShowLinkSearch;
     Public bool Superloop;
+    Public bool HideConsole;
     Public bool SuperloopExplicit;
     Public bool EnvironmentExplicit;
     Public bool RuntimeExplicit;
@@ -102,6 +103,7 @@ Class ProjectProfileConfig
     Public list LinkRoots;
     Public list PackageRoots;
     Public list OfficialPackageRoots;
+    Public list PackagePins;
     Public ProjectProfileConfig Next;
 
     Public Safe Constructor(string name)
@@ -143,6 +145,7 @@ Class ProjectProfileConfig
         This.LinkRoots = list.Create();
         This.PackageRoots = list.Create();
         This.OfficialPackageRoots = list.Create();
+        This.PackagePins = list.Create();
         This.Next = null;
     }
 }
@@ -156,6 +159,7 @@ Class ProjectConfig
     Public string DefaultProfile;
     Public list PackageRoots;
     Public list OfficialPackageRoots;
+    Public list PackagePins;
     Public list WorkspaceIgnores;
     Public SourceSetConfig FirstSourceSet;
     Public ProjectProfileConfig FirstProfile;
@@ -170,6 +174,7 @@ Class ProjectConfig
         This.DefaultProfile = "";
         This.PackageRoots = list.Create();
         This.OfficialPackageRoots = list.Create();
+        This.PackagePins = list.Create();
         This.WorkspaceIgnores = list.Create();
         This.FirstSourceSet = null;
         This.FirstProfile = null;
@@ -378,7 +383,19 @@ Class ProjectConfig
 
         string entry = This.ResolvePath(profile.Entry);
         If (This.FirstSourceSet == null && !IO.Text.IsEmpty(profile.Entry) &&
-            IO.File.Exists(entry)) This.AddUniqueSource(sources, entry);
+            IO.File.Exists(entry))
+        {
+            This.AddUniqueSource(sources, entry);
+            // Without explicit sets, discover beside the entry, then apply
+            // the ordinary FileOnly/EntryUnit/ReachableUnits selection once.
+            If (profile.AutoDiscovery && IO.Text.ToLower(profile.Mode) != "fileonly")
+            {
+                SourceSetConfig implicitSet = New SourceSetConfig("");
+                implicitSet.RequireUnit = false;
+                implicitSet.Roots.Add(IO.Path.Directory(entry));
+                This.DiscoverSourceSet(sources, implicitSet);
+            }
+        }
         Return sources;
     }
 }

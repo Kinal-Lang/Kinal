@@ -1,0 +1,41 @@
+Unit Tests.Executor;
+
+Get Engine By IO.Kinal.VM.Executor;
+Get IO.Text;
+
+Trusted Static Function int Main(string[] args)
+{
+    Engine.Executor compiler = New Engine.Executor();
+    compiler.StandardLibraryRoot = args[0];
+    compiler.CacheDirectory = args[1];
+    compiler.Compile("Unit Session; Get IO.Text; Static Function int Main(string[] a) { Return IO.Text.Length(a[0]); }");
+    byte[] image = compiler.Knc;
+    string[] inputs = {"seven!!"};
+    Engine.Executor vm = New Engine.Executor();
+    vm.LoadBytes(image);
+    If (vm.Run(inputs) != 7 || vm.Run(inputs) != 7) Return 1;
+
+    Try { vm.LoadBytes({0, 1}); Return 2; }
+    Catch (IO.Error error) { If (error.Message == "") Return 3; }
+    If (vm.Run(inputs) != 7) Return 4;
+    Try { compiler.Compile("Unit Missing; Static Function int Main() { Return UndefinedName; }"); Return 5; }
+    Catch (IO.Error error) { If (!IO.Text.Contains(error.Message, "UndefinedName")) Return 6; }
+    If (compiler.Run(inputs) != 7) Return 8;
+
+    vm.LoadFile(args[2]);
+    If (vm.Run() != 42) Return 9;
+    vm.LoadFile(args[3]);
+    Try { vm.Run(); Return 10; }
+    Catch (IO.Error error)
+    {
+        If (!IO.Text.Contains(error.Message, "guest failure") ||
+            !IO.Text.Contains(error.Message, args[4]) ||
+            !IO.Text.Contains(error.Message, "99.8.7")) Return 11;
+    }
+    compiler.Compile("Static Function int Main() { Return 23; }");
+    If (compiler.Run() != 23) Return 12;
+    vm.Knc = compiler.Knc;
+    If (vm.Run() != 23) Return 13;
+    vm.LoadBytes(image);
+    Return vm.Run(inputs) == 7 ? 0 : 14;
+}

@@ -35,6 +35,7 @@ Trusted Function string __PathSlice(string value, int start, int length)
     Return IO.Text.Slice(value, start, length);
 }
 
+[IO.Kinal.Runtime.KncIntrinsic(211)]
 Trusted Function string Combine(string left, string right)
 {
     If (left == null || IO.Text.IsEmpty(left))
@@ -70,6 +71,7 @@ Trusted Function string Join4(string first, string second, string third, string 
     Return Combine(Join3(first, second, third), fourth);
 }
 
+[IO.Kinal.Runtime.KncIntrinsic(212)]
 Trusted Function string FileName(string path)
 {
     If (path == null)
@@ -91,6 +93,7 @@ Trusted Function string FileName(string path)
     Return __PathSlice(path, start, length - start);
 }
 
+[IO.Kinal.Runtime.KncIntrinsic(213)]
 Trusted Function string Extension(string path)
 {
     If (path == null)
@@ -120,6 +123,7 @@ Trusted Function string Extension(string path)
     Return __PathSlice(path, dot + 1, length - dot - 1);
 }
 
+[IO.Kinal.Runtime.KncIntrinsic(214)]
 Trusted Function string Directory(string path)
 {
     If (path == null)
@@ -146,153 +150,72 @@ Trusted Function string Parent(string path)
     Return Directory(path);
 }
 
+[IO.Kinal.Runtime.KncIntrinsic(171)]
 Trusted Function string Normalize(string path)
 {
-    If (path == null)
-    {
-        Return "";
-    }
-
     int length = IO.Text.Length(path);
-    If (length == 0)
-    {
-        Return "";
-    }
+    If (length == 0) Return "";
 
+    char* source = [char*](path);
+    char* result = [char*](IO.Kinal.Runtime.AllocateRaw([usize](length) + 1));
+    If (result == null) Return "";
     char separator = __PathTargetSeparator();
-    string separatorText = [string](separator);
-    char* characters = [char*](path);
-    int index = 0;
+    int read = 0;
+    int written = 0;
     bool absolute = false;
     bool driveRelative = false;
-    bool unc = false;
-    string prefix = "";
-
-    If (IO.Target.OS == IO.Target.OS.Windows)
+    int uncParts = 0;
+    If (IO.Target.OS == IO.Target.OS.Windows && length >= 2 &&
+        __PathIsAsciiLetter(source[0]) && source[1] == ':')
     {
-        If (length >= 2 && __PathIsAsciiLetter(characters[0]) && characters[1] == ':')
-        {
-            prefix = __PathSlice(path, 0, 2);
-            index = 2;
-            If (index < length && __PathIsSeparator(characters[index]))
-            {
-                prefix = prefix + separatorText;
-                absolute = true;
-                While (index < length && __PathIsSeparator(characters[index]))
-                {
-                    index = index + 1;
-                }
-            }
-            Else
-            {
-                driveRelative = true;
-            }
-        }
-        ElseIf (length >= 2 && __PathIsSeparator(characters[0]) &&
-            __PathIsSeparator(characters[1]))
-        {
-            prefix = separatorText + separatorText;
-            index = 2;
-            absolute = true;
-            unc = true;
-            While (index < length && __PathIsSeparator(characters[index]))
-            {
-                index = index + 1;
-            }
-        }
-        ElseIf (__PathIsSeparator(characters[0]))
-        {
-            prefix = separatorText;
-            index = 1;
-            absolute = true;
-            While (index < length && __PathIsSeparator(characters[index]))
-            {
-                index = index + 1;
-            }
-        }
+        result[0] = source[0]; result[1] = ':';
+        read = 2; written = 2;
+        driveRelative = read == length || !__PathIsSeparator(source[read]);
     }
-    ElseIf (__PathIsSeparator(characters[0]))
+    If (read < length && __PathIsSeparator(source[read]))
     {
-        prefix = separatorText;
-        index = 1;
         absolute = true;
-        While (index < length && __PathIsSeparator(characters[index]))
+        result[written++] = separator;
+        If (IO.Target.OS == IO.Target.OS.Windows && read == 0 && length >= 2 && __PathIsSeparator(source[1]))
         {
-            index = index + 1;
+            result[written++] = separator;
+            uncParts = 2;
         }
     }
 
-    list segments = list.Create();
-    int protectedSegments = 0;
-    While (index < length)
+    // Keep the root and, for UNC paths, the server/share prefix when consuming "..".
+    int floor = written;
+    While (read < length)
     {
-        While (index < length && __PathIsSeparator(characters[index]))
+        While (read < length && __PathIsSeparator(source[read])) read++;
+        int begin = read;
+        While (read < length && !__PathIsSeparator(source[read])) read++;
+        int size = read - begin;
+        If (size == 0 || (size == 1 && source[begin] == '.')) Continue;
+        If (size == 2 && source[begin] == '.' && source[begin + 1] == '.')
         {
-            index = index + 1;
-        }
-        If (index >= length)
-        {
-            Break;
-        }
-
-        int begin = index;
-        While (index < length && !__PathIsSeparator(characters[index]))
-        {
-            index = index + 1;
-        }
-        string segment = __PathSlice(path, begin, index - begin);
-        If (segment == ".")
-        {
-            Continue;
-        }
-        If (segment == "..")
-        {
-            int segmentCount = segments.Count();
-            If (segmentCount > protectedSegments)
+            int previous = written;
+            While (previous > floor && result[previous - 1] != separator) previous--;
+            If (previous < written && !(written - previous == 2 &&
+                result[previous] == '.' && result[previous + 1] == '.'))
             {
-                string previous = [string](segments.Fetch(segmentCount - 1));
-                If (previous != "..")
-                {
-                    segments.RemoveAt(segmentCount - 1);
-                    Continue;
-                }
-            }
-            If (absolute)
-            {
+                written = previous > floor ? previous - 1 : floor;
                 Continue;
             }
+            If (absolute) Continue;
         }
-
-        segments.Add(segment);
-        If (unc && protectedSegments < 2)
-        {
-            protectedSegments = protectedSegments + 1;
-        }
+        If (written > 0 && result[written - 1] != separator && !(driveRelative && written == 2))
+            result[written++] = separator;
+        For (int i = begin; i < read; i++) result[written++] = source[i];
+        If (uncParts > 0) { floor = written; uncParts--; }
     }
 
-    string result = prefix;
-    int segmentIndex = 0;
-    While (segmentIndex < segments.Count())
-    {
-        string segment = [string](segments.Fetch(segmentIndex));
-        bool needsSeparator = !IO.Text.IsEmpty(result) &&
-            !__PathIsSeparator([char*](result)[IO.Text.Length(result) - 1]) &&
-            !(driveRelative && IO.Text.Length(result) == 2);
-        If (needsSeparator)
-        {
-            result = result + separatorText;
-        }
-        result = result + segment;
-        segmentIndex = segmentIndex + 1;
-    }
-
-    If (IO.Text.IsEmpty(result))
-    {
-        Return ".";
-    }
-    Return result;
+    If (written == 0) Return ".";
+    result[written] = '\0';
+    Return [string](result);
 }
 
+[IO.Kinal.Runtime.KncIntrinsic(172)]
 Trusted Function string CurrentDirectory()
 {
     string path = IO.Kinal.Runtime.AdoptNativeText(
@@ -305,6 +228,7 @@ Trusted Function string Cwd()
     Return CurrentDirectory();
 }
 
+[IO.Kinal.Runtime.KncIntrinsic(215)]
 Trusted Function string ChangeExtension(string path, string extension)
 {
     If (path == null)
@@ -346,6 +270,7 @@ Trusted Function string ChangeExtension(string path, string extension)
     Return result + extension;
 }
 
+[IO.Kinal.Runtime.KncIntrinsic(216)]
 Trusted Function bool IsAbsolute(string path)
 {
     If (path == null || IO.Text.IsEmpty(path))
@@ -372,6 +297,7 @@ Trusted Function bool IsRelative(string path)
     Return !IsAbsolute(path);
 }
 
+[IO.Kinal.Runtime.KncIntrinsic(217)]
 Trusted Function string BaseName(string path)
 {
     string fileName = FileName(path);
@@ -400,6 +326,7 @@ Trusted Function bool HasExtension(string path)
     Return !IO.Text.IsEmpty(Extension(path));
 }
 
+[IO.Kinal.Runtime.KncIntrinsic(218)]
 Trusted Function string EnsureTrailingSeparator(string path)
 {
     If (path == null || IO.Text.IsEmpty(path))

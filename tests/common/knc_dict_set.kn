@@ -1,0 +1,149 @@
+Unit Tests.KncDictSet;
+
+Get IO.Console;
+Get IO.GC;
+Get IO.Json;
+
+Class Entry { Public int Value; }
+
+Function bool CheckDict()
+{
+    dict data = dict.Create();
+    dict alias = data;
+    Entry entry = New Entry();
+    entry.Value = 37;
+    dict.Set(data, "item", entry);
+    data.Set("", 0);
+    data.Set("雪", null);
+    data.Set("item", data.Fetch("item"));
+    data.Set(null, 99);
+    data.Set("self", data);
+    any boxed = data;
+    If (!(boxed Is dict) || boxed Is set || !boxed.IsObject() || boxed.TypeName() != "IO.Collection.dict") Return false;
+    If (dict.Count(alias) != 4 || !alias.Contains("雪") || alias.Contains(null)) Return false;
+    If (!alias.TryFetch("雪", 11).IsNull() || [int](alias.TryFetch("unknown", 11)) != 11) Return false;
+    list keys = alias.Keys();
+    list values = alias.Values();
+    For (int i = 0; i < keys.Count(); i++)
+    {
+        string key = [string](keys.Fetch(i));
+        If (!values.Fetch(i).Equals(data.Fetch(key))) Return false;
+    }
+    If (!data.Remove("") || data.Remove("") || [dict](data.Fetch("self")) != alias) Return false;
+    data.Set("again", entry);
+    IO.GC.Collect();
+    If ([Entry](alias.Fetch("item")).Value != 37 || [Entry](alias.Fetch("again")) != entry) Return false;
+    For (int added = 0; added < 300; added++) data.Set([string](added), added);
+    For (int removed = 0; removed < 300; removed = removed + 2) If (!data.Remove([string](removed))) Return false;
+    For (int retained = 1; retained < 300; retained = retained + 2) If ([int](data.Fetch([string](retained))) != retained) Return false;
+    For (int restored = 0; restored < 300; restored = restored + 2) data.Set([string](restored), -restored);
+    list orderedKeys = data.Keys();
+    list orderedValues = data.Values();
+    IO.GC.Collect();
+    For (int k = 0; k < orderedKeys.Count(); k++)
+    {
+        string name = [string](orderedKeys.Fetch(k));
+        If (name != "item" && name != "again" && name != "self" && name != "雪" && name != "")
+            If ([int](orderedValues.Fetch(k)) != [int](data.Fetch(name))) Return false;
+    }
+    Return keys.Count() == 4 && values.Count() == 4;
+}
+
+Function bool CheckSet()
+{
+    set tags = set.Create();
+    set.Add(tags, "x");
+    tags.Add("");
+    tags.Add("x");
+    tags.Add(null);
+    tags.Add("中文");
+    any boxed = tags;
+    If (!(boxed Is set) || boxed Is dict || boxed.TypeName() != "IO.Collection.set") Return false;
+    list snapshot = tags.Values();
+    If (tags.Count() != 3 || !tags.Contains("") || tags.Contains(null) || !tags.Remove("x") || tags.Remove("x")) Return false;
+    tags.Clear();
+    IO.GC.Collect();
+    Return tags.IsEmpty() && snapshot.Contains("中文") && snapshot.Count() == 3;
+}
+
+Function bool CheckNull()
+{
+    dict data = null;
+    set tags = null;
+    data.Set("x", 3);
+    tags.Add("x");
+    tags.Clear();
+    Return data.IsEmpty() && tags.IsEmpty() && data.Fetch("x").IsNull() &&
+        [int](data.TryFetch("x", 4)) == 4 && !data.Remove("x") && !tags.Remove("x") &&
+        data.Keys().Count() == 0 && data.Values().Count() == 0 && tags.Values().Count() == 0;
+}
+
+Function bool CheckCollisionRemoval()
+{
+    // With eight buckets, f/n/v start at bucket 7, c at 0 and h at 1.
+    string[] keys = {"f", "c", "n", "h", "v"};
+    dict values = dict.Create();
+    set members = set.Create();
+    Entry keep = New Entry();
+    keep.Value = 37;
+    For (int i = 0; i < keys.Length(); i++)
+    {
+        values.Set(keys[i], i);
+        members.Add(keys[i]);
+    }
+    values.Set("n", keep);
+    members.Add("v");
+    If (values.Count() != 5 || members.Count() != 5) Return false;
+    string[] order = {"f", "h", "v", "c", "n"};
+    For (int removed = 0; removed < order.Length(); removed++)
+    {
+        string key = order[removed];
+        If (!values.Remove(key) || !members.Remove(key) || values.Remove(key) || members.Remove(key)) Return false;
+        If (values.Count() != 4 - removed || members.Count() != 4 - removed) Return false;
+        For (int j = 0; j < order.Length(); j++)
+        {
+            If (values.Contains(order[j]) != (j > removed) || members.Contains(order[j]) != (j > removed)) Return false;
+        }
+        If (removed == 0)
+        {
+            IO.GC.Collect();
+            If ([Entry](values.Fetch("n")) != keep || [Entry](values.Fetch("n")).Value != 37) Return false;
+            If ([int](values.Fetch("c")) != 1 || [int](values.Fetch("h")) != 3 || [int](values.Fetch("v")) != 4) Return false;
+        }
+    }
+    values.Set("f", 42);
+    members.Add("f");
+    Return [int](values.Fetch("f")) == 42 && members.Contains("f");
+}
+
+Function bool CheckJson()
+{
+    dict literal = { "nested": { "x": 1 }, "x": 1, "x": 2 };
+    If ([int](literal.Fetch("x")) != 2 || [int](IO.Json.AsDict(literal.Fetch("nested")).Fetch("x")) != 1) Return false;
+    dict root = IO.Json.Parse("{\"雪\":[],\"x\":1,\"x\":2}");
+    list entries = IO.Json.AsList(root.Fetch("雪"));
+    entries.Add(root.Fetch("x"));
+    entries.Add(null);
+    IO.GC.Collect();
+    If (IO.Json.Format(entries, false) != "[2,null]") Return false;
+    If (!IO.Json.ParseValue("null").IsNull()) Return false;
+    Try { IO.Json.ParseValue("{"); Return false; }
+    Catch (IO.Error error) { If (error.Title != "IO.Json" || error.Message.Length() == 0) Return false; }
+    Try { IO.Json.Minify("["); Return false; }
+    Catch (IO.Error error) { If (error.Title != "IO.Json") Return false; }
+    entries.Add(root);
+    Try { IO.Json.Format(root, false); Return false; }
+    Catch (IO.Error error) { If (error.Message != "JSON structure is too deeply nested") Return false; }
+    Return true;
+}
+
+Trusted Static Function int Main()
+{
+    If (!CheckDict()) Return 1;
+    If (!CheckSet()) Return 2;
+    If (!CheckNull()) Return 3;
+    If (!CheckJson()) Return 4;
+    If (!CheckCollisionRemoval()) Return 5;
+    IO.Console.PrintLine("ok");
+    Return 0;
+}

@@ -1,12 +1,14 @@
 Unit IO.Kinal.Compiler.Backend.KncModel;
 
 Get IO.Text;
+Get IO.Kinal.Compiler.Core.BuildInfo;
 Get IO.File;
 Get IO.Path;
 Get IO.Directory;
 Get IO.Kinal.Runtime.Native;
+Get IO.Kinal.Runtime;
 
-// KNC2 revision 3. All multibyte integers and IEEE-754 payloads are little
+// KNC2 revision 4. All multibyte integers and IEEE-754 payloads are little
 // endian. These values are the wire ABI shared with IO.Kinal.VM.Bytecode.
 Enum KncOpCode By u8
 {
@@ -148,7 +150,9 @@ Enum KncOpCode By u8
     UGeInt = 135,
     LShrInt = 136,
     FloatToF32 = 137,
-    IntToF32 = 138
+    IntToF32 = 138,
+    CallRange = 139,
+    UIntToFloat = 140
 }
 
 Enum KncValueKind By u8
@@ -172,13 +176,22 @@ Enum KncTypeKind By u8
     InterfaceType = 3
 }
 
-// A checked, append-only writer. Patching is bounded to bytes already written.
-// Error is sticky: invalid operands never silently wrap onto the wire.
+// Native managed array descriptors consist of a data pointer and a 64-bit
+// element count. The one-field wrapper preserves the target's aggregate alignment.
+Struct KncByteSpan { byte* Address; i64 Length; }
+Struct KncByteArray { byte[] Bytes; }
+
+// A checked, append-only writer. Patches are bounded to emitted bytes and errors are sticky.
 Public Class KncByteBuffer
 {
     Public byte[] Data;
     Public int Count;
     Public string Error;
+
+    Private byte[] Backing;
+    Private byte* Storage;
+    Private int Capacity;
+    Private int Written;
 
     Public Safe Constructor()
     {
@@ -197,16 +210,110 @@ Public Class KncByteBuffer
         Return IO.Text.IsEmpty(This.Error);
     }
 
-    Private Safe Function bool RequireSpace(int count)
+    // The compiler owns the buffer until FinishBuild publishes an ordinary
+    // exact-length Data array. The public incremental writer keeps Add semantics.
+    Public Trusted Function void BeginBuild()
+    {
+        If (!This.IsValid()) Return;
+        If (This.Count != 0 || This.Data.Length() != 0 || This.Capacity != 0)
+        {
+            This.Fail("KNC builder requires an empty buffer");
+            Return;
+        }
+        If (IO.Runtime.IsNative)
+        {
+            byte[64] initial;
+            This.Backing = initial;
+            This.Storage = &This.Backing[0];
+            This.Capacity = initial.Length();
+            This.Written = 0;
+        }
+    }
+
+    Public Trusted Function void FinishBuild()
+    {
+        If (This.Capacity == 0) Return;
+        If (This.Count != This.Written) This.Fail("inconsistent KNC builder length");
+        This.Count = This.Written;
+        If (IO.Runtime.IsNative)
+        {
+            This.Data = KncByteBuffer.ByteView(This.Storage, This.Count);
+            This.Storage = null;
+            This.Backing = {};
+            This.Capacity = 0;
+        }
+    }
+
+    Private Trusted Function bool RequireSpace(int count)
     {
         If (!This.IsValid()) Return false;
-        If (This.Count != This.Data.Length() || count < 0 ||
-            This.Count > 2147483647 - count)
+        If (This.Count < 0 || count < 0 || This.Count > 2147483647 - count ||
+            (This.Capacity == 0 ? This.Count != This.Data.Length() : This.Count != This.Written))
         {
             This.Fail("KNC buffer exceeds the 2 GiB limit or has inconsistent length");
             Return false;
         }
+        int needed = This.Count + count;
+        If (This.Capacity == 0 || needed <= This.Capacity) Return true;
+        If (IO.Runtime.IsNative) Return This.Grow(needed);
+        Else Return false;
+    }
+
+    Private Trusted Static Function byte[] ByteView(byte* address, int length)
+    {
+        KncByteArray array;
+        KncByteSpan* span = [KncByteSpan*](&array);
+        span[0].Address = address;
+        span[0].Length = [i64](length);
+        Return array.Bytes;
+    }
+
+    Private Trusted Function bool Grow(int needed)
+    {
+        int next = This.Capacity <= 1073741823 ? This.Capacity * 2 : 2147483647;
+        If (next < needed) next = needed;
+        // Array.Add gives the new backing to the same collector that owns
+        // this object, including when the compiler is built by the C seed.
+        byte* temporary = IO.Kinal.Runtime.Native.HeapAllocate([u64](next));
+        If (temporary == null && next > needed)
+        {
+            next = needed;
+            temporary = IO.Kinal.Runtime.Native.HeapAllocate([u64](next));
+        }
+        If (temporary == null) { This.Fail("cannot grow KNC byte buffer"); Return false; }
+        IO.Kinal.Runtime.MemoryCopy(temporary, This.Storage, [usize](This.Count));
+        IO.Kinal.Runtime.Native.MemoryFill(temporary + This.Count, [byte](0), [u64](next - This.Count));
+        byte[] prefix = KncByteBuffer.ByteView(temporary, next - 1);
+        This.Backing = prefix.Add([byte](0));
+        IO.Kinal.Runtime.Native.HeapFree(temporary);
+        This.Storage = &This.Backing[0];
+        This.Capacity = next;
         Return true;
+    }
+
+    Private Trusted Function void AppendByte(byte value)
+    {
+        If (IO.Runtime.IsNative)
+        {
+            If (This.Storage != null)
+            {
+                This.Storage[This.Count] = value;
+                This.Count = This.Count + 1;
+                This.Written = This.Count;
+                Return;
+            }
+        }
+        This.Data = This.Data.Add(value);
+        This.Count = This.Count + 1;
+    }
+
+    Private Trusted Function void SetByte(int offset, byte value)
+    {
+        If (IO.Runtime.IsNative)
+        {
+            If (This.Storage != null) { This.Storage[offset] = value; Return; }
+        }
+        This.Data[offset] = value;
     }
 
     Public Safe Function void WriteU8(int value)
@@ -217,8 +324,7 @@ Public Class KncByteBuffer
             Return;
         }
         If (!This.RequireSpace(1)) Return;
-        This.Data = This.Data.Add([byte](value));
-        This.Count = This.Count + 1;
+        This.AppendByte([byte](value));
     }
 
     Public Safe Function void WriteU16(int value)
@@ -229,8 +335,8 @@ Public Class KncByteBuffer
             Return;
         }
         If (!This.RequireSpace(2)) Return;
-        This.WriteU8(value & 255);
-        This.WriteU8((value >> 8) & 255);
+        This.AppendByte([byte](value & 255));
+        This.AppendByte([byte]((value >> 8) & 255));
     }
 
     Public Safe Function void WriteI32(int value)
@@ -245,7 +351,7 @@ Public Class KncByteBuffer
         int index = 0;
         While (index < 4)
         {
-            This.WriteU8([int]((bits >> (index * 8)) & [u64](255)));
+            This.AppendByte([byte]((bits >> (index * 8)) & [u64](255)));
             index = index + 1;
         }
     }
@@ -257,7 +363,7 @@ Public Class KncByteBuffer
         int index = 0;
         While (index < 8)
         {
-            This.WriteU8([int]((bits >> (index * 8)) & [u64](255)));
+            This.AppendByte([byte]((bits >> (index * 8)) & [u64](255)));
             index = index + 1;
         }
     }
@@ -269,11 +375,9 @@ Public Class KncByteBuffer
         This.WriteI64([i64](bits[0]));
     }
 
-    Public Safe Function void WriteString(string value)
+    Public Trusted Function void WriteString(string value)
     {
-        // Kinal text uses UTF-8 bytes; ToChars preserves those bytes verbatim.
-        char[] characters = value.ToChars();
-        int length = characters.Length();
+        int length = IO.Text.Length(value);
         If (length > 2147483643)
         {
             This.Fail("KNC string exceeds the 2 GiB buffer limit");
@@ -281,30 +385,41 @@ Public Class KncByteBuffer
         }
         If (!This.RequireSpace(length + 4)) Return;
         This.WriteI32(length);
-        int index = 0;
-        While (index < length)
+        If (length == 0) Return;
+        If (IO.Runtime.IsNative)
         {
-            This.WriteU8([int]([byte](characters[index])));
-            index = index + 1;
+            If (This.Storage != null)
+            {
+                IO.Kinal.Runtime.MemoryCopy(This.Storage + This.Count, [byte*](value), [usize](length));
+                This.Count = This.Count + length;
+                This.Written = This.Count;
+                Return;
+            }
         }
+        For (int i = 0; i < length; i++) This.AppendByte([byte](value[i]));
     }
 
-    Public Safe Function void WriteBytes(byte[] bytes)
+    Public Trusted Function void WriteBytes(byte[] bytes)
     {
         int length = bytes.Length();
-        If (!This.RequireSpace(length)) Return;
-        int index = 0;
-        While (index < length)
+        If (!This.RequireSpace(length) || length == 0) Return;
+        If (IO.Runtime.IsNative)
         {
-            This.WriteU8([int](bytes[index]));
-            index = index + 1;
+            If (This.Storage != null)
+            {
+                IO.Kinal.Runtime.MemoryCopy(This.Storage + This.Count, &bytes[0], [usize](length));
+                This.Count = This.Count + length;
+                This.Written = This.Count;
+                Return;
+            }
         }
+        For (int i = 0; i < length; i++) This.AppendByte(bytes[i]);
     }
 
     Private Safe Function bool RequirePatch(int offset, int length)
     {
         If (!This.IsValid()) Return false;
-        If (This.Count != This.Data.Length() || offset < 0 ||
+        If ((This.Capacity == 0 ? This.Count != This.Data.Length() : This.Count != This.Written) || offset < 0 ||
             length > This.Count || offset > This.Count - length)
         {
             This.Fail("KNC patch is outside the emitted buffer");
@@ -321,8 +436,8 @@ Public Class KncByteBuffer
             Return;
         }
         If (!This.RequirePatch(offset, 2)) Return;
-        This.Data[offset] = [byte](value & 255);
-        This.Data[offset + 1] = [byte]((value >> 8) & 255);
+        This.SetByte(offset, [byte](value & 255));
+        This.SetByte(offset + 1, [byte]((value >> 8) & 255));
     }
 
     Public Safe Function void PatchI32(int offset, int value)
@@ -337,7 +452,7 @@ Public Class KncByteBuffer
         int index = 0;
         While (index < 4)
         {
-            This.Data[offset + index] = [byte]((bits >> (index * 8)) & [u64](255));
+            This.SetByte(offset + index, [byte]((bits >> (index * 8)) & [u64](255)));
             index = index + 1;
         }
     }
@@ -351,7 +466,7 @@ Public Class KncByteBuffer
             Return false;
         }
         byte* data = null;
-        If (This.Count > 0) data = &This.Data[0];
+        If (This.Count > 0) data = This.Storage == null ? &This.Data[0] : This.Storage;
         If (IO.Kinal.Runtime.Native.FileWriteAllBytes(path, data, [u64](This.Count)) == 0)
         {
             This.Fail("cannot write KNC output: " + path);
@@ -554,7 +669,9 @@ Public Class KncProgram
 
     Public Safe Static Function int InstructionSize(int op)
     {
-        If (op < 0 || op > 138) Return 0;
+        If (op < 0 || op > 140) Return 0;
+        If (op == 140) Return 3;
+        If (op == 139) Return 7;
         If (op == 59 || op == 69) Return 1;
         If (op == 58 || op == 70 || op == 94 || op == 95) Return 2;
         If (op == 2 || op == 5 || (op >= 14 && op <= 15) || op == 26 ||
@@ -659,12 +776,14 @@ Public Class KncProgram
             output.Fail(This.Error);
             Return output;
         }
+        output.BeginBuild();
         output.WriteU8(75);
         output.WriteU8(78);
         output.WriteU8(67);
         output.WriteU8(50);
-        output.WriteU16(3);
+        output.WriteU16(4);
         output.WriteU16(0);
+        output.WriteString(IO.Kinal.Compiler.Core.BuildInfo.Version());
         output.WriteI32(This.EntryFunction);
         output.WriteI32(This.GlobalCount);
         output.WriteI32(This.IntConstants.Length());
@@ -728,6 +847,7 @@ Public Class KncProgram
             output.WriteBytes(record.Code.Data);
             index = index + 1;
         }
+        output.FinishBuild();
         If (!output.IsValid()) This.Fail(output.Error);
         Return output;
     }
@@ -873,6 +993,8 @@ Public Class KncProgram
         If (opcode == 136) Return "LShrInt";
         If (opcode == 137) Return "FloatToF32";
         If (opcode == 138) Return "IntToF32";
+        If (opcode == 139) Return "CallRange";
+        If (opcode == 140) Return "UIntToFloat";
         Return "Invalid";
     }
 
@@ -992,6 +1114,13 @@ Public Class KncProgram
         If (opcode == 41) Return line + "@" + [string](KncProgram.ListingU16(code, offset + 1));
         If (opcode == 42 || opcode == 43)
             Return line + first + ", @" + [string](KncProgram.ListingU16(code, offset + 2));
+        If (opcode == 139)
+        {
+            int target = KncProgram.ListingU16(code, offset + 3);
+            string ref = b == 0 ? This.ListingFunction(target) :
+                b == 1 ? "slot#" + [string](target) : b == 3 ? "builtin#" + [string](target) : KncProgram.ListingRegister(function, target);
+            Return line + first + ", " + ref + ", r" + [string](code[offset + 5]) + " count=" + [string](code[offset + 6]);
+        }
         If (opcode == 44 || opcode == 45)
         {
             int target = KncProgram.ListingU16(code, offset + 2);
@@ -1064,7 +1193,7 @@ Public Class KncProgram
         If (!This.Validate()) Return false;
         If (IO.Text.IsEmpty(path)) { This.Fail("KNC listing output path is empty"); Return false; }
         list lines = list.Create();
-        lines.Add("; Kinal readable KNC listing, KNC2 v3");
+        lines.Add("; Kinal readable KNC listing, KNC2 v4");
         lines.Add("; entry = #" + [string](This.EntryFunction) + ", globals = " + [string](This.GlobalCount));
         lines.Add("; constants: ints=" + [string](This.IntConstants.Length()) +
             ", floats=" + [string](This.FloatConstants.Length()) + ", strings=" + [string](This.StringConstants.Length()));

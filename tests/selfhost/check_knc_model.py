@@ -1,4 +1,4 @@
-"""Compile the pure-Kinal KNC v3 writer and verify its binary ABI against the VM.
+"""Compile the pure-Kinal KNC v4 writer and verify its binary ABI against the VM.
 
 This focused check needs only KncModel and the fixture, not a full compiler build.
 Every emitted byte is independently reconstructed below. The opcode declarations
@@ -38,9 +38,10 @@ def _string(value: str) -> bytes:
     return struct.pack("<I", len(data)) + data
 
 
-def _expected_program() -> bytes:
+def _expected_program(version: str) -> bytes:
     # Magic, revision, flags, entry, globals, ints, floats, strings, types, funcs.
-    data = b"KNC2" + struct.pack("<HH7i", 3, 0, 0, 2, 3, 6, 2, 2, 1)
+    data = b"KNC2" + struct.pack("<HH", 4, 0) + _string(version)
+    data += struct.pack("<7i", 0, 2, 3, 6, 2, 2, 1)
     data += struct.pack("<3q", -(2**63), 2**63 - 1, -1)
     data += struct.pack("<3d", 1.5, 0.0, -0.0)
     data += struct.pack("<3Q", 0x7FF8000000000042, 0x7FF0000000000000, 0xFFF0000000000000)
@@ -62,30 +63,35 @@ def check_knc_model(compiler: Path, root: Path, out: Path, vm: Path | None = Non
     vm_source = (root / "apps/kinalvm/src/IO/Kinal/VM/Bytecode.kn").read_text(encoding="utf-8")
     model_source = model.read_text(encoding="utf-8")
     assert _enum(model_source, "KncOpCode") == _enum(vm_source, "OpCode")
-    assert _enum(model_source, "KncValueKind") == _enum(vm_source, "ValueKind")
+    wire_kinds = _enum(vm_source, "ValueKind")
+    assert _enum(model_source, "KncValueKind") == wire_kinds
+    capture_cell = _enum(vm_source, "RegisterKind")["CaptureCell"]
+    assert capture_cell == wire_kinds["Pointer"] + 1 and capture_cell not in wire_kinds.values()
     widths = re.findall(r"Case\(\[int\]\(OpCode\.([A-Za-z0-9]+)\)\)\s*\{ Return (\d+); \}", vm_source)
-    expected_sizes = bytearray(139)
+    expected_sizes = bytearray(141)
     opcodes = _enum(vm_source, "OpCode")
     for name, size in widths:
         expected_sizes[opcodes[name]] = int(size)
-    assert len(widths) == 139 and all(expected_sizes)
+    assert len(widths) == 141 and all(expected_sizes)
+    info = model.parent.parent / "Core/BuildInfo.kn"
+    shutil.copyfile(info, out / "BuildInfo.kn")
     shutil.copyfile(model, out / "KncModel.kn")
     shutil.copyfile(fixture, out / "Main.kn")
     project = out / "kinal.knproj"
     project.write_text('Project KncModelCheck { DefaultProfile = "test"; '
-                       'SourceSet "main" { Files = ["Main.kn", "KncModel.kn"]; RequireUnit = true; } '
+                       'SourceSet "main" { Files = ["Main.kn", "KncModel.kn", "BuildInfo.kn"]; RequireUnit = true; } '
                        'Profile "test" { Source { Entry = "Main.kn"; Sets = ["main"]; '
                        'Mode = ReachableUnits; } } }\n', encoding="utf-8")
     executable = out / ("knc-model-writer.exe" if os.name == "nt" else "knc-model-writer")
     command = [str(compiler), "build", "--project", str(project), "-o", str(executable)]
     for argument in link_args:
         command += ["--link-arg", argument]
-    build = subprocess.run(command, cwd=root, text=True, capture_output=True, timeout=180)
+    build = subprocess.run(command, cwd=root, encoding="utf-8", capture_output=True, timeout=180)
     (out / "build.log").write_text(build.stdout + build.stderr, encoding="utf-8")
     assert build.returncode == 0, ("writer compilation failed", build.stdout, build.stderr)
     prefix = out / "model"
     execution = subprocess.run([str(executable), str(prefix)], cwd=root,
-                               text=True, capture_output=True, timeout=30)
+                               encoding="utf-8", capture_output=True, timeout=30)
     (out / "writer.log").write_text(execution.stdout + execution.stderr, encoding="utf-8")
     assert execution.returncode == 0, ("writer fixture failed", execution.returncode,
                                        execution.stdout, execution.stderr)
@@ -94,11 +100,12 @@ def check_knc_model(compiler: Path, root: Path, out: Path, vm: Path | None = Non
     assert (out / "model.bytes").read_bytes() == expected_bytes
     assert (out / "model.sizes").read_bytes() == expected_sizes
     program = (out / "model.knc").read_bytes()
-    assert program == _expected_program(), "KNC v3 serialization differs from wire ABI"
+    version = dict(line.split("=", 1) for line in (root / "VERSION").read_text().splitlines() if "=" in line)["kinal"]
+    assert program == _expected_program(version), "KNC v4 serialization differs from wire ABI"
     assert (out / "model.repeat.knc").read_bytes() == program, "serialization is nondeterministic"
     assert (out / "model.annotated.knc").read_bytes() == program, "listing annotations changed binary serialization"
     listing = (out / "model.listing/nested/program.knasm").read_text(encoding="utf-8")
-    assert "KNC2 v3" in listing and ".function #0 Main" in listing
+    assert "KNC2 v4" in listing and ".function #0 Main" in listing
     assert "r0(result)" in listing and "builtin#0, (r0(result))" in listing
     assert "; source line 7\\ncontinued" in listing and "; function end" in listing
     assert '"é雪"' in listing and "-9223372036854775808" in listing
@@ -116,16 +123,27 @@ def check_knc_model(compiler: Path, root: Path, out: Path, vm: Path | None = Non
     assert not (out / "model.invalid").exists(), "invalid program was written"
     if vm is not None:
         run = subprocess.run([str(vm), str(out / "model.knc")], cwd=root,
-                             text=True, capture_output=True, timeout=30)
+                             encoding="utf-8", capture_output=True, timeout=30)
         assert run.returncode == 0, ("VM execution failed", run.stdout, run.stderr)
         assert run.stdout.replace("\r\n", "\n") == "-9223372036854775808\né雪\n"
         assert not run.stderr
         disasm = subprocess.run([str(vm), "--disasm", str(out / "model.knc")], cwd=root,
-                                text=True, capture_output=True, timeout=30)
+                                encoding="utf-8", capture_output=True, timeout=30)
         (out / "model.disasm").write_text(disasm.stdout + disasm.stderr, encoding="utf-8")
         assert disasm.returncode == 0 and "LoadInt" in disasm.stdout and "Halt" in disasm.stdout
-    return {"name": "knc_v3_model", "ok": True, "opcode_count": 139,
-            "program_bytes": len(program), "vm_executed": vm is not None, "listing_opcode_count": 139}
+    if vm is not None:
+        guest = out / "guest-writer"
+        guest.mkdir(exist_ok=True)
+        shutil.copyfile(info, guest / "BuildInfo.kn")
+        shutil.copyfile(model, guest / "KncModel.kn")
+        shutil.copyfile(fixture.with_name("knc_guest_writer.kn"), guest / "Main.kn")
+        shutil.copyfile(project, guest / "kinal.knproj")
+        bytecode = guest / "writer.knc"
+        subprocess.run([str(compiler), "vm", "build", "--project", str(guest), "-o", str(bytecode)],
+                       cwd=root, check=True, timeout=180)
+        subprocess.run([str(vm), str(bytecode)], cwd=root, check=True, timeout=30)
+    return {"name": "knc_v4_model", "ok": True, "opcode_count": len(widths),
+            "program_bytes": len(program), "vm_executed": vm is not None, "listing_opcode_count": len(widths)}
 
 
 if __name__ == "__main__":

@@ -53,6 +53,24 @@ def windows_drive_roots() -> list[Path]:
     return roots
 
 
+def build_io_ui_native_assets(stdpkg_dir: Path) -> None:
+    """Build the Windows leaf from the same source for both supported Windows ABIs."""
+    source = ROOT / "libs/runtime/src/kn_ui_surface_win.cpp"
+    for arch, triple in (("win-x64", "x86_64-windows-gnu"), ("win-arm64", "aarch64-windows-gnu")):
+        output = stdpkg_dir / "IO.UI" / "2.0.0" / "native" / arch / "kn_ui_surface.obj"
+        if output.is_file() and output.stat().st_mtime >= source.stat().st_mtime:
+            continue
+        zig = ensure_zig_available(fetch=True)
+        if not zig:
+            raise SystemExit("Building the IO.UI Windows backend requires Zig")
+        output.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=output.parent) as tmp:
+            obj = Path(tmp) / output.name
+            run([zig, "cc", "-x", "c++", "-std=c++17", "-target", triple, "-O2", "-g0",
+                 "-fno-exceptions", "-fno-rtti", "-fno-stack-protector", "-c", source, "-o", obj])
+            obj.replace(output)
+
+
 def _pick_latest_path(paths: list[Path]) -> Path | None:
     existing = [p for p in paths if p.exists()]
     if not existing:
@@ -221,6 +239,7 @@ EXPORTS
   HeapAlloc
   HeapFree
   CreateFileA
+  CreateFileW
   CreateFileMappingA
   MapViewOfFile
   UnmapViewOfFile
@@ -230,7 +249,9 @@ EXPORTS
   LockFileEx
   UnlockFileEx
   GetCommandLineA
+  GetCommandLineW
   CreateProcessA
+  CreateProcessW
   WaitForSingleObject
   GetExitCodeProcess
   Sleep
@@ -240,14 +261,22 @@ EXPORTS
   GetSystemTimeAsFileTime
   FileTimeToSystemTime
   FindFirstFileA
+  FindFirstFileW
+  GetFileAttributesW
   FindNextFileA
+  FindNextFileW
   FindClose
   CreateDirectoryA
+  CreateDirectoryW
   RemoveDirectoryA
+  RemoveDirectoryW
   DeleteFileA
+  DeleteFileW
   GetEnvironmentVariableA
   GetCurrentDirectoryA
+  GetCurrentDirectoryW
     GetModuleFileNameA
+  GetModuleFileNameW
   GetModuleHandleA
   GetLastError
   GetConsoleMode
@@ -809,11 +838,17 @@ exec "$HERE/kinal.bin" "$@"
     compiler.chmod(0o755)
 
 
+def kinalvm_host_project() -> Path:
+    if host_tag() in ("win-x64", "win-arm64"):
+        build_io_ui_native_assets(ROOT / "libs/std")
+        return ROOT / "apps/kinalvm/windows.knproj"
+    return ROOT / "apps/kinalvm/kinal.knproj"
+
+
 def build_kinal_vm_binary(compiler: Path, bundle_dir: Path) -> Path:
     generate_kinalvm_build_info()
-    vm_src = ROOT / "apps" / "kinalvm" / "src" / "Main.kn"
     vm_out = bundle_dir / exe_name("kinalvm")
-    cmd: list[str | Path] = [compiler, "build", vm_src, "-o", vm_out]
+    cmd: list[str | Path] = [compiler, "build", "--project", kinalvm_host_project(), "-o", vm_out]
     if host_tag().startswith("linux-"):
         zig_path = ensure_zig_available(fetch=True) or detect_zig_path()
         if zig_path:

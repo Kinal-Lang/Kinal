@@ -2,7 +2,7 @@
 
 Triggered when symbols, types, members, or referenced targets cannot be found.
 
-The examples in this document are minimal reproductions of the most common way each diagnostic code is triggered. A few diagnostics that are more implementation-oriented use the closest surface-level form that user code can express.
+This page records the registered templates. Corrected examples show the supported form. A trigger sketch illustrates a rule or parser state and may require surrounding declarations or report an earlier/different diagnostic in the current C compiler.
 
 ---
 
@@ -42,7 +42,7 @@ The examples in this document are minimal reproductions of the most common way e
 - Default Detail: Multiple functions match; use qualified name
 - Description: The current call site matches multiple equally feasible function candidates.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
 Get A By App.MathA;
@@ -54,10 +54,14 @@ int value = Add(1, 2);
 Correct Example:
 
 ```kinal
-Get A By App.MathA;
-Get B By App.MathB;
+Unit Docs.MathA;
 
-int value = A.Add(1, 2);
+Function int Add(int a, int b) { Return a + b; }
+
+Static Function int Main()
+{
+    Return Docs.MathA.Add(1, 2);
+}
 ```
 
 Reason: There are multiple candidate functions with the same name and the same adaptation in the current scope, and the compiler cannot arbitrarily choose one for you.
@@ -72,7 +76,7 @@ Fix: Give a module qualified name, an alias qualified name, or adjust the argume
 - Default Detail: Base class not found
 - Description: The current reference target does not exist within visible range.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
 Class Derived By MissingBase
@@ -171,7 +175,7 @@ Fix: Check the enumeration name and member name, and fill in missing members if 
 - Default Detail: Unsupported expression
 - Description: The current expression form is not an expression type supported by the compiler.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
 Var pair = (1, 2);
@@ -264,15 +268,19 @@ Fix: Change it to a defined field, or add the field in the type definition.
 - Default Detail: Builtin function reference not found
 - Description: The current reference target does not exist within visible range.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
+Get IO.Console;
+
 IO.Type.Object.Function fn = IO.Console.PrintLn;
 ```
 
 Correct Example:
 
 ```kinal
+Get IO.Console;
+
 IO.Type.Object.Function fn = IO.Console.PrintLine;
 ```
 
@@ -317,7 +325,7 @@ Fix: Define the function first, import the correct module, or fix the spelling.
 - Default Detail: Interface not found
 - Description: The current reference target does not exist within visible range.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
 Class User By IMissing
@@ -353,7 +361,7 @@ Fix: Define the interface first, or quote the correct interface name.
 - Default Detail: Interface method not found
 - Description: The current reference target does not exist within visible range.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
 Interface IUser
@@ -480,7 +488,7 @@ Fix: Check static member names.
 Incorrect Example:
 
 ```kinal
-Struct Packet By Packed(2)
+Struct Packet By UnknownSpecifier
 {
     int Value;
 }
@@ -507,7 +515,7 @@ Fix: Change to a struct specifier explicitly supported in the documentation, suc
 - Default Detail: Symbol not found in module
 - Description: The module import is successful, but the target symbol itself does not exist.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
 Get PrintLn By IO.Console.PrintLn;
@@ -531,7 +539,7 @@ Fix: Check the fully qualified name and member spelling.
 - Default Detail: Cast target type is unknown
 - Description: The current reference target does not exist within visible range.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
 Var value = [MissingType](1);
@@ -555,7 +563,7 @@ Fix: Change it to an existing type name.
 - Default Detail: Class not found
 - Description: The current reference target does not exist within visible range.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
 MissingType value;
@@ -583,7 +591,7 @@ Fix: Define the class first, or correct the class name.
 - Default Detail: Class or interface not found
 - Description: The current reference target does not exist within visible range.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
 Class Derived By MissingBase
@@ -620,7 +628,7 @@ Fix: Use an existing class or interface name instead.
 - Default Detail: Enum not found
 - Description: The current reference target does not exist within visible range.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
 MissingEnum value;
@@ -649,7 +657,7 @@ Fix: Define the enumeration or fix the type name.
 - Default Detail: Struct not found
 - Description: The current reference target does not exist within visible range.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
 MissingStruct value;
@@ -728,7 +736,7 @@ Fix: Declare the variable first, or correct the reference name.
 - Default Detail: Unknown named argument
 - Description: The current reference target does not exist within visible range.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
 Function string Format(string text, int indent = 0)

@@ -19,6 +19,8 @@ env:
 jobs:
   release-feed:
     name: Generate website release feed
+    # Experimental releases must not deploy a compiler to the production site.
+    if: github.event_name != 'release' || !github.event.release.prerelease
     runs-on: ubuntu-22.04
     outputs:
       release_tag: ${{ steps.release.outputs.release_tag }}

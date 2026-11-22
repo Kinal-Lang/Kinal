@@ -6,22 +6,16 @@ on a sidecar at runtime. Bootstrap helpers refresh it before compiling.
 from __future__ import annotations
 
 import argparse
-import re
 from pathlib import Path
 
 from .context import ROOT
-from .vm_metadata import read_vm_version
+from .vm_metadata import read_component_version, read_vm_version
 
 BUILD_INFO = Path("apps/kinal-selfhost/src/IO/Kinal/Compiler/Core/BuildInfo.kn")
 
 
 def read_compiler_version(root: Path = ROOT) -> str:
-    versions = [line.partition("=")[2].strip()
-                for line in (root / "VERSION").read_text(encoding="utf-8").splitlines()
-                if line.partition("=")[0].strip() == "kinal"]
-    if len(versions) != 1 or not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", versions[0]):
-        raise ValueError("VERSION must contain exactly one kinal=MAJOR.MINOR.PATCH entry")
-    return versions[0]
+    return read_component_version(root, "kinal")
 
 
 def render_build_info(version: str, vm_version: str) -> str:

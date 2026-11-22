@@ -1,6 +1,6 @@
 # Interfaces
 
-An interface defines a contract of method signatures; any class implementing the interface must provide concrete implementations for all methods.
+An interface declares methods and property accessors. An implementing class must supply each declared method and accessor.
 
 ## Interface Declaration
 
@@ -12,7 +12,13 @@ Interface IShape
 }
 ```
 
-Interfaces can only declare **method signatures**; they cannot have fields or method implementations.
+Interface methods are abstract by default. You can write `Public Abstract Function float Area();` explicitly. The signature ends with a semicolon, and the implementing class supplies the body.
+
+An interface can expose just the setter of a property. Code using this interface can assign `sink.Value = 42`. Reading `sink.Value` requires a getter in the interface declaration.
+
+```kinal
+Interface ISink { Property int Value { Set; } }
+```
 
 ## Implementing an Interface
 
@@ -80,7 +86,7 @@ IO.Console.PrintLine([string](t.Area()));
 Use the `Is` operator to check whether an object implements an interface:
 
 ```kinal
-Object obj = ...;
+IO.Type.Object.Class obj = ...;
 If (obj Is IShape shape)
 {
     IO.Console.PrintLine(shape.Area());
@@ -201,3 +207,5 @@ Static Function int Main()
 - [Classes and Inheritance](classes.md)
 - [Generics](generics.md)
 
+
+The interface call examples above describe Native dispatch. Current C KNC emission does not generally implement interface receiver calls; use supported concrete receiver paths when targeting the VM. Checked reference casts and `Is` do not by themselves establish method-dispatch support. See [Backend Support](../advanced/backend-support.md).

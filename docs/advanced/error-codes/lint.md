@@ -2,7 +2,9 @@
 
 Diagnostics that do not block compilation, but should still be cleaned up soon.
 
-The examples in this document are minimal reproductions of the most common way each diagnostic code is triggered. A few diagnostics that are more implementation-oriented use the closest surface-level form that user code can express.
+This page records the registered templates. Corrected examples show the supported form. A trigger sketch illustrates a rule or parser state and may require surrounding declarations or report an earlier/different diagnostic in the current C compiler.
+
+Enable these warnings with `kinal build main.kn --emit check --warn-level 2`. Parameters and variables whose names start with `_` are exempt from this unused-variable warning.
 
 ---
 
@@ -56,6 +58,8 @@ Fix: Remove the useless variable, or actually read it and incorporate it into th
 Incorrect Example:
 
 ```kinal
+Get IO.Console;
+
 Static Function int Main()
 {
     Return 0;
@@ -66,6 +70,8 @@ Static Function int Main()
 Correct Example:
 
 ```kinal
+Get IO.Console;
+
 Static Function int Main()
 {
     IO.Console.PrintLine("once");

@@ -1,0 +1,136 @@
+Unit Tests.KncList;
+
+Get IO.Console;
+Get IO.Directory;
+Get IO.File;
+Get IO.GC;
+Get IO.Path;
+Get IO.Text;
+
+Class Entry
+{
+    Public int Number;
+}
+
+Function list MakeCycle()
+{
+    list items = list.Create();
+    list inner = list.Create();
+    Entry item = New Entry();
+    item.Number = 42;
+    inner.Add(item);
+    inner.Add(items);
+    items.Add(inner);
+    Return items;
+}
+
+Function bool CheckScalars()
+{
+    any character = 'A';
+    any decimal = -3.75;
+    any truth = true;
+    any digits = "42";
+    any wide = 258;
+    Return [float](character) == 65.0 && [int](decimal) == -3 && [bool](decimal) &&
+        [int](truth) == 1 && [int](digits) == 42 && [i8](wide) == 2;
+}
+
+Function list TakeEntries(list source)
+{
+    For (int i = 0; i < 4; i++)
+    {
+        Entry item = New Entry();
+        item.Number = i;
+        source.Add(item);
+    }
+    list held = list.Create();
+    held.Add(source.RemoveAt(1));
+    held.Add(source.Pop());
+    Return held;
+}
+
+Function bool CheckGrowth()
+{
+    list values = list.Create();
+    For (int i = 0; i < 513; i++) values.Add(i);
+    values.Insert(256, MakeCycle());
+    values.Insert(0, "head");
+    If ([string](values.RemoveAt(0)) != "head" || [int](values.Pop()) != 512) Return false;
+    IO.GC.Collect();
+    list nested = [list](values.RemoveAt(256));
+    If ([Entry]([list](nested.Peek()).Fetch(0)).Number != 42 || values.Count() != 512) Return false;
+    For (int j = 0; j < values.Count(); j++) If ([int](values.Fetch(j)) != j) Return false;
+    Return true;
+}
+
+Function void ReplaceScalars(list items, dict entries)
+{
+    items.Set(0, MakeCycle());
+    entries.Set("saved", MakeCycle());
+}
+
+Static Function int Main()
+{
+    If (!CheckGrowth()) Return 21;
+    list replaced = list.Create();
+    dict entries = dict.Create();
+    replaced.Add(0);
+    entries.Set("saved", 0);
+    ReplaceScalars(replaced, entries);
+    IO.GC.Collect();
+    list fromList = [list](replaced.Fetch(0));
+    list fromDict = [list](entries.Fetch("saved"));
+    If ([Entry]([list](fromList.Peek()).Fetch(0)).Number != 42 ||
+        [Entry]([list](fromDict.Peek()).Fetch(0)).Number != 42) Return 22;
+    list items = MakeCycle();
+    IO.GC.Collect();
+    list inner = [list](items.Fetch(0));
+    If ([Entry](inner.Fetch(0)).Number != 42 || [list](inner.Peek()) != items) Return 1;
+    any boxed = items;
+    If (!(boxed Is list) || boxed Is Entry || !boxed.IsObject() || boxed.TypeName() != "IO.Collection.list") Return 2;
+    Try { any wrong = "string"; list invalid = [list](wrong); Return 3; }
+    Catch (IO.Error error) { If (error.Title != "Invalid Cast") Return 4; }
+    items.Clear();
+    list.Add(items, "second");
+    items.Insert(-30, "first");
+    items.Insert(100, 9);
+    items.Add(null);
+    If (list.Count(items) != 4 || !items.TryFetch(3, "fallback").IsNull()) Return 5;
+    If ([string](items.TryFetch(-1, "fallback")) != "fallback" || !items.Contains(null)) Return 6;
+    If (items.IndexOf(9) != 2 || items.Contains("9") || items.IndexOf("missing") != -1) Return 7;
+    items.Set(0, "changed");
+    items.Set(99, "outside");
+    If (!items.RemoveAt(4).IsNull() || [string](items.RemoveAt(1)) != "second") Return 8;
+    If (!items.Pop().IsNull() || [int](items.Pop()) != 9 || [string](items.Peek()) != "changed") Return 9;
+    If (!CheckScalars()) Return 18;
+    list source = list.Create();
+    list held = TakeEntries(source);
+    If (source.Count() != 2 || [Entry](source.Fetch(1)).Number != 2) Return 19;
+    source.Clear();
+    source.Add("reused");
+    IO.GC.Collect();
+    If ([Entry](held.Fetch(0)).Number != 1 || [Entry](held.Fetch(1)).Number != 3 ||
+        [string](source.Peek()) != "reused") Return 20;
+    list empty = null;
+    empty.Add(1);
+    If (!empty.IsEmpty() || !empty.Pop().IsNull() || empty.Contains(1) || empty.IndexOf(null) != -1) Return 10;
+    list words = IO.Text.Split("ab::::cd::", "::");
+    If (words.Count() != 4 || IO.Text.Join(words, "|") != "ab||cd|") Return 11;
+    words.Add(42);
+    If (IO.Text.Join(words, "|") != "ab||cd||<any>") Return 12;
+    list lines = IO.Text.Lines("first\r\nsecond");
+    string root = "knc_list_fixture";
+    string sub = IO.Path.Combine(root, "sub");
+    string path = IO.Path.Combine(root, "a.txt");
+    string other = IO.Path.Combine(sub, "b.txt");
+    If (!IO.Directory.Ensure(sub) || !IO.File.WriteLines(path, lines) || !IO.File.WriteAllText(other, "ok")) Return 13;
+    list paths = IO.Directory.Files(root, true);
+    IO.GC.Collect();
+    If (paths.Count() != 2 || IO.Path.FileName([string](paths.Fetch(0))) != "a.txt" ||
+        IO.Path.FileName([string](paths.Fetch(1))) != "b.txt") Return 14;
+    If (IO.Directory.Files(root, false).Count() != 1 || IO.Directory.Files(null, true).Count() != 0) Return 15;
+    If (IO.Text.Join(IO.File.ReadLines(path), "|") != "first|second") Return 16;
+    If (!IO.File.Delete(other) || !IO.File.Delete(path) || !IO.Directory.Delete(sub) || !IO.Directory.Delete(root)) Return 17;
+    IO.Console.PrintLine("ok");
+    Return 0;
+}

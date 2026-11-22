@@ -1,0 +1,24 @@
+Unit Benchmarks.FixedArrayReentry;
+
+Get IO.Console;
+Get IO.Time;
+
+Static Function int Main()
+{
+    int count = [int](IO.Console.ReadLine());
+    If (count < 1 || count > 1000000) Return 2;
+    u64 start = IO.Time.GetNanoTick();
+    int checksum = 0;
+    For (int i = 0; i < count; i++)
+    {
+        int[4096] data;
+        If (data[0] != 0 || data[4095] != 0) Return 1;
+        data[0] = i;
+        data[4095] = i + 1;
+        checksum += data[0] + data[4095];
+    }
+    u64 elapsed = IO.Time.GetNanoTick() - start;
+    If (checksum != count * count) Return 1;
+    IO.Console.PrintLine([string](count) + " " + [string](elapsed));
+    Return 0;
+}

@@ -1,0 +1,14 @@
+Unit Tests.FileFirstLine;
+
+Get IO.Console;
+Get IO.File;
+
+Static Function int Main(string[] args)
+{
+    If (IO.File.ReadFirstLine(null) != "") Return 1;
+    For (int i = 0; i < args.Length(); i++)
+    {
+        IO.Console.PrintLine(IO.File.ReadFirstLine(args[i]));
+    }
+    Return 0;
+}

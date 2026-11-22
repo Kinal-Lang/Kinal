@@ -21,46 +21,36 @@ Class SourceEntry
 Class SourceManager
 {
     Public SourceEntry First;
+    Private SourceEntry Last;
+    Private dict ByPath;
 
     Public Safe Constructor()
     {
         This.First = null;
+        This.ByPath = dict.Create();
     }
 
     Public Safe Function SourceFile Load(string path)
     {
         string normalized = IO.Kinal.Compiler.Source.SourcePath.Canonical(path);
-        SourceEntry current = This.First;
-        While (current != null)
-        {
-            If (current.Path == normalized) Return current.Source;
-            current = current.Next;
-        }
+        SourceFile existing = [SourceFile](This.ByPath.TryFetch(normalized, null));
+        If (existing != null) Return existing;
 
-        SourceFile source = IO.Kinal.Compiler.Source.SourceFile.Load(normalized);
-        SourceEntry entry = New SourceEntry(normalized, source);
-        If (This.First == null)
-        {
-            This.First = entry;
-        }
-        Else
-        {
-            current = This.First;
-            While (current.Next != null) current = current.Next;
-            current.Next = entry;
-        }
+        Return This.Remember(IO.Kinal.Compiler.Source.SourceFile.Load(normalized));
+    }
+
+    Public Safe Function SourceFile Remember(SourceFile source)
+    {
+        SourceEntry entry = New SourceEntry(source.Path, source);
+        If (This.First == null) This.First = entry;
+        Else This.Last.Next = entry;
+        This.Last = entry;
+        This.ByPath.Set(source.Path, source);
         Return source;
     }
 
     Public Safe Function int Count()
     {
-        int count = 0;
-        SourceEntry current = This.First;
-        While (current != null)
-        {
-            count = count + 1;
-            current = current.Next;
-        }
-        Return count;
+        Return This.ByPath.Count();
     }
 }

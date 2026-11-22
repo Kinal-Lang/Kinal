@@ -1,184 +1,110 @@
 # 异步编程
 
-Kinal 内置了 `Async`/`Await` 原生异步支持，使异步代码与同步代码具有相同的书写风格。
+本页完整程序面向 **Native**。当前 C KNC 发射器拒绝通用 Await 表达式及 Task Run 内建调用。VM 的 superloop 选项控制循环融合，不是 Async 任务调度。
 
-## 基本概念
+`Async` 声明产生任务的函数，`Await` 表达对另一任务的依赖。异步语法不会自动并行化工作，也不会把阻塞文件／网络 API 自动变成异步 I/O。
 
-- `Async Function` — 声明一个异步函数，返回 `IO.Async.Task`
-- `Await 表达式` — 等待一个异步任务完成并获取结果
-- `IO.Async.Run(task)` — 同步等待一个异步任务（在同步上下文中使用）
+## 声明与等待任务
 
-## 声明异步函数
+声明的结果类型是任务完成时产生的值：
 
 ```kinal
-Async Function int Compute()
-{
-    Return 42;
-}
-```
-
-异步函数总是返回 `IO.Async.Task`，但你可以在函数签名中写期望的**值类型**（如 `int`），Kinal 会自动包装：
-
-```kinal
-Async Function int Step(int value)
+Async Function int Compute(int value)
 {
     Return value + 1;
 }
 ```
 
-## 使用 Await
-
-在 `Async` 函数中使用 `Await` 等待另一个异步操作：
+调用 `Compute(41)` 产生 IO.Async.Task，Await 后得到声明的 int 结果。Await 用于 Async 函数，包括 Async Main；普通同步函数不能直接使用 Await。
 
 ```kinal
-Static Async Function int Main()
-{
-    Await IO.Async.Yield();        // 让出控制权
-    Await IO.Async.Sleep(100);     // 异步等待 100ms
-
-    int result = Await Step(41);   // 等待并获取结果
-    IO.Console.PrintLine(result);     // 42
-
-    Return 0;
-}
-```
-
-`Await` 后跟返回 `IO.Async.Task` 的表达式。
-
-## 调用异步函数
-
-### 在异步上下文中：直接 Await
-
-```kinal
-Static Async Function int Main()
-{
-    int a = Await StepOne();
-    int b = Await StepTwo(a);
-    Return b;
-}
-```
-
-### 在同步上下文中：IO.Async.Run
-
-```kinal
-Static Function int Main()
-{
-    int value = IO.Async.Run(Compute());  // 同步等待异步任务结果
-    IO.Console.PrintLine(value);
-    Return 0;
-}
-```
-
-## 异步链式调用
-
-```kinal
-Async Function int StepOne()
-{
-    Return 40;
-}
-
-Async Function int StepTwo(int prev)
-{
-    Return prev + 2;
-}
-
-Async Function int Pipeline()
-{
-    int a = Await StepOne();
-    int b = Await StepTwo(a);
-    Return b;
-}
-
-Static Function int Main()
-{
-    int result = IO.Async.Run(Pipeline());
-    IO.Console.PrintLine(result);  // 42
-    Return 0;
-}
-```
-
-## IO.Async 标准库
-
-| 函数 | 签名 | 说明 |
-|------|------|------|
-| `IO.Async.Yield()` | `→ Task` | 让出执行权，异步调度器重执行 |
-| `IO.Async.Sleep(ms)` | `int → Task` | 异步等待指定毫秒 |
-| `IO.Async.Run(task)` | `Task → any` | 同步运行异步任务，获取结果 |
-
-### 进程管理（异步进程）
-
-```kinal
-Get IO.Async;
-
-Static Function int Main()
-{
-    byte* proc = IO.Async.Spawn("cmd /c echo hello");
-
-    // 非阻塞检查
-    IO.Console.PrintLine(IO.Async.IsCompleted(proc));
-
-    // 等待最多 3 秒
-    bool done = IO.Async.Wait(proc, 3000);
-
-    // 获取退出码
-    int code = IO.Async.ExitCode(proc);
-
-    // 关闭进程句柄
-    IO.Async.Close(proc);
-
-    Return 0;
-}
-```
-
-| 函数 | 签名 | 说明 |
-|------|------|------|
-| `IO.Async.Spawn(cmd)` | `string → byte*` | 启动子进程，返回进程句柄（`Trusted`） |
-| `IO.Async.IsCompleted(h)` | `byte* → bool` | 检查进程是否已结束（`Trusted`） |
-| `IO.Async.Wait(h, ms)` | `byte*, int → bool` | 等待进程，0 = 立即检查，-1 = 永久等待（`Trusted`） |
-| `IO.Async.ExitCode(h)` | `byte* → int` | 获取进程退出码（`Trusted`） |
-| `IO.Async.Close(h)` | `byte* → bool` | 释放进程句柄（`Trusted`） |
-
-> `Spawn`、`Wait` 等函数安全级别为 `Trusted`，调用它们的函数需要是 `Trusted` 或 `Unsafe`。
-
-## 完整示例
-
-```kinal
-Unit App.AsyncDemo;
-
+Unit Docs.AsyncEntry;
 Get IO.Console;
 Get IO.Async;
 
-Static Async Function int Fetch(int id)
+Async Function int Compute(int value)
 {
-    Await IO.Async.Sleep(10);  // 模拟网络延迟
+    Await IO.Async.Yield();
+    Await IO.Async.Sleep(1);
+    Return value + 1;
+}
+
+Static Async Function int Main()
+{
+    int result = Await Compute(41);
+    IO.Console.PrintLine(result); // 42
+    Return 0;
+}
+```
+
+完整程序同时导入 IO.Console 和 IO.Async。写限定标准库名称不能替代导入要求。
+
+## 从同步代码调用
+
+使用 `IO.Async.Run(task)` 同步等待，传入异步调用的结果，不是函数名：
+
+```kinal
+Unit Docs.AsyncPipeline;
+Get IO.Console;
+Get IO.Async;
+
+Async Function int Fetch(int id)
+{
+    Await IO.Async.Sleep(1);
     Return id * 100;
 }
 
-Static Async Function int Aggregate()
+Async Function int Aggregate()
 {
-    int a = Await Fetch(1);
-    int b = Await Fetch(2);
-    int c = Await Fetch(3);
-    Return a + b + c;
+    int first = Await Fetch(1);
+    int second = Await Fetch(2);
+    int third = Await Fetch(3);
+    Return first + second + third;
 }
 
 Static Function int Main()
 {
     int total = IO.Async.Run(Aggregate());
-    IO.Console.PrintLine(total);  // 600
+    IO.Console.PrintLine(total); // 600
     Return 0;
 }
 ```
 
-## 注意事项
+以上 Await 是顺序依赖，不是并发 fan-out API。IO.Async.Run 阻塞当前执行路径直至完成；内建声明的擦除结果为 any，受支持的源码调用可在分析时恢复异步函数的结果类型。
 
-1. **`Await` 只能在 `Async` 函数中使用** — 在普通函数中使用 `Await` 会产生编译错误
-2. **`IO.Async.Run` 是同步的** — 会阻塞调用线程直到任务完成
-3. **Async 函数返回 Task** — 其返回类型会被自动包装，调用方接收 `IO.Async.Task`
-4. **链式 Await** — 可以无限链式 Await，每次都等待前一个完成
+## 任务原语
 
-## 下一步
+| 函数 | 声明结果 | 用途 |
+|------|----------|------|
+| `IO.Async.Sleep(int ms)` | `IO.Async.Task` | 定时／等待任务 |
+| `IO.Async.Yield()` | `IO.Async.Task` | 协作让出任务 |
+| `IO.Async.Run(IO.Async.Task task)` | `any` | 同步完成任务并获得结果 |
 
-- [Block（代码块对象）](blocks.md)
-- [安全等级](safety.md)
-- [IO.Async 标准库](../stdlib/async.md)
+这些原语为 Safe。具体调度取决于后端／运行时，不能只从 Async 语法推导线程数、非阻塞系统调用或无限扩展能力。
+
+## Task 与进程句柄不同
+
+`IO.Async.Spawn(string command)` 启动**子进程**并返回 byte*，不会把任意 Kinal 函数作为任务启动。IsCompleted、Wait、ExitCode、Close 操作的是进程句柄。Spawn 传入命令字符串，不是函数对象。参见[IO.Async API](../stdlib/async.md)。
+
+进程句柄是需要 Close 的外部资源；托管 Task 具有不同表示和生命周期，不能互换，也不能把进程句柄传给 Run。
+
+## 后端与运行时要求
+
+VM 的 superloop／no-superloop 控制合适 For／While 模式的专用字节码循环融合，不负责开启或关闭语言 Task 实现。当前 C KNC 没有通用 Await 发射，也未映射 IO.Async.Run，因此以上程序必须使用 Native 路径构建。
+
+Freestanding 的任务／异常／分配支持需要目标运行时 hook，core-only 不提供 hosted 异步服务。参见[后端支持](../advanced/backend-support.md)、[VM CLI](../cli/vm.md)。
+
+## 错误处理与验证
+
+当前 Sema 拒绝 Try／Catch 内的 Await。需要恢复时，可在 Try／Catch 内使用受支持的同步 Run 边界，或将异步工作安排在处理区域之外。Async 声明不会把失败自动变成成功结果。应在声称支持的后端上验证输出和终止行为，语义检查不能代替调度执行。
+
+```bash
+kinal run async-demo.kn
+```
+
+## 相关文档
+
+- [IO.Async](../stdlib/async.md)
+- [函数](functions.md)
+- [异常](exceptions.md)
+- [Block](blocks.md)

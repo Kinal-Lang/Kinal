@@ -1,6 +1,7 @@
 Unit IO.Kinal.Compiler.Driver.PackageCommands;
 
 Get IO.Console;
+Get IO.Kinal.Compiler.Driver.CliOutput;
 Get IO.Directory;
 Get IO.File;
 Get IO.Path;
@@ -12,25 +13,12 @@ Get IO.Kinal.Compiler.Project.KlibWriter;
 
 Safe Function void Help(string command)
 {
-    If (command == "build")
-    {
-        IO.Console.PrintLine("Usage: kinal-selfhost pkg build --manifest <file|dir> [-o <output.klib>]");
-        IO.Console.PrintLine("       kinal-selfhost pkg build --manifest <file|dir> --layout <dir>");
-    }
-    ElseIf (command == "info") IO.Console.PrintLine("Usage: kinal-selfhost pkg info <file.klib>");
-    ElseIf (command == "unpack") IO.Console.PrintLine("Usage: kinal-selfhost pkg unpack <file.klib> [-o <dir>]");
-    Else
-    {
-        IO.Console.PrintLine("Usage: kinal-selfhost pkg <subcommand> [options] [args...]");
-        IO.Console.PrintLine("  build   Build a .klib from a package manifest");
-        IO.Console.PrintLine("  info    Show .klib metadata");
-        IO.Console.PrintLine("  unpack  Extract a .klib into a directory");
-    }
+    IO.Kinal.Compiler.Driver.CliOutput.Help(command == "" ? "pkg" : "pkg " + command);
 }
 
 Safe Function int Failure(string message)
 {
-    IO.Console.PrintLine("[Package] " + message);
+    IO.Kinal.Compiler.Driver.CliOutput.Line(message);
     Return 1;
 }
 
@@ -126,7 +114,7 @@ Trusted Function int Build(string manifestInput, string output, string layout)
         string wrapper = IO.Path.Combine(packageDirectory, "package.knpkg.json");
         If (!IO.File.WriteAllText(wrapper, LayoutManifest(manifest, version)))
             Return Failure("failed to write emitted package manifest: " + wrapper);
-        IO.Console.PrintLine("[Package] emitted local package: " + packageDirectory);
+        IO.Kinal.Compiler.Driver.CliOutput.Line("[Package] emitted local package: " + packageDirectory);
     }
     Return 0;
 }
@@ -138,15 +126,15 @@ Trusted Function int Info(string input)
     bool ok = archive.ReadInfo();
     If (ok)
     {
-        IO.Console.PrintLine("[Klib]");
-        IO.Console.PrintLine("  File: " + input);
-        IO.Console.PrintLine("  Compiler: " +
+        IO.Kinal.Compiler.Driver.CliOutput.Line("[Klib]");
+        IO.Kinal.Compiler.Driver.CliOutput.Line("  File: " + input);
+        IO.Kinal.Compiler.Driver.CliOutput.Line("  Compiler: " +
             (IO.Text.IsEmpty(archive.CompilerPath) ? "<unknown>" : archive.CompilerPath));
-        IO.Console.PrintLine("  Sources: " + [string](archive.SourceCount));
-        IO.Console.PrintLine("  SourceBytes: " + [string](archive.SourceBytes));
+        IO.Kinal.Compiler.Driver.CliOutput.Line("  Sources: " + [string](archive.SourceCount));
+        IO.Kinal.Compiler.Driver.CliOutput.Line("  SourceBytes: " + [string](archive.SourceBytes));
     }
     archive.Dispose();
-    Return ok ? 0 : Failure("invalid klib: " + input + ": " + archive.Error);
+    Return ok ? 0 : Failure("invalid klib: " + input);
 }
 
 Trusted Function int Unpack(string input, string output)
@@ -160,7 +148,7 @@ Trusted Function int Unpack(string input, string output)
         If (IO.Text.IsEmpty(output)) output = "klib-extract";
     }
     KlibArchive archive = New KlibArchive(input);
-    If (!archive.ExtractTo(output)) Return Failure("failed to extract klib: " + archive.Error);
+    If (!archive.ExtractTo(output)) Return Failure("failed to extract klib");
     Return 0;
 }
 
@@ -171,7 +159,7 @@ Trusted Function int Run(string[] args)
     If (command == "--help" || command == "-h") { Help(""); Return 0; }
     If (command != "build" && command != "info" && command != "unpack")
     {
-        IO.Console.PrintLine("unknown pkg subcommand: " + command);
+        IO.Kinal.Compiler.Driver.CliOutput.Line("unknown pkg subcommand: " + command);
         Help("");
         Return 2;
     }
@@ -190,7 +178,7 @@ Trusted Function int Run(string[] args)
         {
             If (index + 1 >= args.Length())
             {
-                IO.Console.PrintLine("missing value for " + arg);
+                IO.Kinal.Compiler.Driver.CliOutput.Line("unknown option: " + arg);
                 Return 2;
             }
             index = index + 1;
@@ -200,17 +188,17 @@ Trusted Function int Run(string[] args)
         }
         ElseIf (IO.Text.StartsWith(arg, "-") && arg != "-")
         {
-            IO.Console.PrintLine("unknown option: " + arg);
+            IO.Kinal.Compiler.Driver.CliOutput.Line("unknown option: " + arg);
             Return 2;
         }
         ElseIf (command == "build")
         {
-            IO.Console.PrintLine("unexpected argument: " + arg);
+            IO.Kinal.Compiler.Driver.CliOutput.Line("unexpected argument: " + arg);
             Return 2;
         }
         ElseIf (!IO.Text.IsEmpty(input))
         {
-            IO.Console.PrintLine("expected exactly one .klib file");
+            IO.Kinal.Compiler.Driver.CliOutput.Line("expected exactly one .klib file");
             Return 2;
         }
         Else input = arg;

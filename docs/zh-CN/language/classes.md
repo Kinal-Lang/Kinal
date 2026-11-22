@@ -53,6 +53,24 @@ Class Config
 }
 ```
 
+## 属性
+
+属性可以只声明 `Get`、只声明 `Set`，也可以同时声明两者。在 `Set` 中通过 `value` 取得赋入的值。
+
+```kinal
+Class Meter
+{
+    Private int count;
+    Public Property int Reading { Get { Return count; } }
+    Public Property int ResetTo { Set { count = value; } }
+    Public Property int Level { Get { Return count; } Set { count = value; } }
+}
+```
+
+执行 `meter.ResetTo = 42` 会调用一次 `Set`，随后读取 `meter.Reading` 得到 42。`meter.Level += step` 这样的复合赋值需要两个访问器。编译器对接收对象求值一次，然后依次调用 `Get`、计算 `step`、调用 `Set`。
+
+对于可读写的数值属性，`meter.Level++` 返回递增前的值，`++meter.Level` 返回递增后的值。递减遵循相同规则。在 `GetMeter().Level++` 中，Kinal 只调用一次 `GetMeter()`，随后在同一个对象上依次调用一次 `Get` 和一次 `Set`。
+
 ## 访问控制
 
 | 修饰符 | 说明 |
@@ -79,9 +97,9 @@ Class Account
 
 ## 构造函数
 
-### 命名构造函数
+### 旧式命名构造语法
 
-函数名与类名相同的方法自动成为构造函数：
+旧式 Function ClassName(...) 写法仍可用，但会产生 W-SYN-00002。新代码优先使用下一节的 Constructor 关键字：
 
 ```kinal
 Class Counter
@@ -257,7 +275,12 @@ Class Dog By Animal
 ### 调用父类成员：`Base`
 
 ```kinal
-Class Derived By Base
+Class ParentClass
+{
+    Public Virtual Function string Describe() { Return "parent"; }
+}
+
+Class Derived By ParentClass
 {
     Public Override Function string Describe()
     {
@@ -328,7 +351,7 @@ Class Container
     Enum State { Empty, Loading, Ready }
 
     // 使用嵌套类型
-    Public Iterator GetIterator()
+    Public Function Iterator GetIterator()
     {
         Return New Iterator();
     }
@@ -394,3 +417,5 @@ Static Safe Function int Main(string[] args)
 - [结构体与枚举](structs-enums.md)
 - [安全等级](safety.md)
 
+
+类使用共享引用；静态字段属于类本身。受检查的向下转换与自定义 Cast 方法参见[运算符](operators.md)。本页接口分派示例面向 Native，VM 限制参见[后端支持](../advanced/backend-support.md)。类声明不保证 C ABI 布局。

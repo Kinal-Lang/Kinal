@@ -1,0 +1,291 @@
+Unit IO.Kinal.Compiler.Metrics.SyntaxMetrics;
+
+Get IO.Text;
+Get IO.Path;
+Get IO.Host;
+Get IO.Kinal.Compiler.Core.CompileSession;
+Get IO.Kinal.Compiler.Metrics.Model;
+Get IO.Kinal.Compiler.Syntax.Nodes;
+Get IO.Kinal.Compiler.Syntax.SyntaxTree;
+Get IO.Kinal.Compiler.Lex.Token;
+Get IO.Kinal.Compiler.Lex.TokenKind;
+
+Safe Function string PathKey(string path)
+{
+    string value = IO.Path.Normalize(path);
+    Return IO.Host.OS == IO.Host.OS.Windows ? IO.Text.ToLower(value) : value;
+}
+
+Safe Function string DisplayPath(string root, string path)
+{
+    string prefix = IO.Text.Replace(IO.Path.Normalize(root), "\\", "/");
+    string value = IO.Text.Replace(IO.Path.Normalize(path), "\\", "/");
+    If (!IO.Text.EndsWith(prefix, "/")) prefix = prefix + "/";
+    If (IO.Text.StartsWith(PathKey(value), PathKey(prefix)))
+        Return IO.Text.Slice(value, IO.Text.Length(prefix), IO.Text.Length(value) - IO.Text.Length(prefix));
+    Return value;
+}
+
+Safe Function void Nest(MetricFunction function, int depth)
+{
+    If (depth > function.Counts.Nesting) function.Counts.Nesting = depth;
+}
+
+Safe Function void Decision(MetricFunction function, int depth)
+{
+    function.Counts.Decisions++;
+    function.Counts.Cognitive = function.Counts.Cognitive + 1 + depth;
+    Nest(function, depth + 1);
+}
+
+Class LogicalSequence
+{
+    Public TokenKind Previous;
+    Public Safe Constructor() { This.Previous = TokenKind.Eof; }
+}
+
+Safe Function bool IsLogical(ExpressionNode expression)
+{
+    Return expression != null && expression.Kind == [int](ExpressionKind.Binary) &&
+        (expression.Operator == TokenKind.AndAnd || expression.Operator == TokenKind.OrOr);
+}
+
+Safe Function void WalkLogical(MetricReport report, MetricFunction function,
+                               ExpressionNode expression, int depth, LogicalSequence sequence)
+{
+    If (!IsLogical(expression)) { WalkExpression(report, function, expression, depth); Return; }
+    WalkLogical(report, function, expression.Left, depth, sequence);
+    function.Counts.Decisions++;
+    function.Counts.LogicalOperators++;
+    If (sequence.Previous != expression.Operator) function.Counts.Cognitive++;
+    sequence.Previous = expression.Operator;
+    WalkLogical(report, function, expression.Right, depth, sequence);
+}
+
+Safe Function void Register(MetricReport report, MetricFunction function)
+{
+    function.Id = IO.Kinal.Compiler.Metrics.Model.FunctionKey(function.File.Path, function.Line, function.Column);
+    report.Functions.Add(function);
+    function.File.Functions.Add(function);
+    report.FunctionMap.Set(IO.Kinal.Compiler.Metrics.Model.FunctionKey(PathKey(function.File.Unit.Source.Path), function.Line, function.Column), function);
+}
+
+Safe Function void WalkExpression(MetricReport report, MetricFunction function,
+                                  ExpressionNode expression, int depth)
+{
+    If (expression == null) Return;
+    int kind = expression.Kind;
+    If (kind == [int](ExpressionKind.FunctionLiteral) || kind == [int](ExpressionKind.BlockLiteral))
+    {
+        MetricFunction nested = New MetricFunction();
+        nested.File = function.File;
+        nested.Kind = kind == [int](ExpressionKind.BlockLiteral) ? "block" : "lambda";
+        nested.Name = function.Name + ".<" + nested.Kind + "@" + IO.Kinal.Compiler.Metrics.Model.SiteKey(expression.Line, expression.Column) + ">";
+        nested.Parent = function.Id;
+        nested.Owner = function.Owner;
+        nested.Literal = expression;
+        nested.Line = expression.Line; nested.Column = expression.Column;
+        nested.StartLine = expression.Line; nested.StartColumn = expression.Column;
+        nested.EndLine = expression.EndLine; nested.EndColumn = expression.EndColumn;
+        nested.HasBody = true;
+        nested.Safety = function.Safety;
+        nested.Counts.Parameters = expression.ArgumentCount();
+        Register(report, nested);
+        function.Children.Add(nested);
+        WalkStatements(report, nested, expression.Body, 0);
+        nested.Cyclomatic = 1 + nested.Counts.Decisions;
+        Return;
+    }
+    If (IsLogical(expression))
+    { WalkLogical(report, function, expression, depth, New LogicalSequence()); Return; }
+    If (kind == [int](ExpressionKind.Conditional))
+    {
+        Decision(function, depth);
+        WalkExpression(report, function, expression.Left, depth);
+        WalkExpression(report, function, expression.Right, depth + 1);
+        WalkExpression(report, function, expression.Third, depth + 1);
+        Return;
+    }
+    If (kind == [int](ExpressionKind.Switch))
+    {
+        function.Counts.Switches++;
+        function.Counts.Cognitive = function.Counts.Cognitive + depth + 1;
+        Nest(function, depth + 1);
+        WalkExpression(report, function, expression.Left, depth);
+        ExpressionNode item = expression.FirstArgument;
+        While (item != null)
+        {
+            function.Counts.Cases++;
+            If (item.Text != "default") function.Counts.Decisions++;
+            WalkExpression(report, function, item.Left, depth);
+            WalkExpression(report, function, item.Right, depth + 1);
+            WalkStatements(report, function, item.Body, depth + 1);
+            item = item.Next;
+        }
+        Return;
+    }
+    If (kind == [int](ExpressionKind.Call) || kind == [int](ExpressionKind.NewObject))
+    {
+        function.Counts.Calls++;
+        function.SourceExpressions.Add(expression);
+        function.SourceCallSites.Add(IO.Kinal.Compiler.Metrics.Model.SiteKey(expression.Line, expression.Column));
+    }
+    If (kind == [int](ExpressionKind.NewObject) || kind == [int](ExpressionKind.ArrayLiteral) ||
+        kind == [int](ExpressionKind.DictLiteral)) function.Counts.Allocations++;
+    If (kind == [int](ExpressionKind.Unary) && expression.Operator == TokenKind.KwAwait)
+        function.Counts.Awaits++;
+    WalkExpression(report, function, expression.Left, depth);
+    WalkExpression(report, function, expression.Right, depth);
+    WalkExpression(report, function, expression.Third, depth);
+    ExpressionNode argument = expression.FirstArgument;
+    While (argument != null)
+    { WalkExpression(report, function, argument, depth); argument = argument.Next; }
+    WalkStatements(report, function, expression.Body, depth);
+}
+
+Safe Function void WalkStatements(MetricReport report, MetricFunction function,
+                                  StatementNode statement, int depth)
+{
+    While (statement != null)
+    {
+        int kind = statement.Kind;
+        If (kind != [int](StatementKind.Block) && kind != [int](StatementKind.Empty) &&
+            kind != [int](StatementKind.Case) && kind != [int](StatementKind.Record)) function.Counts.Statements++;
+        int childDepth = depth;
+        If (kind == [int](StatementKind.If) || kind == [int](StatementKind.While) ||
+            kind == [int](StatementKind.For) || kind == [int](StatementKind.Foreach))
+        {
+            Decision(function, depth); childDepth++;
+            If (kind != [int](StatementKind.If)) function.Counts.Loops++;
+        }
+        If (kind == [int](StatementKind.Switch))
+        {
+            function.Counts.Switches++;
+            function.Counts.Cognitive = function.Counts.Cognitive + depth + 1;
+            childDepth++; Nest(function, childDepth);
+        }
+        If (kind == [int](StatementKind.Case))
+        { function.Counts.Cases++; If (statement.Name != "default") function.Counts.Decisions++; }
+        If (kind == [int](StatementKind.Variable) || kind == [int](StatementKind.Foreach)) function.Counts.Locals++;
+        If (kind == [int](StatementKind.Return)) function.Counts.Returns++;
+        If (kind == [int](StatementKind.Throw)) function.Counts.Throws++;
+        If (kind == [int](StatementKind.Break)) function.Counts.Breaks++;
+        If (kind == [int](StatementKind.Continue)) function.Counts.Continues++;
+        If (kind == [int](StatementKind.Record)) function.Counts.Records++;
+        If (kind == [int](StatementKind.Jump)) { function.Counts.Jumps++; function.Counts.Cognitive++; }
+        If (kind == [int](StatementKind.UnsafeBlock) && statement.IsUnsafe) function.Counts.UnsafeBlocks++;
+        WalkExpression(report, function, statement.Expression, depth);
+        WalkExpression(report, function, statement.SecondExpression, depth);
+        WalkExpression(report, function, statement.ThirdExpression, depth);
+        WalkStatements(report, function, statement.Initializer, depth);
+        WalkStatements(report, function, statement.FirstChild, childDepth);
+        If (kind == [int](StatementKind.Try) && statement.ElseBranch != null)
+        {
+            function.Counts.Catches++; Decision(function, depth);
+            If (!IO.Text.IsEmpty(statement.ElseBranch.Name)) function.Counts.Locals++;
+            WalkStatements(report, function, statement.ElseBranch.FirstChild, depth + 1);
+        }
+        ElseIf (kind == [int](StatementKind.If) && statement.ElseBranch != null)
+        {
+            If (statement.ElseBranch.Kind == [int](StatementKind.If))
+            {
+                // ElseIf contributes a decision but does not pay the outer nesting penalty.
+                function.Counts.Cognitive = function.Counts.Cognitive - depth;
+                WalkStatements(report, function, statement.ElseBranch, depth);
+            }
+            Else { function.Counts.Cognitive++; WalkStatements(report, function, statement.ElseBranch, depth + 1); }
+        }
+        Else WalkStatements(report, function, statement.ElseBranch, depth);
+        statement = statement.Next;
+    }
+}
+
+Safe Function void AddDeclaration(MetricReport report, MetricFile file, FunctionDecl declaration, string owner)
+{
+    MetricFunction function = New MetricFunction();
+    function.File = file; function.Declaration = declaration; function.Owner = owner;
+    function.Name = (IO.Text.IsEmpty(owner) ? file.Unit.Syntax.UnitName : owner) + "." + declaration.Name;
+    function.Kind = IO.Text.IsEmpty(owner) ? "function" : "method";
+    If (declaration.IsConstructor) function.Kind = "constructor";
+    If (IO.Text.StartsWith(declaration.Name, "__get_") || IO.Text.StartsWith(declaration.Name, "__set_")) function.Kind = "accessor";
+    function.Line = declaration.Line; function.Column = declaration.Column;
+    function.StartLine = declaration.StartLine; function.StartColumn = declaration.StartColumn;
+    function.EndLine = declaration.EndLine; function.EndColumn = declaration.EndColumn;
+    function.HasBody = declaration.Body != null;
+    function.Generic = declaration.FirstTypeParameter != null;
+    function.IsExtern = declaration.IsExtern;
+    function.IsAsync = declaration.IsAsync;
+    function.Safety = declaration.Safety;
+    Register(report, function);
+    ParameterDecl parameter = declaration.FirstParameter;
+    While (parameter != null)
+    {
+        function.Counts.Parameters++;
+        WalkExpression(report, function, parameter.DefaultValue, 0);
+        parameter = parameter.Next;
+    }
+    WalkStatements(report, function, declaration.Body, 0);
+    function.Cyclomatic = function.HasBody ? 1 + function.Counts.Decisions : 0;
+}
+
+Safe Function void AddInitializer(MetricReport report, MetricFile file, FieldDecl field, string owner)
+{
+    If (field.Initializer == null) Return;
+    MetricFunction function = New MetricFunction();
+    function.File = file; function.Owner = owner; function.Kind = "initializer";
+    function.Name = (IO.Text.IsEmpty(owner) ? file.Unit.Syntax.UnitName : owner) + "." + field.Name + ".<initializer>";
+    function.Line = field.Line; function.Column = field.Column;
+    function.StartLine = field.Line; function.StartColumn = field.Column;
+    // Initializers have structural metrics; no invented lexical declaration endpoint.
+    function.EndLine = field.Line; function.EndColumn = field.Column;
+    function.HasBody = true;
+    Register(report, function);
+    WalkExpression(report, function, field.Initializer, 0);
+    function.Cyclomatic = 1 + function.Counts.Decisions;
+}
+
+Safe Function void AnalyzeSyntax(MetricReport report, CompilationUnit unit, bool dependency)
+{
+    MetricFile file = New MetricFile();
+    file.Unit = unit; file.Path = DisplayPath(report.Root, unit.Source.Path); file.Dependency = dependency;
+    file.Imports = unit.Syntax.ImportCount(); file.Globals = unit.Syntax.GlobalCount();
+    report.Files.Add(file); report.FileMap.Set(PathKey(unit.Source.Path), file);
+    ImportDecl import = unit.Syntax.FirstImport;
+    While (import != null) { file.Dependencies.Add(import.Target); import = import.Next; }
+    FunctionDecl function = unit.Syntax.FirstFunction;
+    While (function != null) { AddDeclaration(report, file, function, ""); function = function.Next; }
+    FieldDecl global = unit.Syntax.FirstGlobal;
+    While (global != null) { AddInitializer(report, file, global, ""); global = global.Next; }
+    TypeDecl type = unit.Syntax.FirstType;
+    While (type != null)
+    {
+        MetricType item = New MetricType();
+        item.File = file; item.Declaration = type; item.Name = unit.Syntax.UnitName + "." + type.Name;
+        item.Line = type.Line; item.Fields = type.FieldCount(); item.Methods = type.MethodCount();
+        item.Kind = type.Kind == TokenKind.KwClass ? "class" : type.Kind == TokenKind.KwInterface ? "interface" :
+            type.Kind == TokenKind.KwStruct ? "struct" : "enum";
+        report.Types.Add(item); file.Types.Add(item); report.TypeMap.Set(item.Name, item);
+        FunctionDecl method = type.FirstMethod;
+        While (method != null) { AddDeclaration(report, file, method, item.Name); method = method.Next; }
+        FieldDecl field = type.FirstField;
+        While (field != null) { AddInitializer(report, file, field, item.Name); field = field.Next; }
+        type = type.Next;
+    }
+}
+
+Safe Function MetricReport Collect(CompileSession session, dict projectPaths, bool dependencies)
+{
+    MetricReport report = New MetricReport();
+    report.Session = session; report.Root = session.Project.RootDirectory;
+    report.Profile = session.Profile.Name; report.Mode = session.Profile.Mode;
+    report.IncludeDependencies = dependencies;
+    CompilationUnit unit = session.FirstUnit;
+    While (unit != null)
+    {
+        bool dependency = !projectPaths.Contains(PathKey(unit.Source.Path));
+        If (!dependency || dependencies) AnalyzeSyntax(report, unit, dependency);
+        Else report.ExcludedFiles++;
+        unit = unit.Next;
+    }
+    Return report;
+}

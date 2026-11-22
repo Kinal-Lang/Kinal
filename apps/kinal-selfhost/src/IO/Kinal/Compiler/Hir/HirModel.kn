@@ -27,7 +27,8 @@ Enum HirExpressionKind By int
     DictEntry,
     Switch,
     SwitchCase,
-    PackageLiteral
+    PackageLiteral,
+    PropertyAccess
 }
 
 Enum HirCallKind By int
@@ -52,14 +53,19 @@ Class HirExpression
     Public TypeSymbol OperandType;
     Public ValueSymbol Symbol;
     Public FunctionSymbol Function;
+    Public FunctionSymbol PropertySetter;
     Public string Name;
     Public string Target;
     Public TokenKind Operator;
     Public bool HasPrimaryError;
+    Public bool HasArrayStorageBound;
+    // One-based hint into a Native function's root table. Zero means unseen.
+    Public i32 NativeRootHint;
     Public HirExpression Left;
     Public HirExpression Right;
     Public HirExpression Third;
     Public HirExpression FirstArgument;
+    Private HirExpression LastArgument;
     Public HirExpression Next;
 
     Public Safe Constructor(int kind, ExpressionNode syntax, TypeSymbol type)
@@ -80,19 +86,26 @@ Class HirExpression
         This.Right = null;
         This.Third = null;
         This.FirstArgument = null;
+        This.LastArgument = null;
         This.Next = null;
     }
 
     Public Safe Function void AddArgument(HirExpression argument)
     {
-        If (This.FirstArgument == null)
-        {
-            This.FirstArgument = argument;
-            Return;
-        }
-        HirExpression current = This.FirstArgument;
-        While (current.Next != null) current = current.Next;
-        current.Next = argument;
+        If (argument == null) Return;
+        If (This.LastArgument == null) This.FirstArgument = argument;
+        Else This.LastArgument.Next = argument;
+        // A reused operand can already head a chain of arguments.
+        This.LastArgument = argument;
+        While (This.LastArgument.Next != null) This.LastArgument = This.LastArgument.Next;
+    }
+
+    Public Safe Function HirExpression TakeArguments()
+    {
+        HirExpression first = This.FirstArgument;
+        This.FirstArgument = null;
+        This.LastArgument = null;
+        Return first;
     }
 }
 
@@ -172,7 +185,9 @@ Class HirModule
 {
     Public string UnitName;
     Public HirGlobal FirstGlobal;
+    Private HirGlobal LastGlobal;
     Public HirFunction FirstFunction;
+    Private HirFunction LastFunction;
     Public HirModule Next;
 
     Public Safe Constructor(string unitName)
@@ -185,21 +200,66 @@ Class HirModule
 
     Public Safe Function void AddGlobal(HirGlobal global)
     {
-        If (This.FirstGlobal == null) { This.FirstGlobal = global; Return; }
-        HirGlobal current = This.FirstGlobal;
-        While (current.Next != null) current = current.Next;
-        current.Next = global;
+        If (This.LastGlobal == null) This.FirstGlobal = global;
+        Else This.LastGlobal.Next = global;
+        This.LastGlobal = global;
     }
 
     Public Safe Function void AddFunction(HirFunction function)
     {
-        If (This.FirstFunction == null)
+        If (This.LastFunction == null) This.FirstFunction = function;
+        Else This.LastFunction.Next = function;
+        This.LastFunction = function;
+    }
+}
+
+// Both backends index the completed HIR without changing module or declaration order.
+Class HirDefinitionIndex
+{
+    Private list Functions;
+    Private list Globals;
+
+    Public Safe Constructor(HirModule module, int functionCount, int globalCount)
+    {
+        This.Functions = list.Create();
+        This.Globals = list.Create();
+        For (int functionIndex = 0; functionIndex < functionCount; functionIndex++) This.Functions.Add(null);
+        For (int globalIndex = 0; globalIndex < globalCount; globalIndex++) This.Globals.Add(null);
+        While (module != null)
         {
-            This.FirstFunction = function;
-            Return;
+            HirFunction function = module.FirstFunction;
+            While (function != null)
+            {
+                int index = function.Symbol.RegistrationIndex;
+                If (index >= 0 && index < functionCount && [HirFunction](This.Functions.Fetch(index)) == null)
+                    This.Functions.Set(index, function);
+                function = function.Next;
+            }
+            HirGlobal global = module.FirstGlobal;
+            While (global != null)
+            {
+                int index = global.Symbol.Value.GlobalIndex;
+                If (index >= 0 && index < globalCount && [HirGlobal](This.Globals.Fetch(index)) == null)
+                    This.Globals.Set(index, global);
+                global = global.Next;
+            }
+            module = module.Next;
         }
-        HirFunction current = This.FirstFunction;
-        While (current.Next != null) current = current.Next;
-        current.Next = function;
+    }
+
+    Public Safe Function HirFunction FindFunction(FunctionSymbol symbol)
+    {
+        If (symbol == null || symbol.RegistrationIndex < 0 || symbol.RegistrationIndex >= This.Functions.Count())
+            Return null;
+        HirFunction function = [HirFunction](This.Functions.Fetch(symbol.RegistrationIndex));
+        Return function != null && function.Symbol == symbol ? function : null;
+    }
+
+    Public Safe Function HirExpression FindInitializer(GlobalSymbol symbol)
+    {
+        If (symbol == null || symbol.Value.GlobalIndex < 0 || symbol.Value.GlobalIndex >= This.Globals.Count())
+            Return null;
+        HirGlobal global = [HirGlobal](This.Globals.Fetch(symbol.Value.GlobalIndex));
+        Return global != null && global.Symbol == symbol ? global.Initializer : null;
     }
 }

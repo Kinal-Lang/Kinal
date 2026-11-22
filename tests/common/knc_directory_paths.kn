@@ -1,0 +1,39 @@
+Unit Tests.DirectoryPaths;
+Get IO.Console;
+Get IO.Directory;
+Get IO.File;
+Get IO.Path;
+Get IO.Target;
+Get IO.Text;
+
+Static Function int Main()
+{
+    string parent = "fs-雪";
+    string nested = IO.Path.Join3(parent, "sub", "leaf");
+    string cwd = IO.Path.CurrentDirectory();
+    If (!IO.Directory.Exists(cwd) || IO.Path.Cwd() != cwd) Return 1;
+    If (IO.Path.Normalize(null) != "" || IO.Path.Normalize("a/..") != ".") Return 2;
+    If (IO.Path.Normalize("../a/../..") != IO.Path.Combine("..", "..")) Return 3;
+    If (IO.Path.Normalize("a//./é/../📂") != IO.Path.Combine("a", "📂")) Return 4;
+    string path = IO.Path.Join4("one", "two", "three", "雪.tar.gz");
+    If (IO.Path.FileName(path) != "雪.tar.gz" || IO.Path.Extension(path) != "gz" ||
+        IO.Path.BaseName(path) != "雪.tar" || IO.Path.Stem(".config") != ".config") Return 14;
+    If (!IO.Path.HasExtension(path) || !IO.Path.IsRelative(path) || !IO.Path.IsAbsolute(cwd)) Return 15;
+    If (IO.Path.FileName(IO.Path.ChangeExtension(path, ".txt")) != "雪.tar.txt" ||
+        IO.Path.Join(IO.Path.EnsureTrailingSeparator("one"), "two") != IO.Path.Combine("one", "two")) Return 16;
+    If (IO.Target.OS == IO.Target.OS.Windows)
+    {
+        If (IO.Path.Normalize("C:dir/../../note") != "C:..\\note") Return 5;
+        If (IO.Path.Normalize("//server/share/a/../../x") != "\\\\server\\share\\x") Return 6;
+        If (IO.Text.Slice(cwd, 1, 1) == ":" && !IO.Directory.Exists(IO.Text.Slice(cwd, 0, 3))) Return 7;
+    }
+    Else If (IO.Path.Normalize("/../../a") != "/a") Return 8;
+    If (!IO.Directory.Create(parent) || IO.Directory.Create(parent)) Return 9;
+    If (IO.Directory.Exists("fs-*") || !IO.Directory.Ensure(nested) || !IO.Directory.Ensure(nested)) Return 10;
+    string file = IO.Path.Combine(nested, "note.txt");
+    If (!IO.File.WriteAllText(file, "ok") || IO.Directory.Exists(file) || IO.Directory.Delete(nested)) Return 11;
+    If (!IO.File.Delete(file) || !IO.Directory.Delete(nested) || !IO.Directory.DeleteIfExists(nested)) Return 12;
+    If (!IO.Directory.Delete(IO.Path.Parent(nested)) || !IO.Directory.Delete(parent)) Return 13;
+    IO.Console.PrintLine("ok");
+    Return 0;
+}

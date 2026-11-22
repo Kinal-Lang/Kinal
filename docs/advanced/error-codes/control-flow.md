@@ -2,7 +2,7 @@
 
 Diagnostics related to control-flow rules such as `Return`, `Throw`, `Break`, and `Continue`.
 
-The examples in this document are minimal reproductions of the most common way each diagnostic code is triggered. A few diagnostics that are more implementation-oriented use the closest surface-level form that user code can express.
+This page records the registered templates. Corrected examples show the supported form. A trigger sketch illustrates a rule or parser state and may require surrounding declarations or report an earlier/different diagnostic in the current C compiler.
 
 ---
 
@@ -221,7 +221,7 @@ Fix: Make all branches return explicitly, or change the method to `void`.
 - Default Detail: Return not allowed here
 - Description: `Return` cannot be written directly outside a function or method.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
 Return 0;
@@ -308,7 +308,7 @@ Fix: Remove the return value, or change the function signature to the specific t
 - Default Detail: Throw not allowed here
 - Description: `Throw` cannot be written directly outside a function or method.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
 Throw "boom";

@@ -30,7 +30,7 @@ Static Function string[] OpcodeNames()
             "LoopArraySumIntLeInc", "LoopSumIntLtInc", "LoopSumIntLeInc", "AddIntImm", "SubIntImm",
             "MulIntImm", "DivIntImm", "LtIntImm", "LeIntImm", "GtIntImm", "GeIntImm",
             "BitAndIntImm", "BitOrIntImm", "BitXorIntImm", "ShlIntImm", "ShrIntImm", "UDivInt",
-            "URemInt", "ULtInt", "ULeInt", "UGtInt", "UGeInt", "LShrInt", "FloatToF32", "IntToF32"
+            "URemInt", "ULtInt", "ULeInt", "UGtInt", "UGeInt", "LShrInt", "FloatToF32", "IntToF32", "CallRange", "UIntToFloat"
         };
     }
 
@@ -128,8 +128,17 @@ Static Function string Instruction(IO.Kinal.VM.Bytecode.Program program,
                  op <= [int](IO.Kinal.VM.Bytecode.OpCode.StorePtr)) ||
                 (op >= [int](IO.Kinal.VM.Bytecode.OpCode.IntToFloat) &&
                  op <= [int](IO.Kinal.VM.Bytecode.OpCode.FloatToBool)) ||
-                op == [int](IO.Kinal.VM.Bytecode.OpCode.FloatToF32))
+                op == [int](IO.Kinal.VM.Bytecode.OpCode.FloatToF32) ||
+                op == [int](IO.Kinal.VM.Bytecode.OpCode.UIntToFloat))
             operands = Register([int](code[pc + 1])) + ", " + Register([int](code[pc + 2]));
+        ElseIf (op == [int](IO.Kinal.VM.Bytecode.OpCode.CallRange))
+        {
+            int kind = [int](code[pc + 2]);
+            int target = IO.Kinal.VM.Bytecode.Program.ReadU16(code, pc + 3);
+            string name = kind == 0 ? "function#" + [string](target) :
+                kind == 1 ? "slot#" + [string](target) : kind == 3 ? "builtin#" + [string](target) : Register(target);
+            operands = Register([int](code[pc + 1])) + ", " + name + ", " + Register([int](code[pc + 5])) + " count=" + [string](code[pc + 6]);
+        }
         ElseIf (op == [int](IO.Kinal.VM.Bytecode.OpCode.IntToF32))
             operands = Register([int](code[pc + 1])) + ", " + Register([int](code[pc + 2])) +
                 ", " + ([int](code[pc + 3]) == 0 ? "signed" : "unsigned");

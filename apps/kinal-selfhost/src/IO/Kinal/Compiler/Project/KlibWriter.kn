@@ -2,21 +2,13 @@ Unit IO.Kinal.Compiler.Project.KlibWriter;
 
 Get IO.Directory;
 Get IO.File;
+Get IO.Kinal.Compiler.Core.NativeIO;
 Get IO.Path;
 Get IO.Text;
 Get IO.Kinal.Runtime;
 Get IO.Kinal.Runtime.Native;
 Get IO.Kinal.Compiler.Source.SourcePath;
 Get IO.Kinal.Compiler.Project.PackageManifest;
-
-[LinkName("fopen")]
-Extern Unsafe Function byte* OpenFile(string path, string mode) By C;
-[LinkName("fclose")]
-Extern Unsafe Function i32 CloseFile(byte* file) By C;
-[LinkName("fread")]
-Extern Unsafe Function usize ReadBytes(byte[] buffer, usize size, usize count, byte* file) By C;
-[LinkName("fwrite")]
-Extern Unsafe Function usize WriteBytes(byte[] buffer, usize size, usize count, byte* file) By C;
 
 // KNKLIB1 policy, layout, byte counts and serialization are Kinal-owned.
 // The C ABI leaves provide only buffered file I/O, as for VM executable packs.
@@ -96,7 +88,7 @@ Class KlibWriter
             bytes[index] = [byte]((value >> (index * 8)) & [u64](255));
             index = index + 1;
         }
-        Return WriteBytes(bytes, [usize](1), [usize](count), output) == [usize](count);
+        Return IO.Kinal.Compiler.Core.NativeIO.WriteBytes(bytes, [usize](1), [usize](count), output) == [usize](count);
     }
 
     Public Trusted Function bool WriteText(byte* output, string text)
@@ -114,7 +106,7 @@ Class KlibWriter
                 buffer[index] = [byte](characters[offset + index]);
                 index = index + 1;
             }
-            If (WriteBytes(buffer, [usize](1), [usize](count), output) != [usize](count))
+            If (IO.Kinal.Compiler.Core.NativeIO.WriteBytes(buffer, [usize](1), [usize](count), output) != [usize](count))
                 Return false;
             offset = offset + count;
         }
@@ -123,7 +115,7 @@ Class KlibWriter
 
     Public Trusted Function bool CopyFile(byte* output, string path, int expected)
     {
-        byte* input = OpenFile(path, "rb");
+        byte* input = IO.Kinal.Compiler.Core.NativeIO.OpenFile(path, "rb");
         If (input == null) Return This.Fail("cannot open package file: " + path);
         byte[65536] buffer;
         int total = 0;
@@ -132,11 +124,11 @@ Class KlibWriter
         {
             int count = expected - total;
             If (count > 65536) count = 65536;
-            ok = ReadBytes(buffer, [usize](1), [usize](count), input) == [usize](count);
-            If (ok) ok = WriteBytes(buffer, [usize](1), [usize](count), output) == [usize](count);
+            ok = IO.Kinal.Compiler.Core.NativeIO.ReadBytes(buffer, [usize](1), [usize](count), input) == [usize](count);
+            If (ok) ok = IO.Kinal.Compiler.Core.NativeIO.WriteBytes(buffer, [usize](1), [usize](count), output) == [usize](count);
             total = total + count;
         }
-        CloseFile(input);
+        IO.Kinal.Compiler.Core.NativeIO.CloseFile(input);
         If (!ok) Return This.Fail("failed to copy package file: " + path);
         Return true;
     }
@@ -162,7 +154,7 @@ Class KlibWriter
         string parent = IO.Path.Directory(outputPath);
         If (!IO.Text.IsEmpty(parent) && !IO.Directory.Ensure(parent))
             Return This.Fail("cannot create archive output directory: " + parent);
-        byte* output = OpenFile(outputPath, "wb");
+        byte* output = IO.Kinal.Compiler.Core.NativeIO.OpenFile(outputPath, "wb");
         If (output == null) Return This.Fail("cannot create klib: " + outputPath);
         bool ok = This.WriteText(output, "KNKLIB1") &&
             This.WriteNumber(output, [u64](0), 1) &&
@@ -183,7 +175,7 @@ Class KlibWriter
                 This.CopyFile(output, IO.Path.Combine(manifest.Directory, path), size);
             index = index + 1;
         }
-        If (CloseFile(output) != 0) ok = false;
+        If (IO.Kinal.Compiler.Core.NativeIO.CloseFile(output) != 0) ok = false;
         If (!ok)
         {
             IO.File.DeleteIfExists(outputPath);

@@ -1,0 +1,45 @@
+Unit Benchmarks.PathNormalize;
+
+Get IO.Console;
+Get IO.Path;
+Get IO.Target;
+Get IO.Text;
+Get IO.Time;
+
+Static Function int Main(string[] args)
+{
+    If (args.Length() != 2) Return 2;
+    int segments = [int](args[0]);
+    int rounds = [int](args[1]);
+    If (segments < 1 || segments > 8192 || rounds < 1 || rounds > 100000) Return 2;
+
+    IO.Text.Builder input = New IO.Text.Builder();
+    For (int i = 1; i <= segments; i++)
+    {
+        If (i > 1) input.Append("/");
+        input.Append(i % 7 == 0 ? ".." : "section_123");
+    }
+    string path = input.Build();
+    IO.Text.Builder expected = New IO.Text.Builder();
+    string separator = IO.Target.OS == IO.Target.OS.Windows ? "\\" : "/";
+    int remaining = segments - 2 * (segments / 7);
+    For (int i = 0; i < remaining; i++)
+    {
+        If (i > 0) expected.Append(separator);
+        expected.Append("section_123");
+    }
+    string reference = expected.Build();
+
+    string result = "";
+    int checksum = 0;
+    int start = IO.Time.GetNanoTick();
+    For (int i = 0; i < rounds; i++)
+    {
+        result = IO.Path.Normalize(path);
+        checksum += IO.Text.Length(result);
+    }
+    int elapsed = IO.Time.GetNanoTick() - start;
+    If (result != reference || checksum != rounds * IO.Text.Length(reference)) Return 1;
+    IO.Console.PrintLine(elapsed);
+    Return 0;
+}

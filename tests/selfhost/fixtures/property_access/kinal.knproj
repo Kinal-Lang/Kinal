@@ -1,0 +1,5 @@
+Project PropertyAccess
+{
+    SourceSet "app" { Files = ["Main.kn"]; }
+    Profile "test" { Source { Entry = "Main.kn"; Sets = ["app"]; Mode = AllSources; } }
+}

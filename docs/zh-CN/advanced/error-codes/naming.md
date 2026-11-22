@@ -2,7 +2,7 @@
 
 重复声明、作用域冲突、类型名称冲突等问题。
 
-本文中的示例都是最小复现片段，用来说明该错误码最常见的触发方式；少数更偏内部的诊断会使用最接近用户代码的表面写法来说明。
+本页记录预注册模板。正确示例展示支持的写法；触发形态用于说明规则或解析状态，可能依赖外围声明，或在当前 C 编译器中先报告其他诊断。
 
 ---
 
@@ -322,6 +322,7 @@ Interface IValue
 
 Class Counter By IValue
 {
+    Public Function int Value() { Return 0; }
 }
 ```
 
@@ -337,7 +338,7 @@ Class Counter By IValue
 - 默认详情：Interface method already defined
 - 说明：同一命名空间内出现了重复定义。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
 Class Counter
@@ -541,7 +542,7 @@ Enum ValueKind
 - 默认详情：Class conflicts with interface name
 - 说明：不同类型实体使用了同一个名字。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
 Class Value
@@ -579,7 +580,7 @@ Enum ValueKind
 - 默认详情：Class conflicts with struct name
 - 说明：不同类型实体使用了同一个名字。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
 Class Value
@@ -617,7 +618,7 @@ Enum ValueKind
 - 默认详情：Interface conflicts with enum name
 - 说明：不同类型实体使用了同一个名字。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
 Class Value
@@ -655,7 +656,7 @@ Enum ValueKind
 - 默认详情：Interface conflicts with struct name
 - 说明：不同类型实体使用了同一个名字。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
 Class Value
@@ -693,7 +694,7 @@ Enum ValueKind
 - 默认详情：Struct conflicts with enum name
 - 说明：不同类型实体使用了同一个名字。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
 Class Value

@@ -91,6 +91,8 @@ int main(void) { return probe() == 42 && probe() == 42 ? 0 : 1; }
         assert archive.read_bytes().startswith(b'!<arch>\n'), archive
         consumer = directory / ('static-consumer'+suffix)
         consumer_flags = ['-no-pie', '-lm', '-ldl', '-lpthread'] if sys.platform == 'linux' else []
+        if os.name == 'nt':
+            consumer_flags = ['-luser32']
         invoke(role+'-static-consumer-build', [tool('clang'), static_consumer, archive,
                                               *consumer_flags, '-o', consumer])
         invoke(role+'-static-consumer-run', [consumer])

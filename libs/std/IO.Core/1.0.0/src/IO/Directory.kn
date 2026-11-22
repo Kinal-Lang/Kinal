@@ -24,16 +24,19 @@ Extern Unsafe Function string __DirectoryScanNext(byte* scan) By C;
 [LinkName("kn_native_directory_scan_close")]
 Extern Unsafe Function void __DirectoryScanClose(byte* scan) By C;
 
+[IO.Kinal.Runtime.KncIntrinsic(166)]
 Trusted Function bool Exists(string path)
 {
     Return __DirectoryExists(path);
 }
 
+[IO.Kinal.Runtime.KncIntrinsic(167)]
 Trusted Function bool Create(string path)
 {
     Return __DirectoryCreate(path);
 }
 
+[IO.Kinal.Runtime.KncIntrinsic(168)]
 Trusted Function bool Ensure(string path)
 {
     If (Exists(path))
@@ -49,16 +52,19 @@ Trusted Function bool Ensure(string path)
     Return Create(path) || Exists(path);
 }
 
+[IO.Kinal.Runtime.KncIntrinsic(169)]
 Trusted Function bool Delete(string path)
 {
     Return __DirectoryDelete(path);
 }
 
+[IO.Kinal.Runtime.KncIntrinsic(170)]
 Trusted Function bool DeleteIfExists(string path)
 {
     Return !__DirectoryExists(path) || __DirectoryDelete(path);
 }
 
+[IO.Kinal.Runtime.KncIntrinsic(233)]
 Trusted Function list Files(string path, bool recursive)
 {
     list files = list.Create();

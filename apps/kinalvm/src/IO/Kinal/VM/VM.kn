@@ -28,25 +28,87 @@ Public Class VirtualMachine
         Throw "Unsupported unsigned integer width: " + [string](bits);
     }
 
-    Public Unsafe Function int Execute(Bytecode.Program program)
+    Public Unsafe Function int Execute(Bytecode.Program program, string[] arguments = {}, int firstArgument = 0)
     {
-        Context.ExecutionContext ctx = New Context.ExecutionContext(program);
+        Return This.ExecuteProgram(program, arguments, firstArgument, false);
+    }
+
+    Public Unsafe Function int ExecuteChecked(Bytecode.Program program, string[] arguments = {})
+    {
+        Return This.ExecuteProgram(program, arguments, 0, true);
+    }
+
+    Private Unsafe Function int ExecuteProgram(Bytecode.Program program, string[] arguments,
+                                               int firstArgument, bool throwGuestErrors)
+    {
+        Context.ExecutionContext ctx = null;
+        Try
+        {
+            ctx = New Context.ExecutionContext(program);
+            ctx.InvokeCallback = Function Context.VMValue(int index, Context.VMValue[] arguments)
+            {
+                int depth = ctx.FrameCount;
+                Context.FunctionFrame frame = ctx.PushCallback(index, arguments);
+                This.RunFrames(ctx, depth);
+                Return frame.HostResult;
+            };
+            ctx.PushEntry(program.EntryFunction, arguments, firstArgument);
+            This.RunFrames(ctx, 0);
+            If (ctx.HasUnhandledException)
+            {
+                string message = ctx.ExceptionMessage();
+                If (ctx.CurrentTrace != "") message = message + "\n" + ctx.CurrentTrace;
+                If (throwGuestErrors) Throw New IO.Error("KinalVM", message);
+                Console.PrintLine(message + program.VersionNote());
+            }
+        }
+        Catch (IO.Error error)
+        {
+            If (ctx != null) ctx.ReleaseArrayBuffers();
+            string note = program.VersionNote();
+            If (note != "") Throw New IO.Error(error.Title, error.Message + note);
+            Throw error;
+        }
+        ctx.ReleaseArrayBuffers();
+        Return ctx.ExitCode;
+    }
+
+    Private Trusted Function void RunFrames(Context.ExecutionContext ctx, int depth)
+    {
+        Bytecode.Program program = ctx.Program;
         int[] dispatchTargets = {};
         Stdlib.StdlibRegistry registry = This.Registry;
 
-        ctx.PushEntry(program.EntryFunction);
+        Context.FunctionFrame frame;
+        byte[] code;
+        int codeLength;
+        int[] kinds;
+        int[] intRegisters;
+        float[] floatRegisters;
+        bool[] boolRegisters;
+        string[] stringRegisters;
 
         Unsafe Block Dispatch
         </
-            Record LoopStart
-            If (ctx.Halted || ctx.FrameCount <= 0)
+            // Calls, returns and exceptions can select a different frame.
+            // Host callbacks may also replace register storage before dispatch resumes.
+            Record EnterFrame
+            If (ctx.Halted || ctx.FrameCount <= depth)
             {
                 Jump Halt;
             }
 
-            Context.FunctionFrame frame = ctx.CurrentFrame();
-            byte[] code = frame.FnInfo.Code;
-            int codeLength = code.Length();
+            frame = ctx.CurrentFrame();
+            code = frame.FnInfo.Code;
+            codeLength = code.Length();
+            kinds = frame.Kinds;
+            intRegisters = frame.IntRegisters;
+            floatRegisters = frame.FloatRegisters;
+            boolRegisters = frame.BoolRegisters;
+            stringRegisters = frame.StringRegisters;
+            Jump LoopStart;
+
+            Record LoopStart
 
             If (frame.Pc < 0 || frame.Pc >= codeLength)
             {
@@ -61,10 +123,12 @@ Public Class VirtualMachine
 
             Jump dispatchTargets[op];
 
+            Record HeapSafePoint
+            ctx.Heap.Poll(ctx);
+            Jump EnterFrame;
+
             Record OpLoadInt
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
                 frame.SetInt(
                     [int](code[frame.Pc + 1]),
                     program.IntConstants[Bytecode.Program.ReadU16(code, frame.Pc + 2)]
@@ -75,8 +139,6 @@ Public Class VirtualMachine
 
             Record OpLoadFloat
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
                 frame.SetFloat(
                     [int](code[frame.Pc + 1]),
                     program.FloatConstants[Bytecode.Program.ReadU16(code, frame.Pc + 2)]
@@ -87,8 +149,6 @@ Public Class VirtualMachine
 
             Record OpLoadBool
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
                 frame.SetBool([int](code[frame.Pc + 1]), [int](code[frame.Pc + 2]) != 0);
                 frame.Pc = frame.Pc + 3;
                 Jump LoopStart;
@@ -96,8 +156,6 @@ Public Class VirtualMachine
 
             Record OpLoadString
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
                 frame.SetString(
                     [int](code[frame.Pc + 1]),
                     program.StringConstants[Bytecode.Program.ReadU16(code, frame.Pc + 2)]
@@ -108,8 +166,6 @@ Public Class VirtualMachine
 
             Record OpLoadChar
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
                 frame.SetChar(
                     [int](code[frame.Pc + 1]),
                     [char](program.IntConstants[Bytecode.Program.ReadU16(code, frame.Pc + 2)])
@@ -120,8 +176,6 @@ Public Class VirtualMachine
 
             Record OpMove
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
                 frame.CopyValue([int](code[frame.Pc + 1]), [int](code[frame.Pc + 2]));
                 frame.Pc = frame.Pc + 3;
                 Jump LoopStart;
@@ -129,10 +183,6 @@ Public Class VirtualMachine
 
             Record OpAddInt
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
-                int[] kinds = frame.Kinds;
-                int[] intRegisters = frame.IntRegisters;
                 int dst = [int](code[frame.Pc + 1]);
                 int lhs = [int](code[frame.Pc + 2]);
                 int rhs = [int](code[frame.Pc + 3]);
@@ -148,10 +198,6 @@ Public Class VirtualMachine
 
             Record OpSubInt
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
-                int[] kinds = frame.Kinds;
-                int[] intRegisters = frame.IntRegisters;
                 int dst = [int](code[frame.Pc + 1]);
                 int lhs = [int](code[frame.Pc + 2]);
                 int rhs = [int](code[frame.Pc + 3]);
@@ -167,10 +213,6 @@ Public Class VirtualMachine
 
             Record OpMulInt
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
-                int[] kinds = frame.Kinds;
-                int[] intRegisters = frame.IntRegisters;
                 int dst = [int](code[frame.Pc + 1]);
                 int lhs = [int](code[frame.Pc + 2]);
                 int rhs = [int](code[frame.Pc + 3]);
@@ -186,10 +228,6 @@ Public Class VirtualMachine
 
             Record OpDivInt
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
-                int[] kinds = frame.Kinds;
-                int[] intRegisters = frame.IntRegisters;
                 int dst = [int](code[frame.Pc + 1]);
                 int lhs = [int](code[frame.Pc + 2]);
                 int rhs = [int](code[frame.Pc + 3]);
@@ -205,10 +243,6 @@ Public Class VirtualMachine
 
             Record OpAddIntImm
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
-                int[] kinds = frame.Kinds;
-                int[] intRegisters = frame.IntRegisters;
                 int dst = [int](code[frame.Pc + 1]);
                 int lhs = [int](code[frame.Pc + 2]);
                 int rhsValue = program.IntConstants[Bytecode.Program.ReadU16(code, frame.Pc + 3)];
@@ -224,10 +258,6 @@ Public Class VirtualMachine
 
             Record OpSubIntImm
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
-                int[] kinds = frame.Kinds;
-                int[] intRegisters = frame.IntRegisters;
                 int dst = [int](code[frame.Pc + 1]);
                 int lhs = [int](code[frame.Pc + 2]);
                 int rhsValue = program.IntConstants[Bytecode.Program.ReadU16(code, frame.Pc + 3)];
@@ -243,10 +273,6 @@ Public Class VirtualMachine
 
             Record OpMulIntImm
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
-                int[] kinds = frame.Kinds;
-                int[] intRegisters = frame.IntRegisters;
                 int dst = [int](code[frame.Pc + 1]);
                 int lhs = [int](code[frame.Pc + 2]);
                 int rhsValue = program.IntConstants[Bytecode.Program.ReadU16(code, frame.Pc + 3)];
@@ -262,10 +288,6 @@ Public Class VirtualMachine
 
             Record OpDivIntImm
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
-                int[] kinds = frame.Kinds;
-                int[] intRegisters = frame.IntRegisters;
                 int dst = [int](code[frame.Pc + 1]);
                 int lhs = [int](code[frame.Pc + 2]);
                 int rhsValue = program.IntConstants[Bytecode.Program.ReadU16(code, frame.Pc + 3)];
@@ -281,10 +303,6 @@ Public Class VirtualMachine
 
             Record OpAddFloat
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
-                int[] kinds = frame.Kinds;
-                float[] floatRegisters = frame.FloatRegisters;
                 int dst = [int](code[frame.Pc + 1]);
                 int lhs = [int](code[frame.Pc + 2]);
                 int rhs = [int](code[frame.Pc + 3]);
@@ -300,10 +318,6 @@ Public Class VirtualMachine
 
             Record OpSubFloat
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
-                int[] kinds = frame.Kinds;
-                float[] floatRegisters = frame.FloatRegisters;
                 int dst = [int](code[frame.Pc + 1]);
                 int lhs = [int](code[frame.Pc + 2]);
                 int rhs = [int](code[frame.Pc + 3]);
@@ -319,10 +333,6 @@ Public Class VirtualMachine
 
             Record OpMulFloat
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
-                int[] kinds = frame.Kinds;
-                float[] floatRegisters = frame.FloatRegisters;
                 int dst = [int](code[frame.Pc + 1]);
                 int lhs = [int](code[frame.Pc + 2]);
                 int rhs = [int](code[frame.Pc + 3]);
@@ -338,10 +348,6 @@ Public Class VirtualMachine
 
             Record OpDivFloat
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
-                int[] kinds = frame.Kinds;
-                float[] floatRegisters = frame.FloatRegisters;
                 int dst = [int](code[frame.Pc + 1]);
                 int lhs = [int](code[frame.Pc + 2]);
                 int rhs = [int](code[frame.Pc + 3]);
@@ -357,10 +363,6 @@ Public Class VirtualMachine
 
             Record OpNegInt
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
-                int[] kinds = frame.Kinds;
-                int[] intRegisters = frame.IntRegisters;
                 int dst = [int](code[frame.Pc + 1]);
                 int src = [int](code[frame.Pc + 2]);
                 If (kinds[src] != [int](Bytecode.ValueKind.Int))
@@ -375,10 +377,6 @@ Public Class VirtualMachine
 
             Record OpNegFloat
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
-                int[] kinds = frame.Kinds;
-                float[] floatRegisters = frame.FloatRegisters;
                 int dst = [int](code[frame.Pc + 1]);
                 int src = [int](code[frame.Pc + 2]);
                 If (kinds[src] != [int](Bytecode.ValueKind.Float))
@@ -393,8 +391,6 @@ Public Class VirtualMachine
 
             Record OpEq
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
                 frame.SetBool([int](code[frame.Pc + 1]), frame.ValueEquals([int](code[frame.Pc + 2]), [int](code[frame.Pc + 3])));
                 frame.Pc = frame.Pc + 4;
                 Jump LoopStart;
@@ -402,8 +398,6 @@ Public Class VirtualMachine
 
             Record OpNe
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
                 frame.SetBool([int](code[frame.Pc + 1]), !frame.ValueEquals([int](code[frame.Pc + 2]), [int](code[frame.Pc + 3])));
                 frame.Pc = frame.Pc + 4;
                 Jump LoopStart;
@@ -411,11 +405,6 @@ Public Class VirtualMachine
 
             Record OpLtInt
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
-                int[] kinds = frame.Kinds;
-                int[] intRegisters = frame.IntRegisters;
-                bool[] boolRegisters = frame.BoolRegisters;
                 int dst = [int](code[frame.Pc + 1]);
                 int lhs = [int](code[frame.Pc + 2]);
                 int rhs = [int](code[frame.Pc + 3]);
@@ -431,11 +420,6 @@ Public Class VirtualMachine
 
             Record OpLeInt
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
-                int[] kinds = frame.Kinds;
-                int[] intRegisters = frame.IntRegisters;
-                bool[] boolRegisters = frame.BoolRegisters;
                 int dst = [int](code[frame.Pc + 1]);
                 int lhs = [int](code[frame.Pc + 2]);
                 int rhs = [int](code[frame.Pc + 3]);
@@ -451,11 +435,6 @@ Public Class VirtualMachine
 
             Record OpGtInt
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
-                int[] kinds = frame.Kinds;
-                int[] intRegisters = frame.IntRegisters;
-                bool[] boolRegisters = frame.BoolRegisters;
                 int dst = [int](code[frame.Pc + 1]);
                 int lhs = [int](code[frame.Pc + 2]);
                 int rhs = [int](code[frame.Pc + 3]);
@@ -471,11 +450,6 @@ Public Class VirtualMachine
 
             Record OpGeInt
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
-                int[] kinds = frame.Kinds;
-                int[] intRegisters = frame.IntRegisters;
-                bool[] boolRegisters = frame.BoolRegisters;
                 int dst = [int](code[frame.Pc + 1]);
                 int lhs = [int](code[frame.Pc + 2]);
                 int rhs = [int](code[frame.Pc + 3]);
@@ -491,11 +465,6 @@ Public Class VirtualMachine
 
             Record OpLtIntImm
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
-                int[] kinds = frame.Kinds;
-                int[] intRegisters = frame.IntRegisters;
-                bool[] boolRegisters = frame.BoolRegisters;
                 int dst = [int](code[frame.Pc + 1]);
                 int lhs = [int](code[frame.Pc + 2]);
                 int rhsValue = program.IntConstants[Bytecode.Program.ReadU16(code, frame.Pc + 3)];
@@ -511,11 +480,6 @@ Public Class VirtualMachine
 
             Record OpLeIntImm
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
-                int[] kinds = frame.Kinds;
-                int[] intRegisters = frame.IntRegisters;
-                bool[] boolRegisters = frame.BoolRegisters;
                 int dst = [int](code[frame.Pc + 1]);
                 int lhs = [int](code[frame.Pc + 2]);
                 int rhsValue = program.IntConstants[Bytecode.Program.ReadU16(code, frame.Pc + 3)];
@@ -531,11 +495,6 @@ Public Class VirtualMachine
 
             Record OpGtIntImm
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
-                int[] kinds = frame.Kinds;
-                int[] intRegisters = frame.IntRegisters;
-                bool[] boolRegisters = frame.BoolRegisters;
                 int dst = [int](code[frame.Pc + 1]);
                 int lhs = [int](code[frame.Pc + 2]);
                 int rhsValue = program.IntConstants[Bytecode.Program.ReadU16(code, frame.Pc + 3)];
@@ -551,11 +510,6 @@ Public Class VirtualMachine
 
             Record OpGeIntImm
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
-                int[] kinds = frame.Kinds;
-                int[] intRegisters = frame.IntRegisters;
-                bool[] boolRegisters = frame.BoolRegisters;
                 int dst = [int](code[frame.Pc + 1]);
                 int lhs = [int](code[frame.Pc + 2]);
                 int rhsValue = program.IntConstants[Bytecode.Program.ReadU16(code, frame.Pc + 3)];
@@ -571,11 +525,6 @@ Public Class VirtualMachine
 
             Record OpLtFloat
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
-                int[] kinds = frame.Kinds;
-                float[] floatRegisters = frame.FloatRegisters;
-                bool[] boolRegisters = frame.BoolRegisters;
                 int dst = [int](code[frame.Pc + 1]);
                 int lhs = [int](code[frame.Pc + 2]);
                 int rhs = [int](code[frame.Pc + 3]);
@@ -591,11 +540,6 @@ Public Class VirtualMachine
 
             Record OpLeFloat
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
-                int[] kinds = frame.Kinds;
-                float[] floatRegisters = frame.FloatRegisters;
-                bool[] boolRegisters = frame.BoolRegisters;
                 int dst = [int](code[frame.Pc + 1]);
                 int lhs = [int](code[frame.Pc + 2]);
                 int rhs = [int](code[frame.Pc + 3]);
@@ -611,11 +555,6 @@ Public Class VirtualMachine
 
             Record OpGtFloat
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
-                int[] kinds = frame.Kinds;
-                float[] floatRegisters = frame.FloatRegisters;
-                bool[] boolRegisters = frame.BoolRegisters;
                 int dst = [int](code[frame.Pc + 1]);
                 int lhs = [int](code[frame.Pc + 2]);
                 int rhs = [int](code[frame.Pc + 3]);
@@ -631,11 +570,6 @@ Public Class VirtualMachine
 
             Record OpGeFloat
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
-                int[] kinds = frame.Kinds;
-                float[] floatRegisters = frame.FloatRegisters;
-                bool[] boolRegisters = frame.BoolRegisters;
                 int dst = [int](code[frame.Pc + 1]);
                 int lhs = [int](code[frame.Pc + 2]);
                 int rhs = [int](code[frame.Pc + 3]);
@@ -651,10 +585,6 @@ Public Class VirtualMachine
 
             Record OpNotBool
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
-                int[] kinds = frame.Kinds;
-                bool[] boolRegisters = frame.BoolRegisters;
                 int dst = [int](code[frame.Pc + 1]);
                 int src = [int](code[frame.Pc + 2]);
                 If (kinds[src] != [int](Bytecode.ValueKind.Bool))
@@ -669,10 +599,6 @@ Public Class VirtualMachine
 
             Record OpBitAndInt
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
-                int[] kinds = frame.Kinds;
-                int[] intRegisters = frame.IntRegisters;
                 int dst = [int](code[frame.Pc + 1]);
                 int lhs = [int](code[frame.Pc + 2]);
                 int rhs = [int](code[frame.Pc + 3]);
@@ -688,10 +614,6 @@ Public Class VirtualMachine
 
             Record OpBitOrInt
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
-                int[] kinds = frame.Kinds;
-                int[] intRegisters = frame.IntRegisters;
                 int dst = [int](code[frame.Pc + 1]);
                 int lhs = [int](code[frame.Pc + 2]);
                 int rhs = [int](code[frame.Pc + 3]);
@@ -707,10 +629,6 @@ Public Class VirtualMachine
 
             Record OpBitXorInt
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
-                int[] kinds = frame.Kinds;
-                int[] intRegisters = frame.IntRegisters;
                 int dst = [int](code[frame.Pc + 1]);
                 int lhs = [int](code[frame.Pc + 2]);
                 int rhs = [int](code[frame.Pc + 3]);
@@ -726,10 +644,6 @@ Public Class VirtualMachine
 
             Record OpShlInt
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
-                int[] kinds = frame.Kinds;
-                int[] intRegisters = frame.IntRegisters;
                 int dst = [int](code[frame.Pc + 1]);
                 int lhs = [int](code[frame.Pc + 2]);
                 int rhs = [int](code[frame.Pc + 3]);
@@ -745,10 +659,6 @@ Public Class VirtualMachine
 
             Record OpShrInt
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
-                int[] kinds = frame.Kinds;
-                int[] intRegisters = frame.IntRegisters;
                 int dst = [int](code[frame.Pc + 1]);
                 int lhs = [int](code[frame.Pc + 2]);
                 int rhs = [int](code[frame.Pc + 3]);
@@ -764,10 +674,6 @@ Public Class VirtualMachine
 
             Record OpBitAndIntImm
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
-                int[] kinds = frame.Kinds;
-                int[] intRegisters = frame.IntRegisters;
                 int dst = [int](code[frame.Pc + 1]);
                 int lhs = [int](code[frame.Pc + 2]);
                 int rhsValue = program.IntConstants[Bytecode.Program.ReadU16(code, frame.Pc + 3)];
@@ -783,10 +689,6 @@ Public Class VirtualMachine
 
             Record OpBitOrIntImm
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
-                int[] kinds = frame.Kinds;
-                int[] intRegisters = frame.IntRegisters;
                 int dst = [int](code[frame.Pc + 1]);
                 int lhs = [int](code[frame.Pc + 2]);
                 int rhsValue = program.IntConstants[Bytecode.Program.ReadU16(code, frame.Pc + 3)];
@@ -802,10 +704,6 @@ Public Class VirtualMachine
 
             Record OpBitXorIntImm
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
-                int[] kinds = frame.Kinds;
-                int[] intRegisters = frame.IntRegisters;
                 int dst = [int](code[frame.Pc + 1]);
                 int lhs = [int](code[frame.Pc + 2]);
                 int rhsValue = program.IntConstants[Bytecode.Program.ReadU16(code, frame.Pc + 3)];
@@ -821,10 +719,6 @@ Public Class VirtualMachine
 
             Record OpShlIntImm
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
-                int[] kinds = frame.Kinds;
-                int[] intRegisters = frame.IntRegisters;
                 int dst = [int](code[frame.Pc + 1]);
                 int lhs = [int](code[frame.Pc + 2]);
                 int rhsValue = program.IntConstants[Bytecode.Program.ReadU16(code, frame.Pc + 3)];
@@ -840,10 +734,6 @@ Public Class VirtualMachine
 
             Record OpShrIntImm
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
-                int[] kinds = frame.Kinds;
-                int[] intRegisters = frame.IntRegisters;
                 int dst = [int](code[frame.Pc + 1]);
                 int lhs = [int](code[frame.Pc + 2]);
                 int rhsValue = program.IntConstants[Bytecode.Program.ReadU16(code, frame.Pc + 3)];
@@ -859,10 +749,6 @@ Public Class VirtualMachine
 
             Record OpBitNotInt
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
-                int[] kinds = frame.Kinds;
-                int[] intRegisters = frame.IntRegisters;
                 int dst = [int](code[frame.Pc + 1]);
                 int src = [int](code[frame.Pc + 2]);
                 If (kinds[src] != [int](Bytecode.ValueKind.Int))
@@ -877,8 +763,6 @@ Public Class VirtualMachine
 
             Record OpIntToString
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
                 frame.SetString([int](code[frame.Pc + 1]), [string](frame.GetInt([int](code[frame.Pc + 2]))));
                 frame.Pc = frame.Pc + 3;
                 Jump LoopStart;
@@ -886,17 +770,13 @@ Public Class VirtualMachine
 
             Record OpBoolToString
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                    byte[] code = frame.FnInfo.Code;
-                frame.SetString([int](code[frame.Pc + 1]), [string](frame.GetBool([int](code[frame.Pc + 2]))));
+                    frame.SetString([int](code[frame.Pc + 1]), [string](frame.GetBool([int](code[frame.Pc + 2]))));
                 frame.Pc = frame.Pc + 3;
                 Jump LoopStart;
             }
 
             Record OpCharToString
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
                 frame.SetString([int](code[frame.Pc + 1]), [string](frame.GetChar([int](code[frame.Pc + 2]))));
                 frame.Pc = frame.Pc + 3;
                 Jump LoopStart;
@@ -904,8 +784,6 @@ Public Class VirtualMachine
 
             Record OpStringToInt
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
                 frame.SetInt([int](code[frame.Pc + 1]), [int](frame.GetString([int](code[frame.Pc + 2]))));
                 frame.Pc = frame.Pc + 3;
                 Jump LoopStart;
@@ -913,8 +791,6 @@ Public Class VirtualMachine
 
             Record OpStringToBool
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
                 frame.SetBool([int](code[frame.Pc + 1]), [bool](frame.GetString([int](code[frame.Pc + 2]))));
                 frame.Pc = frame.Pc + 3;
                 Jump LoopStart;
@@ -922,8 +798,6 @@ Public Class VirtualMachine
 
             Record OpCharToInt
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
                 frame.SetInt([int](code[frame.Pc + 1]), [int](frame.GetChar([int](code[frame.Pc + 2]))));
                 frame.Pc = frame.Pc + 3;
                 Jump LoopStart;
@@ -931,8 +805,6 @@ Public Class VirtualMachine
 
             Record OpIntToChar
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
                 frame.SetChar([int](code[frame.Pc + 1]), [char](frame.GetInt([int](code[frame.Pc + 2]))));
                 frame.Pc = frame.Pc + 3;
                 Jump LoopStart;
@@ -940,8 +812,6 @@ Public Class VirtualMachine
 
             Record OpStringToChar
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
                 frame.SetChar([int](code[frame.Pc + 1]), [char](frame.GetString([int](code[frame.Pc + 2]))));
                 frame.Pc = frame.Pc + 3;
                 Jump LoopStart;
@@ -949,18 +819,12 @@ Public Class VirtualMachine
 
             Record OpJump
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
                 frame.Pc = Bytecode.Program.ReadU16(code, frame.Pc + 1);
                 Jump LoopStart;
             }
 
             Record OpJumpIfFalse
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
-                int[] kinds = frame.Kinds;
-                bool[] boolRegisters = frame.BoolRegisters;
                 int cond = [int](code[frame.Pc + 1]);
                 If (kinds[cond] != [int](Bytecode.ValueKind.Bool))
                 {
@@ -979,10 +843,6 @@ Public Class VirtualMachine
 
             Record OpJumpIfTrue
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
-                int[] kinds = frame.Kinds;
-                bool[] boolRegisters = frame.BoolRegisters;
                 int cond = [int](code[frame.Pc + 1]);
                 If (kinds[cond] != [int](Bytecode.ValueKind.Bool))
                 {
@@ -1001,10 +861,6 @@ Public Class VirtualMachine
 
             Record OpJumpIfIntLtFalse
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
-                int[] kinds = frame.Kinds;
-                int[] intRegisters = frame.IntRegisters;
                 int lhs = [int](code[frame.Pc + 1]);
                 int rhs = [int](code[frame.Pc + 2]);
                 If (kinds[lhs] != [int](Bytecode.ValueKind.Int) || kinds[rhs] != [int](Bytecode.ValueKind.Int))
@@ -1024,10 +880,6 @@ Public Class VirtualMachine
 
             Record OpJumpIfIntLeFalse
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
-                int[] kinds = frame.Kinds;
-                int[] intRegisters = frame.IntRegisters;
                 int lhs = [int](code[frame.Pc + 1]);
                 int rhs = [int](code[frame.Pc + 2]);
                 If (kinds[lhs] != [int](Bytecode.ValueKind.Int) || kinds[rhs] != [int](Bytecode.ValueKind.Int))
@@ -1047,10 +899,6 @@ Public Class VirtualMachine
 
             Record OpJumpIfIntGtFalse
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
-                int[] kinds = frame.Kinds;
-                int[] intRegisters = frame.IntRegisters;
                 int lhs = [int](code[frame.Pc + 1]);
                 int rhs = [int](code[frame.Pc + 2]);
                 If (kinds[lhs] != [int](Bytecode.ValueKind.Int) || kinds[rhs] != [int](Bytecode.ValueKind.Int))
@@ -1070,10 +918,6 @@ Public Class VirtualMachine
 
             Record OpJumpIfIntGeFalse
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
-                int[] kinds = frame.Kinds;
-                int[] intRegisters = frame.IntRegisters;
                 int lhs = [int](code[frame.Pc + 1]);
                 int rhs = [int](code[frame.Pc + 2]);
                 If (kinds[lhs] != [int](Bytecode.ValueKind.Int) || kinds[rhs] != [int](Bytecode.ValueKind.Int))
@@ -1093,10 +937,6 @@ Public Class VirtualMachine
 
             Record OpJumpIfIntEqFalse
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
-                int[] kinds = frame.Kinds;
-                int[] intRegisters = frame.IntRegisters;
                 int lhs = [int](code[frame.Pc + 1]);
                 int rhs = [int](code[frame.Pc + 2]);
                 If (kinds[lhs] != [int](Bytecode.ValueKind.Int) || kinds[rhs] != [int](Bytecode.ValueKind.Int))
@@ -1116,10 +956,6 @@ Public Class VirtualMachine
 
             Record OpJumpIfIntNeFalse
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
-                int[] kinds = frame.Kinds;
-                int[] intRegisters = frame.IntRegisters;
                 int lhs = [int](code[frame.Pc + 1]);
                 int rhs = [int](code[frame.Pc + 2]);
                 If (kinds[lhs] != [int](Bytecode.ValueKind.Int) || kinds[rhs] != [int](Bytecode.ValueKind.Int))
@@ -1139,10 +975,6 @@ Public Class VirtualMachine
 
             Record OpIncInt
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
-                int[] kinds = frame.Kinds;
-                int[] intRegisters = frame.IntRegisters;
                 int reg = [int](code[frame.Pc + 1]);
                 If (kinds[reg] != [int](Bytecode.ValueKind.Int))
                 {
@@ -1155,10 +987,6 @@ Public Class VirtualMachine
 
             Record OpDecInt
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
-                int[] kinds = frame.Kinds;
-                int[] intRegisters = frame.IntRegisters;
                 int reg = [int](code[frame.Pc + 1]);
                 If (kinds[reg] != [int](Bytecode.ValueKind.Int))
                 {
@@ -1171,11 +999,6 @@ Public Class VirtualMachine
 
             Record OpIntToFloat
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
-                int[] kinds = frame.Kinds;
-                int[] intRegisters = frame.IntRegisters;
-                float[] floatRegisters = frame.FloatRegisters;
                 int dst = [int](code[frame.Pc + 1]);
                 int src = [int](code[frame.Pc + 2]);
                 If (kinds[src] != [int](Bytecode.ValueKind.Int))
@@ -1188,12 +1011,19 @@ Public Class VirtualMachine
                 Jump LoopStart;
             }
 
+            Record OpUIntToFloat
+            {
+                int dst = [int](code[frame.Pc + 1]);
+                int src = [int](code[frame.Pc + 2]);
+                If (frame.Kinds[src] != [int](Bytecode.ValueKind.Int)) Throw "Expected int register";
+                frame.FloatRegisters[dst] = [float]([u64](frame.IntRegisters[src]));
+                frame.Kinds[dst] = [int](Bytecode.ValueKind.Float);
+                frame.Pc = frame.Pc + 3;
+                Jump LoopStart;
+            }
+
             Record OpFloatToF32
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
-                int[] kinds = frame.Kinds;
-                float[] floatRegisters = frame.FloatRegisters;
                 int dst = [int](code[frame.Pc + 1]);
                 int src = [int](code[frame.Pc + 2]);
                 If (kinds[src] != [int](Bytecode.ValueKind.Float))
@@ -1208,11 +1038,6 @@ Public Class VirtualMachine
 
             Record OpIntToF32
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
-                int[] kinds = frame.Kinds;
-                int[] intRegisters = frame.IntRegisters;
-                float[] floatRegisters = frame.FloatRegisters;
                 int dst = [int](code[frame.Pc + 1]);
                 int src = [int](code[frame.Pc + 2]);
                 int unsignedFlag = [int](code[frame.Pc + 3]);
@@ -1239,11 +1064,6 @@ Public Class VirtualMachine
 
             Record OpFloatToInt
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
-                int[] kinds = frame.Kinds;
-                int[] intRegisters = frame.IntRegisters;
-                float[] floatRegisters = frame.FloatRegisters;
                 int dst = [int](code[frame.Pc + 1]);
                 int src = [int](code[frame.Pc + 2]);
                 If (kinds[src] != [int](Bytecode.ValueKind.Float))
@@ -1258,11 +1078,6 @@ Public Class VirtualMachine
 
             Record OpFloatToString
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
-                int[] kinds = frame.Kinds;
-                float[] floatRegisters = frame.FloatRegisters;
-                string[] stringRegisters = frame.StringRegisters;
                 int dst = [int](code[frame.Pc + 1]);
                 int src = [int](code[frame.Pc + 2]);
                 If (kinds[src] != [int](Bytecode.ValueKind.Float))
@@ -1277,11 +1092,6 @@ Public Class VirtualMachine
 
             Record OpStringToFloat
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
-                int[] kinds = frame.Kinds;
-                float[] floatRegisters = frame.FloatRegisters;
-                string[] stringRegisters = frame.StringRegisters;
                 int dst = [int](code[frame.Pc + 1]);
                 int src = [int](code[frame.Pc + 2]);
                 If (kinds[src] != [int](Bytecode.ValueKind.String))
@@ -1296,11 +1106,6 @@ Public Class VirtualMachine
 
             Record OpBoolToInt
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
-                int[] kinds = frame.Kinds;
-                int[] intRegisters = frame.IntRegisters;
-                bool[] boolRegisters = frame.BoolRegisters;
                 int dst = [int](code[frame.Pc + 1]);
                 int src = [int](code[frame.Pc + 2]);
                 If (kinds[src] != [int](Bytecode.ValueKind.Bool))
@@ -1322,11 +1127,6 @@ Public Class VirtualMachine
 
             Record OpBoolToFloat
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
-                int[] kinds = frame.Kinds;
-                float[] floatRegisters = frame.FloatRegisters;
-                bool[] boolRegisters = frame.BoolRegisters;
                 int dst = [int](code[frame.Pc + 1]);
                 int src = [int](code[frame.Pc + 2]);
                 If (kinds[src] != [int](Bytecode.ValueKind.Bool))
@@ -1348,11 +1148,6 @@ Public Class VirtualMachine
 
             Record OpFloatToBool
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
-                int[] kinds = frame.Kinds;
-                float[] floatRegisters = frame.FloatRegisters;
-                bool[] boolRegisters = frame.BoolRegisters;
                 int dst = [int](code[frame.Pc + 1]);
                 int src = [int](code[frame.Pc + 2]);
                 If (kinds[src] != [int](Bytecode.ValueKind.Float))
@@ -1367,8 +1162,7 @@ Public Class VirtualMachine
 
             Record OpCallBuiltin
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
+                int pc = frame.Pc;
                 registry.Invoke(
                     ctx,
                     Bytecode.Program.ReadU16(code, frame.Pc + 2),
@@ -1378,14 +1172,30 @@ Public Class VirtualMachine
                     [int](code[frame.Pc + 7]),
                     [int](code[frame.Pc + 8])
                 );
-                frame.Pc = frame.Pc + 9;
-                Jump LoopStart;
+                If (frame.Pc == pc) frame.Pc = pc + 9;
+                Jump HeapSafePoint;
+            }
+
+            Record OpCallRange
+            {
+                If (frame.Pc + 7 > code.Length()) Throw "Truncated CallRange";
+                int kind = [int](code[frame.Pc + 2]);
+                int target = Bytecode.Program.ReadU16(code, frame.Pc + 3);
+                int dst = [int](code[frame.Pc + 1]);
+                int first = [int](code[frame.Pc + 5]);
+                int count = [int](code[frame.Pc + 6]);
+                If (kind == 3)
+                {
+                    int pc = frame.Pc;
+                    registry.InvokeRange(ctx, target, dst, first, count);
+                    If (frame.Pc == pc) frame.Pc = pc + 7;
+                }
+                Else ctx.PushRangeCall(frame, kind, target, dst, first, count);
+                Jump HeapSafePoint;
             }
 
             Record OpCallFunc
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
                 int nextPc = frame.Pc + 9;
                 ctx.PushCall(
                     Bytecode.Program.ReadU16(code, frame.Pc + 2),
@@ -1399,67 +1209,59 @@ Public Class VirtualMachine
                     [int](code[frame.Pc + 7]),
                     [int](code[frame.Pc + 8])
                 );
-                Jump LoopStart;
+                Jump EnterFrame;
             }
 
             Record OpNewObject
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
-                frame.ImportValue(
-                    [int](code[frame.Pc + 1]),
-                    Context.VMValue.FromObject(ctx.NewObject(Bytecode.Program.ReadU16(code, frame.Pc + 2)))
-                );
+                int dst = [int](code[frame.Pc + 1]);
+                int handle = ctx.NewObject(Bytecode.Program.ReadU16(code, frame.Pc + 2));
+                kinds[dst] = [int](Bytecode.ValueKind.Object);
+                intRegisters[dst] = handle;
                 frame.Pc = frame.Pc + 4;
-                Jump LoopStart;
+                Jump HeapSafePoint;
             }
 
             Record OpNewArray
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
                 int handle = ctx.NewArray(
                     frame.GetInt([int](code[frame.Pc + 2])),
                     [int](code[frame.Pc + 3])
                 );
-                frame.ImportValue([int](code[frame.Pc + 1]), Context.VMValue.FromArray(handle));
+                int dst = [int](code[frame.Pc + 1]);
+                kinds[dst] = [int](Bytecode.ValueKind.Array);
+                intRegisters[dst] = handle;
                 frame.Pc = frame.Pc + 4;
-                Jump LoopStart;
+                Jump HeapSafePoint;
             }
 
             Record OpLoadField
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
-                Context.VMValue value = ctx.ObjectGetValue(
-                    frame.IntRegisters[[int](code[frame.Pc + 2])],
-                    Bytecode.Program.ReadU16(code, frame.Pc + 3)
-                );
-                frame.ImportValue([int](code[frame.Pc + 1]), value);
+                int dst = [int](code[frame.Pc + 1]);
+                int field = [int](code[frame.Pc + 3]) | ([int](code[frame.Pc + 4]) << 8);
+                Context.VMValue value = ctx.ObjectGetValue(intRegisters[[int](code[frame.Pc + 2])], field);
+                int kind = value.Kind;
+                If (kind == [int](Bytecode.ValueKind.Int) || kind == [int](Bytecode.ValueKind.Object))
+                {
+                    kinds[dst] = kind;
+                    intRegisters[dst] = value.IntValue;
+                }
+                Else frame.ImportValue(dst, value);
                 frame.Pc = frame.Pc + 5;
                 Jump LoopStart;
             }
 
             Record OpStoreField
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
-                ctx.ObjectSetValue(
-                    frame.IntRegisters[[int](code[frame.Pc + 1])],
-                    Bytecode.Program.ReadU16(code, frame.Pc + 3),
-                    frame.ExportValue([int](code[frame.Pc + 2]))
-                );
+                int field = [int](code[frame.Pc + 3]) | ([int](code[frame.Pc + 4]) << 8);
+                ctx.ObjectSetValue(intRegisters[[int](code[frame.Pc + 1])], field,
+                    frame.ExportValue([int](code[frame.Pc + 2])));
                 frame.Pc = frame.Pc + 5;
                 Jump LoopStart;
             }
 
             Record OpLoadIndex
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
-                int[] kinds = frame.Kinds;
-                int[] intRegisters = frame.IntRegisters;
-                string[] stringRegisters = frame.StringRegisters;
                 int dst = [int](code[frame.Pc + 1]);
                 int recv = [int](code[frame.Pc + 2]);
                 int indexReg = [int](code[frame.Pc + 3]);
@@ -1481,33 +1283,17 @@ Public Class VirtualMachine
                 Else
                 {
                     int handle = intRegisters[recv];
-                    If (handle < 0 || handle >= ctx.Arrays.Length())
+                    Context.HeapArray arr = ctx.RequireArray(handle);
+                    int elementKind = arr.ElementKind;
+                    If (elementKind == [int](Bytecode.ValueKind.Int) || elementKind == [int](Bytecode.ValueKind.Char))
                     {
-                        Throw "Array handle out of range";
-                    }
-
-                    Context.HeapArray arr = ctx.Arrays[handle];
-                    If (arr.ElementKind == [int](Bytecode.ValueKind.Int))
-                    {
-                        If (index < 0 || index >= arr.RawLength)
-                        {
-                            Throw "Array index out of range";
-                        }
-                        kinds[dst] = [int](Bytecode.ValueKind.Int);
-                        intRegisters[dst] = ([int*](arr.RawBuffer))[index];
-                    }
-                    Else If (arr.ElementKind == [int](Bytecode.ValueKind.Char))
-                    {
-                        If (index < 0 || index >= arr.RawLength)
-                        {
-                            Throw "Array index out of range";
-                        }
-                        kinds[dst] = [int](Bytecode.ValueKind.Char);
+                        If (index < 0 || index >= arr.Length) Throw "Array index out of range";
+                        kinds[dst] = elementKind;
                         intRegisters[dst] = ([int*](arr.RawBuffer))[index];
                     }
                     Else
                     {
-                        ctx.ArrayLoadIntoFrame(handle, index, frame, dst);
+                        arr.LoadIntoFrame(index, frame, dst);
                     }
                 }
                 frame.Pc = frame.Pc + 4;
@@ -1516,10 +1302,6 @@ Public Class VirtualMachine
 
             Record OpStoreIndex
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
-                int[] kinds = frame.Kinds;
-                int[] intRegisters = frame.IntRegisters;
                 int recv = [int](code[frame.Pc + 1]);
                 int indexReg = [int](code[frame.Pc + 2]);
                 int src = [int](code[frame.Pc + 3]);
@@ -1532,19 +1314,15 @@ Public Class VirtualMachine
                 }
                 index = intRegisters[indexReg];
 
-                If (handle < 0 || handle >= ctx.Arrays.Length())
-                {
-                    Throw "Array handle out of range";
-                }
-
-                Context.HeapArray arr = ctx.Arrays[handle];
+                Context.HeapArray arr = ctx.RequireArray(handle);
                 If (arr.ElementKind == [int](Bytecode.ValueKind.Int))
                 {
-                    If (index < 0 || index >= arr.RawLength)
+                    If (index < 0 || index >= arr.Length)
                     {
                         Throw "Array index out of range";
                     }
-                    If (kinds[src] != [int](Bytecode.ValueKind.Int))
+                    If (kinds[src] == [int](Bytecode.RegisterKind.CaptureCell)) arr.CaptureEnvironment = true;
+                    Else If (kinds[src] != [int](Bytecode.ValueKind.Int))
                     {
                         Throw "Expected int register at r" + [string](src);
                     }
@@ -1552,7 +1330,7 @@ Public Class VirtualMachine
                 }
                 Else If (arr.ElementKind == [int](Bytecode.ValueKind.Char))
                 {
-                    If (index < 0 || index >= arr.RawLength)
+                    If (index < 0 || index >= arr.Length)
                     {
                         Throw "Array index out of range";
                     }
@@ -1564,7 +1342,7 @@ Public Class VirtualMachine
                 }
                 Else
                 {
-                    ctx.ArrayStoreFromFrame(handle, index, frame, src);
+                    arr.StoreFromFrame(index, frame, src);
                 }
                 frame.Pc = frame.Pc + 4;
                 Jump LoopStart;
@@ -1572,8 +1350,6 @@ Public Class VirtualMachine
 
             Record OpArrayLength
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
                 frame.SetInt(
                     [int](code[frame.Pc + 1]),
                     ctx.ArrayLengthOf(frame.IntRegisters[[int](code[frame.Pc + 2])])
@@ -1584,8 +1360,6 @@ Public Class VirtualMachine
 
             Record OpArrayAdd
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
                 int handle = ctx.ArrayAddFromFrame(
                     frame.IntRegisters[[int](code[frame.Pc + 2])],
                     frame,
@@ -1593,13 +1367,11 @@ Public Class VirtualMachine
                 );
                 frame.ImportValue([int](code[frame.Pc + 1]), Context.VMValue.FromArray(handle));
                 frame.Pc = frame.Pc + 4;
-                Jump LoopStart;
+                Jump HeapSafePoint;
             }
 
             Record OpCallVirt
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
                 int nextPc = frame.Pc + 9;
                 int recv = [int](code[frame.Pc + 2]);
                 int functionIndex = ctx.ResolveVirtualFunction(
@@ -1618,13 +1390,11 @@ Public Class VirtualMachine
                     [int](code[frame.Pc + 7]),
                     [int](code[frame.Pc + 8])
                 );
-                Jump LoopStart;
+                Jump EnterFrame;
             }
 
             Record OpIsType
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
                 int dst = [int](code[frame.Pc + 1]);
                 int src = [int](code[frame.Pc + 2]);
                 int targetKind = [int](code[frame.Pc + 3]);
@@ -1653,8 +1423,6 @@ Public Class VirtualMachine
 
             Record OpLoadGlobal
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
                 int slot = Bytecode.Program.ReadU16(code, frame.Pc + 2);
                 frame.ImportValue([int](code[frame.Pc + 1]), ctx.GetGlobalValue(slot));
                 frame.Pc = frame.Pc + 4;
@@ -1663,8 +1431,6 @@ Public Class VirtualMachine
 
             Record OpStoreGlobal
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
                 int slot = Bytecode.Program.ReadU16(code, frame.Pc + 2);
                 ctx.SetGlobalValue(slot, frame.ExportValue([int](code[frame.Pc + 1])));
                 frame.Pc = frame.Pc + 4;
@@ -1673,13 +1439,13 @@ Public Class VirtualMachine
 
             Record OpMakeFunc
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
                 int dst = [int](code[frame.Pc + 1]);
                 int typeIndex = Bytecode.Program.ReadU16(code, frame.Pc + 2);
                 int targetKind = [int](code[frame.Pc + 4]);
                 int targetIndex = Bytecode.Program.ReadU16(code, frame.Pc + 5);
                 int envReg = [int](code[frame.Pc + 7]);
+                If (envReg != 255 && frame.Kinds[envReg] == [int](Bytecode.ValueKind.Array))
+                    ctx.RequireArray(frame.IntRegisters[envReg]).CaptureEnvironment = true;
                 int handle = ctx.NewObject(typeIndex);
                 int encoded = targetIndex;
 
@@ -1700,13 +1466,11 @@ Public Class VirtualMachine
 
                 frame.ImportValue(dst, Context.VMValue.FromObject(handle));
                 frame.Pc = frame.Pc + 8;
-                Jump LoopStart;
+                Jump HeapSafePoint;
             }
 
             Record OpCallClosure
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
                 int dst = [int](code[frame.Pc + 1]);
                 int calleeReg = [int](code[frame.Pc + 2]);
                 int argCount = [int](code[frame.Pc + 3]);
@@ -1728,8 +1492,8 @@ Public Class VirtualMachine
                         [int](code[frame.Pc + 6]),
                         [int](code[frame.Pc + 7])
                     );
-                    frame.Pc = nextPc;
-                    Jump LoopStart;
+                    If (frame.Pc == nextPc - 8) frame.Pc = nextPc;
+                    Jump HeapSafePoint;
                 }
 
                 If (envValue.Kind == [int](Bytecode.ValueKind.Array))
@@ -1749,40 +1513,32 @@ Public Class VirtualMachine
                     [int](code[frame.Pc + 6]),
                     [int](code[frame.Pc + 7])
                 );
-                Jump LoopStart;
+                Jump HeapSafePoint;
             }
 
             Record OpNewCell
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
-                frame.SetInt([int](code[frame.Pc + 1]), ctx.NewCell(frame.ExportValue([int](code[frame.Pc + 2]))));
+                frame.SetCell([int](code[frame.Pc + 1]), ctx.NewCell(frame.ExportValue([int](code[frame.Pc + 2]))));
                 frame.Pc = frame.Pc + 3;
-                Jump LoopStart;
+                Jump HeapSafePoint;
             }
 
             Record OpLoadCell
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
-                frame.ImportValue([int](code[frame.Pc + 1]), ctx.GetCellValue(frame.GetInt([int](code[frame.Pc + 2]))));
+                frame.ImportValue([int](code[frame.Pc + 1]), ctx.GetCellValue(frame.GetCell([int](code[frame.Pc + 2]))));
                 frame.Pc = frame.Pc + 3;
                 Jump LoopStart;
             }
 
             Record OpStoreCell
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
-                ctx.SetCellValue(frame.GetInt([int](code[frame.Pc + 1])), frame.ExportValue([int](code[frame.Pc + 2])));
+                ctx.SetCellValue(frame.GetCell([int](code[frame.Pc + 1])), frame.ExportValue([int](code[frame.Pc + 2])));
                 frame.Pc = frame.Pc + 3;
                 Jump LoopStart;
             }
 
             Record OpLoadCapture
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
                 int slot = Bytecode.Program.ReadU16(code, frame.Pc + 2);
                 Context.VMValue cellRef = ctx.ArrayGetValue(frame.EnvHandle, slot);
                 frame.ImportValue([int](code[frame.Pc + 1]), ctx.GetCellValue(cellRef.IntValue));
@@ -1792,8 +1548,6 @@ Public Class VirtualMachine
 
             Record OpStoreCapture
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
                 int slot = Bytecode.Program.ReadU16(code, frame.Pc + 2);
                 Context.VMValue cellRef = ctx.ArrayGetValue(frame.EnvHandle, slot);
                 ctx.SetCellValue(cellRef.IntValue, frame.ExportValue([int](code[frame.Pc + 1])));
@@ -1803,19 +1557,15 @@ Public Class VirtualMachine
 
             Record OpLoadCaptureCell
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
                 int slot = Bytecode.Program.ReadU16(code, frame.Pc + 2);
                 Context.VMValue cellRef = ctx.ArrayGetValue(frame.EnvHandle, slot);
-                frame.SetInt([int](code[frame.Pc + 1]), cellRef.IntValue);
+                frame.SetCell([int](code[frame.Pc + 1]), cellRef.IntValue);
                 frame.Pc = frame.Pc + 4;
                 Jump LoopStart;
             }
 
             Record OpPushTry
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
                 Context.TryHandler handler = New Context.TryHandler();
                 handler.CatchReg = [int](code[frame.Pc + 1]);
                 handler.CatchKind = [int](code[frame.Pc + 2]);
@@ -1828,7 +1578,6 @@ Public Class VirtualMachine
 
             Record OpPopTry
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
                 frame.PopHandler();
                 frame.Pc = frame.Pc + 1;
                 Jump LoopStart;
@@ -1836,44 +1585,36 @@ Public Class VirtualMachine
 
             Record OpThrow
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
                 Context.VMValue value = frame.ExportValue([int](code[frame.Pc + 1]));
                 If (!ctx.RaiseException(value))
                 {
                     Jump Halt;
                 }
-                Jump LoopStart;
+                Jump EnterFrame;
             }
 
             Record OpMakePtrLocal
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
                 frame.SetPointer(
                     [int](code[frame.Pc + 1]),
                     ctx.NewFramePointer(ctx.FrameCount - 1, [int](code[frame.Pc + 2]))
                 );
                 frame.Pc = frame.Pc + 3;
-                Jump LoopStart;
+                Jump HeapSafePoint;
             }
 
             Record OpMakePtrGlobal
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
                 frame.SetPointer(
                     [int](code[frame.Pc + 1]),
                     ctx.NewGlobalPointer(Bytecode.Program.ReadU16(code, frame.Pc + 2))
                 );
                 frame.Pc = frame.Pc + 4;
-                Jump LoopStart;
+                Jump HeapSafePoint;
             }
 
             Record OpMakePtrIndex
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
                 int dst = [int](code[frame.Pc + 1]);
                 int recv = [int](code[frame.Pc + 2]);
                 int index = frame.GetInt([int](code[frame.Pc + 3]));
@@ -1886,13 +1627,11 @@ Public Class VirtualMachine
                     frame.SetPointer(dst, ctx.NewArrayPointer(frame.IntRegisters[recv], index));
                 }
                 frame.Pc = frame.Pc + 4;
-                Jump LoopStart;
+                Jump HeapSafePoint;
             }
 
             Record OpMakePtrField
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
                 frame.SetPointer(
                     [int](code[frame.Pc + 1]),
                     ctx.NewObjectPointer(
@@ -1901,37 +1640,31 @@ Public Class VirtualMachine
                     )
                 );
                 frame.Pc = frame.Pc + 5;
-                Jump LoopStart;
+                Jump HeapSafePoint;
             }
 
             Record OpMakePtrFunc
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
                 frame.SetPointer(
                     [int](code[frame.Pc + 1]),
                     ctx.NewFunctionPointer(Bytecode.Program.ReadU16(code, frame.Pc + 2))
                 );
                 frame.Pc = frame.Pc + 4;
-                Jump LoopStart;
+                Jump HeapSafePoint;
             }
 
             Record OpMakePtrCell
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
                 frame.SetPointer(
                     [int](code[frame.Pc + 1]),
-                    ctx.NewCellPointer(frame.GetInt([int](code[frame.Pc + 2])))
+                    ctx.NewCellPointer(frame.GetCell([int](code[frame.Pc + 2])))
                 );
                 frame.Pc = frame.Pc + 3;
-                Jump LoopStart;
+                Jump HeapSafePoint;
             }
 
             Record OpLoadPtr
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
                 int dst = [int](code[frame.Pc + 1]);
                 int src = [int](code[frame.Pc + 2]);
                 If (frame.Kinds[src] == [int](Bytecode.ValueKind.Pointer))
@@ -1957,8 +1690,6 @@ Public Class VirtualMachine
 
             Record OpStorePtr
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
                 int ptrReg = [int](code[frame.Pc + 1]);
                 int src = [int](code[frame.Pc + 2]);
                 If (frame.Kinds[ptrReg] != [int](Bytecode.ValueKind.Pointer))
@@ -1972,8 +1703,6 @@ Public Class VirtualMachine
 
             Record OpAddPtr
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
                 int dst = [int](code[frame.Pc + 1]);
                 int src = [int](code[frame.Pc + 2]);
                 int delta = frame.GetInt([int](code[frame.Pc + 3]));
@@ -1990,15 +1719,11 @@ Public Class VirtualMachine
                     Throw "Pointer arithmetic requires pointer or string-backed pointer";
                 }
                 frame.Pc = frame.Pc + 4;
-                Jump LoopStart;
+                Jump HeapSafePoint;
             }
 
             Record OpLoopIntLtInc
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
-                int[] kinds = frame.Kinds;
-                int[] intRegisters = frame.IntRegisters;
                 int counterReg = [int](code[frame.Pc + 1]);
                 int limitReg = [int](code[frame.Pc + 2]);
                 int counterValue;
@@ -2020,10 +1745,6 @@ Public Class VirtualMachine
 
             Record OpLoopIntLeInc
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
-                int[] kinds = frame.Kinds;
-                int[] intRegisters = frame.IntRegisters;
                 int counterReg = [int](code[frame.Pc + 1]);
                 int limitReg = [int](code[frame.Pc + 2]);
                 int counterValue;
@@ -2045,10 +1766,6 @@ Public Class VirtualMachine
 
             Record OpLoopIntGtDec
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
-                int[] kinds = frame.Kinds;
-                int[] intRegisters = frame.IntRegisters;
                 int counterReg = [int](code[frame.Pc + 1]);
                 int limitReg = [int](code[frame.Pc + 2]);
                 int counterValue;
@@ -2070,10 +1787,6 @@ Public Class VirtualMachine
 
             Record OpLoopIntGeDec
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
-                int[] kinds = frame.Kinds;
-                int[] intRegisters = frame.IntRegisters;
                 int counterReg = [int](code[frame.Pc + 1]);
                 int limitReg = [int](code[frame.Pc + 2]);
                 int counterValue;
@@ -2095,10 +1808,6 @@ Public Class VirtualMachine
 
             Record OpLoopIntEqInc
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
-                int[] kinds = frame.Kinds;
-                int[] intRegisters = frame.IntRegisters;
                 int counterReg = [int](code[frame.Pc + 1]);
                 int limitReg = [int](code[frame.Pc + 2]);
                 int counterValue;
@@ -2120,10 +1829,6 @@ Public Class VirtualMachine
 
             Record OpLoopIntNeInc
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
-                int[] kinds = frame.Kinds;
-                int[] intRegisters = frame.IntRegisters;
                 int counterReg = [int](code[frame.Pc + 1]);
                 int limitReg = [int](code[frame.Pc + 2]);
                 int counterValue;
@@ -2145,10 +1850,6 @@ Public Class VirtualMachine
 
             Record OpLoopIntEqDec
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
-                int[] kinds = frame.Kinds;
-                int[] intRegisters = frame.IntRegisters;
                 int counterReg = [int](code[frame.Pc + 1]);
                 int limitReg = [int](code[frame.Pc + 2]);
                 int counterValue;
@@ -2170,10 +1871,6 @@ Public Class VirtualMachine
 
             Record OpLoopIntNeDec
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
-                int[] kinds = frame.Kinds;
-                int[] intRegisters = frame.IntRegisters;
                 int counterReg = [int](code[frame.Pc + 1]);
                 int limitReg = [int](code[frame.Pc + 2]);
                 int counterValue;
@@ -2195,10 +1892,6 @@ Public Class VirtualMachine
 
             Record OpLoopBackIntLtInc
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
-                int[] kinds = frame.Kinds;
-                int[] intRegisters = frame.IntRegisters;
                 int counterReg = [int](code[frame.Pc + 1]);
                 int limitReg = [int](code[frame.Pc + 2]);
                 If (kinds[counterReg] != [int](Bytecode.ValueKind.Int) || kinds[limitReg] != [int](Bytecode.ValueKind.Int))
@@ -2219,10 +1912,6 @@ Public Class VirtualMachine
 
             Record OpLoopBackIntLeInc
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
-                int[] kinds = frame.Kinds;
-                int[] intRegisters = frame.IntRegisters;
                 int counterReg = [int](code[frame.Pc + 1]);
                 int limitReg = [int](code[frame.Pc + 2]);
                 If (kinds[counterReg] != [int](Bytecode.ValueKind.Int) || kinds[limitReg] != [int](Bytecode.ValueKind.Int))
@@ -2243,10 +1932,6 @@ Public Class VirtualMachine
 
             Record OpLoopBackIntGtDec
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
-                int[] kinds = frame.Kinds;
-                int[] intRegisters = frame.IntRegisters;
                 int counterReg = [int](code[frame.Pc + 1]);
                 int limitReg = [int](code[frame.Pc + 2]);
                 If (kinds[counterReg] != [int](Bytecode.ValueKind.Int) || kinds[limitReg] != [int](Bytecode.ValueKind.Int))
@@ -2267,10 +1952,6 @@ Public Class VirtualMachine
 
             Record OpLoopBackIntGeDec
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
-                int[] kinds = frame.Kinds;
-                int[] intRegisters = frame.IntRegisters;
                 int counterReg = [int](code[frame.Pc + 1]);
                 int limitReg = [int](code[frame.Pc + 2]);
                 If (kinds[counterReg] != [int](Bytecode.ValueKind.Int) || kinds[limitReg] != [int](Bytecode.ValueKind.Int))
@@ -2291,10 +1972,6 @@ Public Class VirtualMachine
 
             Record OpLoopBackIntEqInc
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
-                int[] kinds = frame.Kinds;
-                int[] intRegisters = frame.IntRegisters;
                 int counterReg = [int](code[frame.Pc + 1]);
                 int limitReg = [int](code[frame.Pc + 2]);
                 If (kinds[counterReg] != [int](Bytecode.ValueKind.Int) || kinds[limitReg] != [int](Bytecode.ValueKind.Int))
@@ -2315,10 +1992,6 @@ Public Class VirtualMachine
 
             Record OpLoopBackIntNeInc
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
-                int[] kinds = frame.Kinds;
-                int[] intRegisters = frame.IntRegisters;
                 int counterReg = [int](code[frame.Pc + 1]);
                 int limitReg = [int](code[frame.Pc + 2]);
                 If (kinds[counterReg] != [int](Bytecode.ValueKind.Int) || kinds[limitReg] != [int](Bytecode.ValueKind.Int))
@@ -2339,10 +2012,6 @@ Public Class VirtualMachine
 
             Record OpLoopBackIntEqDec
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
-                int[] kinds = frame.Kinds;
-                int[] intRegisters = frame.IntRegisters;
                 int counterReg = [int](code[frame.Pc + 1]);
                 int limitReg = [int](code[frame.Pc + 2]);
                 If (kinds[counterReg] != [int](Bytecode.ValueKind.Int) || kinds[limitReg] != [int](Bytecode.ValueKind.Int))
@@ -2363,10 +2032,6 @@ Public Class VirtualMachine
 
             Record OpLoopBackIntNeDec
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
-                int[] kinds = frame.Kinds;
-                int[] intRegisters = frame.IntRegisters;
                 int counterReg = [int](code[frame.Pc + 1]);
                 int limitReg = [int](code[frame.Pc + 2]);
                 If (kinds[counterReg] != [int](Bytecode.ValueKind.Int) || kinds[limitReg] != [int](Bytecode.ValueKind.Int))
@@ -2387,10 +2052,6 @@ Public Class VirtualMachine
 
             Record OpLoopArrayFillIntLtInc
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
-                int[] kinds = frame.Kinds;
-                int[] intRegisters = frame.IntRegisters;
                 int arrayReg = [int](code[frame.Pc + 1]);
                 int counterReg = [int](code[frame.Pc + 2]);
                 int limitReg = [int](code[frame.Pc + 3]);
@@ -2407,18 +2068,14 @@ Public Class VirtualMachine
                     Throw "LoopArrayFillIntLtInc requires array/int registers";
                 }
                 handle = intRegisters[arrayReg];
-                If (handle < 0 || handle >= ctx.Arrays.Length())
-                {
-                    Throw "Array handle out of range";
-                }
-                arr = ctx.Arrays[handle];
+                arr = ctx.RequireArray(handle);
                 If (arr.ElementKind != [int](Bytecode.ValueKind.Int))
                 {
                     Throw "LoopArrayFillIntLtInc requires int arrays";
                 }
                 counterValue = intRegisters[counterReg];
                 limitValue = intRegisters[limitReg];
-                arrayLength = arr.RawLength;
+                arrayLength = arr.Length;
                 raw = [int*](arr.RawBuffer);
                 If (counterValue >= 0 && limitValue <= arrayLength)
                 {
@@ -2447,10 +2104,6 @@ Public Class VirtualMachine
 
             Record OpLoopArrayFillIntLeInc
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
-                int[] kinds = frame.Kinds;
-                int[] intRegisters = frame.IntRegisters;
                 int arrayReg = [int](code[frame.Pc + 1]);
                 int counterReg = [int](code[frame.Pc + 2]);
                 int limitReg = [int](code[frame.Pc + 3]);
@@ -2467,18 +2120,14 @@ Public Class VirtualMachine
                     Throw "LoopArrayFillIntLeInc requires array/int registers";
                 }
                 handle = intRegisters[arrayReg];
-                If (handle < 0 || handle >= ctx.Arrays.Length())
-                {
-                    Throw "Array handle out of range";
-                }
-                arr = ctx.Arrays[handle];
+                arr = ctx.RequireArray(handle);
                 If (arr.ElementKind != [int](Bytecode.ValueKind.Int))
                 {
                     Throw "LoopArrayFillIntLeInc requires int arrays";
                 }
                 counterValue = intRegisters[counterReg];
                 limitValue = intRegisters[limitReg];
-                arrayLength = arr.RawLength;
+                arrayLength = arr.Length;
                 raw = [int*](arr.RawBuffer);
                 If (counterValue >= 0 && limitValue < arrayLength)
                 {
@@ -2507,10 +2156,6 @@ Public Class VirtualMachine
 
             Record OpLoopArraySumIntLtInc
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
-                int[] kinds = frame.Kinds;
-                int[] intRegisters = frame.IntRegisters;
                 int sumReg = [int](code[frame.Pc + 1]);
                 int arrayReg = [int](code[frame.Pc + 2]);
                 int counterReg = [int](code[frame.Pc + 3]);
@@ -2530,11 +2175,7 @@ Public Class VirtualMachine
                     Throw "LoopArraySumIntLtInc requires int/array registers";
                 }
                 handle = intRegisters[arrayReg];
-                If (handle < 0 || handle >= ctx.Arrays.Length())
-                {
-                    Throw "Array handle out of range";
-                }
-                arr = ctx.Arrays[handle];
+                arr = ctx.RequireArray(handle);
                 If (arr.ElementKind != [int](Bytecode.ValueKind.Int))
                 {
                     Throw "LoopArraySumIntLtInc requires int arrays";
@@ -2542,7 +2183,7 @@ Public Class VirtualMachine
                 sumValue = intRegisters[sumReg];
                 counterValue = intRegisters[counterReg];
                 limitValue = intRegisters[limitReg];
-                arrayLength = arr.RawLength;
+                arrayLength = arr.Length;
                 raw = [int*](arr.RawBuffer);
                 If (counterValue >= 0 && limitValue <= arrayLength)
                 {
@@ -2573,10 +2214,6 @@ Public Class VirtualMachine
 
             Record OpLoopArraySumIntLeInc
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
-                int[] kinds = frame.Kinds;
-                int[] intRegisters = frame.IntRegisters;
                 int sumReg = [int](code[frame.Pc + 1]);
                 int arrayReg = [int](code[frame.Pc + 2]);
                 int counterReg = [int](code[frame.Pc + 3]);
@@ -2596,11 +2233,7 @@ Public Class VirtualMachine
                     Throw "LoopArraySumIntLeInc requires int/array registers";
                 }
                 handle = intRegisters[arrayReg];
-                If (handle < 0 || handle >= ctx.Arrays.Length())
-                {
-                    Throw "Array handle out of range";
-                }
-                arr = ctx.Arrays[handle];
+                arr = ctx.RequireArray(handle);
                 If (arr.ElementKind != [int](Bytecode.ValueKind.Int))
                 {
                     Throw "LoopArraySumIntLeInc requires int arrays";
@@ -2608,7 +2241,7 @@ Public Class VirtualMachine
                 sumValue = intRegisters[sumReg];
                 counterValue = intRegisters[counterReg];
                 limitValue = intRegisters[limitReg];
-                arrayLength = arr.RawLength;
+                arrayLength = arr.Length;
                 raw = [int*](arr.RawBuffer);
                 If (counterValue >= 0 && limitValue < arrayLength)
                 {
@@ -2639,10 +2272,6 @@ Public Class VirtualMachine
 
             Record OpLoopSumIntLtInc
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
-                int[] kinds = frame.Kinds;
-                int[] intRegisters = frame.IntRegisters;
                 int sumReg = [int](code[frame.Pc + 1]);
                 int counterReg = [int](code[frame.Pc + 2]);
                 int limitReg = [int](code[frame.Pc + 3]);
@@ -2672,10 +2301,6 @@ Public Class VirtualMachine
 
             Record OpLoopSumIntLeInc
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
-                int[] kinds = frame.Kinds;
-                int[] intRegisters = frame.IntRegisters;
                 int sumReg = [int](code[frame.Pc + 1]);
                 int counterReg = [int](code[frame.Pc + 2]);
                 int limitReg = [int](code[frame.Pc + 3]);
@@ -2705,10 +2330,6 @@ Public Class VirtualMachine
 
             Record OpUDivInt
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
-                int[] kinds = frame.Kinds;
-                int[] intRegisters = frame.IntRegisters;
                 int dst = [int](code[frame.Pc + 1]);
                 int lhs = [int](code[frame.Pc + 2]);
                 int rhs = [int](code[frame.Pc + 3]);
@@ -2727,10 +2348,6 @@ Public Class VirtualMachine
 
             Record OpURemInt
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
-                int[] kinds = frame.Kinds;
-                int[] intRegisters = frame.IntRegisters;
                 int dst = [int](code[frame.Pc + 1]);
                 int lhs = [int](code[frame.Pc + 2]);
                 int rhs = [int](code[frame.Pc + 3]);
@@ -2749,11 +2366,6 @@ Public Class VirtualMachine
 
             Record OpULtInt
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
-                int[] kinds = frame.Kinds;
-                int[] intRegisters = frame.IntRegisters;
-                bool[] boolRegisters = frame.BoolRegisters;
                 int dst = [int](code[frame.Pc + 1]);
                 int lhs = [int](code[frame.Pc + 2]);
                 int rhs = [int](code[frame.Pc + 3]);
@@ -2772,11 +2384,6 @@ Public Class VirtualMachine
 
             Record OpULeInt
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
-                int[] kinds = frame.Kinds;
-                int[] intRegisters = frame.IntRegisters;
-                bool[] boolRegisters = frame.BoolRegisters;
                 int dst = [int](code[frame.Pc + 1]);
                 int lhs = [int](code[frame.Pc + 2]);
                 int rhs = [int](code[frame.Pc + 3]);
@@ -2795,11 +2402,6 @@ Public Class VirtualMachine
 
             Record OpUGtInt
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
-                int[] kinds = frame.Kinds;
-                int[] intRegisters = frame.IntRegisters;
-                bool[] boolRegisters = frame.BoolRegisters;
                 int dst = [int](code[frame.Pc + 1]);
                 int lhs = [int](code[frame.Pc + 2]);
                 int rhs = [int](code[frame.Pc + 3]);
@@ -2818,11 +2420,6 @@ Public Class VirtualMachine
 
             Record OpUGeInt
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
-                int[] kinds = frame.Kinds;
-                int[] intRegisters = frame.IntRegisters;
-                bool[] boolRegisters = frame.BoolRegisters;
                 int dst = [int](code[frame.Pc + 1]);
                 int lhs = [int](code[frame.Pc + 2]);
                 int rhs = [int](code[frame.Pc + 3]);
@@ -2841,10 +2438,6 @@ Public Class VirtualMachine
 
             Record OpLShrInt
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
-                int[] kinds = frame.Kinds;
-                int[] intRegisters = frame.IntRegisters;
                 int dst = [int](code[frame.Pc + 1]);
                 int lhs = [int](code[frame.Pc + 2]);
                 int rhs = [int](code[frame.Pc + 3]);
@@ -2862,10 +2455,8 @@ Public Class VirtualMachine
 
             Record OpRet
             {
-                Context.FunctionFrame frame = ctx.CurrentFrame();
-                byte[] code = frame.FnInfo.Code;
                 ctx.ReturnFromCurrent([int](code[frame.Pc + 1]));
-                Jump LoopStart;
+                Jump EnterFrame;
             }
 
             Record OpHalt
@@ -3016,19 +2607,12 @@ Public Class VirtualMachine
             Dispatch.OpUGeInt,
             Dispatch.OpLShrInt,
             Dispatch.OpFloatToF32,
-            Dispatch.OpIntToF32
+            Dispatch.OpIntToF32,
+            Dispatch.OpCallRange,
+            Dispatch.OpUIntToFloat
         };
 
         Dispatch.Run();
 
-        If (ctx.HasUnhandledException)
-        {
-            Console.PrintLine(ctx.ExceptionMessage());
-            If (ctx.CurrentTrace != "")
-            {
-                Console.PrintLine(ctx.CurrentTrace);
-            }
-        }
-        Return ctx.ExitCode;
     }
 }

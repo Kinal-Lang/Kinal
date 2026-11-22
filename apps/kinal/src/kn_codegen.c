@@ -86,6 +86,7 @@ typedef struct
     StructDecl *decl;
     LLVMTypeRef struct_ty;
     LLVMTypeRef ptr_ty;
+    enum { ARRAY_FIELDS_UNKNOWN, ARRAY_FIELDS_CHECKING, ARRAY_FIELDS_NONE, ARRAY_FIELDS_PRESENT } array_fields;
 } StructSymbol;
 
 typedef struct

@@ -3,6 +3,7 @@ Unit IO.Kinal.Compiler.Project.DependencyResolver;
 Get IO.Text;
 Get IO.Kinal.Compiler.Core.CompileSession;
 Get IO.Kinal.Compiler.Core.IntrinsicUnits;
+Get IO.Kinal.Compiler.Lex.Lexer;
 Get IO.Kinal.Compiler.Project.PackageResolver;
 Get IO.Kinal.Compiler.Syntax.SyntaxTree;
 
@@ -79,25 +80,23 @@ Class DependencyResolver
         While (index < paths.Count())
         {
             string path = [string](paths.Fetch(index));
-            ProjectSourceProbe probe = This.Session.ProbeProjectSource(path);
-            If (probe != null && !IO.Text.IsEmpty(probe.Syntax.UnitName))
-                modules.AddSource(probe.Syntax.UnitName, probe.Path);
+            // Full project probes still own local reachability and diagnostic
+            // isolation. Package indexing needs no function bodies or imports;
+            // ParseFile reads those only when the module becomes reachable.
+            string unitName = IO.Kinal.Compiler.Lex.Lexer.ProbeUnitName(
+                This.Session.Sources.Load(path));
+            If (unitName == null)
+            {
+                ProjectSourceProbe probe = This.Session.ProbeProjectSource(path);
+                unitName = probe == null ? "" : probe.Syntax.UnitName;
+            }
+            If (!IO.Text.IsEmpty(unitName))
+                modules.AddSource(unitName, path);
             ElseIf (This.Catalog.ExplicitSources.Contains(path))
                 This.Session.ReportProject("Invalid package source",
                     "package source_files requires a Unit declaration: " + path);
             index = index + 1;
         }
-    }
-
-    Public Safe Function bool ContainsSource(string path)
-    {
-        CompilationUnit unit = This.Session.FirstUnit;
-        While (unit != null)
-        {
-            If (unit.Source.Path == path) Return true;
-            unit = unit.Next;
-        }
-        Return false;
     }
 
     Public Safe Function void LoadModule(DependencyModule module)
@@ -107,7 +106,7 @@ Class DependencyResolver
         While (index < module.Paths.Count() && !This.Session.HasErrors())
         {
             string path = [string](module.Paths.Fetch(index));
-            If (!This.ContainsSource(path)) This.Session.ParseFile(path);
+            If (!This.Session.ContainsParsedPath(path)) This.Session.ParseFile(path);
             index = index + 1;
         }
     }

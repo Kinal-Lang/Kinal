@@ -13,6 +13,7 @@ extern "C" {
  */
 int kn_sh_llvm_version_major(void);
 void *kn_sh_llvm_module_create(const char *name);
+void kn_sh_llvm_discard_value_names(void *module_handle);
 /* Select the machine and data layout before IR lowering; owned by the module. */
 int kn_sh_llvm_module_set_target(void *module_handle, const char *target_triple);
 void kn_sh_llvm_module_dispose(void *module_handle);
@@ -20,6 +21,11 @@ int kn_sh_llvm_build_probe(void *module_handle, const char *function_name,
                            int return_value);
 /* The returned IR text is malloc-owned and must be released by the caller. */
 char *kn_sh_llvm_module_ir(void *module_handle);
+int kn_sh_llvm_write_ir(void *module_handle, const char *path);
+int kn_sh_llvm_write_bitcode(void *module_handle, const char *pipeline,
+                             const char *path);
+void kn_sh_llvm_erase_isolated_calls(void *function, void **calls, int count);
+int kn_sh_llvm_has_uses(void *value);
 int kn_sh_llvm_emit_object(void *module_handle, const char *target_triple,
                            const char *output_path);
 int kn_sh_llvm_emit_assembly(void *module_handle, const char *target_triple,
@@ -68,6 +74,7 @@ void *kn_sh_llvm_add_global(void *module_handle, void *type, const char *name);
 int kn_sh_llvm_set_initializer(void *global, void *value);
 int kn_sh_llvm_set_private_linkage(void *global);
 int kn_sh_llvm_set_call_convention(void *function, int convention);
+int kn_sh_llvm_add_function_enum_attribute(void *function, const char *name, uint64_t value);
 int kn_sh_llvm_set_alignment(void *value, int alignment);
 int kn_sh_llvm_set_volatile(void *instruction, int enabled);
 int kn_sh_llvm_set_section(void *global, const char *section);

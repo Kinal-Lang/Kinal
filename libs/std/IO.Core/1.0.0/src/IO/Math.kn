@@ -3,42 +3,72 @@ Unit IO;
 // ===== C-backed math functions (top-level Extern, linked from kn_math.obj) =====
 
 // Trigonometric
+[IO.Kinal.Runtime.KncIntrinsic(164)]
 Extern Unsafe Function f64 __kn_math_sin(f64 x) By C;
+[IO.Kinal.Runtime.KncIntrinsic(165)]
 Extern Unsafe Function f64 __kn_math_cos(f64 x) By C;
+[IO.Kinal.Runtime.KncIntrinsic(260)]
 Extern Unsafe Function f64 __kn_math_tan(f64 x) By C;
+[IO.Kinal.Runtime.KncIntrinsic(261)]
 Extern Unsafe Function f64 __kn_math_asin(f64 x) By C;
+[IO.Kinal.Runtime.KncIntrinsic(262)]
 Extern Unsafe Function f64 __kn_math_acos(f64 x) By C;
+[IO.Kinal.Runtime.KncIntrinsic(263)]
 Extern Unsafe Function f64 __kn_math_atan(f64 x) By C;
+[IO.Kinal.Runtime.KncIntrinsic(264)]
 Extern Unsafe Function f64 __kn_math_atan2(f64 y, f64 x) By C;
 
 // Hyperbolic
+[IO.Kinal.Runtime.KncIntrinsic(265)]
 Extern Unsafe Function f64 __kn_math_sinh(f64 x) By C;
+[IO.Kinal.Runtime.KncIntrinsic(266)]
 Extern Unsafe Function f64 __kn_math_cosh(f64 x) By C;
+[IO.Kinal.Runtime.KncIntrinsic(267)]
 Extern Unsafe Function f64 __kn_math_tanh(f64 x) By C;
 
 // Power / Exponential
+[IO.Kinal.Runtime.KncIntrinsic(268)]
 Extern Unsafe Function f64 __kn_math_sqrt(f64 x) By C;
+[IO.Kinal.Runtime.KncIntrinsic(286)]
+Extern Unsafe Function f64 __kn_math_hypot(f64 x, f64 y) By C;
+[IO.Kinal.Runtime.KncIntrinsic(269)]
 Extern Unsafe Function f64 __kn_math_cbrt(f64 x) By C;
+[IO.Kinal.Runtime.KncIntrinsic(270)]
 Extern Unsafe Function f64 __kn_math_pow(f64 base, f64 exponent) By C;
+[IO.Kinal.Runtime.KncIntrinsic(271)]
 Extern Unsafe Function f64 __kn_math_exp(f64 x) By C;
+[IO.Kinal.Runtime.KncIntrinsic(272)]
 Extern Unsafe Function f64 __kn_math_log(f64 x) By C;
+[IO.Kinal.Runtime.KncIntrinsic(273)]
 Extern Unsafe Function f64 __kn_math_log2(f64 x) By C;
+[IO.Kinal.Runtime.KncIntrinsic(274)]
 Extern Unsafe Function f64 __kn_math_log10(f64 x) By C;
 
 // Rounding
+[IO.Kinal.Runtime.KncIntrinsic(275)]
 Extern Unsafe Function f64 __kn_math_floor(f64 x) By C;
+[IO.Kinal.Runtime.KncIntrinsic(276)]
 Extern Unsafe Function f64 __kn_math_ceil(f64 x) By C;
+[IO.Kinal.Runtime.KncIntrinsic(277)]
 Extern Unsafe Function f64 __kn_math_round(f64 x) By C;
+[IO.Kinal.Runtime.KncIntrinsic(278)]
 Extern Unsafe Function f64 __kn_math_trunc(f64 x) By C;
 
 // Misc
+[IO.Kinal.Runtime.KncIntrinsic(279)]
 Extern Unsafe Function f64 __kn_math_fabs(f64 x) By C;
+[IO.Kinal.Runtime.KncIntrinsic(280)]
 Extern Unsafe Function f64 __kn_math_fmod(f64 x, f64 y) By C;
+[IO.Kinal.Runtime.KncIntrinsic(281)]
 Extern Unsafe Function f64 __kn_math_fmin(f64 x, f64 y) By C;
+[IO.Kinal.Runtime.KncIntrinsic(282)]
 Extern Unsafe Function f64 __kn_math_fmax(f64 x, f64 y) By C;
+[IO.Kinal.Runtime.KncIntrinsic(283)]
 Extern Unsafe Function f64 __kn_math_copysign(f64 x, f64 y) By C;
-Extern Unsafe Function int __kn_math_isinf(f64 x) By C;
-Extern Unsafe Function int __kn_math_isnan(f64 x) By C;
+[IO.Kinal.Runtime.KncIntrinsic(284)]
+Extern Unsafe Function i32 __kn_math_isinf(f64 x) By C;
+[IO.Kinal.Runtime.KncIntrinsic(285)]
+Extern Unsafe Function i32 __kn_math_isnan(f64 x) By C;
 
 // ===== Constants (accessible as IO.PI, IO.E, etc.) =====
 Const f64 PI      = 3.14159265358979323846;
@@ -67,6 +97,7 @@ Static Class Math
 
     // --- Power / Exponential ---
     Public Trusted Function f64 Sqrt(f64 x) { Return __kn_math_sqrt(x); }
+    Public Trusted Function f64 Hypot(f64 x, f64 y) { Return __kn_math_hypot(x, y); }
     Public Trusted Function f64 Cbrt(f64 x) { Return __kn_math_cbrt(x); }
     Public Trusted Function f64 Pow(f64 base, f64 exponent) { Return __kn_math_pow(base, exponent); }
     Public Trusted Function f64 Exp(f64 x) { Return __kn_math_exp(x); }
@@ -94,6 +125,7 @@ Static Class Math
     Public Trusted Function f32 CosF(f32 x) { Return [f32](__kn_math_cos([f64](x))); }
     Public Trusted Function f32 TanF(f32 x) { Return [f32](__kn_math_tan([f64](x))); }
     Public Trusted Function f32 SqrtF(f32 x) { Return [f32](__kn_math_sqrt([f64](x))); }
+    Public Trusted Function f32 HypotF(f32 x, f32 y) { Return [f32](__kn_math_hypot([f64](x), [f64](y))); }
     Public Trusted Function f32 PowF(f32 base, f32 exponent) { Return [f32](__kn_math_pow([f64](base), [f64](exponent))); }
     Public Trusted Function f32 FloorF(f32 x) { Return [f32](__kn_math_floor([f64](x))); }
     Public Trusted Function f32 CeilF(f32 x) { Return [f32](__kn_math_ceil([f64](x))); }

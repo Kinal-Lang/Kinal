@@ -1,0 +1,157 @@
+Unit Tests.GcFrames;
+
+Get IO.Kinal.Runtime;
+
+Function int FoldByteArray(byte[] data, int start, int end, int state)
+{
+    int i = start;
+    While (i < end)
+    {
+        state = (state * 31 + [int](data[i])) % 1000000007;
+        i = i + 1;
+    }
+    Return state;
+}
+
+Function int FoldGenerator(int start, int end, int state)
+{
+    int i = start;
+    While (i < end)
+    {
+        state = (13849 + 25173 * state) % 65521;
+        i = i + 1;
+    }
+    Return state;
+}
+
+Function int FoldLiteral(int state)
+{
+    string text = "abé\0hidden";
+    int i = 0;
+    While (i < text.Length())
+    {
+        state = (state * 31 + [int](text[i])) % 1000000007;
+        i = i + 1;
+    }
+    Return state;
+}
+
+Function int DependentAddend(int count, int state)
+{
+    int i = 0;
+    While (i < count)
+    {
+        state = (state * 31 + [byte](state)) % 65521;
+        i = i + 1;
+    }
+    Return state;
+}
+
+Function int WideProduct(int count, int state)
+{
+    int i = 0;
+    While (i < count)
+    {
+        state = (state * 65537 + 47) % 4000000007;
+        i = i + 1;
+    }
+    Return state;
+}
+
+Function u32 FoldUnsigned32(int count, u32 state)
+{
+    int i = 0;
+    While (i < count)
+    {
+        state = (state * [u32](7) + [u32](3)) % [u32](65521);
+        i = i + 1;
+    }
+    Return state;
+}
+
+Function i16 FoldSigned16(int count, i16 state)
+{
+    int i = 0;
+    While (i < count)
+    {
+        state = (state * [i16](3) + [i16](5)) % [i16](101);
+        i = i + 1;
+    }
+    Return state;
+}
+
+Trusted Function int ExposedRecurrence(int count, int state)
+{
+    int* address = &state;
+    int i = 0;
+    While (i < count) { state = (state * 31 + 1) % 65521; i = i + 1; }
+    Return address[0];
+}
+
+Function byte ReadTerm(int index)
+{
+    If (index == 3) Throw "done";
+    Return [byte](index);
+}
+
+Function int ThrowingRecurrence(int count)
+{
+    int state = 1; int i = 0;
+    Try
+    {
+        While (i < count) { state = (state * 31 + [int](ReadTerm(i))) % 65521; i = i + 1; }
+    }
+    Catch (string error) { If (error == "done") Return state; }
+    Return -1;
+}
+
+Trusted Function int ShortenedString()
+{
+    char* data = IO.Kinal.Runtime.AllocateText(4);
+    data[0] = 'a'; data[1] = 'b'; data[2] = 'c'; data[3] = 'd';
+    string text = [string](data);
+    int i = 0;
+    While (i < text.Length())
+    {
+        If (i == 0) data[2] = '\0';
+        i = i + 1;
+    }
+    Return i;
+}
+
+Function bool CheckModularLoops()
+{
+    byte[2051] data;
+    For (int i = 0; i < 2051; i++) data[i] = [byte](i * 17);
+    int[] lengths = {0, 1, 2, 3, 4, 5, 1023, 1024, 1025, 2049};
+    int[] seeds = {0, 1, -1, 65520, 65521, 1000000006, 1000000007, 0x7fffffffffffffff, 0x8000000000000000};
+    For (int k = 0; k < seeds.Length(); k++)
+    {
+        int seed = seeds[k];
+        string literal = "abé\0hidden";
+        int hash = seed;
+        For (int i = 0; i < literal.Length(); i++) hash = (hash * 31 + [int](literal[i])) % 1000000007;
+        If (FoldLiteral(seed) != hash) Return false;
+        For (int t = 0; t < lengths.Length(); t++)
+        {
+            int n = lengths[t];
+            int bytes = seed; int generated = seed; int dependent = seed; int wide = seed;
+            u32 unsignedState = [u32](seed); i16 smallState = [i16](seed);
+            For (int i = 0; i < n; i++)
+            {
+                bytes = (bytes * 31 + [int](data[2 + i])) % 1000000007;
+                generated = (generated * 25173 + 13849) % 65521;
+                dependent = (dependent * 31 + [byte](dependent)) % 65521;
+                wide = (wide * 65537 + 47) % 4000000007;
+                unsignedState = (unsignedState * [u32](7) + [u32](3)) % [u32](65521);
+                smallState = (smallState * [i16](3) + [i16](5)) % [i16](101);
+            }
+            If (FoldByteArray(data, 2, n + 2, seed) != bytes || FoldGenerator(-20, n - 20, seed) != generated ||
+                FoldGenerator(0x7fffffffffffffff - n, 0x7fffffffffffffff, seed) != generated ||
+                DependentAddend(n, seed) != dependent || WideProduct(n, seed) != wide) Return false;
+            If (FoldUnsigned32(n, [u32](seed)) != unsignedState || FoldSigned16(n, [i16](seed)) != smallState)
+                Return false;
+        }
+    }
+    Return ShortenedString() == 2 && ExposedRecurrence(2, 0) == 32 && ThrowingRecurrence(8) == 29824;
+}

@@ -1,0 +1,6 @@
+Unit Tests.Selfhost.Models;
+
+Class ModelRow
+{
+    Public int Count;
+}

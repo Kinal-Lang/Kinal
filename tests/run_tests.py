@@ -18,6 +18,7 @@ import tempfile
 import threading
 import time
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -240,6 +241,7 @@ def run_web_gc_roots_fixture(executable: Path) -> tuple[subprocess.CompletedProc
         [str(executable)],
         cwd=str(ROOT),
         text=True,
+        stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         encoding="utf-8",
@@ -274,7 +276,7 @@ def run_web_gc_roots_fixture(executable: Path) -> tuple[subprocess.CompletedProc
                     connection.close()
 
         try:
-            stdout, stderr = proc.communicate(timeout=5)
+            stdout, stderr = proc.communicate(input="done\n", timeout=5)
         except subprocess.TimeoutExpired:
             fixture_error = fixture_error or "server did not exit within 5 seconds"
             proc.kill()
@@ -567,6 +569,74 @@ def matches_expected_runtime_output(output: str, expected: str) -> bool:
     return normalize_unhandled_runtime_output(normalized_output) == normalized_expected
 
 
+def check_file_append(compiler: Path, vm: Path, out_dir: Path) -> None:
+    source = ROOT / "tests" / "stdlib_file_append_worker.kn"
+    with tempfile.TemporaryDirectory(dir=out_dir) as name:
+        folder = Path(name)
+        native = exe_path(folder / "writer")
+        knc = folder / "writer.knc"
+        for options, output in [([], native), (["vm"], knc)]:
+            run([str(compiler), *options, "build", "--no-module-discovery", str(source), "-o", str(output)], cwd=folder)
+
+        path = folder / "日志.bin"
+        prefix = b"existing\x00bytes\xff\r\n"
+        path.write_bytes(prefix)
+        writers = [[str(native)], [str(vm), str(knc)]] * 2
+
+        def write(index: int) -> None:
+            subprocess.run([*writers[index], str(path), str(index)], cwd=folder, check=True, timeout=60)
+
+        with ThreadPoolExecutor(max_workers=len(writers)) as pool:
+            list(pool.map(write, range(len(writers))))
+        data = path.read_bytes()
+        assert data.startswith(prefix), "append changed the existing binary prefix"
+        records = data[len(prefix):].split(b"\n")
+        assert records.pop() == b"", "missing final LF"
+        expected = [f"{i}-{j}".encode("ascii") for i in range(len(writers)) for j in range(128)]
+        assert sorted(records) == sorted(expected), "missing, duplicated, or split records"
+    print("[OK] file_append_native_vm")
+
+
+def check_file_first_line(compiler: Path, vm: Path, out_dir: Path) -> None:
+    source = ROOT / "tests" / "stdlib_file_first_line.kn"
+    with tempfile.TemporaryDirectory(dir=out_dir) as name:
+        folder = Path(name)
+        native = exe_path(folder / "reader")
+        knc = folder / "reader.knc"
+        for options, output in [([], native), (["vm"], knc)]:
+            run([str(compiler), *options, "build", "--no-module-discovery", str(source), "-o", str(output)], cwd=folder)
+        cases = [(b"", b""), (b"\nignored", b""), (b"\x00ignored", b""),
+                 (b"a\rb\r\r\nend", b"a\rb\r"), (b"no LF\r", b"no LF"),
+                 (b"zero\r\x00\xff\nend", b"zero"), (b"\xef\xbb\xbftext", b"\xef\xbb\xbftext")]
+        for size in (4094, 4095, 4096, 4097, 16384):
+            cases.append((b"x" * size + b"\r\ntail", b"x" * size))
+        text = b"x" * 4095 + "雪".encode() + b"y" * 100000
+        cases.append((text, text))
+        paths = []
+        for index, (contents, _) in enumerate(cases):
+            path = folder / f"读取-{index}.txt"
+            path.write_bytes(contents)
+            paths.append(str(path))
+        lines = [line for _, line in cases] + [b"", b""]
+        for command in ([str(native)], [str(vm), str(knc)]):
+            with open(paths[-1], "ab"):
+                result = subprocess.run([*command, *paths, str(folder), str(folder / "missing")],
+                                        cwd=folder, capture_output=True, check=True, timeout=30)
+            separators = (b"\n", b"\r\n") if is_windows() else (b"\n",)
+            assert any(result.stdout == sep.join(lines) + sep for sep in separators)
+            if os.name == "posix":
+                with subprocess.Popen([*command, "/dev/stdin"], cwd=folder, stdin=subprocess.PIPE,
+                                      stdout=subprocess.PIPE) as proc:
+                    try:
+                        proc.stdin.write(b"ready\n")
+                        proc.stdin.flush()
+                        assert proc.wait(timeout=10) == 0 and proc.stdout.read() == b"ready\n"
+                    finally:
+                        if proc.poll() is None:
+                            proc.kill()
+    print("[OK] file_first_line_native_vm")
+
+
 def run_driver_integration_tests(compiler: Path, out_dir: Path) -> int:
     hello_fx = ROOT / "tests" / "common" / "hello.kn"
     build_native_ffi_assets(out_dir)
@@ -587,6 +657,14 @@ def run_driver_integration_tests(compiler: Path, out_dir: Path) -> int:
         print("[FAIL] pipeline_resume")
         return 1
     print("[OK] pipeline_resume")
+
+    generic_project = ROOT / "tests/selfhost/fixtures/generic_functions/kinal.knproj"
+    generic_vm = run([str(compiler), "vm", "run", "--project", str(generic_project),
+                      "--profile", "vm"], cwd=out_dir, capture=True)
+    if generic_vm.returncode != 0 or generic_vm.stdout.splitlines() != ["42", "nest", "3", "17"]:
+        print("[FAIL] generic_signature_project", generic_vm.stderr, generic_vm.stdout)
+        return 1
+    print("[OK] generic_signature_project")
 
     # LTO tests — zig linker on macOS/Linux does not support LTO (requires LLD).
     if sys.platform == "win32":
@@ -633,6 +711,8 @@ def run_driver_integration_tests(compiler: Path, out_dir: Path) -> int:
         return 1
     print("[OK] bundled_kinalvm")
     vm_exe = bundled_vm
+    check_file_append(compiler, vm_exe, out_dir)
+    check_file_first_line(compiler, vm_exe, out_dir)
 
     hello_knc = out_dir / "hello.knc"
     run([str(compiler), "vm", "build", "--no-module-discovery", str(hello_fx), "-o", str(hello_knc)], cwd=ROOT)
@@ -695,11 +775,11 @@ def run_driver_integration_tests(compiler: Path, out_dir: Path) -> int:
         return 1
     print("[OK] knc_vm_exe_alias")
 
-    def run_knc_case(label: str, source_name: str, expected: str, expected_exit_code: int = 0) -> int:
+    def run_knc_case(label: str, source_name: str, expected: str, expected_exit_code: int = 0, *, cwd: Path = ROOT) -> int:
         src = ROOT / "tests" / "common" / source_name
         out = out_dir / f"{Path(source_name).stem}.knc"
         run([str(compiler), "vm", "build", "--no-module-discovery", str(src), "-o", str(out)], cwd=ROOT)
-        proc = run([str(vm_exe), str(out)], cwd=ROOT, capture=True)
+        proc = run([str(vm_exe), str(out)], cwd=cwd, capture=True)
         assert isinstance(proc, subprocess.CompletedProcess)
         actual = (proc.stdout or "").replace("\r\n", "\n")
         if proc.returncode != expected_exit_code or actual != expected:
@@ -884,6 +964,15 @@ def run_driver_integration_tests(compiler: Path, out_dir: Path) -> int:
         return 1
     if run_knc_case("knc_vm_property_static_accessors", "property_static_accessors_native_knc.kn", "ok\n") != 0:
         return 1
+    if run_knc_case("knc_vm_generic_method_calls", "generic_method_calls.kn", "42\n") != 0:
+        return 1
+    if run_knc_case("knc_vm_property_incdec", "property_incdec.kn", "ok\n") != 0:
+        return 1
+    if run_knc_case("knc_vm_interface_dispatch", "knc_interface_dispatch.kn",
+                    "17\n42\n11\n4321\n1234\n3221\ntrue\n15\n") != 0:
+        return 1
+    if run_knc_case("knc_vm_unitless_class_members", "unitless_class_members.kn", "ok\n") != 0:
+        return 1
     if run_knc_case("knc_vm_selfhost_property_compound_order", "selfhost_property_compound_order.kn", "ok\n") != 0:
         return 1
     if run_knc_case("knc_vm_switch_default_prefix", "switch_default_prefix.kn", "") != 0:
@@ -902,6 +991,11 @@ def run_driver_integration_tests(compiler: Path, out_dir: Path) -> int:
         return 1
     if run_knc_case("knc_vm_unsigned_ops", "knc_unsigned_ops.kn", "ok\n") != 0:
         return 1
+    if run_knc_case("knc_vm_text_queries", "knc_text_queries.kn", "ok\n") != 0:
+        return 1
+    with tempfile.TemporaryDirectory(prefix="kinal-directory-") as directory:
+        if run_knc_case("knc_vm_directory_paths", "knc_directory_paths.kn", "ok\n", cwd=Path(directory)) != 0:
+            return 1
     knc_unsigned_src = ROOT / "tests" / "common" / "knc_unsigned_ops.kn"
     knc_unsigned_nofuse = out_dir / "knc_unsigned_ops_nofuse.knc"
     run(
@@ -990,6 +1084,23 @@ def run_driver_integration_tests(compiler: Path, out_dir: Path) -> int:
         return 1
     print("[OK] knc_readable_listing")
 
+    guards = out_dir / "guard_registers.kn"
+    branches = [
+        f"If (n == {i}) " + ('Throw "guard-" + [string](n);' if i % 2 else "Return n + 1;")
+        for i in range(500)
+    ]
+    guards.write_text(
+        "Unit Tests.GuardRegisters;\nFunction int Route(int n) {\n" + "\n".join(branches) +
+        '\nReturn -1; }\nStatic Function int Main() {\n'
+        'If (Route(0) != 1 || Route(498) != 499 || Route(-1) != -1) Return 1;\n'
+        'Try { Route(499); Return 2; } Catch (string e) { Return e == "guard-499" ? 0 : 3; } }\n',
+        encoding="utf-8",
+    )
+    guard_binary = guards.with_suffix(".knc")
+    run([str(compiler), "vm", "build", "--no-module-discovery", str(guards), "-o", str(guard_binary)], cwd=ROOT)
+    run([str(vm_exe), str(guard_binary)], cwd=ROOT)
+    print("[OK] knc_guard_registers")
+
     disasm_out = run([str(vm_exe), "--disasm", str(knc_superloop_binary)], cwd=ROOT, capture=True)
     assert isinstance(disasm_out, subprocess.CompletedProcess)
     disasm_text = (disasm_out.stdout or "").replace("\r\n", "\n")
@@ -1048,6 +1159,21 @@ def run_driver_integration_tests(compiler: Path, out_dir: Path) -> int:
     if run_knc_case("knc_vm_gc_new_arg_root", "gc_new_arg_root.kn", "ok\n") != 0:
         return 1
     if run_knc_case("knc_vm_gc_call_arg_root", "gc_call_arg_root.kn", "AB\n") != 0:
+        return 1
+    with tempfile.TemporaryDirectory(dir=out_dir) as directory:
+        if run_knc_case("knc_vm_list", "knc_list.kn", "ok\n", cwd=Path(directory)) != 0:
+            return 1
+    if run_knc_case("knc_vm_dict_set", "knc_dict_set.kn", "ok\n") != 0:
+        return 1
+    if run_knc_case("knc_vm_text_builder", "stdlib_text_builder.kn", "ok\n") != 0:
+        return 1
+    if run_knc_case("knc_vm_time_calendar", "stdlib_time_calendar.kn", "ok\n") != 0:
+        return 1
+    if run_knc_case("knc_vm_math_edges", "knc_math_edges.kn", "ok\n") != 0:
+        return 1
+    if run_knc_case("knc_vm_guest_heap", "knc_guest_heap.kn", "ok\n") != 0:
+        return 1
+    if run_knc_case("knc_vm_frame_unwind", "knc_frame_unwind.kn", "ok\n") != 0:
         return 1
     if run_knc_case("knc_vm_runtime_ffi", "ffi.kn", "true\ntrue\n") != 0:
         return 1

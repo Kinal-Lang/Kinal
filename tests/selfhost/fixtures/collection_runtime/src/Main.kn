@@ -1,6 +1,25 @@
 Unit Tests.Selfhost.CollectionRuntime;
 
 Get IO.Console;
+Get IO.GC;
+
+int FallbackCalls;
+
+Safe Function int ReplaceDuringFallback(dict values, string key, int value)
+{
+    FallbackCalls = FallbackCalls + 1;
+    values.Set(key, value);
+    IO.GC.Collect();
+    Return 99;
+}
+
+Safe Function int RemoveDuringFallback(dict values, string key)
+{
+    FallbackCalls = FallbackCalls + 1;
+    values.Remove(key);
+    IO.GC.Collect();
+    Return 99;
+}
 
 Static Safe Function int Main()
 {
@@ -73,5 +92,19 @@ Static Safe Function int Main()
     IO.Console.PrintLine(tags.Remove("missing"));
     tags.Clear();
     IO.Console.PrintLine(set.IsEmpty(tags));
+
+    // Arguments run eagerly and exactly once before the lookup, for both
+    // instance and namespace calls. Collection must observe their mutations.
+    dict changing = dict.Create();
+    changing.Set("present", 10);
+    IO.Console.PrintLine([int](changing.TryFetch("present",
+        ReplaceDuringFallback(changing, "present", 20))));
+    IO.Console.PrintLine([int](dict.TryFetch(changing, "missing",
+        ReplaceDuringFallback(changing, "missing", 40))));
+    IO.Console.PrintLine([int](changing.TryFetch("present",
+        RemoveDuringFallback(changing, "present"))));
+    IO.Console.PrintLine([int](dict.TryFetch(changing, "missing",
+        RemoveDuringFallback(changing, "missing"))));
+    IO.Console.PrintLine(FallbackCalls);
     Return 0;
 }

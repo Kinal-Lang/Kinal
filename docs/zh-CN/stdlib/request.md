@@ -155,3 +155,71 @@ Else
 
 - [IO.Web](web.md) — 内嵌 HTTP 服务包
 - [IO.System](system.md) — 更底层的系统与 FFI 接口
+
+## 默认值、错误与内存
+
+默认方法 GET，超时 10000 毫秒。Send 是同步调用；检查响应状态需要 IsSuccess 或 EnsureSuccess，后者对非 2xx 抛出 IO.Error。配置、连接与解析失败同样可能抛出 IO.Error。BodyDict 每次访问都解析文本并要求对象根。
+
+Header 名称会去除首尾空白，但 dict 键不会统一大小写，Header(name) 也按该键查询；应使用实际返回的名称（如 Content-Type）。HTTP 名称语义与 dict 的大小写敏感存储应分别考虑。
+
+整个响应体会读入内存，目前没有响应大小上限或流式 API。BodyLength 是字节数，不能用于推断 Unicode 字符数。当前执行路径为 hosted Native；使用前确保原生资产与 OpenSSL 位数匹配。
+
+## 公开源码签名
+
+下表逐项列出当前包源码的公开字段、构造函数、属性和方法；继承成员在基类下列出。Get/Set 表示属性访问器，函数行的参数包含声明默认值。原生句柄、Host／Win32 等低层接口需要相应 ABI 与生命周期知识，普通应用优先使用包的高级对象。
+
+### 枚举
+
+- `IO.Request.Method`: `GET = 1`, `POST = 2`, `PUT = 3`, `PATCH = 4`, `DELETE = 5`, `HEAD = 6`, `OPTIONS = 7`
+
+### IO.Request.Response
+
+| 成员 | 声明 | 访问器 |
+|------|------|--------|
+| `Constructor` | `Public Constructor(int statusCode, string statusText, string bodyText, int bodyLength, dict headers)` | — |
+| `StatusCode` | `Public Property int StatusCode` | Get/Set |
+| `StatusText` | `Public Property string StatusText` | Get/Set |
+| `BodyText` | `Public Property string BodyText` | Get/Set |
+| `BodyJson` | `Public Trusted Property IO.Json.Value BodyJson` | Get |
+| `BodyObject` | `Public Trusted Property IO.Json.Object BodyObject` | Get |
+| `BodyDict` | `Public Trusted Property dict BodyDict` | Get |
+| `BodyLength` | `Public Property int BodyLength` | Get/Set |
+| `Headers` | `Public Property dict Headers` | Get/Set |
+| `IsSuccess` | `Public Safe Function bool IsSuccess()` | — |
+| `Header` | `Public Trusted Function string Header(string name)` | — |
+| `ContentType` | `Public Trusted Property string ContentType` | Get |
+| `EnsureSuccess` | `Public Trusted Function void EnsureSuccess()` | — |
+
+### IO.Request.Options
+
+| 成员 | 声明 | 访问器 |
+|------|------|--------|
+| `Constructor` | `Public Constructor(string url, IO.Request.Method method = IO.Request.Method.GET)` | — |
+| `Url` | `Public Property string Url` | Get/Set |
+| `Method` | `Public Property IO.Request.Method Method` | Get/Set |
+| `Body` | `Public Property string Body` | Get/Set |
+| `BodyJson` | `Public Trusted Property IO.Json.Value BodyJson` | Get/Set |
+| `BodyObject` | `Public Trusted Property IO.Json.Object BodyObject` | Get/Set |
+| `BodyDict` | `Public Trusted Property dict BodyDict` | Get/Set |
+| `ContentType` | `Public Property string ContentType` | Get/Set |
+| `TimeoutMs` | `Public Property int TimeoutMs` | Get/Set |
+| `Headers` | `Public Property dict Headers` | Get/Set |
+| `SetMethod` | `Public Trusted Function IO.Request.Options SetMethod(IO.Request.Method method)` | — |
+| `SetBody` | `Public Trusted Function IO.Request.Options SetBody(string body, string contentType = "text/plain; charset=utf-8")` | — |
+| `SetTimeout` | `Public Trusted Function IO.Request.Options SetTimeout(int timeoutMs)` | — |
+| `SetHeader` | `Public Trusted Function IO.Request.Options SetHeader(string name, string value)` | — |
+| `RemoveHeader` | `Public Trusted Function IO.Request.Options RemoveHeader(string name)` | — |
+| `HeaderBlock` | `Public Trusted Function string HeaderBlock()` | — |
+| `Validate` | `Public Trusted Function void Validate()` | — |
+
+### IO.Request
+
+| 成员 | 声明 | 访问器 |
+|------|------|--------|
+| `Send` | `Trusted Function IO.Request.Response Send(IO.Request.Options options)` | — |
+| `Fetch` | `Trusted Function IO.Request.Response Fetch(string url, int timeoutMs = 10000)` | — |
+| `Head` | `Trusted Function IO.Request.Response Head(string url, int timeoutMs = 10000)` | — |
+| `Post` | `Trusted Function IO.Request.Response Post(string url, string body, string contentType = "text/plain; charset=utf-8", int timeoutMs = 10000)` | — |
+| `Put` | `Trusted Function IO.Request.Response Put(string url, string body, string contentType = "text/plain; charset=utf-8", int timeoutMs = 10000)` | — |
+| `Patch` | `Trusted Function IO.Request.Response Patch(string url, string body, string contentType = "text/plain; charset=utf-8", int timeoutMs = 10000)` | — |
+| `DeleteRequest` | `Trusted Function IO.Request.Response DeleteRequest(string url, int timeoutMs = 10000)` | — |

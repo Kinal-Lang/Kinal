@@ -38,9 +38,14 @@ REGISTERED_LABELS = (
     'knc_vm_f32_rounding',
     'knc_vm_property_compound_receiver_once',
     'knc_vm_property_static_accessors',
+    'knc_vm_generic_method_calls',
+    'knc_vm_property_incdec',
+    'knc_vm_interface_dispatch',
+    'knc_vm_unitless_class_members',
     'knc_vm_array_add_value_semantics',
     'knc_vm_integer_widening',
     'knc_vm_unsigned_ops',
+    'knc_vm_text_queries',
     'knc_vm_global_block_records',
     'knc_vm_f32_compound_operand_promotion',
     'knc_vm_if_numeric_join',
@@ -66,6 +71,14 @@ REGISTERED_LABELS = (
     'knc_vm_superloop_branches',
     'knc_vm_gc_new_arg_root',
     'knc_vm_gc_call_arg_root',
+    'knc_vm_guest_heap',
+    'knc_vm_frame_unwind',
+    'knc_vm_list',
+    'knc_vm_dict_set',
+    'knc_vm_math_edges',
+    'knc_vm_time_calendar',
+    'knc_vm_text_builder',
+    'knc_vm_directory_paths',
     'knc_vm_runtime_ffi',
 )
 
@@ -73,6 +86,8 @@ REGISTERED_LABELS = (
 # Explicit positive KNC builds in the same accepted driver workflow. These
 # supplement its run_knc_case calls without importing native-only manifest cases.
 REGISTERED_EXPLICIT = {
+    "knc_vm_time_clock": ("tests/common/stdlib_time_more.kn", "true\n" * 8, ()),
+    "knc_vm_math_complete": ("tests/common/stdlib_math_complete.kn", "true\n" * 54, ()),
     "knc_vm_static_property_inheritance": ("tests/selfhost/fixtures/property_static_inherited/Main.kn", "ok\n", ()),
     "knc_vm_hello": ("tests/common/hello.kn", "hello\n", ()),
     "capture_control_flow_knc": ("tests/common/capture_control_flow.kn",
@@ -146,7 +161,7 @@ EXTENDED_MANIFEST_CASES = (
     "function_objects", "builtin_function_ref", "frontend_block_jump_state_machine",
     "block_features", "block_hierarchy", "ctor_named_function", "is_pattern_if",
     "any_cast", "custom_cast_simple", "array_contextual",
-    "array_const_len", "knc_f32_rounding", "float_literal_rounding",
+    "array_const_len", "knc_f32_rounding", "float_literal_rounding", "stdlib_json_complete",
 )
 
 AGGREGATE_CASES = {
@@ -315,24 +330,16 @@ Static Function int Main() { IO.Console.PrintLine(Sum(1, 2, 3, 4)); Return 0; }
 # can alias an unrelated VM array. Check the new empty-array invariant directly
 # rather than treating that old undefined value as a differential oracle.
 SELFHOST_FIXTURES = {
+    "global-wide-calls": ("tests/selfhost/fixtures/knc_backend/global_wide_calls.kn", ""),
     "conditional-numeric-join-global-increments": ("tests/selfhost/fixtures/knc_backend/if_numeric_join_global_increments.kn", ""),
     "switch-default-prefix": ("tests/selfhost/fixtures/knc_backend/switch_default_prefix.kn", ""),
 }
-AGGREGATE_REFERENCE_GAPS = {
-    "nested_interface_in_class": "stage0 VM reports Virtual slot out of range",
-    "object_casts": "stage0 interface dispatch differs from expected manifest output",
-    "any_object_casts": "stage0 does not map list.Create in this case",
-}
-SELFHOST_ONLY = {"main-empty-arguments", *SELFHOST_FIXTURES, *AGGREGATE_REFERENCE_GAPS}
+SELFHOST_ONLY = {"main-empty-arguments", *SELFHOST_FIXTURES}
 
 UNSUPPORTED = {
     "extern-call": '''
 Extern Function int KncUnavailableNative(int value) By C;
 Trusted Static Function int Main() { Return KncUnavailableNative(1); }
-''',
-    "five-argument-call": '''
-Function int Sum(int a, int b, int c, int d, int e) { Return a+b+c+d+e; }
-Static Function int Main() { Return Sum(1,2,3,4,5); }
 ''',
     "extended-float": '''
 Static Function int Main() { f128 value = [f128](1.0); Return [int](value); }
@@ -467,6 +474,7 @@ def check_knc_backend(stage0: Path, vm: Path, root: Path, out: Path, *,
     for name in names:
         directory = out / name
         directory.mkdir(exist_ok=True)
+        run_directory = directory if name in {"knc_vm_list", "knc_vm_directory_paths"} else root
         aggregate = name in AGGREGATE_CASES
         negative = name in UNSUPPORTED and not aggregate
         expected_exit = 0
@@ -494,8 +502,6 @@ def check_knc_backend(stage0: Path, vm: Path, root: Path, out: Path, *,
         if name in registered:
             row["reference_flags"] = list(registered[name].get("reference_flags", ()))
             row["selfhost_flags"] = ["--no-superloop"] if no_superloop else []
-        if name in AGGREGATE_REFERENCE_GAPS:
-            row["reference_gap"] = AGGREGATE_REFERENCE_GAPS[name]
         try:
             if name == "knc_vm_time_file":
                 # Match the accepted workflow's ordinary temporary-file setup,
@@ -514,11 +520,11 @@ def check_knc_backend(stage0: Path, vm: Path, root: Path, out: Path, *,
                 assert compiler_input_hashes(stage0) == reference_inputs, "reference-compiler-payload-changed"
                 assert built.returncode == 0, "stage0-build"
                 assert hashlib.sha256(vm.read_bytes()).hexdigest() == vm_hash, "VM-changed"
-                run = _run([str(vm), str(reference)], root, directory / "stage0.run.log", timeout=30)
+                run = _run([str(vm), str(reference)], run_directory, directory / "stage0.run.log", timeout=30)
                 assert run.returncode == expected_exit and run.stdout.replace("\r\n", "\n") == expected, "stage0-run"
                 if baseline_vm is not None:
                     assert hashlib.sha256(baseline_vm.read_bytes()).hexdigest() == baseline_vm_hash, "baseline-VM-changed"
-                    baseline = _run([str(baseline_vm), str(reference)], root, directory / "stage0.baseline.run.log", timeout=30)
+                    baseline = _run([str(baseline_vm), str(reference)], run_directory, directory / "stage0.baseline.run.log", timeout=30)
                     assert baseline.returncode == expected_exit and baseline.stdout.replace("\r\n", "\n") == expected, "stage0-baseline-VM-run"
                 row["stage0_ok"] = True
             if reference_only:
@@ -550,13 +556,13 @@ def check_knc_backend(stage0: Path, vm: Path, root: Path, out: Path, *,
                 else:
                     assert built.returncode == 0, "selfhost-build"
                     binary = output.read_bytes()
-                    assert binary[:8] == b"KNC2" + struct.pack("<HH", 3, 0), "wrong-KNC-version"
+                    assert binary[:8] == b"KNC2" + struct.pack("<HH", 4, 0), "wrong-KNC-version"
                     assert hashlib.sha256(vm.read_bytes()).hexdigest() == vm_hash, "VM-changed"
-                    run = _run([str(vm), str(output)], root, directory / "selfhost.run.log", timeout=30)
+                    run = _run([str(vm), str(output)], run_directory, directory / "selfhost.run.log", timeout=30)
                     assert run.returncode == expected_exit and run.stdout.replace("\r\n", "\n") == expected, "selfhost-run"
                     if baseline_vm is not None:
                         assert hashlib.sha256(baseline_vm.read_bytes()).hexdigest() == baseline_vm_hash, "baseline-VM-changed"
-                        baseline = _run([str(baseline_vm), str(output)], root, directory / "selfhost.baseline.run.log", timeout=30)
+                        baseline = _run([str(baseline_vm), str(output)], run_directory, directory / "selfhost.baseline.run.log", timeout=30)
                         assert baseline.returncode == expected_exit and baseline.stdout.replace("\r\n", "\n") == expected, "selfhost-baseline-VM-run"
                     again = directory / "selfhost.repeat.knc"
                     repeated = _run(_emission_command(harness, compiler, project, again, packages, out / "package-cache",
@@ -619,7 +625,7 @@ def check_knc_workflow(stage0: Path, vm: Path, root: Path, out: Path, *,
             assert again.returncode == 0, "repeated CLI emission failed"
         assert binary.read_bytes() == repeated.read_bytes(), "repeat emission changed binary bytes"
         text = listing.read_text(encoding="utf-8")
-        assert "KNC2 v3" in text and ".function" in text and "Tests.KncSuperloop.Main" in text
+        assert "KNC2 v4" in text and ".function" in text and "Tests.KncSuperloop.Main" in text
         assert re.search(r"r\d+\(i\)", text), "local register names missing from listing"
         fused = re.search(r"^\d+: LoopInt(?:Lt|Le|Gt|Ge|Eq|Ne)(?:Inc|Dec)\s", text, re.M)
         assert bool(fused) != disabled, (name, "unexpected fused-loop listing")

@@ -1,0 +1,53 @@
+Unit Benchmarks.VmHandles;
+
+Get IO.Console;
+Get IO.GC;
+Get IO.Time;
+
+Class Node
+{
+    Public Node Next;
+    Public int Value;
+}
+
+Function int MeasureLive(int count)
+{
+    int start = IO.Time.GetNanoTick();
+    Node head = null;
+    For (int i = 0; i < count; i++)
+    {
+        Node node = New Node();
+        node.Value = i;
+        node.Next = head;
+        head = node;
+    }
+    int built = IO.Time.GetNanoTick();
+    IO.GC.Collect();
+    int marked = IO.Time.GetNanoTick();
+    int expected = count;
+    While (head != null)
+    {
+        expected--;
+        If (head.Value != expected) Return 1;
+        head = head.Next;
+    }
+    If (expected != 0) Return 1;
+    int traversed = IO.Time.GetNanoTick();
+    IO.Console.PrintLine(built - start);
+    IO.Console.PrintLine(marked - built);
+    IO.Console.PrintLine(traversed - marked);
+    Return 0;
+}
+
+Static Function int Main(string[] args)
+{
+    If (args.Length() != 1) Return 2;
+    int count = [int](args[0]);
+    If (count < 1 || count > 1000000) Return 2;
+    If (MeasureLive(count) != 0) Return 1;
+    // The frame holding the linked list has returned before this collection.
+    int start = IO.Time.GetNanoTick();
+    IO.GC.Collect();
+    IO.Console.PrintLine(IO.Time.GetNanoTick() - start);
+    Return 0;
+}

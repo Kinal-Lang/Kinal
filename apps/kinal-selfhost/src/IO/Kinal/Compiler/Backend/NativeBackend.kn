@@ -24,24 +24,40 @@ Class NativeBackend
     Public SemanticCompilation Semantics;
     Public LlvmModule Module;
     Public LlvmTypeBinding FirstType;
+    Private list TypeBindings;
     Public LlvmGlobalBinding FirstGlobal;
     Public LlvmDelegateBinding FirstDelegate;
     Public LlvmDelegateAdapter FirstDelegateAdapter;
     Public LlvmFunctionBinding FirstFunction;
+    Private list FunctionTargetsByArity;
+    Private list FunctionBindings;
+    Private HirDefinitionIndex Definitions;
+    Private list GlobalBindings;
+    Private LlvmGlobalBinding LastGlobal;
     Public byte* AnyType;
     Private LlvmFunctionBinding GlobalInitializer;
     Public string Error;
     Private int NameSequence;
+    Public bool EmitUsedRuntimeOnly;
+    Public bool CompactValueNames;
 
     Public Trusted Constructor(SemanticCompilation semantics)
     {
         This.Semantics = semantics;
         This.Module = New LlvmModule("kinal.selfhost.output");
         This.FirstType = null;
+        This.TypeBindings = list.Create();
         This.FirstGlobal = null;
         This.FirstDelegate = null;
         This.FirstDelegateAdapter = null;
         This.FirstFunction = null;
+        This.FunctionTargetsByArity = list.Create();
+        This.FunctionBindings = list.Create();
+        This.GlobalBindings = list.Create();
+        This.Definitions = New HirDefinitionIndex(semantics.FirstHirModule,
+            semantics.RegisteredFunctionCount, semantics.GlobalCount);
+        For (int functionIndex = 0; functionIndex < semantics.RegisteredFunctionCount; functionIndex++) This.FunctionBindings.Add(null);
+        For (int globalIndex = 0; globalIndex < semantics.GlobalCount; globalIndex++) This.GlobalBindings.Add(null);
         This.AnyType = null;
         This.GlobalInitializer = null;
         This.Error = "";
@@ -50,6 +66,9 @@ Class NativeBackend
 
     Public Safe Function string Unique(string prefix)
     {
+        // LLVM uniquifies repeated IR names. Only preserved text artifacts
+        // need a compiler-wide sequence for readable instruction traces.
+        If (This.CompactValueNames) Return prefix;
         This.NameSequence = This.NameSequence + 1;
         Return prefix + [string](This.NameSequence);
     }
@@ -72,16 +91,21 @@ Class NativeBackend
         Return raw;
     }
 
-    Public Safe Function string DecodeString(string raw)
+    Public Trusted Function string DecodeString(string raw)
     {
         string body = This.Unquote(raw);
-        char[] chars = body.ToChars();
-        string result = "";
+        If (IO.Text.IsEmpty(body)) Return "";
+        If (IO.Text.IndexOf(body, "\\") < 0) Return body;
+        int length = IO.Text.Length(body);
+        char* chars = [char*](body);
+        char* result = IO.Kinal.Runtime.AllocateText(length);
+        If (result == null) Return "";
+        int used = 0;
         int i = 0;
-        While (i < chars.Length())
+        While (i < length)
         {
             int value = [int](chars[i]);
-            If (value == 92 && i + 1 < chars.Length())
+            If (value == 92 && i + 1 < length)
             {
                 i = i + 1;
                 int escaped = [int](chars[i]);
@@ -92,10 +116,17 @@ Class NativeBackend
                 ElseIf (escaped == 48) value = 0;
                 Else value = escaped;
             }
-            result = result + [string]([char](value));
+            // The previous char-to-string conversion contributes no bytes
+            // for NUL in Kinal's NUL-terminated string representation.
+            If (value != 0)
+            {
+                result[used] = [char](value);
+                used = used + 1;
+            }
             i = i + 1;
         }
-        Return result;
+        result[used] = '\0';
+        Return [string](result);
     }
 
     Public Safe Function int DecodeCharacter(string raw)
@@ -158,20 +189,23 @@ Class NativeBackend
         Return IO.Text.Replace(decoded, "{IO.Version}", This.LanguageVersion());
     }
 
-    Public Safe Function string Sanitize(string name)
+    Public Trusted Function string Sanitize(string name)
     {
-        char[] chars = name.ToChars();
-        string result = "";
+        int length = IO.Text.Length(name);
+        If (length == 0) Return "";
+        char* chars = [char*](name);
+        char* result = IO.Kinal.Runtime.AllocateText(length);
+        If (result == null) Return "";
         int i = 0;
-        While (i < chars.Length())
+        While (i < length)
         {
             int value = [int](chars[i]);
             bool valid = (value >= 48 && value <= 57) ||
                 (value >= 65 && value <= 90) || (value >= 97 && value <= 122);
-            result = result + (valid ? [string](chars[i]) : "_");
+            result[i] = valid ? chars[i] : '_';
             i = i + 1;
         }
-        Return result;
+        Return [string](result);
     }
 
     Public Safe Function string AttributeString(FunctionDecl function, string name)
@@ -244,12 +278,22 @@ Class NativeBackend
 
     Public Safe Function void AddTypeBinding(LlvmTypeBinding binding)
     {
+        This.TypeBindings.Add(binding);
+        int count = This.TypeBindings.Count();
+        binding.Symbol.NativeBindingHint = [i32](count <= 2147483647 ? count : -1);
         binding.Next = This.FirstType;
         This.FirstType = binding;
     }
 
     Public Safe Function LlvmTypeBinding FindTypeBinding(TypeSymbol symbol)
     {
+        If (symbol == null || symbol.NativeBindingHint == 0) Return null;
+        int slot = symbol.NativeBindingHint;
+        If (slot > 0 && slot <= This.TypeBindings.Count())
+        {
+            LlvmTypeBinding indexed = [LlvmTypeBinding](This.TypeBindings.Fetch(slot - 1));
+            If (indexed.Symbol == symbol) Return indexed;
+        }
         LlvmTypeBinding current = This.FirstType;
         While (current != null)
         {
@@ -390,28 +434,28 @@ Class NativeBackend
     {
         binding.Next = This.FirstFunction;
         This.FirstFunction = binding;
+        This.FunctionBindings.Set(binding.Symbol.RegistrationIndex, binding);
+        // Bindings are prepended: the newest matching target/arity wins.
+        int arity = binding.Symbol.ParameterCount();
+        While (This.FunctionTargetsByArity.Count() <= arity)
+            This.FunctionTargetsByArity.Add(dict.Create());
+        dict targets = [dict](This.FunctionTargetsByArity.Fetch(arity));
+        targets.Set(binding.Symbol.QualifiedName(), binding);
     }
 
     Public Safe Function void AddGlobalBinding(LlvmGlobalBinding binding)
     {
-        If (This.FirstGlobal == null) This.FirstGlobal = binding;
-        Else
-        {
-            LlvmGlobalBinding last = This.FirstGlobal;
-            While (last.Next != null) last = last.Next;
-            last.Next = binding;
-        }
+        If (This.LastGlobal == null) This.FirstGlobal = binding;
+        Else This.LastGlobal.Next = binding;
+        This.LastGlobal = binding;
+        This.GlobalBindings.Set(binding.Symbol.Value.GlobalIndex, binding);
     }
 
     Public Safe Function LlvmGlobalBinding FindGlobalBinding(ValueSymbol symbol)
     {
-        LlvmGlobalBinding current = This.FirstGlobal;
-        While (current != null)
-        {
-            If (current.Symbol.Value == symbol) Return current;
-            current = current.Next;
-        }
-        Return null;
+        If (symbol == null || symbol.GlobalIndex < 0 || symbol.GlobalIndex >= This.GlobalBindings.Count()) Return null;
+        LlvmGlobalBinding binding = [LlvmGlobalBinding](This.GlobalBindings.Fetch(symbol.GlobalIndex));
+        Return binding != null && binding.Symbol.Value == symbol ? binding : null;
     }
 
     Public Safe Function void AddDelegateBinding(LlvmDelegateBinding binding)
@@ -522,18 +566,7 @@ Class NativeBackend
 
     Public Safe Function HirExpression BoundGlobalInitializer(GlobalSymbol symbol)
     {
-        HirModule module = This.Semantics.FirstHirModule;
-        While (module != null)
-        {
-            HirGlobal global = module.FirstGlobal;
-            While (global != null)
-            {
-                If (global.Symbol == symbol) Return global.Initializer;
-                global = global.Next;
-            }
-            module = module.Next;
-        }
-        Return null;
+        Return This.Definitions.FindInitializer(symbol);
     }
 
     Public Trusted Function byte* FoldedStringInitializer(TypeSymbol type, HirExpression expression)
@@ -644,17 +677,7 @@ Class NativeBackend
                 If (This.IsLibrary() && (symbol.UnitName == "IO.Kinal.Runtime" ||
                     IO.Text.StartsWith(symbol.UnitName, "IO.Kinal.Runtime.")))
                     This.Module.SetPrivateLinkage(address);
-                HirModule module = This.Semantics.FirstHirModule;
-                While (module != null)
-                {
-                    HirGlobal global = module.FirstGlobal;
-                    While (global != null)
-                    {
-                        If (global.Symbol == symbol) binding.Initializer = global.Initializer;
-                        global = global.Next;
-                    }
-                    module = module.Next;
-                }
+                binding.Initializer = This.BoundGlobalInitializer(symbol);
                 This.AddGlobalBinding(binding);
             }
             symbol = symbol.Next;
@@ -670,21 +693,33 @@ Class NativeBackend
         FunctionSymbol symbol = New FunctionSymbol("", null, declaration);
         symbol.ReturnType = This.Semantics.Primitive("void");
         byte* functionType = This.Module.FunctionType(This.Module.VoidType(), This.Types0(), false);
+        // Keep the guard small enough to inline even with large user initializers.
+        byte* ensure = This.Module.AddFunction("__kn_sh_ensure_global_init", functionType);
+        This.Module.SetPrivateLinkage(ensure);
+        This.GlobalInitializer = New LlvmFunctionBinding(symbol, functionType, ensure, false);
         byte* function = This.Module.AddFunction("__kn_sh_global_init", functionType);
         This.Module.SetPrivateLinkage(function);
-        This.GlobalInitializer = New LlvmFunctionBinding(symbol, functionType, function, false);
-        LlvmFunctionContext context = New LlvmFunctionContext(This.GlobalInitializer);
+        If (!This.Module.AddFunctionAttribute(ensure, "alwaysinline", [u64](0)) ||
+            !This.Module.AddFunctionAttribute(function, "cold", [u64](0)))
+            This.Fail("failed to describe global initialization");
+        LlvmFunctionContext context = New LlvmFunctionContext(
+            New LlvmFunctionBinding(symbol, functionType, function, false));
         context.TraceName = "<global init>";
         byte* boolType = This.Module.IntType(1);
         byte* guard = This.Module.AddGlobal(boolType, "__kn_sh_global_init_done");
         This.Module.SetPrivateLinkage(guard);
         This.Module.SetInitializer(guard, This.Module.ConstInt(boolType, 0));
-        byte* entry = This.Module.AppendBlock(function, "entry");
-        byte* initialize = This.Module.AppendBlock(function, "initialize");
-        byte* done = This.Module.AppendBlock(function, "done");
+        byte* entry = This.Module.AppendBlock(ensure, "entry");
+        byte* initialize = This.Module.AppendBlock(ensure, "initialize");
+        byte* done = This.Module.AppendBlock(ensure, "done");
         This.Module.PositionAtEnd(entry);
         This.Module.ConditionalBranch(This.Module.Load(boolType, guard, "initialized"), done, initialize);
         This.Module.PositionAtEnd(initialize);
+        This.Module.Call(functionType, function, This.Types0(), "");
+        This.Module.Branch(done);
+        This.Module.PositionAtEnd(done);
+        This.Module.ReturnVoid();
+        This.Module.PositionAtEnd(This.Module.AppendBlock(function, "entry"));
         // Set the guard before calling runtime/user code. Re-entrant calls must
         // observe already initialized slots and zero for later declarations.
         This.Module.Store(This.Module.ConstInt(boolType, 1), guard);
@@ -696,6 +731,17 @@ Class NativeBackend
         While (binding != null)
         {
             This.PrepareExpressionRoots(context, binding.Initializer);
+            TypeSymbol type = binding.Symbol.Value.Type;
+            If (type.Kind != [int](TypeKind.ArrayType) && This.NeedsElementStorage(type))
+                This.InitializeAggregateStorage(context, type, binding.Address, false);
+            ElseIf (binding.StaticStorage != null && type.Kind == [int](TypeKind.ArrayType) &&
+                This.NeedsElementStorage(type.ElementType))
+            {
+                byte* data = This.Module.BitCast(binding.StaticStorage, This.Module.PointerType(This.TypeHandle(type.ElementType)),
+                    This.Unique("global_items"));
+                This.InitializeArrayElements(context, type.ElementType, data, 0,
+                    This.Semantics.StorageArrayLength(binding.Symbol.Declaration));
+            }
             binding = binding.Next;
         }
         binding = This.FirstGlobal;
@@ -710,7 +756,7 @@ Class NativeBackend
             {
                 value = This.EmitArrayValue(context, type,
                     initializer == null ? null : initializer.FirstArgument,
-                    This.Module.ConstInt(This.Module.IntType(64), length), binding.Address, length);
+                    This.Module.ConstInt(This.Module.IntType(64), length), binding.Address, length, false);
             }
             ElseIf (initializer != null)
                 value = This.CastValue(This.EmitExpression(context, initializer), type);
@@ -720,8 +766,6 @@ Class NativeBackend
             binding = binding.Next;
         }
         This.PopGcFrame(context);
-        This.Module.Branch(done);
-        This.Module.PositionAtEnd(done);
         This.Module.ReturnVoid();
     }
 
@@ -856,13 +900,9 @@ Class NativeBackend
 
     Public Safe Function LlvmFunctionBinding FindFunctionBinding(FunctionSymbol symbol)
     {
-        LlvmFunctionBinding current = This.FirstFunction;
-        While (current != null)
-        {
-            If (current.Symbol == symbol) Return current;
-            current = current.Next;
-        }
-        Return null;
+        If (symbol == null || symbol.RegistrationIndex < 0 ||
+            symbol.RegistrationIndex >= This.FunctionBindings.Count()) Return null;
+        Return [LlvmFunctionBinding](This.FunctionBindings.Fetch(symbol.RegistrationIndex));
     }
 
     Public Safe Function bool IsVirtualMethod(FunctionSymbol symbol)
@@ -1019,14 +1059,9 @@ Class NativeBackend
 
     Public Safe Function LlvmFunctionBinding FindFunctionByTarget(string target, int parameterCount)
     {
-        LlvmFunctionBinding current = This.FirstFunction;
-        While (current != null)
-        {
-            If (current.Symbol.QualifiedName() == target &&
-                current.Symbol.ParameterCount() == parameterCount) Return current;
-            current = current.Next;
-        }
-        Return null;
+        If (parameterCount < 0 || parameterCount >= This.FunctionTargetsByArity.Count()) Return null;
+        dict targets = [dict](This.FunctionTargetsByArity.Fetch(parameterCount));
+        Return [LlvmFunctionBinding](targets.TryFetch(target, null));
     }
 
     Public Safe Function bool IsLibrary()
@@ -1070,6 +1105,19 @@ Class NativeBackend
         FunctionSymbol symbol = This.Semantics.FirstFunction;
         While (symbol != null)
         {
+            // An external object may call a runtime function on its own.
+            If (This.EmitUsedRuntimeOnly && symbol.Declaration.IsExtern)
+            {
+                SyntaxAttribute attribute = symbol.Declaration.FirstAttribute;
+                While (attribute != null)
+                {
+                    string name = This.Semantics.AttributeShortName(attribute.Name);
+                    If (name == "LinkFile" || name == "LinkFileTarget" ||
+                        name == "LinkLib" || name == "LinkLibTarget")
+                    { This.EmitUsedRuntimeOnly = false; Break; }
+                    attribute = attribute.Next;
+                }
+            }
             If (symbol.IsGenericTemplate())
             {
                 symbol = symbol.Next;
@@ -1123,7 +1171,18 @@ Class NativeBackend
                 symbol = symbol.Next;
                 Continue;
             }
-            byte* function = This.Module.AddFunction(This.FunctionName(symbol), functionType);
+            string linkName = This.FunctionName(symbol);
+            byte* function = This.Module.AddFunction(linkName, functionType);
+            // This native leaf only returns the address of the current thread's
+            // fixed storage. Loads of the exception word itself remain mutable.
+            If (symbol.Declaration.IsExtern && linkName == "kn_native_runtime_thread_storage" &&
+                symbol.QualifiedName() == "IO.Kinal.Runtime.Native.ThreadStorage")
+            {
+                If (!This.Module.AddFunctionAttribute(function, "memory", [u64](0)) ||
+                    !This.Module.AddFunctionAttribute(function, "nounwind", [u64](0)) ||
+                    !This.Module.AddFunctionAttribute(function, "willreturn", [u64](0)))
+                    This.Fail("failed to describe native thread storage");
+            }
             // System imports use stdcall only on 32-bit Windows. The bridge
             // carries a direct callee's convention onto every call instruction.
             If (symbol.Declaration.IsExtern && symbol.Declaration.Abi == "System" &&
@@ -1451,7 +1510,7 @@ Class NativeBackend
         Return This.UnboxAny(boxed, resultType);
     }
 
-    Public Trusted Function LlvmValue UnboxAny(LlvmValue value, TypeSymbol target)
+    Public Trusted Function LlvmValue UnboxAny(LlvmValue value, TypeSymbol target, bool addressable=false)
     {
         // Dynamic callable parameters can themselves be any. This is an
         // identity conversion, not an unsupported destination/default value.
@@ -1623,8 +1682,10 @@ Class NativeBackend
             This.Module.Store(This.Module.ConstNull(aggregateType), fallback);
             byte* selected = This.Module.Select(valid, typed, fallback,
                 This.Unique("any_aggregate_selected"));
-            Return New LlvmValue(This.Module.Load(aggregateType, selected,
+            LlvmValue result = New LlvmValue(This.Module.Load(aggregateType, selected,
                 This.Unique("any_aggregate_value")), target);
+            If (addressable) result.Address = selected;
+            Return result;
         }
         If (This.IsReferenceType(target))
             Return New LlvmValue(This.Module.IntToPointer(payload, This.TypeHandle(target), This.Unique("any_pointer")), target);
@@ -1876,41 +1937,163 @@ Class NativeBackend
         Return -1;
     }
 
-    Public Trusted Function int InitializeObjectFields(LlvmTypeBinding binding,
+    Public Safe Function bool HasEmbeddedArrays(TypeSymbol type)
+    {
+        If (!This.Semantics.IsStructType(type)) Return false;
+        LlvmTypeBinding binding = This.FindTypeBinding(type);
+        If (binding.ArrayFields == EmbeddedArrayLayout.Checking)
+        {
+            This.Fail("recursive struct has no finite default storage");
+            Return false;
+        }
+        If (binding.ArrayFields == EmbeddedArrayLayout.Unknown)
+        {
+            binding.ArrayFields = EmbeddedArrayLayout.Checking;
+            bool found = false;
+            FieldDecl field = type.Declaration.FirstField;
+            While (field != null)
+            {
+                If (!field.IsStatic)
+                {
+                    TypeSymbol member = This.Semantics.ResolveFieldType(type.Syntax, field);
+                    If (member.Kind == [int](TypeKind.ArrayType) && This.Semantics.StorageArrayLength(field) > 0)
+                    {
+                        This.NeedsElementStorage(member.ElementType);
+                        found = true;
+                    }
+                    ElseIf (member.Kind != [int](TypeKind.ArrayType) && This.NeedsElementStorage(member)) found = true;
+                }
+                field = field.Next;
+            }
+            binding.ArrayFields = found && !This.Failed() ? EmbeddedArrayLayout.Present : EmbeddedArrayLayout.None;
+        }
+        Return binding.ArrayFields == EmbeddedArrayLayout.Present;
+    }
+
+    Public Safe Function bool NeedsElementStorage(TypeSymbol type)
+    {
+        If (type.Kind == [int](TypeKind.PackageType))
+        {
+            PackageElementType item = type.FirstPackageElement;
+            While (item != null)
+            {
+                This.NeedsElementStorage(item.Type);
+                item = item.Next;
+            }
+            Return type.PackageCount > 0;
+        }
+        If (type.Kind != [int](TypeKind.ArrayType)) Return This.HasEmbeddedArrays(type);
+        If (type.ArrayLength <= 0) Return false;
+        // Check the entire default shape for recursive structs before emitting loops.
+        This.NeedsElementStorage(type.ElementType);
+        Return true;
+    }
+
+    Public Trusted Function void InitializeAggregateStorage(LlvmFunctionContext context, TypeSymbol type,
+                                                            byte* address, bool packed)
+    {
+        If (This.Failed()) Return;
+        If (type.Kind == [int](TypeKind.ArrayType))
+        {
+            This.EmitArrayValue(context, type, null, This.Module.ConstInt(This.Module.IntType(64), type.ArrayLength),
+                address, type.ArrayLength, packed);
+            Return;
+        }
+        If (type.Kind != [int](TypeKind.PackageType))
+        {
+            This.InitializeObjectFields(context, This.FindTypeBinding(type), address, type, 0);
+            Return;
+        }
+        byte* word = This.Module.IntType(64);
+        LlvmValue value = This.EmitArrayValue(context, type, null, This.Module.ConstInt(word, type.PackageCount),
+            address, type.PackageCount, packed);
+        byte* data = This.Module.ExtractValue(value.Handle, 0, This.Unique("package_items"));
+        PackageElementType item = type.FirstPackageElement;
+        int index = 0;
+        While (item != null)
+        {
+            byte* slot = This.Module.Gep(This.AnyType, data, This.Types1(This.Module.ConstInt(word, index)), true,
+                This.Unique("package_item"));
+            LlvmValue boxed = This.BoxAny(This.DefaultValue(item.Type));
+            This.Module.Store(boxed.Handle, slot);
+            If (This.NeedsElementStorage(item.Type))
+            {
+                // Publish the box in its rooted Package before allocating any of its children.
+                byte* payload = This.Module.ExtractValue(boxed.Handle, 1, This.Unique("package_payload"));
+                byte* storage = This.Module.IntToPointer(payload, This.Module.PointerType(This.TypeHandle(item.Type)),
+                    This.Unique("package_storage"));
+                This.InitializeAggregateStorage(context, item.Type, storage, false);
+            }
+            index++;
+            item = item.Next;
+        }
+    }
+
+    Public Safe Function bool NeedsDefaultStorage(HirExpression expression)
+    {
+        Return expression.Kind == [int](HirExpressionKind.Constant) &&
+            This.Semantics.IsDefaultBranch(expression) && !This.Semantics.Session.IsFreestanding() &&
+            This.NeedsElementStorage(expression.Type);
+    }
+
+    Public Trusted Function void InitializeArrayElements(LlvmFunctionContext context, TypeSymbol elementType,
+                                                           byte* data, int first, int length)
+    {
+        If (first >= length || !This.NeedsElementStorage(elementType) || This.Failed()) Return;
+        byte* function = context.Binding.Function;
+        byte* entry = This.Module.CurrentBlock();
+        byte* body = This.Module.AppendBlock(function, This.Unique("array_defaults"));
+        byte* done = This.Module.AppendBlock(function, This.Unique("array_ready"));
+        byte* word = This.Module.IntType(64);
+        This.Module.Branch(body);
+        This.Module.PositionAtEnd(body);
+        byte* index = This.Module.Phi(word, This.Unique("array_index"));
+        This.Module.AddIncoming(index, This.Module.ConstInt(word, first), entry);
+        byte* slot = This.Module.Gep(This.TypeHandle(elementType), data, This.Types1(index), true, This.Unique("array_item"));
+        This.InitializeAggregateStorage(context, elementType, slot, false);
+        byte* next = This.Module.Add(index, This.Module.ConstInt(word, 1), This.Unique("array_next"));
+        This.Module.AddIncoming(index, next, This.Module.CurrentBlock());
+        byte* more = This.Module.Compare([int](LlvmIntPredicate.UnsignedLess), next,
+            This.Module.ConstInt(word, length), This.Unique("array_more"));
+        This.Module.ConditionalBranch(more, body, done);
+        This.Module.PositionAtEnd(done);
+    }
+
+    Public Trusted Function int InitializeObjectFields(LlvmFunctionContext context, LlvmTypeBinding binding,
                                                         byte* object,
                                                         TypeSymbol type,
                                                         int fieldIndex)
     {
         If (type == null || type.Declaration == null) Return fieldIndex;
-        fieldIndex = This.InitializeObjectFields(binding, object, type.BaseType, fieldIndex);
+        bool embedded = This.Semantics.IsStructType(type);
+        If (!embedded) fieldIndex = This.InitializeObjectFields(context, binding, object, type.BaseType, fieldIndex);
         FieldDecl field = type.Declaration.FirstField;
         While (field != null)
         {
             If (!field.IsStatic)
             {
                 TypeSymbol fieldType = This.Semantics.ResolveFieldType(type.Syntax, field);
+                bool nestedArrays = fieldType.Kind != [int](TypeKind.ArrayType) && This.NeedsElementStorage(fieldType);
+                int lengthValue = This.Semantics.StorageArrayLength(field);
+                If (embedded && !nestedArrays && !(fieldType.Kind == [int](TypeKind.ArrayType) && lengthValue > 0))
+                {
+                    fieldIndex++;
+                    field = field.Next;
+                    Continue;
+                }
                 byte* address = This.Module.StructGep(binding.StructHandle, object,
                     fieldIndex, This.Unique("field_init"));
-                int lengthValue = This.Semantics.StorageArrayLength(field);
                 If (fieldType.Kind == [int](TypeKind.ArrayType) && lengthValue >= 0)
                 {
-                    byte* elementHandle = This.TypeHandle(fieldType.ElementType);
-                    byte* length = This.Module.ConstInt(This.Module.IntType(64), lengthValue);
-                    byte* bytes = This.Module.Multiply(length, This.Module.SizeOf(elementHandle),
-                        This.Unique("field_array_bytes"));
-                    byte* memory = This.CallKinalRuntime(
-                        "IO.Kinal.Runtime.GarbageCollector.Allocate", 1,
-                        This.Types1(bytes), This.Unique("field_array_memory"));
-                    This.CallKinalRuntime("IO.Kinal.Runtime.MemoryZero", 2,
-                        This.Types2(memory, bytes), "");
-                    byte* data = This.Module.BitCast(memory, This.Module.PointerType(elementHandle),
-                        This.Unique("field_array_data"));
-                    byte* value = This.Module.ConstUndef(This.TypeHandle(fieldType));
-                    value = This.Module.InsertValue(value, data, 0, "");
-                    value = This.Module.InsertValue(value, length, 1, "");
-                    This.Module.Store(value, address);
+                    This.EmitArrayValue(context, fieldType, null, This.Module.ConstInt(This.Module.IntType(64), lengthValue),
+                        address, lengthValue, embedded);
                 }
-                Else This.Module.Store(This.DefaultValue(fieldType).Handle, address);
+                Else
+                {
+                    If (!embedded) This.Module.Store(This.DefaultValue(fieldType).Handle, address);
+                    If (nestedArrays)
+                        This.InitializeAggregateStorage(context, fieldType, address, embedded);
+                }
                 fieldIndex = fieldIndex + 1;
             }
             field = field.Next;
@@ -2109,8 +2292,8 @@ Class NativeBackend
     Public Trusted Function byte* EmitAddress(LlvmFunctionContext context, HirExpression expression)
     {
         byte* address = This.EmitAddressValue(context, expression);
-        LlvmAddressRoot root = expression == null ? null : context.FindAddressRoot(expression);
-        If (root != null && address != null) This.Module.Store(address, root.Address);
+        LlvmExpressionRoot root = context.ExpressionRoot(expression);
+        If (root != null && root.AddressSlot != null && address != null) This.Module.Store(address, root.AddressSlot);
         Return address;
     }
 
@@ -2122,6 +2305,10 @@ Class NativeBackend
         If (expression.Kind == [int](HirExpressionKind.Local))
         {
             LlvmVariable variable = context.FindVariable(expression.Symbol, expression.Target);
+            // A normal read can publish the old string; a normal assignment
+            // can replace it. The next append must start with a fresh copy.
+            If (variable != null && variable.StringAppendState != null)
+                This.Module.Store(This.Module.ConstInt(This.Module.IntType(64), 0), variable.StringAppendState);
             Return variable == null ? null : variable.Address;
         }
         If (expression.Kind == [int](HirExpressionKind.Global))
@@ -2217,10 +2404,9 @@ Class NativeBackend
             This.Unique("package_any")), This.Semantics.Primitive("any"));
         // Package storage is internally boxed as `any`, but indexing a typed
         // package is an extraction, not a language-level dynamic conversion.
-        LlvmValue result = expression.Type.Kind == [int](TypeKind.AnyType) ? boxed :
-            This.UnboxAny(boxed, expression.Type);
-        result.Address = address;
-        Return result;
+        boxed.Address = address;
+        Return expression.Type.Kind == [int](TypeKind.AnyType) ? boxed :
+            This.UnboxAny(boxed, expression.Type, true);
     }
 
     Public Safe Function int HirArgumentCount(HirExpression expression)
@@ -2281,8 +2467,10 @@ Class NativeBackend
             parameter = parameter.Next;
         }
         string resultName = callResultType.Kind == [int](TypeKind.VoidType) ? "" : This.Unique("call");
-        byte* result = This.Module.Call(binding.FunctionType, binding.Function, arguments, resultName);
-        If (!binding.UsesCAbi) This.MaybePropagateException(context);
+        bool knownClean = context.InScalarBody && binding.ScalarBody != null;
+        byte* result = This.Module.Call(binding.FunctionType,
+            knownClean ? binding.ScalarBody : binding.Function, arguments, resultName);
+        If (!binding.UsesCAbi && !knownClean) This.MaybePropagateException(context);
         Return binding.UsesCAbi ? This.FromCAbi(result, binding.Symbol.ReturnType) :
             New LlvmValue(result, callResultType);
     }
@@ -3431,10 +3619,11 @@ Class NativeBackend
                                                         HirExpression expression)
     {
         int count = This.ExpressionListCount(expression.FirstArgument);
+        If (expression.HasArrayStorageBound && expression.Type.ArrayLength > count) count = expression.Type.ArrayLength;
         If (count == 0) Return This.DefaultValue(expression.Type);
         Return This.EmitArrayValue(context, expression.Type, expression.FirstArgument,
             This.Module.ConstInt(This.Module.IntType(64), count),
-            This.ExpressionRootAddress(context, expression), count);
+            This.ExpressionRootAddress(context, expression), count, false);
     }
 
     // Runtime=None storage is initialized in generated code, without a hidden
@@ -3466,7 +3655,7 @@ Class NativeBackend
                                                        HirExpression firstItem,
                                                        byte* length,
                                                        byte* rootAddress,
-                                                       int fixedLength)
+                                                       int fixedLength, bool packedRoot, bool reuseArray = false)
     {
         TypeSymbol elementType = arrayType.ElementType;
         byte* elementHandle = This.TypeHandle(elementType);
@@ -3487,16 +3676,26 @@ Class NativeBackend
         }
         Else
         {
-            memory = This.CallKinalRuntime("IO.Kinal.Runtime.GarbageCollector.Allocate", 1,
+            If (reuseArray)
+            {
+                byte* previous = This.Module.Load(This.TypeHandle(arrayType), rootAddress, "");
+                byte* data = This.Module.ExtractValue(previous, 0, "");
+                memory = This.CallKinalRuntime("IO.Kinal.Runtime.GarbageCollector.TakeLocalArray", 2,
+                    This.Types2(data, bytes), This.Unique("array_memory"));
+            }
+            Else memory = This.CallKinalRuntime("IO.Kinal.Runtime.GarbageCollector.Allocate", 1,
                 This.Types1(bytes), This.Unique("array_memory"));
-            This.CallKinalRuntime("IO.Kinal.Runtime.MemoryZero", 2, This.Types2(memory, bytes), "");
         }
         byte* data = This.Module.BitCast(memory, This.Module.PointerType(elementHandle),
             This.Unique("array_data"));
         byte* value = This.Module.ConstUndef(This.TypeHandle(arrayType));
         value = This.Module.InsertValue(value, data, 0, "");
         value = This.Module.InsertValue(value, length, 1, "");
-        If (rootAddress != null) This.Module.Store(value, rootAddress);
+        If (rootAddress != null)
+        {
+            byte* store = This.Module.Store(value, rootAddress);
+            If (packedRoot) This.Module.SetAlignment(store, 1);
+        }
         HirExpression item = firstItem;
         int index = 0;
         While (item != null)
@@ -3508,6 +3707,8 @@ Class NativeBackend
             index = index + 1;
             item = item.Next;
         }
+        If (!This.Semantics.Session.IsFreestanding())
+            This.InitializeArrayElements(context, elementType, data, index, fixedLength);
         Return New LlvmValue(value, arrayType);
     }
 
@@ -4252,6 +4453,11 @@ Class NativeBackend
             {
                 LlvmValue key = This.CastValue(This.EmitExpression(context, argument),
                     This.Semantics.Primitive("string"));
+                // Evaluate every argument before reading the collection. The
+                // fallback may mutate it or collect a removed managed value.
+                LlvmValue fallback = null;
+                If (target == "TryFetch")
+                    fallback = This.BoxAny(This.EmitExpression(context, argument.Next));
                 byte* tagSlot = This.Module.Alloca(This.Module.IntType(64),
                     This.Unique("dict_result_tag_slot"));
                 byte* payloadSlot = This.Module.Alloca(This.Module.IntType(64),
@@ -4265,7 +4471,6 @@ Class NativeBackend
                 byte* has = This.RuntimeBool(This.CallKinalRuntime(
                     "IO.Kinal.Runtime.Collections.DictionaryContains", 2,
                     This.Types2(values.Handle, key.Handle), This.Unique("dict_try_has_c")));
-                LlvmValue fallback = This.BoxAny(This.EmitExpression(context, argument.Next));
                 Return This.AnyValue(
                     This.Module.Select(has,
                         This.Module.ExtractValue(fetched.Handle, 0, This.Unique("dict_try_tag")),
@@ -4431,7 +4636,7 @@ Class NativeBackend
         This.InitializeObjectVtable(typeBinding, object, type);
         This.InitializeObjectTypeId(typeBinding, object);
 
-        This.InitializeObjectFields(typeBinding, object, type, 2);
+        This.InitializeObjectFields(context, typeBinding, object, type, 2);
 
         int count = This.HirArgumentCount(expression);
         LlvmFunctionBinding constructor = This.FirstFunction;
@@ -4821,6 +5026,67 @@ Class NativeBackend
             This.EmitExpression(context, expression.Left));
     }
 
+    Public Trusted Function LlvmValue EmitPropertyGet(LlvmFunctionContext context,
+                                                      HirExpression access, LlvmValue receiver)
+    {
+        LlvmFunctionBinding getter = This.FindFunctionBinding(access.Function);
+        If (getter == null)
+        {
+            This.Fail("property getter binding is missing: " + access.Target);
+            Return This.DefaultValue(access.Type);
+        }
+        If (receiver != null && access.Left.Name != "Base" && This.IsVirtualMethod(getter.Symbol))
+            Return This.EmitVirtualFunctionCall(context, getter, access, receiver);
+        Return This.EmitFunctionCall(context, getter, access, receiver);
+    }
+
+    Public Trusted Function void EmitPropertySet(LlvmFunctionContext context,
+        HirExpression access, LlvmValue receiver, LlvmValue value)
+    {
+        LlvmFunctionBinding setter = This.FindFunctionBinding(access.PropertySetter);
+        If (setter == null)
+        {
+            This.Fail("property setter binding is missing: " + access.Target);
+            Return;
+        }
+        bool qualifiedBase = access.Left != null && access.Left.Name == "Base";
+        LlvmHandles arguments = New LlvmHandles();
+        bool hasReceiver = setter.Symbol.OwnerType != null &&
+            !setter.Symbol.Declaration.IsStatic;
+        If (hasReceiver)
+        {
+            If (receiver == null)
+            {
+                This.Fail("property setter has no receiver: " + access.Target);
+                Return;
+            }
+            arguments.Add(This.CastValue(receiver,
+                setter.Symbol.OwnerType).Handle);
+        }
+        arguments.Add(value.Handle);
+        byte* callable = setter.Function;
+        If (hasReceiver && This.IsVirtualMethod(setter.Symbol) && !qualifiedBase)
+        {
+            int slot = This.DispatchSlot(setter.Symbol.OwnerType, setter.Symbol);
+            If (slot < 0)
+            {
+                This.Fail("virtual property setter slot is missing: " + access.Target);
+                Return;
+            }
+            byte* bytePointer = This.Module.PointerType(This.Module.IntType(8));
+            byte* rawReceiver = This.Module.BitCast(receiver.Handle, bytePointer,
+                This.Unique("property_receiver"));
+            byte* vtable = This.LoadObjectVtable(rawReceiver);
+            byte* methodAddress = This.Module.Gep(bytePointer, vtable,
+                This.Types1(This.Module.ConstInt(This.Module.IntType(64), slot)), true,
+                This.Unique("property_setter_slot"));
+            callable = This.Module.Load(This.Module.PointerType(setter.FunctionType),
+                methodAddress, This.Unique("property_setter"));
+        }
+        This.Module.Call(setter.FunctionType, callable, arguments, "");
+        This.MaybePropagateException(context);
+    }
+
     Public Trusted Function LlvmValue EmitBinary(LlvmFunctionContext context, HirExpression expression)
     {
         TokenKind operatorKind = expression.Operator;
@@ -4838,28 +5104,16 @@ Class NativeBackend
             // type only after compound evaluation, immediately before storage.
             TypeSymbol operationType = operatorKind == TokenKind.Assign || expression.OperandType == null ?
                 expression.Left.Type : expression.OperandType;
-            If (expression.Left.Kind == [int](HirExpressionKind.Field) &&
-                expression.Left.Function != null)
+            If (expression.Left.Kind == [int](HirExpressionKind.PropertyAccess))
             {
-                LlvmFunctionBinding getter = This.FindFunctionBinding(expression.Left.Function);
-                LlvmFunctionBinding setter = This.FindFunctionByTarget(expression.Left.Name, 1);
-                If (getter == null || setter == null)
-                {
-                    This.Fail("property accessor binding is missing: " + expression.Left.Target);
-                    Return This.DefaultValue(expression.Left.Type);
-                }
                 LlvmValue receiver = expression.Left.Left == null ? null :
                     This.EmitExpression(context, expression.Left.Left);
                 // Bind the receiver and read the old property value before RHS
                 // evaluation. Keep getter results live across RHS safe points.
                 LlvmValue left = null;
-                bool qualifiedBase = expression.Left.Left != null &&
-                    expression.Left.Left.Name == "Base";
                 If (operatorKind != TokenKind.Assign)
                 {
-                    left = This.IsVirtualMethod(getter.Symbol) && !qualifiedBase ?
-                        This.EmitVirtualFunctionCall(context, getter, expression.Left, receiver) :
-                        This.EmitFunctionCall(context, getter, expression.Left, receiver);
+                    left = This.EmitPropertyGet(context, expression.Left, receiver);
                     left = This.StoreExpressionRoot(context, expression.Left, left);
                 }
                 LlvmValue right = This.CastValue(
@@ -4917,41 +5171,7 @@ Class NativeBackend
                                 This.Unique("property_rem")), left.Type);
                 }
                 right = This.CastValue(right, expression.Left.Type);
-                LlvmHandles arguments = New LlvmHandles();
-                bool hasReceiver = setter.Symbol.OwnerType != null &&
-                    !setter.Symbol.Declaration.IsStatic;
-                If (hasReceiver)
-                {
-                    If (receiver == null)
-                    {
-                        This.Fail("property setter has no receiver: " + expression.Left.Target);
-                        Return right;
-                    }
-                    arguments.Add(This.CastValue(receiver,
-                        setter.Symbol.OwnerType).Handle);
-                }
-                arguments.Add(right.Handle);
-                byte* callable = setter.Function;
-                If (hasReceiver && This.IsVirtualMethod(setter.Symbol) && !qualifiedBase)
-                {
-                    int slot = This.DispatchSlot(setter.Symbol.OwnerType, setter.Symbol);
-                    If (slot < 0)
-                    {
-                        This.Fail("virtual property setter slot is missing: " + expression.Left.Target);
-                        Return right;
-                    }
-                    byte* bytePointer = This.Module.PointerType(This.Module.IntType(8));
-                    byte* rawReceiver = This.Module.BitCast(receiver.Handle, bytePointer,
-                        This.Unique("property_receiver"));
-                    byte* vtable = This.LoadObjectVtable(rawReceiver);
-                    byte* methodAddress = This.Module.Gep(bytePointer, vtable,
-                        This.Types1(This.Module.ConstInt(This.Module.IntType(64), slot)), true,
-                        This.Unique("property_setter_slot"));
-                    callable = This.Module.Load(This.Module.PointerType(setter.FunctionType),
-                        methodAddress, This.Unique("property_setter"));
-                }
-                This.Module.Call(setter.FunctionType, callable, arguments, "");
-                This.MaybePropagateException(context);
+                This.EmitPropertySet(context, expression.Left, receiver, right);
                 Return right;
             }
             bool packageElement = expression.Left.Kind == [int](HirExpressionKind.Index) &&
@@ -5199,15 +5419,26 @@ Class NativeBackend
         }
         If (operatorKind == TokenKind.PlusPlus || operatorKind == TokenKind.MinusMinus)
         {
-            // Evaluate the lvalue once (including pointer calls/index effects).
-            byte* address = This.EmitAddress(context, expression.Left);
-            If (address == null)
-            {
-                This.Fail("increment operand has no address");
-                Return This.DefaultValue(expression.Type);
-            }
             TypeSymbol type = expression.Left.Type;
-            byte* previous = This.Module.Load(This.TypeHandle(type), address, This.Unique("increment_old"));
+            byte* address = null;
+            LlvmValue receiver = null;
+            byte* previous = null;
+            If (expression.Left.Kind == [int](HirExpressionKind.PropertyAccess))
+            {
+                If (expression.Left.Left != null)
+                    receiver = This.EmitExpression(context, expression.Left.Left);
+                previous = This.EmitPropertyGet(context, expression.Left, receiver).Handle;
+            }
+            Else
+            {
+                address = This.EmitAddress(context, expression.Left);
+                If (address == null)
+                {
+                    This.Fail("increment operand has no address");
+                    Return This.DefaultValue(expression.Type);
+                }
+                previous = This.Module.Load(This.TypeHandle(type), address, This.Unique("increment_old"));
+            }
             byte* next = null;
             bool increment = operatorKind == TokenKind.PlusPlus;
             If (type.Kind == [int](TypeKind.PointerType))
@@ -5226,7 +5457,9 @@ Class NativeBackend
                 next = increment ? This.Module.Add(previous, one, This.Unique("increment")) :
                     This.Module.Subtract(previous, one, This.Unique("decrement"));
             }
-            This.Module.Store(next, address);
+            If (address == null)
+                This.EmitPropertySet(context, expression.Left, receiver, New LlvmValue(next, type));
+            Else This.Module.Store(next, address);
             Return New LlvmValue(expression.Syntax != null && expression.Syntax.IsPostfix ? previous : next,
                 expression.Type);
         }
@@ -5450,6 +5683,14 @@ Class NativeBackend
                 Return New LlvmValue(This.Module.ConstInt(This.Module.IntType(1),
                     expression.Name == "true" || expression.Name == "True" ? 1 : 0),
                     expression.Type);
+            If (This.NeedsDefaultStorage(expression))
+            {
+                TypeSymbol type = expression.Type;
+                byte* slot = This.ExpressionRootAddress(context, expression);
+                This.Module.Store(This.DefaultValue(type).Handle, slot);
+                This.InitializeAggregateStorage(context, type, slot, false);
+                Return New LlvmValue(This.Module.Load(This.TypeHandle(type), slot, This.Unique("default_value")), type);
+            }
             Return This.DefaultValue(expression.Type);
         }
         If (expression.Kind == [int](HirExpressionKind.Local) ||
@@ -5493,20 +5734,11 @@ Class NativeBackend
         If (expression.Kind == [int](HirExpressionKind.Field) &&
             expression.Left != null && expression.Left.Type.Name == "IO.Error")
             Return This.EmitErrorField(context, expression);
-        If (expression.Kind == [int](HirExpressionKind.Field) &&
-            expression.Function != null)
+        If (expression.Kind == [int](HirExpressionKind.PropertyAccess))
         {
-            LlvmFunctionBinding getter = This.FindFunctionBinding(expression.Function);
-            If (getter == null)
-            {
-                This.Fail("property getter binding is missing: " + expression.Target);
-                Return This.DefaultValue(expression.Type);
-            }
             LlvmValue receiver = expression.Left == null ? null :
                 This.EmitExpression(context, expression.Left);
-            If (This.IsVirtualMethod(getter.Symbol) && receiver != null)
-                Return This.EmitVirtualFunctionCall(context, getter, expression, receiver);
-            Return This.EmitFunctionCall(context, getter, expression, receiver);
+            Return This.EmitPropertyGet(context, expression, receiver);
         }
         If (expression.Kind == [int](HirExpressionKind.Field) ||
             expression.Kind == [int](HirExpressionKind.Index))
@@ -5525,7 +5757,7 @@ Class NativeBackend
         If (expression.Kind == [int](HirExpressionKind.PackageLiteral))
             Return This.EmitArrayValue(context, expression.Type, expression.FirstArgument,
                 This.Module.ConstInt(This.Module.IntType(64), This.HirArgumentCount(expression)),
-                This.ExpressionRootAddress(context, expression), This.HirArgumentCount(expression));
+                This.ExpressionRootAddress(context, expression), This.HirArgumentCount(expression), false);
         If (expression.Kind == [int](HirExpressionKind.DictLiteral))
             Return This.EmitDictLiteral(context, expression);
         If (expression.Kind == [int](HirExpressionKind.Switch))
@@ -5539,7 +5771,7 @@ Class NativeBackend
                 Return This.EmitArrayValue(context, expression.Type, expression.Left.FirstArgument,
                     This.Module.ConstInt(This.Module.IntType(64),
                         This.HirArgumentCount(expression.Left)),
-                    This.ExpressionRootAddress(context, expression), This.HirArgumentCount(expression.Left));
+                    This.ExpressionRootAddress(context, expression), This.HirArgumentCount(expression.Left), false);
             If (expression.Left != null &&
                 expression.Left.Type.Kind == [int](TypeKind.PackageType) &&
                 expression.Type.Kind == [int](TypeKind.ArrayType))
@@ -5608,18 +5840,7 @@ Class NativeBackend
 
     Public Safe Function HirFunction FindHirFunction(FunctionSymbol symbol)
     {
-        HirModule module = This.Semantics.FirstHirModule;
-        While (module != null)
-        {
-            HirFunction function = module.FirstFunction;
-            While (function != null)
-            {
-                If (function.Symbol == symbol) Return function;
-                function = function.Next;
-            }
-            module = module.Next;
-        }
-        Return null;
+        Return This.Definitions.FindFunction(symbol);
     }
 
     // These functions implement the GC frame machinery itself.  Giving them
@@ -5639,9 +5860,197 @@ Class NativeBackend
             "IO.Kinal.Runtime.");
     }
 
+    Private Safe Function bool IsCallScalar(TypeSymbol type)
+    {
+        Return type != null && (type.Kind == [int](TypeKind.IntegerType) ||
+            type.Kind == [int](TypeKind.FloatType) || type.Kind == [int](TypeKind.BoolType));
+    }
+
+    Private Safe Function bool CheckScalarExpression(LlvmFunctionBinding caller, HirExpression expr)
+    {
+        If (expr == null) Return true;
+        If (!This.IsCallScalar(expr.Type)) Return false;
+        int kind = expr.Kind;
+        If (kind == [int](HirExpressionKind.Call))
+        {
+            If (expr.CallKind != [int](HirCallKind.UnitFunction) || expr.Left != null)
+                Return false;
+            LlvmFunctionBinding target = This.FindFunctionBinding(expr.Function);
+            If (target == null) Return false;
+            If (target.ScalarCallers == null) target.ScalarCallers = list.Create();
+            target.ScalarCallers.Add(caller);
+            caller.HasScalarCalls = true;
+            HirExpression arg = expr.FirstArgument;
+            While (arg != null)
+            {
+                If (!This.CheckScalarExpression(caller, arg)) Return false;
+                arg = arg.Next;
+            }
+            Return true;
+        }
+        If (expr.Function != null) Return false;
+        If (kind == [int](HirExpressionKind.Constant)) Return true;
+        If (kind == [int](HirExpressionKind.Local))
+            Return expr.Symbol != null && !expr.Symbol.IsCaptured;
+        If (kind == [int](HirExpressionKind.Unary) && expr.Operator != TokenKind.Minus &&
+            expr.Operator != TokenKind.Plus && expr.Operator != TokenKind.Not &&
+            expr.Operator != TokenKind.Tilde) Return false;
+        If (kind != [int](HirExpressionKind.Unary) && kind != [int](HirExpressionKind.Cast) &&
+            kind != [int](HirExpressionKind.Binary) && kind != [int](HirExpressionKind.Conditional))
+            Return false;
+        // All operands must remain scalar. In particular, reject type tests,
+        // user conversions, indexing, boxing, and indirect/overloaded operators.
+        If (kind == [int](HirExpressionKind.Binary))
+        {
+            TokenKind op = expr.Operator;
+            If (op != TokenKind.Plus && op != TokenKind.Minus && op != TokenKind.Star &&
+                op != TokenKind.Slash && op != TokenKind.Percent && op != TokenKind.Assign &&
+                op != TokenKind.Equal && op != TokenKind.NotEqual && op != TokenKind.Less &&
+                op != TokenKind.LessEqual && op != TokenKind.Greater && op != TokenKind.GreaterEqual &&
+                op != TokenKind.AndAnd && op != TokenKind.OrOr && op != TokenKind.Ampersand &&
+                op != TokenKind.BitOr && op != TokenKind.Xor && op != TokenKind.ShiftLeft &&
+                op != TokenKind.ShiftRight) Return false;
+        }
+        Return This.CheckScalarExpression(caller, expr.Left) &&
+            This.CheckScalarExpression(caller, expr.Right) && This.CheckScalarExpression(caller, expr.Third);
+    }
+
+    Private Safe Function bool CheckScalarStatements(LlvmFunctionBinding caller, HirStatement item)
+    {
+        While (item != null)
+        {
+            int kind = item.Kind;
+            If (kind != [int](StatementKind.Block) && kind != [int](StatementKind.Return) &&
+                kind != [int](StatementKind.If) && kind != [int](StatementKind.Variable) &&
+                kind != [int](StatementKind.Expression) && kind != [int](StatementKind.While) &&
+                kind != [int](StatementKind.For) && kind != [int](StatementKind.Break) &&
+                kind != [int](StatementKind.Continue) && kind != [int](StatementKind.Empty))
+                Return false;
+            If (item.DeclaredSymbol != null && (item.DeclaredSymbol.IsCaptured ||
+                !This.IsCallScalar(item.DeclaredType))) Return false;
+            If (!This.CheckScalarExpression(caller, item.Expression) ||
+                !This.CheckScalarExpression(caller, item.SecondExpression) ||
+                !This.CheckScalarExpression(caller, item.ThirdExpression) ||
+                !This.CheckScalarStatements(caller, item.Initializer) ||
+                !This.CheckScalarStatements(caller, item.FirstChild) ||
+                !This.CheckScalarStatements(caller, item.ElseBranch)) Return false;
+            item = item.Next;
+        }
+        Return true;
+    }
+
+    Private Safe Function bool HasScalarBody(LlvmFunctionBinding binding)
+    {
+        FunctionSymbol symbol = binding.Symbol;
+        If (!This.IsCallScalar(symbol.ReturnType) || symbol.Declaration.IsExtern ||
+            symbol.Declaration.IsAsync || symbol.Declaration.IsDelegate || symbol.IsLiteral ||
+            symbol.IsBlockLiteral || symbol.FirstCapture != null || symbol.IsVariadic ||
+            (symbol.OwnerType != null && !symbol.Declaration.IsStatic) ||
+            This.IsRuntimeInfrastructureFunction(symbol)) Return false;
+        ParameterSymbol parameter = symbol.FirstParameter;
+        While (parameter != null)
+        {
+            If (!This.IsCallScalar(parameter.Type) || parameter.Value == null ||
+                parameter.Value.IsCaptured) Return false;
+            parameter = parameter.Next;
+        }
+        HirFunction hir = This.FindHirFunction(symbol);
+        Return hir != null && hir.Body != null && This.CheckScalarStatements(binding, hir.Body);
+    }
+
+    Private Trusted Function void PrepareScalarCalls()
+    {
+        If (This.Semantics.Session.IsFreestanding() || This.IsLibrary()) Return;
+        list rejected = list.Create();
+        LlvmFunctionBinding binding = This.FirstFunction;
+        While (binding != null)
+        {
+            binding.ScalarEligible = This.HasScalarBody(binding);
+            If (!binding.ScalarEligible) rejected.Add(binding);
+            binding = binding.Next;
+        }
+        // Reject an entire recursive component if any outgoing edge can throw
+        // or change the thread's exception. Each rejection is enqueued once.
+        int index = 0;
+        While (index < rejected.Count())
+        {
+            binding = [LlvmFunctionBinding](rejected.Fetch(index));
+            int i = 0;
+            While (binding.ScalarCallers != null && i < binding.ScalarCallers.Count())
+            {
+                LlvmFunctionBinding caller = [LlvmFunctionBinding](binding.ScalarCallers.Fetch(i));
+                If (caller.ScalarEligible)
+                {
+                    caller.ScalarEligible = false;
+                    rejected.Add(caller);
+                }
+                i = i + 1;
+            }
+            index = index + 1;
+        }
+        binding = This.FirstFunction;
+        While (binding != null)
+        {
+            bool needed = binding.HasScalarCalls;
+            int i = 0;
+            While (!needed && binding.ScalarCallers != null && i < binding.ScalarCallers.Count())
+            {
+                needed = [LlvmFunctionBinding](binding.ScalarCallers.Fetch(i)).ScalarEligible;
+                i = i + 1;
+            }
+            If (binding.ScalarEligible && needed)
+            {
+                binding.ScalarBody = This.Module.AddFunction(This.FunctionName(binding.Symbol) +
+                    "$scalar", binding.FunctionType);
+                This.Module.SetPrivateLinkage(binding.ScalarBody);
+            }
+            binding = binding.Next;
+        }
+    }
+
+    Public Trusted Function void ActivateGcFrame(LlvmFunctionContext context)
+    {
+        If (!context.PlanningGcRoots) Return;
+        context.PlanningGcRoots = false;
+        // An empty frame contributes no scan regions. Safepoints still see
+        // the caller's frame, including when this function collects or throws.
+        If (context.GcRootCount == 0) Return;
+        context.GcFrame = This.Module.Alloca(
+            This.Module.ArrayType(This.Module.IntType(64), 6), This.Unique("gc_frame_storage"));
+        byte* roots = This.Module.Alloca(This.Module.ArrayType(This.Module.IntType(64),
+            context.GcRootCount * 2), This.Unique("gc_root_storage"));
+        If (This.IsRuntimeInfrastructureFunction(context.Binding.Symbol))
+            context.RuntimeFrameCalls = New LlvmHandles();
+        int index = 0;
+        LlvmPendingRoot root = context.FirstPendingRoot;
+        While (root != null)
+        {
+            byte* registered = This.CallKinalRuntime("IO.Kinal.Runtime.GarbageCollector.SetFrameRoot", 4,
+                This.Types4(roots, root.Address, This.Module.SizeOf(This.TypeHandle(root.Type)),
+                    This.Module.ConstInt(This.Module.IntType(64), index)), "");
+            If (context.RuntimeFrameCalls != null) context.RuntimeFrameCalls.Add(registered);
+            root = root.Next;
+            index = index + 1;
+        }
+        byte* pushed = This.CallKinalRuntime("IO.Kinal.Runtime.GarbageCollector.PushPlannedFrame", 3,
+            This.Types3(context.GcFrame, roots,
+                This.Module.ConstInt(This.Module.IntType(64), context.GcRootCount)), "");
+        If (context.RuntimeFrameCalls != null) context.RuntimeFrameCalls.Add(pushed);
+    }
+
     Public Trusted Function void AddGcRoot(LlvmFunctionContext context, TypeSymbol type, byte* address)
     {
-        If (!This.NeedsGcRoot(type) || context.GcFrame == null || address == null) Return;
+        If (!This.NeedsGcRoot(type) || address == null) Return;
+        If (context.PlanningGcRoots)
+        {
+            LlvmPendingRoot root = New LlvmPendingRoot(type, address);
+            If (context.FirstPendingRoot == null) context.FirstPendingRoot = root;
+            Else context.LastPendingRoot.Next = root;
+            context.LastPendingRoot = root;
+            context.GcRootCount = context.GcRootCount + 1;
+            Return;
+        }
+        If (context.GcFrame == null) Return;
         byte* bytePointer = This.Module.PointerType(This.Module.IntType(8));
         byte* rootAddress = This.Module.BitCast(address, bytePointer, This.Unique("gc_root"));
         This.CallKinalRuntime("IO.Kinal.Runtime.GarbageCollector.AddRoot", 3,
@@ -5649,32 +6058,87 @@ Class NativeBackend
                 This.Module.SizeOf(This.TypeHandle(type))), "");
     }
 
+    Private Safe Function bool IsLiteralStringLocal(HirExpression value)
+    {
+        Return value != null && value.Kind == [int](HirExpressionKind.Local) && value.Symbol != null &&
+            value.Symbol.UnmodifiedStringLiteral && !value.Symbol.IsCaptured && !value.Symbol.AddressTaken;
+    }
+
+    Private Safe Function bool IsLiteralStringLength(HirExpression value)
+    {
+        Return value != null && value.Kind == [int](HirExpressionKind.Call) &&
+            value.CallKind == [int](HirCallKind.RuntimeBuiltin) && value.Target == "Length" &&
+            value.FirstArgument == null && This.IsLiteralStringLocal(value.Left);
+    }
+
     Public Trusted Function void PrepareExpressionRoot(
         LlvmFunctionContext context, HirExpression expression)
     {
-        If (expression == null || expression.Type == null ||
-            !This.NeedsGcRoot(expression.Type) ||
-            context.FindExpressionRoot(expression) != null) Return;
+        If (expression == null || expression.Type == null || !This.NeedsGcRoot(expression.Type) ||
+            This.IsLiteralStringLocal(expression)) Return;
+        LlvmExpressionRoot root = context.ExpressionRoot(expression, true);
+        If (root.ValueSlot != null) Return;
         byte* address = This.Module.Alloca(This.TypeHandle(expression.Type),
             This.Unique("gc_expression"));
         LlvmValue empty = This.DefaultValue(expression.Type);
         If (empty.Handle != null) This.Module.Store(empty.Handle, address);
-        context.AddExpressionRoot(New LlvmExpressionRoot(
-            expression, expression.Type, address));
+        root.ValueSlot = address;
         This.AddGcRoot(context, expression.Type, address);
     }
 
+    // A numeric load or arithmetic operation over locals cannot rebind an
+    // array or run a collector. Its local array descriptor is already rooted.
+    Public Safe Function bool IsPlainScalar(HirExpression expression)
+    {
+        If (expression == null || expression.Function != null || expression.Type == null ||
+            (expression.Type.Kind != [int](TypeKind.IntegerType) &&
+             expression.Type.Kind != [int](TypeKind.FloatType))) Return false;
+        If (expression.Kind == [int](HirExpressionKind.Local) ||
+            expression.Kind == [int](HirExpressionKind.Constant)) Return true;
+        If (expression.Kind == [int](HirExpressionKind.Cast))
+            Return This.IsPlainScalar(expression.Left);
+        If (This.IsLiteralStringLength(expression)) Return true;
+        If (expression.Kind == [int](HirExpressionKind.Index))
+        {
+            If (expression.Left != null && expression.Left.Kind == [int](HirExpressionKind.Local) &&
+                expression.Left.Type.Kind == [int](TypeKind.StringType)) Return This.IsPlainScalar(expression.Right);
+            Return This.IsLocalArrayIndex(expression);
+        }
+        If (expression.Kind != [int](HirExpressionKind.Binary)) Return false;
+        TokenKind op = expression.Operator;
+        Return (op == TokenKind.Plus || op == TokenKind.Minus || op == TokenKind.Star ||
+            op == TokenKind.Slash || op == TokenKind.Percent) &&
+            This.IsPlainScalar(expression.Left) && This.IsPlainScalar(expression.Right);
+    }
+
+    Public Safe Function bool IsLocalArrayIndex(HirExpression expression)
+    {
+        Return expression != null && expression.Kind == [int](HirExpressionKind.Index) &&
+            expression.Left != null && expression.Left.Kind == [int](HirExpressionKind.Local) &&
+            expression.Left.Type != null && expression.Left.Type.Kind == [int](TypeKind.ArrayType) &&
+            This.IsPlainScalar(expression.Right);
+    }
+
     Public Trusted Function void PrepareExpressionRoots(
-        LlvmFunctionContext context, HirExpression expression)
+        LlvmFunctionContext context, HirExpression expression, HirExpression privateArray = null)
     {
         HirExpression current = expression;
         While (current != null)
         {
+            If (current.Kind == [int](HirExpressionKind.Local) && current != privateArray &&
+                current.Type.Kind == [int](TypeKind.ArrayType) && current.Symbol != null)
+                current.Symbol.NativeArrayExposed = true;
+            If (current.Kind == [int](HirExpressionKind.Unary) && current.Operator == TokenKind.Ampersand &&
+                current.Left != null && current.Left.Kind == [int](HirExpressionKind.Index) &&
+                current.Left.Left != null && current.Left.Left.Kind == [int](HirExpressionKind.Local) &&
+                current.Left.Left.Symbol != null)
+                current.Left.Left.Symbol.NativeArrayExposed = true;
             bool ownsPartiallyInitializedStorage =
                 current.Kind == [int](HirExpressionKind.ArrayLiteral) ||
                 current.Kind == [int](HirExpressionKind.PackageLiteral) ||
                 current.Kind == [int](HirExpressionKind.DictLiteral) ||
                 current.Kind == [int](HirExpressionKind.NewObject) ||
+                This.NeedsDefaultStorage(current) ||
                 (current.Kind == [int](HirExpressionKind.Call) &&
                  current.Target == "Add") ||
                 (current.Kind == [int](HirExpressionKind.Cast) &&
@@ -5683,7 +6147,10 @@ Class NativeBackend
             If (ownsPartiallyInitializedStorage)
                 This.PrepareExpressionRoot(context, current);
 
-            If (current.Kind == [int](HirExpressionKind.Binary) &&
+            bool numericArrayLeft = current.Kind == [int](HirExpressionKind.Binary) &&
+                current.Left != null && current.Left.Kind == [int](HirExpressionKind.Index) &&
+                This.IsPlainScalar(current.Left) && This.IsPlainScalar(current.Right);
+            If (!numericArrayLeft && current.Kind == [int](HirExpressionKind.Binary) &&
                 (current.Operator == TokenKind.Assign || current.Operator == TokenKind.PlusAssign ||
                  current.Operator == TokenKind.MinusAssign || current.Operator == TokenKind.StarAssign ||
                  current.Operator == TokenKind.SlashAssign || current.Operator == TokenKind.PercentAssign))
@@ -5693,16 +6160,19 @@ Class NativeBackend
             // arguments, or switch cases are evaluated. Any of those paths
             // may enter another Kinal function and therefore reach a GC safe
             // point.
-            If (current.Left != null &&
+            If (!This.IsLocalArrayIndex(current) && current.Left != null &&
                 (current.Right != null || current.FirstArgument != null ||
                  current.Kind == [int](HirExpressionKind.Switch)))
                 This.PrepareExpressionRoot(context, current.Left);
 
             // Assignment address lowering consumes the receiver directly,
             // rather than loading the complete Field/Index expression.
-            If (current.Kind == [int](HirExpressionKind.Binary) &&
+            bool unaryUpdate = current.Kind == [int](HirExpressionKind.Unary) &&
+                (current.Operator == TokenKind.PlusPlus || current.Operator == TokenKind.MinusMinus);
+            If (!numericArrayLeft && (current.Kind == [int](HirExpressionKind.Binary) || unaryUpdate) &&
                 current.Left != null && current.Left.Left != null &&
                 (current.Left.Kind == [int](HirExpressionKind.Field) ||
+                 current.Left.Kind == [int](HirExpressionKind.PropertyAccess) ||
                  current.Left.Kind == [int](HirExpressionKind.Index)))
                 This.PrepareExpressionRoot(context, current.Left.Left);
 
@@ -5712,7 +6182,10 @@ Class NativeBackend
                 This.PrepareExpressionRoot(context, argument);
                 argument = argument.Next;
             }
-            This.PrepareExpressionRoots(context, current.Left);
+            bool privateReceiver = current.Kind == [int](HirExpressionKind.Index) ||
+                (current.Kind == [int](HirExpressionKind.Call) &&
+                 current.CallKind == [int](HirCallKind.RuntimeBuiltin) && current.Target == "Length");
+            This.PrepareExpressionRoots(context, current.Left, privateReceiver ? current.Left : null);
             This.PrepareExpressionRoots(context, current.Right);
             This.PrepareExpressionRoots(context, current.Third);
             This.PrepareExpressionRoots(context, current.FirstArgument);
@@ -5736,17 +6209,19 @@ Class NativeBackend
     Public Trusted Function void PrepareAssignmentAddressRoot(
         LlvmFunctionContext context, HirExpression expression)
     {
-        If (expression == null || context.FindAddressRoot(expression) != null) Return;
+        If (expression == null) Return;
         // Ordinary named slots already have a local/global/capture root. A
         // property setter consumes its receiver, not a storage address.
         If (expression.Kind == [int](HirExpressionKind.Local) ||
             expression.Kind == [int](HirExpressionKind.Global) ||
             expression.Kind == [int](HirExpressionKind.Delegate) ||
-            (expression.Kind == [int](HirExpressionKind.Field) && expression.Function != null)) Return;
+            expression.Kind == [int](HirExpressionKind.PropertyAccess)) Return;
+        LlvmExpressionRoot root = context.ExpressionRoot(expression, true);
+        If (root.AddressSlot != null) Return;
         byte* pointer = This.Module.PointerType(This.Module.IntType(8));
         byte* slot = This.Module.Alloca(pointer, This.Unique("gc_assignment_address"));
         This.Module.Store(This.Module.ConstNull(pointer), slot);
-        context.AddAddressRoot(New LlvmAddressRoot(expression, slot));
+        root.AddressSlot = slot;
         This.AddGcRoot(context,
             This.Semantics.MakePointerType(This.Semantics.Primitive("byte")), slot);
     }
@@ -5774,25 +6249,108 @@ Class NativeBackend
         LlvmValue empty = This.DefaultValue(type);
         This.Module.Store(empty.Handle, address);
         context.AddLocalRoot(New LlvmLocalRoot(symbol, address));
+        // A static literal outlives every frame. Keep the local slot private
+        // so LLVM can propagate the string address across calls and GC polls.
+        If (symbol.UnmodifiedStringLiteral && !symbol.AddressTaken) Return;
         This.AddGcRoot(context, type, address);
     }
 
+    Public Safe Function bool MentionsLocal(HirExpression value, ValueSymbol local)
+    {
+        If (value == null) Return false;
+        If (value.Symbol == local || This.MentionsLocal(value.Left, local) ||
+            This.MentionsLocal(value.Right, local) || This.MentionsLocal(value.Third, local)) Return true;
+        HirExpression argument = value.FirstArgument;
+        While (argument != null)
+        {
+            If (This.MentionsLocal(argument, local)) Return true;
+            argument = argument.Next;
+        }
+        Return false;
+    }
+
+    Public Safe Function HirExpression LocalStringAppendSuffix(HirExpression value)
+    {
+        If (value == null || value.Kind != [int](HirExpressionKind.Binary) ||
+            value.Left == null || value.Left.Kind != [int](HirExpressionKind.Local) ||
+            value.Left.Type.Kind != [int](TypeKind.StringType)) Return null;
+        ValueSymbol local = value.Left.Symbol;
+        If (local == null || local.IsCaptured || local.AddressTaken || local.Declaration == null ||
+            local.Declaration.Kind != [int](StatementKind.Variable)) Return null;
+        HirExpression suffix = value.Right;
+        If (value.Operator == TokenKind.Assign)
+        {
+            If (suffix == null || suffix.Kind != [int](HirExpressionKind.Binary) ||
+                suffix.Operator != TokenKind.Plus || suffix.Left == null ||
+                suffix.Left.Kind != [int](HirExpressionKind.Local) || suffix.Left.Symbol != local) Return null;
+            suffix = suffix.Right;
+        }
+        ElseIf (value.Operator != TokenKind.PlusAssign) Return null;
+        If (suffix == null || suffix.Type.Kind != [int](TypeKind.StringType) ||
+            This.MentionsLocal(suffix, local)) Return null;
+        Return suffix;
+    }
+
+    Public Safe Function bool IsLocalArrayCandidate(HirStatement statement)
+    {
+        If (statement.FixedArrayLength < 1 || statement.FixedArrayLength > 1048576 ||
+            statement.Kind != [int](StatementKind.Variable) || statement.DeclaredSymbol == null ||
+            statement.DeclaredSymbol.IsCaptured || statement.DeclaredSymbol.AddressTaken ||
+            statement.DeclaredType.Kind != [int](TypeKind.ArrayType) ||
+            (statement.Expression != null && statement.Expression.Kind != [int](HirExpressionKind.ArrayLiteral)))
+            Return false;
+        TypeSymbol element = statement.DeclaredType.ElementType;
+        int width = 1;
+        If (This.IsIntegerLike(element)) width = This.IntegerBits(element) / 8;
+        ElseIf (element.Kind == [int](TypeKind.FloatType)) width = This.FloatBits(element) / 8;
+        ElseIf (element.Kind != [int](TypeKind.BoolType)) Return false;
+        int bytes = statement.FixedArrayLength * width;
+        Return bytes >= 32768 && bytes <= 1048576;
+    }
+
     Public Trusted Function void PrepareStatementRoots(
-        LlvmFunctionContext context, HirStatement statement)
+        LlvmFunctionContext context, HirStatement statement, bool inLoop = false)
     {
         HirStatement current = statement;
         While (current != null)
         {
             This.PrepareVariableRoot(context, current.DeclaredSymbol, current.DeclaredType);
+            If (This.IsLocalArrayCandidate(current) && !This.Semantics.Session.IsFreestanding())
+            {
+                LlvmLocalRoot root = context.FindLocalRoot(current.DeclaredSymbol);
+                If (root != null && !root.ReuseArray)
+                {
+                    root.ReuseArray = true;
+                    root.NextReusableArray = context.FirstReusableArray;
+                    context.FirstReusableArray = root;
+                }
+            }
             If (current.Kind == [int](StatementKind.Switch) ||
                 current.Kind == [int](StatementKind.Foreach))
                 This.PrepareExpressionRoot(context, current.Expression);
             This.PrepareExpressionRoots(context, current.Expression);
             This.PrepareExpressionRoots(context, current.SecondExpression);
             This.PrepareExpressionRoots(context, current.ThirdExpression);
-            This.PrepareStatementRoots(context, current.Initializer);
-            This.PrepareStatementRoots(context, current.FirstChild);
-            This.PrepareStatementRoots(context, current.ElseBranch);
+            If (inLoop && current.Kind == [int](StatementKind.Expression) &&
+                This.LocalStringAppendSuffix(current.Expression) != null)
+            {
+                ValueSymbol symbol = current.Expression.Left.Symbol;
+                LlvmLocalRoot root = context.FindLocalRoot(symbol);
+                If (root != null && root.StringAppendState == null && !This.Semantics.Session.IsFreestanding() &&
+                    This.FindFunctionByTarget("IO.Kinal.Runtime.StringAppendLocal", 3) != null)
+                {
+                    symbol.HasLoopStringAppend = true;
+                    root.StringAppendState = This.Module.Alloca(
+                        This.Module.ArrayType(This.Module.IntType(64), 2), This.Unique("string_append_state"));
+                    // A Block can enter at a Record beyond the declaration.
+                    This.Module.Store(This.Module.ConstInt(This.Module.IntType(64), 0), root.StringAppendState);
+                }
+            }
+            bool loopBody = inLoop || current.Kind == [int](StatementKind.While) ||
+                current.Kind == [int](StatementKind.For) || current.Kind == [int](StatementKind.Foreach);
+            This.PrepareStatementRoots(context, current.Initializer, inLoop);
+            This.PrepareStatementRoots(context, current.FirstChild, loopBody);
+            This.PrepareStatementRoots(context, current.ElseBranch, inLoop);
             current = current.Next;
         }
     }
@@ -5800,6 +6358,8 @@ Class NativeBackend
     Public Trusted Function void PrepareFunctionRoots(
         LlvmFunctionContext context, HirStatement body)
     {
+        context.PlanningGcRoots = true;
+        context.GcRootCount = 0;
         ValueSymbol receiver = context.Binding.Symbol.Receiver;
         If (receiver != null)
             This.PrepareVariableRoot(context, receiver, receiver.Type);
@@ -5810,6 +6370,22 @@ Class NativeBackend
             parameter = parameter.Next;
         }
         This.PrepareStatementRoots(context, body);
+        LlvmLocalRoot candidate = context.FirstReusableArray;
+        context.FirstReusableArray = null;
+        If (candidate == null) Return;
+        bool supported = This.FindFunctionByTarget("IO.Kinal.Runtime.GarbageCollector.TakeLocalArray", 2) != null &&
+            This.FindFunctionByTarget("IO.Kinal.Runtime.GarbageCollector.ReturnLocalArray", 1) != null;
+        While (candidate != null)
+        {
+            LlvmLocalRoot next = candidate.NextReusableArray;
+            candidate.ReuseArray = supported && !candidate.Symbol.NativeArrayExposed;
+            If (candidate.ReuseArray)
+            {
+                candidate.NextReusableArray = context.FirstReusableArray;
+                context.FirstReusableArray = candidate;
+            }
+            candidate = next;
+        }
     }
 
     Public Trusted Function void AddVariableGcRoot(LlvmFunctionContext context,
@@ -5827,9 +6403,8 @@ Class NativeBackend
     Public Trusted Function byte* ExpressionRootAddress(
         LlvmFunctionContext context, HirExpression expression)
     {
-        LlvmExpressionRoot root = expression == null ? null :
-            context.FindExpressionRoot(expression);
-        Return root == null ? null : root.Address;
+        LlvmExpressionRoot root = context.ExpressionRoot(expression);
+        Return root == null ? null : root.ValueSlot;
     }
 
     Public Trusted Function LlvmValue StoreExpressionRoot(
@@ -5850,7 +6425,8 @@ Class NativeBackend
         {
             LlvmLocalRoot local = symbol == null ? null : context.FindLocalRoot(symbol);
             If (local != null) Return local.Address;
-            If (context.GcFrame != null && symbol != null && This.NeedsGcRoot(type))
+            If ((context.GcRootCount >= 0 || context.GcFrame != null) &&
+                symbol != null && This.NeedsGcRoot(type))
             {
                 This.Fail("managed declaration has no entry root: " + name);
                 Return null;
@@ -5904,9 +6480,18 @@ Class NativeBackend
 
     Public Trusted Function void PopGcFrame(LlvmFunctionContext context)
     {
-        If (context.GcFrame != null)
-            This.CallKinalRuntime("IO.Kinal.Runtime.GarbageCollector.PopFrame", 1,
-                This.Types1(context.GcFrame), "");
+        If (context.GcFrame == null) Return;
+        LlvmLocalRoot array = context.FirstReusableArray;
+        While (array != null)
+        {
+            byte* descriptor = This.Module.Load(This.TypeHandle(array.Symbol.Type), array.Address, "");
+            byte* data = This.Module.ExtractValue(descriptor, 0, "");
+            This.CallKinalRuntime("IO.Kinal.Runtime.GarbageCollector.ReturnLocalArray", 1, This.Types1(data), "");
+            array = array.NextReusableArray;
+        }
+        byte* popped = This.CallKinalRuntime("IO.Kinal.Runtime.GarbageCollector.PopFrame", 1,
+            This.Types1(context.GcFrame), "");
+        If (context.RuntimeFrameCalls != null) context.RuntimeFrameCalls.Add(popped);
     }
 
     Public Safe Function TypeSymbol ErrorType()
@@ -5985,19 +6570,23 @@ Class NativeBackend
         // calls would recursively call Exception.Has.
         If (This.IsRuntimeInfrastructureFunction(context.Binding.Symbol)) Return;
         byte* function = context.Binding.Function;
-        byte* errorBlock = This.Module.AppendBlock(function,
-            This.Unique("exception_error"));
+        bool first = context.PropagationBlock == null;
+        If (first)
+            context.PropagationBlock = This.Module.AppendBlock(function, This.Unique("exception_error"));
         byte* okBlock = This.Module.AppendBlock(function,
             This.Unique("exception_ok"));
         byte* hasException = This.RuntimeBool(This.CallKinalRuntime(
             "IO.Kinal.Runtime.Exception.Has", 0, This.Types0(),
             This.Unique("exception_has_c")));
-        This.Module.ConditionalBranch(hasException, errorBlock, okBlock);
+        This.Module.ConditionalBranch(hasException, context.PropagationBlock, okBlock);
 
-        This.Module.PositionAtEnd(errorBlock);
-        byte* error = This.CallKinalRuntime("IO.Kinal.Runtime.Exception.Current", 0,
-            This.Types0(), This.Unique("exception_current"));
-        This.RouteException(context, error);
+        If (first)
+        {
+            This.Module.PositionAtEnd(context.PropagationBlock);
+            byte* error = This.CallKinalRuntime("IO.Kinal.Runtime.Exception.Current", 0,
+                This.Types0(), This.Unique("exception_current"));
+            This.RouteException(context, error);
+        }
 
         This.Module.PositionAtEnd(okBlock);
     }
@@ -6081,6 +6670,253 @@ Class NativeBackend
         This.Module.PositionAtEnd(mergeBlock);
     }
 
+    Private Safe Function bool IsScalarComparison(HirExpression expression)
+    {
+        If (expression == null || expression.Kind != [int](HirExpressionKind.Binary) ||
+            expression.Function != null) Return false;
+        TokenKind op = expression.Operator;
+        Return (op == TokenKind.Less || op == TokenKind.LessEqual || op == TokenKind.Greater ||
+            op == TokenKind.GreaterEqual || op == TokenKind.Equal || op == TokenKind.NotEqual) &&
+            This.IsPlainScalar(expression.Left) && This.IsPlainScalar(expression.Right);
+    }
+
+    Private Safe Function bool HasOnlyScalarStatements(HirStatement item,
+        ValueSymbol fixedIndex, ValueSymbol fixedBound)
+    {
+        While (item != null)
+        {
+            HirExpression write = item.Expression;
+            If (item.Kind == [int](StatementKind.Expression))
+            {
+                If (write == null || write.Kind != [int](HirExpressionKind.Binary) ||
+                    write.Function != null || write.Operator != TokenKind.Assign || write.Left == null ||
+                    (write.Left.Kind != [int](HirExpressionKind.Local) && !This.IsLocalArrayIndex(write.Left)) ||
+                    !This.IsPlainScalar(write.Left) || !This.IsPlainScalar(write.Right)) Return false;
+                If (fixedIndex != null && write.Left.Kind == [int](HirExpressionKind.Local) &&
+                    (write.Left.Symbol == fixedIndex || write.Left.Symbol == fixedBound)) Return false;
+            }
+            ElseIf (item.Kind == [int](StatementKind.Block))
+            {
+                If (!This.HasOnlyScalarStatements(item.FirstChild, fixedIndex, fixedBound)) Return false;
+            }
+            ElseIf (item.Kind == [int](StatementKind.If))
+            {
+                If (item.DeclaredSymbol != null || !This.IsScalarComparison(write) ||
+                    !This.HasOnlyScalarStatements(item.FirstChild, fixedIndex, fixedBound) ||
+                    !This.HasOnlyScalarStatements(item.ElseBranch, fixedIndex, fixedBound)) Return false;
+            }
+            ElseIf (item.Kind == [int](StatementKind.Variable))
+            {
+                If (item.DeclaredSymbol == null || item.DeclaredSymbol.IsCaptured ||
+                    item.DeclaredType == null ||
+                    (item.DeclaredType.Kind != [int](TypeKind.IntegerType) &&
+                     item.DeclaredType.Kind != [int](TypeKind.FloatType)) ||
+                    (write != null && !This.IsPlainScalar(write))) Return false;
+            }
+            ElseIf (item.Kind != [int](StatementKind.Break)) Return false;
+            item = item.Next;
+        }
+        Return true;
+    }
+
+    Public Safe Function bool CanBatchWhilePolls(HirStatement loop)
+    {
+        HirExpression test = loop.Expression;
+        Return This.IsScalarComparison(test) &&
+            test.Left.Kind == [int](HirExpressionKind.Local) &&
+            (test.Right.Kind == [int](HirExpressionKind.Local) ||
+             test.Right.Kind == [int](HirExpressionKind.Constant) || This.IsLiteralStringLength(test.Right)) &&
+            loop.FirstChild != null && This.HasOnlyScalarStatements(loop.FirstChild, null, null);
+    }
+
+    // For a nonescaping integer i, a stable bound and a single final i=i+1,
+    // compare the induction variable with the end of this bounded batch.
+    Public Safe Function bool HasUnitStride(HirStatement loop)
+    {
+        HirExpression index = loop.Expression.Left;
+        HirExpression bound = loop.Expression.Right;
+        If (loop.Expression.Operator != TokenKind.Less || index.Symbol == null || index.Symbol.IsCaptured || index.Symbol.AddressTaken ||
+            index.Type.Kind != [int](TypeKind.IntegerType) || index.Type != bound.Type ||
+            This.IntegerBits(index.Type) < 16 ||
+            (bound.Kind == [int](HirExpressionKind.Local) &&
+             (bound.Symbol == null || bound.Symbol.IsCaptured || bound.Symbol.AddressTaken))) Return false;
+        HirStatement item = loop.FirstChild;
+        If (item.Kind == [int](StatementKind.Block)) item = item.FirstChild;
+        While (item != null)
+        {
+            If (item.Kind == [int](StatementKind.If) || item.Kind == [int](StatementKind.Block))
+            {
+                If (!This.HasOnlyScalarStatements(item.FirstChild, index.Symbol, bound.Symbol) ||
+                    !This.HasOnlyScalarStatements(item.ElseBranch, index.Symbol, bound.Symbol)) Return false;
+                item = item.Next;
+                Continue;
+            }
+            If (item.Kind == [int](StatementKind.Variable))
+            {
+                If (item.DeclaredSymbol == index.Symbol || item.DeclaredSymbol == bound.Symbol) Return false;
+                item = item.Next;
+                Continue;
+            }
+            If (item.Kind != [int](StatementKind.Expression)) Return false;
+            HirExpression write = item.Expression;
+            If (write.Left.Kind == [int](HirExpressionKind.Local))
+            {
+                If (bound.Symbol != null && write.Left.Symbol == bound.Symbol) Return false;
+                If (write.Left.Symbol == index.Symbol)
+                {
+                    HirExpression add = write.Right;
+                    Return item.Next == null && add.Kind == [int](HirExpressionKind.Binary) &&
+                        add.Operator == TokenKind.Plus && add.Left.Kind == [int](HirExpressionKind.Local) &&
+                        add.Left.Symbol == index.Symbol && add.Right.Kind == [int](HirExpressionKind.Constant) &&
+                        add.Right.Name == "1" && add.Type == index.Type;
+                }
+            }
+            item = item.Next;
+        }
+        Return false;
+    }
+
+    Private Safe Function int PositiveIntegerLimit(TypeSymbol type)
+    {
+        int bits = This.IntegerBits(type);
+        If (bits == 64) Return 0x7fffffffffffffff;
+        Return ([int](1) << (This.IsUnsignedInteger(type) ? bits : bits - 1)) - 1;
+    }
+
+    Private Safe Function int NonnegativeLiteral(HirExpression value)
+    {
+        If (value == null || value.Type.Kind != [int](TypeKind.IntegerType) || value.Function != null) Return -1;
+        int number;
+        If (value.Kind == [int](HirExpressionKind.Cast)) number = This.NonnegativeLiteral(value.Left);
+        ElseIf (value.Kind == [int](HirExpressionKind.Constant) && value.Syntax != null &&
+            value.Syntax.Kind == [int](ExpressionKind.Number)) number = This.IntegerLiteralValue(value.Name);
+        Else Return -1;
+        Return number >= 0 && number <= This.PositiveIntegerLimit(value.Type) ? number : -1;
+    }
+
+    // Each addend must remain independent of the unreduced accumulator.
+    Private Safe Function int ModularAddendLimit(HirExpression value, ValueSymbol state, ValueSymbol index)
+    {
+        If (value == null || value.Function != null || value.Type.Kind != [int](TypeKind.IntegerType)) Return -1;
+        If (value.Kind == [int](HirExpressionKind.Constant)) Return This.NonnegativeLiteral(value);
+        If (value.Kind == [int](HirExpressionKind.Cast))
+        {
+            int limit = This.ModularAddendLimit(value.Left, state, index);
+            Return limit <= This.PositiveIntegerLimit(value.Type) ? limit : -1;
+        }
+        If (value.Kind == [int](HirExpressionKind.Local))
+        {
+            If (value.Symbol == null || value.Symbol == state) Return -1;
+        }
+        ElseIf (value.Kind == [int](HirExpressionKind.Index))
+        {
+            If (value.Left == null || value.Left.Kind != [int](HirExpressionKind.Local) ||
+                (value.Left.Type.Kind != [int](TypeKind.StringType) && value.Left.Type.Kind != [int](TypeKind.ArrayType)) ||
+                value.Right == null || value.Right.Kind != [int](HirExpressionKind.Local) || value.Right.Symbol != index)
+                Return -1;
+        }
+        Else Return -1;
+        Return This.IsUnsignedInteger(value.Type) && This.IntegerBits(value.Type) < 64 ?
+            This.PositiveIntegerLimit(value.Type) : -1;
+    }
+
+    Private Safe Function bool IsModularOperation(HirExpression value, TokenKind op, TypeSymbol type)
+    {
+        Return value != null && value.Kind == [int](HirExpressionKind.Binary) && value.Operator == op &&
+            value.Function == null && value.Type == type && value.Left != null && value.Right != null &&
+            (value.OperandType == null ? value.Left.Type : value.OperandType) == type;
+    }
+
+    // Called only after proving a stable loop bound and the final unit-stride increment.
+    Private Safe Function LlvmModularRecurrence FindModularRecurrence(HirStatement loop)
+    {
+        HirStatement body = loop.FirstChild;
+        If (body.Kind == [int](StatementKind.Block))
+        {
+            If (body.Next != null) Return null;
+            body = body.FirstChild;
+        }
+        If (body == null || body.Kind != [int](StatementKind.Expression) || body.Next == null ||
+            body.Next.Next != null || body.Next.Kind != [int](StatementKind.Expression)) Return null;
+        HirExpression write = body.Expression;
+        If (write == null || write.Operator != TokenKind.Assign || write.Left == null ||
+            write.Left.Kind != [int](HirExpressionKind.Local)) Return null;
+        HirExpression state = write.Left;
+        ValueSymbol index = loop.Expression.Left.Symbol;
+        If (state.Symbol == null || state.Symbol == index || state.Symbol.AddressTaken || state.Symbol.IsCaptured ||
+            state.Type.Kind != [int](TypeKind.IntegerType)) Return null;
+        HirExpression rem = write.Right;
+        If (!This.IsModularOperation(rem, TokenKind.Percent, state.Type) ||
+            !This.IsModularOperation(rem.Left, TokenKind.Plus, state.Type)) Return null;
+        int modulus = This.NonnegativeLiteral(rem.Right);
+        If (modulus <= 1 || (modulus & (modulus - 1)) == 0) Return null;
+        HirExpression product = rem.Left.Left;
+        HirExpression addend = rem.Left.Right;
+        If (!This.IsModularOperation(product, TokenKind.Star, state.Type))
+        {
+            product = rem.Left.Right;
+            addend = rem.Left.Left;
+            If (!This.IsModularOperation(product, TokenKind.Star, state.Type)) Return null;
+        }
+        HirExpression previous = product.Left;
+        HirExpression factor = product.Right;
+        If (previous.Kind != [int](HirExpressionKind.Local)) { previous = product.Right; factor = product.Left; }
+        If (previous.Symbol != state.Symbol || previous.Kind != [int](HirExpressionKind.Local)) Return null;
+        int multiplier = This.NonnegativeLiteral(factor);
+        int addendLimit = This.ModularAddendLimit(addend, state.Symbol, index);
+        int maximum = This.PositiveIntegerLimit(state.Type);
+        If (multiplier < 1 || multiplier > maximum || modulus > maximum || addendLimit < 0 || addendLimit > maximum)
+            Return null;
+        // Bound every intermediate before combining up to four source iterations.
+        int safeInput = (maximum - addendLimit) / multiplier;
+        int upper = modulus - 1;
+        int count = 0;
+        While (count < 4 && upper <= safeInput) { upper = upper * multiplier + addendLimit; count++; }
+        If (count < 2) Return null;
+        LlvmModularRecurrence plan = New LlvmModularRecurrence();
+        plan.State = state;
+        plan.Addend = addend;
+        plan.Multiplier = multiplier;
+        plan.Modulus = modulus;
+        plan.GroupSize = count;
+        Return plan;
+    }
+
+    Private Trusted Function void EmitModularGroups(LlvmFunctionContext context, HirExpression index,
+        LlvmModularRecurrence plan, byte* batchEnd, byte* scalarBody, byte* poll)
+    {
+        byte* function = context.Binding.Function;
+        byte* check = This.Module.AppendBlock(function, This.Unique("modular_group_check"));
+        byte* group = This.Module.AppendBlock(function, This.Unique("modular_group_body"));
+        byte* stateType = This.TypeHandle(plan.State.Type);
+        byte* indexType = This.TypeHandle(index.Type);
+        byte* stateSlot = This.EmitAddress(context, plan.State);
+        byte* indexSlot = This.EmitAddress(context, index);
+        byte* modulus = This.Module.ConstI64(stateType, plan.Modulus, false);
+        byte* multiplier = This.Module.ConstI64(stateType, plan.Multiplier, false);
+        // A signed negative or an unreduced seed executes the ordinary source operations.
+        byte* state = This.Module.Load(stateType, stateSlot, "");
+        This.Module.ConditionalBranch(This.Module.Compare([int](LlvmIntPredicate.UnsignedLess),
+            state, modulus, ""), check, scalarBody);
+        This.Module.PositionAtEnd(check);
+        byte* limit = This.Module.Load(indexType, batchEnd, "");
+        byte* cursor = This.Module.Load(indexType, indexSlot, "");
+        byte* enough = This.Module.Compare([int](LlvmIntPredicate.UnsignedGreaterEqual),
+            This.Module.Subtract(limit, cursor, ""), This.Module.ConstInt(indexType, plan.GroupSize), "");
+        This.Module.ConditionalBranch(enough, group, scalarBody);
+        This.Module.PositionAtEnd(group);
+        state = This.Module.Load(stateType, stateSlot, "");
+        For (int step = 0; step < plan.GroupSize; step++)
+        {
+            LlvmValue term = This.CastValue(This.EmitExpression(context, plan.Addend), plan.State.Type);
+            state = This.Module.Add(This.Module.Multiply(state, multiplier, ""), term.Handle, "");
+            cursor = This.Module.Add(cursor, This.Module.ConstInt(indexType, 1), "");
+            This.Module.Store(cursor, indexSlot);
+        }
+        This.Module.Store(This.Module.UnsignedRemainder(state, modulus, ""), stateSlot);
+        This.Module.ConditionalBranch(This.Module.Compare([int](LlvmIntPredicate.Equal), cursor, limit, ""), poll, check);
+    }
+
     Public Trusted Function void EmitWhile(LlvmFunctionContext context, HirStatement statement)
     {
         byte* function = context.Binding.Function;
@@ -6088,12 +6924,44 @@ Class NativeBackend
         byte* bodyBlock = This.Module.AppendBlock(function, This.Unique("while_body"));
         byte* stepBlock = This.Module.AppendBlock(function, This.Unique("while_step"));
         byte* endBlock = This.Module.AppendBlock(function, This.Unique("while_end"));
+        byte* budget = null;
+        byte* batchEnd = null;
+        byte* counterType = This.Module.IntType(32);
+        If (!This.Semantics.Session.IsFreestanding() &&
+            !This.IsRuntimeInfrastructureFunction(context.Binding.Symbol) &&
+            This.CanBatchWhilePolls(statement))
+        {
+            If (This.HasUnitStride(statement))
+                batchEnd = This.Module.Alloca(This.TypeHandle(statement.Expression.Left.Type),
+                    This.Unique("gc_batch_end"));
+            Else budget = This.Module.Alloca(counterType, This.Unique("gc_loop_budget"));
+        }
         This.Module.Branch(conditionBlock);
 
         This.Module.PositionAtEnd(conditionBlock);
+        If (budget != null) This.Module.Store(This.Module.ConstInt(counterType, 1024), budget);
         LlvmValue condition = This.CastValue(This.EmitExpression(context, statement.Expression),
             This.Semantics.Primitive("bool"));
-        This.Module.ConditionalBranch(condition.Handle, bodyBlock, endBlock);
+        If (batchEnd != null)
+        {
+            byte* low = This.EmitExpression(context, statement.Expression.Left).Handle;
+            byte* high = This.EmitExpression(context, statement.Expression.Right).Handle;
+            byte* stride = This.Module.ConstInt(This.TypeHandle(statement.Expression.Left.Type), 1024);
+            byte* shortBatch = This.Module.Compare([int](LlvmIntPredicate.UnsignedLess),
+                This.Module.Subtract(high, low, ""), stride, "");
+            This.Module.Store(This.Module.Select(shortBatch, high, This.Module.Add(low, stride, ""), ""), batchEnd);
+        }
+        LlvmModularRecurrence recurrence = batchEnd == null ? null : This.FindModularRecurrence(statement);
+        byte* batchPoll = null;
+        If (recurrence != null)
+        {
+            byte* dispatch = This.Module.AppendBlock(function, This.Unique("modular_dispatch"));
+            batchPoll = This.Module.AppendBlock(function, This.Unique("while_poll"));
+            This.Module.ConditionalBranch(condition.Handle, dispatch, endBlock);
+            This.Module.PositionAtEnd(dispatch);
+            This.EmitModularGroups(context, statement.Expression.Left, recurrence, batchEnd, bodyBlock, batchPoll);
+        }
+        Else This.Module.ConditionalBranch(condition.Handle, bodyBlock, endBlock);
 
         byte* previousBreak = context.BreakTarget;
         byte* previousContinue = context.ContinueTarget;
@@ -6103,6 +6971,27 @@ Class NativeBackend
         This.EmitStatementList(context, statement.FirstChild);
         If (!This.Module.IsTerminated(This.Module.CurrentBlock())) This.Module.Branch(stepBlock);
         This.Module.PositionAtEnd(stepBlock);
+        If (batchEnd != null)
+        {
+            byte* current = This.EmitExpression(context, statement.Expression.Left).Handle;
+            byte* limit = This.Module.Load(This.TypeHandle(statement.Expression.Left.Type), batchEnd, "");
+            byte* more = This.Module.Compare([int](LlvmIntPredicate.NotEqual), current, limit, "");
+            If (batchPoll == null) batchPoll = This.Module.AppendBlock(function, This.Unique("while_poll"));
+            This.Module.ConditionalBranch(more, bodyBlock, batchPoll);
+            This.Module.PositionAtEnd(batchPoll);
+        }
+        ElseIf (budget != null)
+        {
+            byte* remaining = This.Module.Subtract(This.Module.Load(counterType, budget, ""),
+                This.Module.ConstInt(counterType, 1), "");
+            This.Module.Store(remaining, budget);
+            byte* withinBatch = This.Module.Compare([int](LlvmIntPredicate.NotEqual),
+                remaining, This.Module.ConstInt(counterType, 0), "");
+            LlvmValue more = This.EmitExpression(context, statement.Expression);
+            byte* poll = This.Module.AppendBlock(function, This.Unique("while_poll"));
+            This.Module.ConditionalBranch(This.Module.And(withinBatch, more.Handle, ""), bodyBlock, poll);
+            This.Module.PositionAtEnd(poll);
+        }
         This.EmitGcSafePoint(context);
         This.Module.Branch(conditionBlock);
         context.BreakTarget = previousBreak;
@@ -6300,6 +7189,9 @@ Class NativeBackend
             This.Unique("try_exception"));
         This.Module.Store(This.Module.ConstNull(bytePointer), exceptionSlot);
 
+        // Calls in one lexical handler share the same trace, frame and destination.
+        byte* previousPropagation = context.PropagationBlock;
+        context.PropagationBlock = null;
         byte* previousCatch = context.CatchTarget;
         byte* previousSlot = context.ExceptionSlot;
         context.CatchTarget = catchBlock;
@@ -6308,6 +7200,7 @@ Class NativeBackend
         If (!This.Module.IsTerminated(This.Module.CurrentBlock()))
             This.Module.Branch(afterBlock);
         context.CatchTarget = previousCatch;
+        context.PropagationBlock = previousPropagation;
         context.ExceptionSlot = previousSlot;
 
         This.Module.PositionAtEnd(catchBlock);
@@ -6357,6 +7250,53 @@ Class NativeBackend
         This.SetAndRouteException(context, error);
     }
 
+    Private Trusted Function void EmitLocalStringAppend(LlvmFunctionContext context, LlvmVariable local,
+        HirExpression suffix)
+    {
+        byte* left = This.Module.Load(This.TypeHandle(local.Type), local.Address, "");
+        LlvmValue right = This.EmitExpression(context, suffix);
+        byte* done = null;
+        If (suffix.Kind == [int](HirExpressionKind.Constant) && suffix.Syntax != null &&
+            suffix.Syntax.Kind == [int](ExpressionKind.String))
+        {
+            string text = suffix.Syntax.IsRawString ? This.Unquote(suffix.Name) : This.DecodeString(suffix.Name);
+            int bytes = text.Length();
+            LlvmFunctionBinding copy = This.FindFunctionByTarget("IO.Kinal.Runtime.Native.MemoryCopy", 3);
+            If (bytes > 0 && copy != null)
+            {
+                byte* function = context.Binding.Function;
+                byte* owned = This.Module.AppendBlock(function, This.Unique("append_owned"));
+                byte* fitting = This.Module.AppendBlock(function, This.Unique("append_fitting"));
+                byte* grow = This.Module.AppendBlock(function, This.Unique("append_grow"));
+                done = This.Module.AppendBlock(function, This.Unique("append_done"));
+                byte* word = This.Module.IntType(64);
+                byte* capacity = This.Module.Load(word, local.StringAppendState, "");
+                This.Module.ConditionalBranch(This.Module.Compare([int](LlvmIntPredicate.SignedGreater),
+                    capacity, This.Module.ConstInt(word, 0), ""), owned, grow);
+                This.Module.PositionAtEnd(owned);
+                // The length slot is initialized only while this local owns the buffer.
+                byte* lengthSlot = This.Module.Gep(word, local.StringAppendState,
+                    This.Types1(This.Module.ConstInt(word, 1)), true, "");
+                byte* length = This.Module.Load(word, lengthSlot, "");
+                byte* extra = This.Module.ConstI64(word, bytes, false);
+                This.Module.ConditionalBranch(This.Module.Compare([int](LlvmIntPredicate.UnsignedGreaterEqual),
+                    This.Module.Subtract(capacity, length, ""), extra, ""), fitting, grow);
+                This.Module.PositionAtEnd(fitting);
+                byte* tail = This.Module.Gep(This.Module.IntType(8), left, This.Types1(length), true, "");
+                // Literal storage includes the terminator and cannot alias the owned buffer.
+                This.Module.Call(copy.FunctionType, copy.Function,
+                    This.Types3(tail, right.Handle, This.Module.ConstI64(word, bytes + 1, false)), "");
+                This.Module.Store(This.Module.Add(length, extra, ""), lengthSlot);
+                This.Module.Branch(done);
+                This.Module.PositionAtEnd(grow);
+            }
+        }
+        byte* joined = This.CallKinalRuntime("IO.Kinal.Runtime.StringAppendLocal", 3,
+            This.Types3(left, right.Handle, local.StringAppendState), This.Unique("string_append"));
+        This.Module.Store(joined, local.Address);
+        If (done != null) { This.Module.Branch(done); This.Module.PositionAtEnd(done); }
+    }
+
     Public Trusted Function void EmitStatement(LlvmFunctionContext context, HirStatement statement)
     {
         If (statement == null) Return;
@@ -6384,6 +7324,15 @@ Class NativeBackend
                 statement.DeclaredType, This.Sanitize(statement.Name));
             LlvmVariable variable = New LlvmVariable(statement.Name, statement.DeclaredSymbol,
                 statement.DeclaredType, address);
+            If (statement.DeclaredSymbol.HasLoopStringAppend)
+            {
+                LlvmLocalRoot root = context.FindLocalRoot(statement.DeclaredSymbol);
+                If (root != null && root.StringAppendState != null)
+                {
+                    variable.StringAppendState = root.StringAppendState;
+                    This.Module.Store(This.Module.ConstInt(This.Module.IntType(64), 0), variable.StringAppendState);
+                }
+            }
             context.AddVariable(variable);
             This.AddVariableGcRoot(context, statement.DeclaredSymbol, statement.DeclaredType, address);
             LlvmValue value = null;
@@ -6396,17 +7345,33 @@ Class NativeBackend
                 HirExpression firstItem = statement.Expression != null &&
                     statement.Expression.Kind == [int](HirExpressionKind.ArrayLiteral) ?
                     statement.Expression.FirstArgument : null;
+                LlvmLocalRoot root = context.FindLocalRoot(statement.DeclaredSymbol);
                 value = This.EmitArrayValue(context, statement.DeclaredType, firstItem,
-                    requestedLength, address, statement.FixedArrayLength);
+                    requestedLength, address, statement.FixedArrayLength, false, root != null && root.ReuseArray);
             }
             Else value = statement.Expression == null ? This.DefaultValue(statement.DeclaredType) :
                 This.CastValue(This.EmitExpression(context, statement.Expression), statement.DeclaredType);
             This.Module.Store(value.Handle, address);
+            If (statement.Expression == null && !This.Semantics.Session.IsFreestanding() &&
+                statement.DeclaredType.Kind != [int](TypeKind.ArrayType) && This.NeedsElementStorage(statement.DeclaredType))
+                This.InitializeAggregateStorage(context, statement.DeclaredType, address, false);
             Return;
         }
         If (statement.Kind == [int](StatementKind.Expression))
         {
-            This.EmitExpression(context, statement.Expression);
+            HirExpression value = statement.Expression;
+            If (value != null && value.Left != null && value.Left.Symbol != null &&
+                value.Left.Symbol.HasLoopStringAppend)
+            {
+                HirExpression suffix = This.LocalStringAppendSuffix(value);
+                LlvmVariable local = suffix == null ? null : context.FindVariable(value.Left.Symbol, value.Left.Target);
+                If (local != null && local.StringAppendState != null)
+                {
+                    This.EmitLocalStringAppend(context, local, suffix);
+                    Return;
+                }
+            }
+            This.EmitExpression(context, value);
             Return;
         }
         If (statement.Kind == [int](StatementKind.Return))
@@ -6469,10 +7434,6 @@ Class NativeBackend
         This.Module.PositionAtEnd(entry);
         LlvmFunctionContext context = New LlvmFunctionContext(binding);
         If (!This.Semantics.Session.IsFreestandingCore() && !This.IsGarbageCollectorFunction(binding.Symbol))
-            context.GcFrame = This.CallKinalRuntime(
-                "IO.Kinal.Runtime.GarbageCollector.PushFrame", 0,
-                This.Types0(), This.Unique("gc_frame"));
-        If (context.GcFrame != null)
             This.PrepareFunctionRoots(context, hirFunction.Body);
 
         If (binding.Symbol.FirstCapture != null)
@@ -6499,6 +7460,7 @@ Class NativeBackend
             }
         }
 
+        This.ActivateGcFrame(context);
         If (!This.IsRuntimeInfrastructureFunction(binding.Symbol)) This.CallGlobalInitializer();
         This.EmitGcSafePoint(context);
 
@@ -6569,16 +7531,13 @@ Class NativeBackend
     }
 
     Public Trusted Function void EmitRegularFunctionBody(
-        LlvmFunctionBinding binding, HirFunction hirFunction)
+        LlvmFunctionBinding binding, HirFunction hirFunction, bool inScalarBody)
     {
         byte* entry = This.Module.AppendBlock(binding.Function, "entry");
         This.Module.PositionAtEnd(entry);
         LlvmFunctionContext context = New LlvmFunctionContext(binding);
+        context.InScalarBody = inScalarBody;
         If (!This.Semantics.Session.IsFreestandingCore() && !This.IsGarbageCollectorFunction(binding.Symbol))
-            context.GcFrame = This.CallKinalRuntime(
-                "IO.Kinal.Runtime.GarbageCollector.PushFrame", 0,
-                This.Types0(), This.Unique("gc_frame"));
-        If (context.GcFrame != null)
             This.PrepareFunctionRoots(context, hirFunction.Body);
 
         int parameterIndex = 0;
@@ -6630,10 +7589,38 @@ Class NativeBackend
             parameter = parameter.Next;
         }
 
-        If (!This.IsRuntimeInfrastructureFunction(binding.Symbol)) This.CallGlobalInitializer();
+        This.ActivateGcFrame(context);
+        If (!inScalarBody && !This.IsRuntimeInfrastructureFunction(binding.Symbol))
+            This.CallGlobalInitializer();
+        If (binding.ScalarBody != null && binding.HasScalarCalls)
+        {
+            // A first-use initializer or native callback may have left an exception
+            // pending. In that case run the original body with its exact trace sites.
+            byte* slow = This.Module.AppendBlock(binding.Function, "pending_exception");
+            byte* fast = This.Module.AppendBlock(binding.Function, "scalar_call");
+            byte* pending = This.RuntimeBool(This.CallKinalRuntime("IO.Kinal.Runtime.Exception.Has",
+                0, This.Types0(), This.Unique("pending")));
+            This.Module.ConditionalBranch(pending, slow, fast);
+            This.Module.PositionAtEnd(fast);
+            LlvmHandles arguments = New LlvmHandles();
+            int i = 0;
+            While (i < parameterIndex)
+            {
+                arguments.Add(This.Module.Parameter(binding.Function, i));
+                i = i + 1;
+            }
+            This.Module.ReturnValue(This.Module.Call(binding.FunctionType, binding.ScalarBody,
+                arguments, This.Unique("scalar_result")));
+            This.Module.PositionAtEnd(slow);
+        }
         This.EmitGcSafePoint(context);
         This.EmitStatementList(context, hirFunction.Body);
         If (!This.Module.IsTerminated(This.Module.CurrentBlock())) This.EmitReturn(context, null);
+        // Runtime leaves have no implicit polls. Only discard their frame
+        // if the finished IR contains no other calls that could collect.
+        If (context.RuntimeFrameCalls != null)
+            IO.Kinal.Compiler.Backend.LlvmBridge.NativeEraseIsolatedCalls(binding.Function,
+                context.RuntimeFrameCalls.ItemsRaw(), [i32](context.RuntimeFrameCalls.Count()));
     }
 
     Public Trusted Function void EmitAsyncFunctionBody(
@@ -6642,7 +7629,7 @@ Class NativeBackend
         LlvmFunctionBinding bodyBinding = New LlvmFunctionBinding(
             binding.Symbol, binding.AsyncBodyFunctionType,
             binding.AsyncBodyFunction, false);
-        This.EmitRegularFunctionBody(bodyBinding, hirFunction);
+        This.EmitRegularFunctionBody(bodyBinding, hirFunction, false);
 
         byte* bytePointer = This.Module.PointerType(This.Module.IntType(8));
         byte* int64Type = This.Module.IntType(64);
@@ -6774,33 +7761,50 @@ Class NativeBackend
             This.EmitAsyncFunctionBody(binding, hirFunction);
             Return;
         }
-        This.EmitRegularFunctionBody(binding, hirFunction);
+        This.EmitRegularFunctionBody(binding, hirFunction, false);
+        If (binding.ScalarBody != null)
+            This.EmitRegularFunctionBody(New LlvmFunctionBinding(binding.Symbol,
+                binding.FunctionType, binding.ScalarBody, false), hirFunction, true);
     }
 
     Public Trusted Function void EmitFunctions()
     {
         LlvmFunctionBinding binding = This.FirstFunction;
+        list pending = list.Create();
         While (binding != null)
         {
-            This.EmitFunctionBody(binding);
+            If (This.EmitUsedRuntimeOnly && !binding.Symbol.Declaration.IsExtern &&
+                This.IsRuntimeInfrastructureFunction(binding.Symbol))
+                pending.Add(binding);
+            Else This.EmitFunctionBody(binding);
             binding = binding.Next;
+        }
+        // The entry point, metadata and global initializers have already
+        // taken their references. A runtime body can bring in further bodies.
+        bool changed = true;
+        While (changed && pending.Count() > 0)
+        {
+            changed = false;
+            list remaining = list.Create();
+            int index = 0;
+            While (index < pending.Count())
+            {
+                binding = [LlvmFunctionBinding](pending.Fetch(index));
+                If (IO.Kinal.Compiler.Backend.LlvmBridge.NativeHasUses(binding.Function) != 0)
+                {
+                    This.EmitFunctionBody(binding);
+                    changed = true;
+                }
+                Else remaining.Add(binding);
+                index = index + 1;
+            }
+            pending = remaining;
         }
     }
 
     Public Safe Function LlvmFunctionBinding FindEntryFunction()
     {
-        string name = This.Semantics.Session.Profile == null ? "Main" :
-            This.Semantics.Session.Profile.EntrySymbol;
-        If (IO.Text.IsEmpty(name)) name = "Main";
-        LlvmFunctionBinding binding = This.FirstFunction;
-        While (binding != null)
-        {
-            If (binding.Symbol.OwnerType == null &&
-                (binding.Symbol.QualifiedName() == name ||
-                 (binding.Symbol.Name == name && binding.Symbol.UnitName == This.Semantics.Session.EntryUnitName))) Return binding;
-            binding = binding.Next;
-        }
-        Return null;
+        Return This.FindFunctionBinding(This.Semantics.ResolveProgramEntry());
     }
 
     Public Trusted Function void EmitEntryPoint()
@@ -6911,24 +7915,7 @@ Class NativeBackend
     {
         string name = This.Semantics.Session.Profile.EntrySymbol;
         If (IO.Text.IsEmpty(name)) name = "KMain";
-        LlvmFunctionBinding entry = null;
-        LlvmFunctionBinding candidate = This.FirstFunction;
-        While (candidate != null)
-        {
-            FunctionSymbol symbol = candidate.Symbol;
-            If (symbol.OwnerType == null && !symbol.Declaration.IsExtern &&
-                (symbol.QualifiedName() == name ||
-                 (symbol.UnitName == This.Semantics.Session.EntryUnitName && symbol.Name == name)))
-            {
-                If (entry != null)
-                {
-                    This.Fail("ambiguous freestanding entry: " + name);
-                    Return;
-                }
-                entry = candidate;
-            }
-            candidate = candidate.Next;
-        }
+        LlvmFunctionBinding entry = This.FindEntryFunction();
         If (entry == null)
         {
             This.Fail("freestanding entry not found: " + name);
@@ -6972,11 +7959,13 @@ Class NativeBackend
             This.Fail("LLVM target configuration failed: " + IO.Kinal.Compiler.Backend.LlvmBridge.LastError());
             Return false;
         }
+        If (This.CompactValueNames) This.Module.DiscardValueNames();
         This.PrepareTypes();
         This.DeclareFunctions();
+        This.PrepareScalarCalls();
         This.DeclareGlobals();
         This.EmitGlobalInitializer();
-        This.EmitFunctions();
+        If (!This.EmitUsedRuntimeOnly) This.EmitFunctions();
         This.EmitMetaModuleExport();
         bool library = This.Semantics.Session.Profile != null &&
             This.Semantics.Session.Profile.ArtifactKind != "exe";
@@ -6985,6 +7974,7 @@ Class NativeBackend
             If (This.Semantics.Session.IsFreestanding()) This.EmitFreestandingEntry();
             Else This.EmitEntryPoint();
         }
+        If (This.EmitUsedRuntimeOnly) This.EmitFunctions();
         If (This.Failed()) Return false;
         If (This.Semantics.Session.IsFreestanding() && !This.Module.PruneUnused())
         {
@@ -6997,6 +7987,23 @@ Class NativeBackend
             Return false;
         }
         Return true;
+    }
+
+    Public Trusted Function bool EmitIr(string outputPath)
+    {
+        If (!This.GenerateModule()) Return false;
+        If (This.Module.WriteIr(outputPath)) Return true;
+        This.Fail("IR emission failed: " + IO.Kinal.Compiler.Backend.LlvmBridge.LastError());
+        Return false;
+    }
+
+    Public Trusted Function bool EmitFullLtoBitcode(string outputPath)
+    {
+        If (!This.GenerateModule()) Return false;
+        // Run the pre-link optimizer before lld resolves externals from bitcode.
+        If (This.Module.WriteBitcode("lto-pre-link<O2>", outputPath)) Return true;
+        This.Fail("full LTO bitcode emission failed: " + IO.Kinal.Compiler.Backend.LlvmBridge.LastError());
+        Return false;
     }
 
     Public Trusted Function bool EmitObject(string outputPath)

@@ -32,7 +32,7 @@ Get IO.Console;
 ```kinal
 Static Function int Main()
 {
-    ...
+    Return 0;
 }
 ```
 程序入口函数。`Static` 表示这是一个静态函数（无需类实例），返回类型为 `int`，返回 `0` 表示成功。
@@ -54,7 +54,7 @@ Return 0;
 ```bash
 kinal build hello.kn -o hello
 ./hello         # Linux/macOS
-hello.exe       # Windows
+.\hello.exe    # Windows PowerShell
 ```
 
 输出：
@@ -62,7 +62,7 @@ hello.exe       # Windows
 Hello, Kinal!
 ```
 
-### 方式二：通过 KinalVM 直接运行（无需 LLVM）
+### 方式二：编译字节码并通过 KinalVM 运行
 
 ```bash
 kinal vm run hello.kn
@@ -76,6 +76,15 @@ kinal vm run hello.kn
 kinal vm build hello.kn -o hello.knc
 kinalvm hello.knc
 ```
+
+## 原生快速运行与语义检查
+
+```bash
+kinal run hello.kn
+kinal build hello.kn --emit check -o out/hello.kcheck
+```
+
+`run` 构建临时原生程序，运行后清理；`check` 在语义分析后停止，不链接也不执行。从源码生成 KNC 时仍需保留完整编译器发行目录；只有独立 VM 执行已有字节码才绕过编译器。参见[后端支持](../advanced/backend-support.md)。
 
 ## 带命令行参数的入口
 
@@ -93,6 +102,11 @@ Static Function int Main(string[] args)
     }
     Return 0;
 }
+```
+
+```bash
+kinal run hello.kn -- first second
+kinal vm run hello.kn -- first second
 ```
 
 ## 异步入口

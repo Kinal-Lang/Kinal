@@ -1,0 +1,150 @@
+Unit IO.UI;
+Get IO.Math;
+
+// An indexed, perspective-projected mesh on the window's existing drawing surface.
+Public Class Viewport3D By Canvas
+{
+    Private f64[] _vertices;
+    Private int[] _indices;
+    Private u32[] _colors;
+    Private int[] _screenX;
+    Private int[] _screenY;
+    Private f64[] _depth;
+    Private f64[] _faceDepth;
+    Private int[] _order;
+    Private int[] _scratch;
+    Private int _yaw;
+    Private int _pitch;
+    Private int _zoom;
+    Private int _panX; Private int _panY; Private bool _panning;
+    Private bool _orthographic; Private bool _wireframe;
+    Public Property int PanX { Get { Return _panX; } Set { _panX=__UI_Limit(value,-16384,16384);Invalidate(); } }
+    Public Property int PanY { Get { Return _panY; } Set { _panY=__UI_Limit(value,-16384,16384);Invalidate(); } }
+    Public Property bool Orthographic { Get { Return _orthographic; } Set { _orthographic=value;Invalidate(); } }
+    Public Property bool Wireframe { Get { Return _wireframe; } Set { _wireframe=value;Invalidate(); } }
+    Private int _lastX;
+    Private int _lastY;
+
+    Public Property int Yaw { Get { Return _yaw; } Set { _yaw=value%360;Invalidate(); } }
+    Public Property int Pitch { Get { Return _pitch; } Set { _pitch=__UI_High(-85,__UI_Low(value,85));Invalidate(); } }
+    Public Property int Zoom { Get { Return _zoom; } Set { _zoom=__UI_Limit(value,35,240);Invalidate(); } }
+    Private bool _edges;
+    Public Property bool ShowEdges { Get { Return _edges; } Set { _edges=value;Invalidate(); } }
+    Public Property int TriangleCount { Get { Return _colors.Length(); } }
+
+    Public Constructor(string title="3D",int x=0,int y=0,int width=280,int height=190)
+    {
+        _Text=title;_X=x;_Y=y;_Width=width;_Height=height;_Events={};
+        ResetCamera();ResetMesh();
+    }
+
+    Public Function void ResetMesh()
+    {
+        f64[] points={0.0,1.0,0.0, -0.78,0.13,-0.48, 0.06,0.13,-0.86, 0.80,0.13,-0.37,
+                      0.78,0.13,0.48, -0.06,0.13,0.86, -0.80,0.13,0.37, 0.0,-1.0,0.0};
+        int[] faces={0,1,2, 0,2,3, 0,3,4, 0,4,5, 0,5,6, 0,6,1, 7,2,1, 7,3,2, 7,4,3, 7,5,4, 7,6,5, 7,1,6};
+        u32[] palette={0xff89dceb,0xff89b4fa,0xffb4befe,0xffcba6f7,0xfff5c2e7,0xff94e2d5,
+                       0xff5893ae,0xff617cb3,0xff8689bc,0xff9b78b8,0xffb990ac,0xff639c9d};
+        SetMesh(points,faces,palette);
+    }
+
+    Public Function void ResetCamera(){_yaw=-26;_pitch=15;_zoom=100;_panX=0;_panY=0;Invalidate();}
+
+    // Positions are packed x,y,z triples. Supply one ARGB color per triangle.
+    Public Function void SetMesh(f64[] points,int[] triangles,u32[] colors)
+    {
+        int n=points.Length();int faces=colors.Length();
+        If(n<9||n%3!=0||faces==0||triangles.Length()%3!=0||triangles.Length()/3!=faces)
+            Throw New IO.Error("Viewport3D","Expected positions, indexed triangles and one color per face");
+        f64[] lo={points[0],points[1],points[2]};f64[] hi={points[0],points[1],points[2]};
+        int i=0;While(i<n){
+            f64 v=points[i];If(!(v>=-1000000000000.0&&v<=1000000000000.0))Throw New IO.Error("Viewport3D","Invalid vertex coordinate");
+            int axis=i%3;If(v<lo[axis])lo[axis]=v;If(v>hi[axis])hi[axis]=v;i++;
+        }
+        i=0;While(i<triangles.Length()){
+            If(triangles[i]<0||triangles[i]>=n/3)Throw New IO.Error("Viewport3D","Vertex index outside the mesh");i++;
+        }
+        f64 span=0.0;i=0;While(i<3){If(hi[i]-lo[i]>span)span=hi[i]-lo[i];i++;}
+        If(span<=0.0)Throw New IO.Error("Viewport3D","Mesh has no extent");
+        _vertices={};_indices={};_colors={};_screenX={};_screenY={};_depth={};_faceDepth={};_order={};_scratch={};
+        i=0;While(i<n){
+            int axis=i%3;_vertices=_vertices.Add((points[i]-(lo[axis]+hi[axis])/2.0)/span*2.0);
+            If(axis==0){_screenX=_screenX.Add(0);_screenY=_screenY.Add(0);_depth=_depth.Add(0.0);}i++;
+        }
+        i=0;While(i<faces){
+            _indices=_indices.Add(triangles[i*3]);_indices=_indices.Add(triangles[i*3+1]);_indices=_indices.Add(triangles[i*3+2]);
+            _colors=_colors.Add(colors[i]);_faceDepth=_faceDepth.Add(0.0);_order=_order.Add(i);_scratch=_scratch.Add(0);i++;
+        }Invalidate();
+    }
+
+    Private Function void SortFaces(){
+        int n=TriangleCount;int width=1;
+        While(width<n){
+            int left=0;While(left<n){
+                int mid=__UI_Low(n,left+width);int end=__UI_Low(n,mid+width);
+                int a=left;int b=mid;int out=left;
+                While(out<end){
+                    If(a<mid&&(b==end||_faceDepth[_order[a]]<=_faceDepth[_order[b]])){_scratch[out]=_order[a];a++;}
+                    Else{_scratch[out]=_order[b];b++;}out++;
+                }left=end;
+            }
+            int[] temp=_order;_order=_scratch;_scratch=temp;width*=2;
+        }
+    }
+
+    Public Override Function void Draw(IO.UI.DrawingContext g){
+        int w=ActualWidth;int h=ActualHeight;int r=StyleRadius(7);
+        g.Box(0,0,w,h,StyleFill(0xff181825,0xff181825,0xff1e1e2e),r);
+        If(w<24||h<24)Return;
+        int px=w/2+_panX;int py=h/2+6+_panY;
+        f64 radians=0.0174532925199433;
+        f64 sy=IO.Math.Sin([f64](_yaw)*radians);f64 cy=IO.Math.Cos([f64](_yaw)*radians);
+        f64 sp=IO.Math.Sin([f64](_pitch)*radians);f64 cp=IO.Math.Cos([f64](_pitch)*radians);
+        f64 focal=[f64](__UI_Low(w,h))*1.12*[f64](_zoom)/100.0;
+        int i=0;While(i<_depth.Length()){
+            f64 x=_vertices[3*i];f64 y=_vertices[3*i+1];f64 z=_vertices[3*i+2];
+            f64 viewX=cy*x+sy*z;f64 side=cy*z-sy*x;
+            f64 viewY=cp*y-sp*side;f64 viewZ=sp*y+cp*side;
+            f64 factor=focal/(_orthographic?3.65:3.65-viewZ);
+            _screenX[i]=px+[int](viewX*factor);_screenY[i]=py-[int](viewY*factor);_depth[i]=viewZ;i++;
+        }
+        i=0;While(i<TriangleCount){
+            _faceDepth[i]=_depth[_indices[3*i]]+_depth[_indices[3*i+1]]+_depth[_indices[3*i+2]];i++;
+        }
+        SortFaces();
+        i=0;While(i<TriangleCount){
+            int face=_order[i];int a=_indices[3*face];int b=_indices[3*face+1];int c=_indices[3*face+2];
+            If(!_wireframe)g.Triangle(_screenX[a],_screenY[a],_screenX[b],_screenY[b],_screenX[c],_screenY[c],_colors[face]);
+            If(_edges||_wireframe){
+                u32 edge=_wireframe?_colors[face]:0xff45475a;
+                g.Line(_screenX[a],_screenY[a],_screenX[b],_screenY[b],edge);
+                g.Line(_screenX[b],_screenY[b],_screenX[c],_screenY[c],edge);
+                g.Line(_screenX[c],_screenY[c],_screenX[a],_screenY[a],edge);
+            }
+            i++;
+        }
+        g.Write(Text,10,4,w-55,20,StyleText(0xffcdd6f4),_Font==null?12:_Font.Size,_Font==null?600:[int](_Font.Weight));
+        g.Write([string](_zoom)+"%",w-51,4,43,20,0xffa6adc8,10,500,true,TextAlignment.Center);
+        If(BorderWidth>0)g.Box(0,0,w,h,StyleBorder(HasFocus?0xff89b4fa:0xff45475a),r,BorderWidth);
+    }
+
+    Public Override Function void OnSurfaceEvent(IO.UI.SurfaceInput input){
+        Base.OnSurfaceEvent(input);
+        SurfaceEvent k=input.Kind;
+        If(k==SurfaceEvent.MiddleUp||k==SurfaceEvent.CaptureLost||k==SurfaceEvent.Blur)_panning=false;
+        If(k==SurfaceEvent.MiddleDown){_panning=true;_lastX=input.First;_lastY=input.Second;}
+        Else If(k==SurfaceEvent.PointerMove&&_panning){
+            PanX=_panX+input.First-_lastX;PanY=_panY+input.Second-_lastY;_lastX=input.First;_lastY=input.Second;
+        }Else If(k==SurfaceEvent.PointerDown){_lastX=input.First;_lastY=input.Second;}
+        Else If(k==SurfaceEvent.PointerMove&&Pressed){
+            Yaw=_yaw+input.First-_lastX;Pitch=_pitch+input.Second-_lastY;_lastX=input.First;_lastY=input.Second;
+        }Else If(k==SurfaceEvent.Wheel&&input.First!=0)Zoom=_zoom+(input.First>0?10:-10);
+        Else If(k==SurfaceEvent.DoubleClick)ResetCamera();
+        Else If(k==SurfaceEvent.KeyDown){
+            If(input.First==37)Yaw=_yaw-5;Else If(input.First==39)Yaw=_yaw+5;
+            Else If(input.First==38)Pitch=_pitch-5;Else If(input.First==40)Pitch=_pitch+5;
+            Else If(input.First==36)ResetCamera();
+        }
+        If(k==SurfaceEvent.Focus||k==SurfaceEvent.Blur||k==SurfaceEvent.PointerDown||k==SurfaceEvent.PointerUp||k==SurfaceEvent.PointerLeave||k==SurfaceEvent.CaptureLost)Invalidate();
+    }
+}

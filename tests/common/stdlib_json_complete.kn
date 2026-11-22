@@ -3,7 +3,9 @@ Unit Tests.StdlibJsonComplete;
 Get Console By IO.Console;
 Get IO.Error;
 Get IO.Json;
+Get IO.Math;
 Get IO.Text;
+Get IO.Target;
 
 Class Unsupported
 {
@@ -22,6 +24,15 @@ Trusted Static Function int Main()
     Console.PrintLine(IO.Json.IsList(items));
     Console.PrintLine(IO.Json.AsDict(data).Count() == 2);
     Console.PrintLine(IO.Json.AsList(items).Count() == 2);
+
+    list nested = IO.Json.AsList(IO.Json.ParseValue("[[],{\"left\":[0,{\"leaf\":7}],\"雪\":[],\"left\":[2]},[{},9],11]"));
+    dict middle = IO.Json.AsDict(nested.Fetch(1));
+    list lastPair = IO.Json.AsList(nested.Fetch(2));
+    If (nested.Count() != 4 || IO.Json.AsList(nested.Fetch(0)).Count() != 0 ||
+        middle.Count() != 2 || IO.Json.AsList(middle.Fetch("雪")).Count() != 0 ||
+        [int](IO.Json.AsList(middle.Fetch("left")).Fetch(0)) != 2 ||
+        IO.Json.AsDict(lastPair.Fetch(0)).Count() != 0 || [int](lastPair.Fetch(1)) != 9 ||
+        [int](nested.Fetch(3)) != 11) Return 1;
 
     IO.Json.Value empty = New IO.Json.Value();
     IO.Json.Value dictValue = New IO.Json.Value(data);
@@ -68,8 +79,36 @@ Trusted Static Function int Main()
     Console.PrintLine(minified == "{\"a\":1}");
     Console.PrintLine(IO.Text.Contains(fromValue, "\"name\":\"kinal\""));
     Console.PrintLine(fromAlias == "[true,3.5]");
+    string controls = [string]([char](1)) + [string]([char](8)) + [string]([char](12)) + "\r\n\t";
+    string escaped = IO.Json.Format("雪" + controls + "\"\\end", false);
+    If (escaped != "\"雪\\u0001\\b\\f\\r\\n\\t\\\"\\\\end\"") Return 2;
+    dict quoted = dict.Create();
+    quoted.Set("雪\"\\", IO.Json.ParseValue("[{},[],null]"));
+    If (IO.Json.Format(quoted, false) != "{\"雪\\\"\\\\\":[{},[],null]}") Return 3;
+    If ([string](IO.Json.ParseValue(escaped)) != "雪" + controls + "\"\\end") Return 4;
+    string nestedText = "[{},[{\"x\":[],\"y\":{}}],true,1.23456789]";
+    any tree = IO.Json.ParseValue(nestedText);
+    // Use the parsed value's own float width in both formatting paths.
+    string compact = IO.Json.Format(tree, false);
+    If (IO.Json.Format(tree, true) != IO.Json.FormatText(compact, true)) Return 5;
+    If (IO.Json.Format([string]([char](31)), false) != "\"\\u001f\"") Return 6;
+    If (IO.Target.PointerBits == 64)
+    {
+        list exact = list.Create();
+        exact.Add([int]("9007199254740993"));
+        exact.Add([int]("9223372036854775807"));
+        exact.Add([int]("-9223372036854775808"));
+        If (IO.Json.Format(exact, false) != "[9007199254740993,9223372036854775807,-9223372036854775808]") Return 7;
+        If (IO.Json.Format(exact) != "[9007199254740993, 9223372036854775807, -9223372036854775808]") Return 8;
+    }
 
     bool invalidParse = false;
+    list recursive = list.Create();
+    recursive.Add(recursive);
+    Try { IO.Json.Format(recursive); Return 9; }
+    Catch (IO.Error error) { If (!IO.Text.Contains(error.Message, "deeply nested")) Return 10; }
+    Try { IO.Json.Format(IO.Math.Sqrt(-1.0f), false); Return 11; }
+    Catch (IO.Error error) { If (!IO.Text.Contains(error.Message, "NaN")) Return 12; }
     bool invalidDict = false;
     bool invalidList = false;
     bool invalidValue = false;

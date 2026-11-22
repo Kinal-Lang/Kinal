@@ -2,6 +2,8 @@
 
 `IO.Time` provides functionality for retrieving the current time, high-precision timers, sleeping, and time formatting.
 
+Native and the matching KinalVM support all five functions on this page. Each call to `Now()` returns a fresh UTC snapshot with milliseconds since the Unix epoch in `Ticks`. Use `GetTick()` or `GetNanoTick()` to measure elapsed time.
+
 ## Import
 
 ```kinal
@@ -12,13 +14,15 @@ Get IO.Time;
 
 ## Function Reference
 
+All five functions have the `Trusted` safety level.
+
 ### Getting Time
 
 | Function | Signature | Description |
 |----------|-----------|-------------|
-| `Now()` | `→ IO.Time.DateTime` | Returns the current local time (DateTime object) |
+| `Now()` | `→ IO.Time.DateTime` | Returns current UTC calendar fields (DateTime object) |
 | `GetTick()` | `→ int` | Returns a millisecond-precision timer (relative value, used for measurements) |
-| `GetNanoTick()` | `→ int` | Returns a nanosecond-precision timer (high precision) |
+| `GetNanoTick()` | `→ int` | Returns a monotonic timer in nanosecond units; actual resolution is host-dependent |
 
 ```kinal
 IO.Time.DateTime now = IO.Time.Now();
@@ -56,6 +60,9 @@ Common format specifiers:
 | `HH` | 24-hour hour | `14` |
 | `mm` | Minutes | `05` |
 | `ss` | Seconds | `07` |
+| `fff` | Milliseconds | `123` |
+
+Formatting reads the current calendar fields, including edits made after `Now()`. A null date supplies zero fields. An empty or null pattern uses `yyyy-MM-dd HH:mm:ss`. Text outside complete tokens is preserved, including UTF-8 literals. For example, `yyyy年MM月dd日` can produce `2024年02月29日`.
 
 ```kinal
 IO.Time.DateTime now = IO.Time.Now();
@@ -67,11 +74,11 @@ IO.Console.PrintLine(ts);  // e.g., "2024-03-09 14:05:07"
 
 ## DateTime Object
 
-`IO.Time.DateTime` is a read-only struct with the following fields:
+`IO.Time.DateTime` is a mutable class with public integer fields:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `Ticks` | `int` | Tick count since epoch |
+| `Ticks` | `int` | Unix timestamp in milliseconds |
 | `Year` | `int` | Year (e.g. 2024) |
 | `Month` | `int` | Month (1–12) |
 | `Day` | `int` | Day (1–31) |
@@ -154,3 +161,4 @@ Static Function void Log(string level, string msg)
 - [IO.Async.Sleep](async.md) — Non-blocking sleep
 - [IO.File](filesystem.md) — Persistent timestamp logging
 - [IO.Core](core.md) — Math helpers often used with timing code
+- [Backend Support](../advanced/backend-support.md)

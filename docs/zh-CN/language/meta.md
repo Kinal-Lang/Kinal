@@ -1,6 +1,6 @@
 # Meta（元数据注解）
 
-Meta 是 Kinal 的自定义属性系统，允许你为函数、类、方法、字段等声明附加元数据，并在编译期或运行时查询这些信息。
+Meta 是 Kinal 的自定义属性系统，允许你为函数、类、方法、字段等声明附加元数据，并通过 IO.Meta 在运行时查询保留记录。编译期生命周期供编译器特性使用，不表示存在通用的用户代码编译期反射 API。
 
 ## 定义 Meta
 
@@ -38,15 +38,15 @@ Meta 名称(参数列表)
 | `@struct` | 结构体 |
 | `@enum` | 枚举 |
 | `@interface` | 接口 |
-| `@method` | 方法（类/结构体的成员方法） |
+| `@method` | 类／接口方法 |
 | `@field` | 字段 |
 
-多个目标用 `|` 分隔：
+多个目标用逗号分隔：
 
 ```kinal
 Meta Tag(string name)
 {
-    On @class | @method | @field;
+    On @class, @method, @field;
     Keep @runtime;
 }
 ```
@@ -155,20 +155,20 @@ dict attr = IO.Meta.Find(MyFunc, "Version");
 string version = [string](attr.Fetch("arg.text"));
 
 // 查询所有匹配属性（返回 list）
-list allTags = IO.Meta.Of("Tag");
+list allTags = IO.Meta.Query("Tag");
 
 // 检查是否存在某属性
-bool has = IO.Meta.Has("Version", MyFunc);
+bool has = IO.Meta.Has(MyFunc, "Version");
 ```
 
 ### IO.Meta 函数参考
 
-| 函数 | 参数 | 返回值 | 说明 |
-|------|------|--------|------|
-| `IO.Meta.Find(target, name)` | `any, string` | `dict` | 查找指定声明上的指定属性，返回属性字典 |
-| `IO.Meta.Of(name)` | `string` | `list` | 查找所有带指定属性名的声明 |
-| `IO.Meta.Query(name)` | `string` | `list` | 同 `Of` |
-| `IO.Meta.Has(name, target)` | `string, any` | `bool` | 检查指定声明是否拥有指定属性 |
+| 函数 | 参数 | 返回 | 含义 |
+|------|------|------|------|
+| `IO.Meta.Find(owner, name)` | `声明/string, string` | `dict` | 一条匹配保留记录 |
+| `IO.Meta.Of(owner)` | `声明/string` | `list` | 一个 owner 的保留记录 |
+| `IO.Meta.Query(name)` | `string` | `list` | 按属性名匹配的保留记录 |
+| `IO.Meta.Has(owner, name)` | `声明/string, string` | `bool` | owner 是否具有该属性 |
 
 ### 属性字典键格式
 
@@ -261,3 +261,5 @@ Delegate Function int Calculate(int a, int b) By C;
 
 - [FFI 外部函数接口](ffi.md)
 - [IO.Meta 标准库](../stdlib/meta.md)
+
+当前查询契约为 Query(属性名) 返回 list，Of(owner) 返回 list，Has(owner, 属性名) 返回 bool，Find(owner, 属性名) 返回 dict。声明引用可解析为 owner 字符串，实例方法值并非通用受支持查询目标。自定义 compile-only 属性不会自动增加编译器行为。记录字段及已验证 Repeatable 示例见[完整 IO.Meta 参考](../stdlib/meta.md)。编译器属性还包括显式类转换方法的 Cast，以及受支持末尾数组形参打包的 Variadic；后者不是 C 可变参数支持。

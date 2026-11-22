@@ -2,6 +2,8 @@
 
 `kinal` 是 Kinal 语言的统一命令行工具。所有操作通过**子命令**区分；每个子命令拥有独立的选项集。
 
+本文以 C 实现为准。下表保留的 `metrics` 链接仅适用于自举版，不是 C 编译器子命令。构建配置参见[项目文件](project-files.md)，执行限制参见[后端支持](../advanced/backend-support.md)。
+
 ## 子命令一览
 
 | 子命令 | 用途 |
@@ -11,6 +13,7 @@
 | [`fmt`](fmt.md) | 格式化 `.kn` 源文件 |
 | [`vm`](vm.md) | 字节码相关操作（构建 `.knc`、执行、打包 vm-exe） |
 | [`pkg`](packages.md) | 包管理（构建 `.klib`、查看信息、解包） |
+| [`metrics`](metrics.md) | 项目复杂度计算，终端/JSON/HTML 报告（仅自举版） |
 
 ```
 kinal [options] <subcommand> [options] [args...]
@@ -108,17 +111,23 @@ kinal build [选项] <文件.kn> [文件2.kn ...]
 | `asm` | 生成汇编代码 |
 | `ir` | 生成 LLVM IR（`.ll`） |
 | `check` | 在语义分析后停止并写出确定性的 `.kcheck` 摘要；不运行后端或链接器 |
+| `tokens` | 词法分析后停止，写出确定性 token 摘要 |
+| `ast` | 语法分析后停止，写出确定性 AST 摘要 |
 
-`check` 用于编辑器/CI 的快速验证，以及 stage0/stage1 差分测试。摘要以
-`format=kinal-sema-v1` 开头，记录目标信息和顶层声明数量。成功的检查还会写出
-`hir_format=kinal-call-hir-v1`、typed expression 数量，以及 Native/KNC 共用的
-已解析调用目标计数。
+编辑器和 CI 可以使用 `--emit check` 做语义检查。两种编译器都会报告目标平台、指针位宽和构建环境。读取其他统计项时，先看 `format` 字段。
+
+| 编译器 | 摘要格式 | 部分字段 |
+| --- | --- | --- |
+| C stage0 | `kinal-sema-v1` | 声明数量、`hir_unresolved_calls`、二元表达式 HIR 统计 |
+| 自举版 | `kinal-selfhost-sema-v1` | 单元数、声明数量、泛型实例数、`bound_expressions`、`unresolved_expressions` |
+
+需要检查词元原文时，使用 `--emit tokens`。每条记录包含词元类别、从 1 开始的行号和字节列号，以及用大写十六进制表示的原始字节。文件头的 UTF-8 BOM 不计入列号。自举编译器在统计词法指标时保留词元列表，常规语义检查和后端构建会在解析完依赖后释放对列表的引用。[编译耗时与内存实测](../../../benchmarks/README.md#source-token-storage)
 
 ### 目标平台
 
 | 选项 | 说明 |
 |------|------|
-| `--target <三元组>` | 目标平台三元组（如 `x86_64-linux-gnu`） |
+| `--target <三元组>` | 目标平台三元组（如 `x86_64-pc-linux-gnu`） |
 | `--freestanding` | 裸机/嵌入式模式 |
 | `--env <环境>` | 运行环境：`hosted`（默认）或 `freestanding` |
 | `--runtime <类型>` | 运行时：`none`、`alloc`、`gc` |
@@ -129,12 +138,15 @@ kinal build [选项] <文件.kn> [文件2.kn ...]
 
 | 别名 | 等效三元组 |
 |------|-----------|
-| `win86` | `i686-windows-msvc` |
-| `win64` | `x86_64-windows-msvc` |
-| `linux64` | `x86_64-linux-gnu` |
-| `linux-arm64` | `aarch64-linux-gnu` |
-| `bare64` | `x86_64-unknown-none` |
-| `bare-arm64` | `aarch64-unknown-none` |
+| `win86` | `i686-pc-windows-msvc` |
+| `win64` | `x86_64-pc-windows-msvc` |
+| `win-arm64` | `aarch64-pc-windows-msvc` |
+| `linux64` | `x86_64-pc-linux-gnu` |
+| `linux-arm64` | `aarch64-unknown-linux-gnu` |
+| `macos-x64` | `x86_64-apple-darwin` |
+| `macos-arm64` | `aarch64-apple-darwin` |
+| `bare64` | `x86_64-unknown-none-elf` |
+| `bare-arm64` | `aarch64-unknown-none-elf` |
 
 ### 链接选项
 
@@ -146,7 +158,7 @@ kinal build [选项] <文件.kn> [文件2.kn ...]
 | `--link-root <目录>` | 添加链接根目录 |
 | `--link-arg <参数>` | 传递额外参数给链接器 |
 | `--link-script <脚本>` | 指定链接脚本（`.ld`） |
-| `--linker <后端>` | 链接器后端：`lld`（默认）、`zig`、`msvc` |
+| `--linker <后端>` | 链接器后端：`lld`、`zig`、`msvc`；Windows／freestanding 默认 LLD，hosted Linux/macOS 优先 Zig |
 | `--linker-path <路径>` | 指定链接器可执行文件路径 |
 | `--lto[=off\|full\|thin]` | 链接时优化（默认 `off`） |
 | `--crt <auto\|dynamic\|static>` | CRT 选择（默认 `auto`） |
@@ -165,6 +177,8 @@ kinal build [选项] <文件.kn> [文件2.kn ...]
 | `--stdpkg-root <目录>` | 覆盖标准包根目录 |
 
 当 `--project` 传入目录时，`kinal` 会优先查找 `kinal.knproj`。如果没有显式传 `--profile`，则使用项目文件中的 `DefaultProfile`。
+
+项目配置字段、路径规则、命令行覆盖与源码参与模式见[项目文件参考](project-files.md)。
 
 ### 前端选项
 

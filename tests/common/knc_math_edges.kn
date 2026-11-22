@@ -1,0 +1,46 @@
+Unit Tests.MathEdges;
+
+Get IO.Console;
+Get IO.Math;
+
+// An annotated extern can also be passed as a Kinal function value.
+[IO.Kinal.Runtime.KncIntrinsic(264)]
+[LinkName("__kn_math_atan2")]
+Extern Unsafe Function f64 Angle(f64 y, f64 x) By C;
+
+Trusted Function bool CheckAngleReference()
+{
+    Object.Function angle = Angle;
+    Return [f64](angle(-1.0, 0.0)) == IO.Math.Atan2(-1.0, 0.0);
+}
+
+Function f64 Widen(u64 value) { Return value; }
+
+Static Function int Main()
+{
+    f64 inf = IO.Math.Exp(1000.0);
+    f64 nan = IO.Math.Sqrt(-1.0);
+    f64 negZero = IO.Math.CopySign(0.0, -1.0);
+    If (!IO.Math.IsInf(inf) || !IO.Math.IsNaN(nan) || IO.Math.IsNaN(inf) || IO.Math.IsInf(nan)) Return 1;
+    If (IO.Math.CopySign(1.0, negZero) != -1.0 || IO.Math.Atan2(negZero, -1.0) >= 0.0) Return 2;
+    If (IO.Math.FAbs(IO.Math.Atan2(3.0, -3.0) - PI * 0.75) > 0.000000001) Return 3;
+    If (IO.Math.Round(-2.5) != -3.0 || IO.Math.Trunc(-2.75) != -2.0 ||
+        IO.Math.FMod(-7.5, 2.0) != -1.5 || IO.Math.Pow(-2.0, 3.0) != -8.0) Return 4;
+    If (IO.Math.Hypot(-3.0, 4.0) != 5.0 || IO.Math.HypotF([f32](3), [f32](4)) != [f32](5)) Return 5;
+
+    // Squaring either input directly would overflow or underflow.
+    f64 large = IO.Math.Exp(460.0);
+    f64 small = IO.Math.Exp(-460.0);
+    If (IO.Math.FAbs(IO.Math.Hypot(large, large) / large - IO.Math.Sqrt(2.0)) > 0.000000001) Return 6;
+    If (IO.Math.FAbs(IO.Math.Hypot(small, small) / small - IO.Math.Sqrt(2.0)) > 0.000000001) Return 7;
+    If (!IO.Math.IsNaN(IO.Math.Hypot(nan, 1.0)) || !IO.Math.IsInf(IO.Math.Hypot(inf, 2.0))) Return 8;
+    If (IO.Math.CopySign(1.0, IO.Math.Hypot(negZero, negZero)) != 1.0) Return 9;
+    If (!IO.Math.IsInf(IO.Math.Hypot(inf, nan)) || IO.Math.Hypot(3, 4) != 5.0) Return 10;
+    If (IO.Math.Atan2([i32](1), [i32](0)) != IO.Math.Atan2(1.0, 0.0)) Return 11;
+    u64 high = [u64](-1);
+    If (Widen(high) != 18446744073709551616.0 || [f64](high) != Widen(high)) Return 12;
+    If (Widen(high - [u64](2047)) != 18446744073709549568.0) Return 13;
+    If (!CheckAngleReference()) Return 14;
+    IO.Console.PrintLine("ok");
+    Return 0;
+}

@@ -1,184 +1,110 @@
 # Async Programming
 
-Kinal has built-in native `Async`/`Await` support, giving async code the same writing style as synchronous code.
+The complete programs on this page target **Native**. Current C KNC emission rejects general Await expressions and the Task Run builtin. VM `--superloop` controls loop fusion, not Async task scheduling.
 
-## Basic Concepts
+`Async` declares a task-producing function and `Await` expresses a dependency on another task. Async syntax does not automatically make work parallel or turn a blocking file/network API into asynchronous I/O.
 
-- `Async Function` — declares an async function that returns `IO.Async.Task`
-- `Await expression` — waits for an async task to complete and retrieves its result
-- `IO.Async.Run(task)` — synchronously waits for an async task (used in synchronous contexts)
+## Declaring and Awaiting Tasks
 
-## Declaring Async Functions
+The declared result is the value produced when the task finishes:
 
 ```kinal
-Async Function int Compute()
-{
-    Return 42;
-}
-```
-
-Async functions always return `IO.Async.Task`, but you can write the expected **value type** (e.g., `int`) in the function signature and Kinal will automatically wrap it:
-
-```kinal
-Async Function int Step(int value)
+Async Function int Compute(int value)
 {
     Return value + 1;
 }
 ```
 
-## Using Await
-
-Use `Await` inside an `Async` function to wait for another async operation:
+Calling `Compute(41)` produces an `IO.Async.Task`; awaiting it obtains the declared int result. Use Await inside an Async function, including an Async Main. A non-async function cannot use Await directly.
 
 ```kinal
-Static Async Function int Main()
-{
-    Await IO.Async.Yield();        // yield control
-    Await IO.Async.Sleep(100);     // async wait 100ms
-
-    int result = Await Step(41);   // wait and get result
-    IO.Console.PrintLine(result);     // 42
-
-    Return 0;
-}
-```
-
-`Await` is followed by an expression that returns `IO.Async.Task`.
-
-## Calling Async Functions
-
-### In an Async Context: Direct Await
-
-```kinal
-Static Async Function int Main()
-{
-    int a = Await StepOne();
-    int b = Await StepTwo(a);
-    Return b;
-}
-```
-
-### In a Synchronous Context: IO.Async.Run
-
-```kinal
-Static Function int Main()
-{
-    int value = IO.Async.Run(Compute());  // synchronously wait for async task result
-    IO.Console.PrintLine(value);
-    Return 0;
-}
-```
-
-## Async Chained Calls
-
-```kinal
-Async Function int StepOne()
-{
-    Return 40;
-}
-
-Async Function int StepTwo(int prev)
-{
-    Return prev + 2;
-}
-
-Async Function int Pipeline()
-{
-    int a = Await StepOne();
-    int b = Await StepTwo(a);
-    Return b;
-}
-
-Static Function int Main()
-{
-    int result = IO.Async.Run(Pipeline());
-    IO.Console.PrintLine(result);  // 42
-    Return 0;
-}
-```
-
-## IO.Async Standard Library
-
-| Function | Signature | Description |
-|----------|-----------|-------------|
-| `IO.Async.Yield()` | `→ Task` | Yield execution; async scheduler re-runs |
-| `IO.Async.Sleep(ms)` | `int → Task` | Async wait for specified milliseconds |
-| `IO.Async.Run(task)` | `Task → any` | Synchronously run an async task and get the result |
-
-### Process Management (Async Processes)
-
-```kinal
-Get IO.Async;
-
-Static Function int Main()
-{
-    byte* proc = IO.Async.Spawn("cmd /c echo hello");
-
-    // Non-blocking check
-    IO.Console.PrintLine(IO.Async.IsCompleted(proc));
-
-    // Wait up to 3 seconds
-    bool done = IO.Async.Wait(proc, 3000);
-
-    // Get exit code
-    int code = IO.Async.ExitCode(proc);
-
-    // Close process handle
-    IO.Async.Close(proc);
-
-    Return 0;
-}
-```
-
-| Function | Signature | Description |
-|----------|-----------|-------------|
-| `IO.Async.Spawn(cmd)` | `string → byte*` | Start a child process, returns a process handle (`Trusted`) |
-| `IO.Async.IsCompleted(h)` | `byte* → bool` | Check if the process has finished (`Trusted`) |
-| `IO.Async.Wait(h, ms)` | `byte*, int → bool` | Wait for process; 0 = check immediately, -1 = wait forever (`Trusted`) |
-| `IO.Async.ExitCode(h)` | `byte* → int` | Get process exit code (`Trusted`) |
-| `IO.Async.Close(h)` | `byte* → bool` | Release the process handle (`Trusted`) |
-
-> `Spawn`, `Wait`, and similar functions have a safety level of `Trusted`; functions that call them must be `Trusted` or `Unsafe`.
-
-## Complete Example
-
-```kinal
-Unit App.AsyncDemo;
-
+Unit Docs.AsyncEntry;
 Get IO.Console;
 Get IO.Async;
 
-Static Async Function int Fetch(int id)
+Async Function int Compute(int value)
 {
-    Await IO.Async.Sleep(10);  // simulate network latency
+    Await IO.Async.Yield();
+    Await IO.Async.Sleep(1);
+    Return value + 1;
+}
+
+Static Async Function int Main()
+{
+    int result = Await Compute(41);
+    IO.Console.PrintLine(result); // 42
+    Return 0;
+}
+```
+
+Both IO.Console and IO.Async are imported in this complete program. A qualified standard-library name does not remove its import requirement.
+
+## Calling from Synchronous Code
+
+Use `IO.Async.Run(task)` to wait synchronously. Pass the result of an async call, not a function name:
+
+```kinal
+Unit Docs.AsyncPipeline;
+Get IO.Console;
+Get IO.Async;
+
+Async Function int Fetch(int id)
+{
+    Await IO.Async.Sleep(1);
     Return id * 100;
 }
 
-Static Async Function int Aggregate()
+Async Function int Aggregate()
 {
-    int a = Await Fetch(1);
-    int b = Await Fetch(2);
-    int c = Await Fetch(3);
-    Return a + b + c;
+    int first = Await Fetch(1);
+    int second = Await Fetch(2);
+    int third = Await Fetch(3);
+    Return first + second + third;
 }
 
 Static Function int Main()
 {
     int total = IO.Async.Run(Aggregate());
-    IO.Console.PrintLine(total);  // 600
+    IO.Console.PrintLine(total); // 600
     Return 0;
 }
 ```
 
-## Important Notes
+These Await operations are sequential dependencies. They are not a concurrent fan-out API. IO.Async.Run blocks the calling execution path until completion; the builtin's erased result is any, with supported source calls recovering the async function's result type during analysis.
 
-1. **`Await` can only be used inside `Async` functions** — using `Await` in a regular function produces a compile error
-2. **`IO.Async.Run` is synchronous** — it blocks the calling thread until the task completes
-3. **Async functions return Task** — the return type is automatically wrapped; callers receive `IO.Async.Task`
-4. **Chained Await** — Await can be chained indefinitely; each step waits for the previous one to complete
+## Task Primitives
 
-## Next Steps
+| Function | Declared result | Purpose |
+|----------|-----------------|---------|
+| `IO.Async.Sleep(int ms)` | `IO.Async.Task` | Timer/wait task |
+| `IO.Async.Yield()` | `IO.Async.Task` | Cooperative yield task |
+| `IO.Async.Run(IO.Async.Task task)` | `any` | Synchronously complete a task and obtain its result |
 
-- [Block (Code Block Objects)](blocks.md)
-- [Safety Levels](safety.md)
-- [IO.Async Standard Library](../stdlib/async.md)
+These primitives are Safe. Scheduler behavior depends on backend/runtime. Do not infer thread counts, nonblocking system calls or unlimited scalability from Async syntax alone.
+
+## Task and Process Handles Are Different
+
+`IO.Async.Spawn(string command)` starts a **child process** and returns `byte*`; it does not start an arbitrary Kinal function as a task. `IsCompleted`, `Wait`, `ExitCode` and `Close` operate on that process handle. Pass a command string, not a function object. See [IO.Async API](../stdlib/async.md).
+
+A process handle is an external resource requiring Close. A managed Task has a different representation and lifecycle; do not interchange them or pass a process handle to Run.
+
+## Backend and Runtime Requirements
+
+VM `--superloop`/`--no-superloop` toggles specialized bytecode loop fusion for eligible For/While patterns. It neither enables nor disables the language Task implementation. Current C KNC has no general Await emission and does not map IO.Async.Run, so the programs above must be built through the Native path.
+
+Freestanding task/exception/allocation support requires target runtime hooks; core-only mode does not supply hosted async services. See [Backend Support](../advanced/backend-support.md) and [VM CLI](../cli/vm.md).
+
+## Error Handling and Validation
+
+The current Sema rejects Await inside Try/Catch. When recovery is needed, use a supported synchronous Run boundary inside Try/Catch, or structure async work outside the handler region. An Async declaration does not convert failure into a successful result. Validate output and termination on the claimed backend; semantic checking alone does not exercise task scheduling.
+
+```bash
+kinal run async-demo.kn
+```
+
+## See Also
+
+- [IO.Async](../stdlib/async.md)
+- [Functions](functions.md)
+- [Exceptions](exceptions.md)
+- [Blocks](blocks.md)

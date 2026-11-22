@@ -11,7 +11,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 
-EXPECTED_HOST_CASES = {"windows": 193, "linux": 191, "macos": 187}
+EXPECTED_HOST_CASES = {"windows": 202, "linux": 200, "macos": 196}
 UNIT_PATTERN = re.compile(r"^\s*Unit\s+([A-Za-z_][A-Za-z0-9_.]*)\s*;", re.MULTILINE)
 GET_PATTERN = re.compile(r"^\s*Get\s+([^;\r\n]+)\s*;", re.MULTILINE)
 MAIN_PATTERN = re.compile(r"\bFunction\b[^;{}]*\bMain\s*\(", re.MULTILINE)
@@ -180,7 +180,7 @@ def audit_case(
     output.unlink(missing_ok=True)
     try:
         proc = subprocess.run(
-            [str(compiler), "build-object", str(project), str(output), "native"],
+            [str(compiler), "build", "--project", str(project), "--profile", "native", "--emit", "obj", "-o", str(output)],
             cwd=root,
             text=True,
             capture_output=True,

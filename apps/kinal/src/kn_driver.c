@@ -1,6 +1,9 @@
 #include "kn/util.h"
 #if !defined(_WIN32) && !defined(_WIN64)
 #include <unistd.h>
+#include <errno.h>
+#include <spawn.h>
+#include <sys/wait.h>
 #include <dirent.h>
 #include <fcntl.h>
 #include <stdlib.h>
@@ -40,6 +43,15 @@ typedef struct
     int count;
     int cap;
 } StrList;
+
+#define KN_PKG_PINS_PER_SCOPE 32
+#define KN_PKG_PIN_SIZE 192 /* package name, @, version and terminator */
+
+typedef struct
+{
+    int count;
+    char items[2 * KN_PKG_PINS_PER_SCOPE][KN_PKG_PIN_SIZE];
+} KnPackagePins;
 
 typedef struct
 {
@@ -85,6 +97,7 @@ typedef struct
     int package_root_count;
     const char **official_package_roots;
     int official_package_root_count;
+    const KnPackagePins *package_pins;
     const char **project_local_sources;
     int project_local_source_count;
     const KnLinkItem *link_items;
@@ -102,6 +115,7 @@ typedef struct
     int crt_mode;      // KnCrtMode
     int no_crt;
     int no_default_libs;
+    int hide_console;
     const char *entry_symbol;
     const char *link_script;
     int show_link;

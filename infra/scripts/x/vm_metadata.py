@@ -17,29 +17,37 @@ from .context import ROOT
 BUILD_INFO = Path("apps/kinalvm/src/IO/Kinal/VM/BuildInfo.kn")
 
 
-def read_vm_version(root: Path = ROOT) -> str:
+def read_component_version(root: Path, component: str) -> str:
     versions = [line.partition("=")[2].strip()
                 for line in (root / "VERSION").read_text(encoding="utf-8").splitlines()
-                if line.partition("=")[0].strip() == "kinalvm"]
+                if line.partition("=")[0].strip() == component]
     if len(versions) != 1 or not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", versions[0]):
-        raise ValueError("VERSION must contain exactly one kinalvm=MAJOR.MINOR.PATCH entry")
+        raise ValueError(f"VERSION must contain exactly one {component}=MAJOR.MINOR.PATCH entry")
     return versions[0]
 
 
-def render_build_info(version: str) -> str:
+def read_vm_version(root: Path = ROOT) -> str:
+    return read_component_version(root, "kinalvm")
+
+
+def render_build_info(version: str, compiler_version: str) -> str:
     # Only VERSION values accepted by read_vm_version are interpolated here.
-    return ("// Generated from VERSION:kinalvm. Do not edit by hand.\n"
+    return ("// Generated from VERSION:kinalvm and VERSION:kinal. Do not edit by hand.\n"
             "// Regenerate: python -m infra.scripts.x.vm_metadata\n"
             "Unit IO.Kinal.VM.BuildInfo;\n\n"
             "Safe Function string Version()\n"
             "{\n"
             f'    Return "{version}";\n'
+            "}\n\n"
+            "Safe Function string CompilerVersion()\n"
+            "{\n"
+            f'    Return "{compiler_version}";\n'
             "}\n")
 
 
 def generate_kinalvm_build_info(root: Path = ROOT, *, check: bool = False) -> Path:
     output = root / BUILD_INFO
-    expected = render_build_info(read_vm_version(root))
+    expected = render_build_info(read_vm_version(root), read_component_version(root, "kinal"))
     current = output.read_text(encoding="utf-8") if output.is_file() else None
     if current != expected:
         if check:

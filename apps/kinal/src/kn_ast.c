@@ -1,5 +1,18 @@
 ﻿#include "kn/ast.h"
 
+bool func_matches_entry(const Func *f, const char *entry)
+{
+    if (!f || !f->name || !entry || f->type_param_count || f->is_generic_instance)
+        return false;
+    if (kn_strcmp(f->name, entry) == 0)
+        return true;
+    if (!f->unit || !*f->unit)
+        return false;
+    size_t n = kn_strlen(f->unit);
+    return kn_strncmp(entry, f->unit, n) == 0 && entry[n] == '.' &&
+           kn_strcmp(entry + n + 1, f->name) == 0;
+}
+
 Expr *new_expr(ExprKind k, int line, int col)
 {
     Expr *e = (Expr *)kn_malloc(sizeof(Expr));

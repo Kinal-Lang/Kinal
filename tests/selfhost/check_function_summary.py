@@ -25,8 +25,11 @@ def check_function_summary(compiler: Path, stage0: Path, root: Path, out: Path,
     project = root / "tests/selfhost/fixtures/function_summary/kinal.knproj"
     for label, tool in tools:
         executable = out / (label + (".exe" if os.name == "nt" else ""))
-        build = subprocess.run([str(tool), "build", "--project", str(project), "--profile", "test",
-                                "-o", str(executable)], cwd=root, capture_output=True,
+        command = [str(tool), "build", "--project", str(project), "--profile", "test",
+                   "-o", str(executable)]
+        if label == "stage0":
+            command.extend(["--link-file", str(compiler.parent / "bridge/kn_selfhost_runtime.o")])
+        build = subprocess.run(command, cwd=root, capture_output=True,
                                text=True, timeout=900)
         assert build.returncode == 0, (label, build.returncode, build.stdout, build.stderr)
         for repeat in range(2):

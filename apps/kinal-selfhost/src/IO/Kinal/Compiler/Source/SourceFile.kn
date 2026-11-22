@@ -7,40 +7,84 @@ Class SourceFile
 {
     Public string Path;
     Public string Text;
-    Public list Lines;
+    Private list CachedLines;
+    Private string PendingLineText;
+
+    Public Property list Lines
+    {
+        Get
+        {
+            If (This.PendingLineText != null)
+            {
+                This.CachedLines = IO.Text.Lines(This.PendingLineText);
+                This.PendingLineText = null;
+            }
+            Return This.CachedLines;
+        }
+        Set
+        {
+            This.CachedLines = value;
+            This.PendingLineText = null;
+        }
+    }
 
     Public Safe Constructor(string path, string text)
     {
         This.Path = path;
         This.Text = text;
-        This.Lines = IO.Text.Lines(text);
+        This.PendingLineText = text == null ? "" : text;
     }
 
     Public Safe Function string GetLine(int line)
     {
-        If (line < 1 || line > This.Lines.Count())
+        If (line < 1) Return "";
+        list lines = This.Lines;
+        If (line > lines.Count())
         {
             Return "";
         }
-        Return [string](This.Lines.Fetch(line - 1));
+        Return [string](lines.Fetch(line - 1));
     }
 }
 
-Safe Function SourceFile Load(string path)
+// Native array descriptors use the target alignment of a pointer and an i64.
+Struct SourceTextSpan { char* Data; i64 Length; }
+Struct SourceChars { char[] Data; }
+
+// The caller must have established that [start, start + length) is in text.
+Unsafe Function string CopyTextSpan(string text, int start, int length)
+{
+    If (text == null || length <= 0) Return "";
+    If (IO.Runtime.IsNative)
+    {
+        SourceChars range;
+        SourceTextSpan* span = [SourceTextSpan*](&range);
+        span[0].Data = [char*](text) + start;
+        span[0].Length = [i64](length);
+        // Callers supply a bounded byte span. Add copies it and the terminator
+        // onto the same language heap as SourceFile and Token, even under stage0.
+        char[] owned = range.Data.Add('\0');
+        Return [string](&owned[0]);
+    }
+    Return IO.Text.Slice(text, start, length);
+}
+
+Trusted Function SourceFile Load(string path)
 {
     If (!IO.File.Exists(path))
     {
         Return New SourceFile(path, "");
     }
 
-    string text = IO.File.ReadAllText(path);
-    char[] chars = text.ToChars();
-    If (chars.Length() >= 3 &&
-        [int](chars[0]) == 239 &&
-        [int](chars[1]) == 187 &&
-        [int](chars[2]) == 191)
-    {
-        text = IO.Text.Slice(text, 3, IO.Text.Length(text) - 3);
-    }
+    Return FromText(path, IO.File.ReadAllText(path));
+}
+
+Trusted Function SourceFile FromText(string path, string text)
+{
+    If (text == null) Return New SourceFile(path, text);
+    // Each nonzero BOM byte ensures the next read is within the terminated snapshot.
+    int start = ([int](text[0]) == 239 && [int](text[1]) == 187 && [int](text[2]) == 191) ? 3 : 0;
+    If (IO.Runtime.IsNative || start != 0)
+        text = CopyTextSpan(text, start, IO.Text.Length(text) - start);
     Return New SourceFile(path, text);
 }

@@ -1,0 +1,47 @@
+Unit IO.UI;
+
+Enum DockArea By int { Left=0, LowerLeft=1, Right=2, LowerRight=3, Bottom=4, Floating=5 }
+
+Public Class DockPane
+{
+    Public string ID; Public string Title;
+    Public DockArea Area; Public DockArea Home;
+    Public int X; Public int Y; Public int Width; Public int Height;
+    Public Constructor(string id,string title,DockArea area)
+    {
+        ID=id;Title=title;Area=area;Home=area;
+        X=100;Y=100;Width=320;Height=380;
+    }
+}
+
+Public Class DockLayout
+{
+    Private DockPane[] _Panes;
+    Private int[] _Selected;
+    Public Constructor(){_Panes={};_Selected={-1,-1,-1,-1,-1};}
+    Public Property int Count { Get {Return _Panes.Length();} }
+    Public Function DockPane Pane(int index){Return _Panes[index];}
+    Public Function int Find(string id){int i=0;While(i<Count){If(_Panes[i].ID==id)Return i;i++;}Return -1;}
+    Public Function int Add(string id,string title,DockArea area)
+    {
+        If(Find(id)>=0)Throw New IO.Error("IO.UI","Duplicate dock panel ID");
+        DockPane p=New DockPane(id,title,area);_Panes=_Panes.Add(p);
+        int index=Count-1;Activate(index);Return index;
+    }
+    Public Function int Active(DockArea area)
+    {
+        int n=[int](area);If(n<0||n>=5)Return -1;
+        int selected=_Selected[n];
+        If(selected>=0&&selected<Count&&Pane(selected).Area==area)Return selected;
+        int i=0;While(i<Count){If(Pane(i).Area==area)Return i;i++;}Return -1;
+    }
+    Public Function void Activate(int panel){
+        If(panel>=0&&panel<Count){int area=[int](Pane(panel).Area);If(area>=0&&area<5)_Selected[area]=panel;}
+    }
+    Public Function void Move(int panel,DockArea area){
+        If(panel<0||panel>=Count||[int](area)<0||[int](area)>5)Return;
+        DockPane p=Pane(panel);If(p.Area!=DockArea.Floating)p.Home=p.Area;
+        p.Area=area;Activate(panel);
+    }
+}
+

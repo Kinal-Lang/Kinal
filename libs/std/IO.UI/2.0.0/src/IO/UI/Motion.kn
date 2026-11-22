@@ -1,0 +1,73 @@
+Unit IO.UI;
+
+Get IO.Time;
+Get Native By IO.__UI;
+
+Enum Easing By int { Linear = 0, EaseIn = 1, EaseOut = 2, EaseInOut = 3 }
+
+[IO.Kinal.Runtime.KncIntrinsic(209)]
+Trusted Function bool MotionEnabled()
+{
+    i32 enabled = 1;
+    Native.SystemParametersInfoW(0x1042, 0, &enabled, 0);
+    Return enabled != 0;
+}
+
+// Call Sample with a monotonic millisecond timestamp. Retargeting starts at the displayed value.
+Public Class Transition
+{
+    Public int Duration;
+    Public int Delay;
+    Public Easing Curve;
+    Public bool RespectSystemMotion;
+    Private float _From;
+    Private float _To;
+    Private int _Start;
+    Private bool _Running;
+    Private int _Span;
+    Public Constructor(float initial = 0, int duration = 140, Easing easing = Easing.EaseOut)
+    {
+        _From = initial; _To = initial; Duration = duration; Curve = easing;
+        RespectSystemMotion = true;
+    }
+    Public Property bool Running { Get { Return _Running; } }
+    Public Property float Target { Get { Return _To; } }
+    Public Function float Sample(int now)
+    {
+        If (!_Running) Return _To;
+        If (now < _Start) Return _From;
+        If (now >= _Start + _Span) { _Running = false; Return _To; }
+        float t = [float](now - _Start) / [float](_Span);
+        If (Curve == Easing.EaseIn) t = t * t;
+        Else If (Curve == Easing.EaseOut) t = 1.0 - (1.0-t)*(1.0-t);
+        Else If (Curve == Easing.EaseInOut) t = t*t*(3.0-2.0*t);
+        Return _From + (_To - _From)*t;
+    }
+    Public Trusted Function void StartAt(float target, int now)
+    {
+        If (target == _To) Return;
+        _From = Sample(now); _To = target;
+        _Span = Duration; _Start = now + (Delay > 0 ? Delay : 0);
+        _Running = _Span > 0 && _From != _To;
+        If (_Running && RespectSystemMotion && !MotionEnabled()) _Running = false;
+    }
+    Public Trusted Function void To(float target) { StartAt(target, IO.Time.GetTick()); }
+    Public Trusted Function float Current() { Return Sample(IO.Time.GetTick()); }
+    Public Function void Snap(float value) { _Running = false; _From = value; _To = value; }
+}
+
+Safe Function u32 __UI_Channel(u32 a, u32 b, int shift, int step)
+{
+    int first = [int]((a >> shift) & 255);
+    int last = [int]((b >> shift) & 255);
+    Return [u32]((first*(255-step)+last*step+127)/255) << shift;
+}
+Safe Function u32 BlendColor(u32 a, u32 b, float amount)
+{
+    If (amount <= 0.0) Return a;
+    If (amount >= 1.0) Return b;
+    int step = [int](amount*255.0+0.5);
+    Return __UI_Channel(a,b,24,step) | __UI_Channel(a,b,16,step) |
+           __UI_Channel(a,b,8,step) | __UI_Channel(a,b,0,step);
+}
+

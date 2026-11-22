@@ -7,12 +7,11 @@ Kinal/
 ├── x.py                     # 构建入口脚本
 ├── apps/
 │   ├── kinal/               # Kinal 编译器（C）
-│   │   ├── include/kn/      # 公共头文件（含 version.h）
+│   │   ├── include/kn/      # 编译器头文件（version.h 在构建目录生成）
 │   │   └── src/             # 编译器源码
 │   ├── kinal-lsp/           # LSP 语言服务器（C++）
 │   │   └── server/src/
 │   └── kinalvm/             # KinalVM 虚拟机（用 Kinal 语言编写）
-│       ├── VERSION           # VM 版本号
 │       └── src/
 ├── libs/
 │   ├── runtime/             # 运行时库（C）
@@ -45,6 +44,15 @@ HIR 边界正在增量落地。Sema 将每个直接调用和成员调用规范�
 `KnResolvedCall`，其中保存已经选定的 builtin、函数、delegate，或
 静态/直接/虚方法/接口方法目标。Native 与 KNC 必须从该记录分派，不能再根据
 面向 Parser 的名称和标志重新推断调用类型。
+
+C 前端分别按源码名称和编译符号为顶层函数建立索引。同名候选保留声明顺序，
+编译器和语言服务器使用相同的顺序检查重载和可见性。泛型实例在创建时立即
+进入两个索引。函数体检查结束后，Sema 按索引顺序把实例追加到 AST，
+调用 HIR 就能复用符号索引定位最终目标。
+
+C 前端查找类、接口、结构体或枚举时，每次查询只展开一次局部别名。限定名称会保留
+末尾的标识符，因此只需对末尾名称相同的声明检查可见性和导入规则。例如，查找
+`Box` 时会保留 `Left.Box` 和 `Right.Box` 两个候选，也省去了为无关声明构造限定名的开销。
 
 Typed Binary HIR v1 对每个 `EXPR_BINARY` 应用同一规则。Sema 会保存一个
 后端无关的 `KnResolvedBinary` plan，其中包含：
@@ -89,11 +97,7 @@ opcode：
 
 ## KNC 数值存储和舍入
 
-KNC 格式版本 3 保留 `KNC2` magic 和既有表结构，唯一的存储格式变更是整数
-常量项由四字节改为小端有符号八字节。计数、索引、元数据及既有 opcode ID
-均不变。VM 的两种加载路径同时支持版本 2（有符号 32 位常量）和版本 3
-（有符号 64 位常量），拒绝其他版本。编译器只输出版本 3；编译器和 VM 应
-一同升级，旧 VM 会拒绝新版本，而不是错位读取常量表。
+C 和自举编译器输出 KNC2 格式版本 4。magic 和两个小端 u16 字段（格式版本、标志）之后是带长度的 UTF-8 编译器版本号，其余内容沿用版本 3 的布局。文件、内存和打包加载器都接受版本 2（i32 整数常量）以及版本 3、4（i64 整数常量）。生成方编译器版本不同也可以执行。成功读出生成方版本后，加载或执行错误会附带双方版本号。
 
 Float 寄存器仍以 binary64 存储。`FloatToF32`（137）的三字节布局为
 `[opcode, dst, src]`，将 Float 值舍入为 IEEE binary32 后再扩大到寄存器的
@@ -102,7 +106,7 @@ Float 寄存器仍以 binary64 存储。`FloatToF32`（137）的三字节布局�
 产生双重舍入。f32 的有类型传值及数值操作数在使用前舍入，算术结果在每次
 运算后舍入。函数对象调用会擦除实参类型，因此还在函数入口规范化 f32 形参。
 
-`tests/test_knc_numeric_format.py` 使用独立构造的 v2/v3 文件与打包载荷、
+`tests/test_knc_numeric_format.py` 使用独立构造的 v2/v3/v4 文件与打包载荷、
 IEEE 边界值及精确有理数 f32 算术 oracle 检查加载器。设置 `KINAL_V2_VM_PATH`
 为旧 VM 路径，可额外验证旧 VM 明确拒绝版本 3 的行为。
 
@@ -139,3 +143,11 @@ entry 共同需要的少量 Win32 LLVM handle。拆分 helper 时必须保持 LL
 
 O0+ASan 构建使用 `-Wframe-larger-than=16384` 作为结构守卫；Sema 分派器、
 builtin 分派器和 hosted runtime 协调器都必须保持在该阈值以下。
+
+## 驱动、包与运行时责任
+
+C 驱动选择工程／Profile，收集本地源码候选，解析声明 Unit 的导入与包，执行前端分析，再生成 Native LLVM 或 KNC。后端由显式命令决定；emit check／tokens／ast 在代码生成／链接前停止。包归档保存源码／原生资产，不是序列化 Typed HIR。
+
+C 编译器与语言运行时是不同组件。libs/runtime 提供旧 C 运行时辅助函数及窄原生 ABI 叶子；版本化 IO.Core／IO.Kinal.Runtime 源码也用 Kinal 实现公开标准库算法、托管数据及主机边界包装。C 编译应用可以使用这些包，无需自举编译器。应保留所有权／ABI 边界，不要把旧 C 托管分配返回给要求另一运行时所有权的包路径。
+
+Hosted Native 存储使用 frame／global 根及托管闭包 cell。KNC 有独立寄存器／对象／捕获表示；Native 存在某个 ABI 或前端类型不代表 KNC 已实现 lowering。参见[后端支持](../../docs/zh-CN/advanced/backend-support.md)、[内存](../../docs/zh-CN/advanced/memory-management.md)、[测试](testing.md)。

@@ -209,6 +209,7 @@ def make_project(root: Path, generated_units: int, *, lsp_profile: str = "reacha
         f"""Project LspStress
 {{
     DefaultProfile = "reachable";
+    Packages {{ OfficialRoots = ["packages"]; Pins = ["Stress.Bundle@2.0.0"]; }}
 
     Workspace
     {{
@@ -232,6 +233,7 @@ def make_project(root: Path, generated_units: int, *, lsp_profile: str = "reacha
 
     Profile "reachable"
     {{
+        Packages {{ Pins = ["Stress.Bundle@1.0.0"]; }}
         Source
         {{
             Entry = "src/Main.kn";
@@ -324,6 +326,18 @@ Static Function int Main()
 }
 """
     write_text(root / "src" / "Main.kn", main_text)
+    for version, field in [("2.0.0", "Height"), ("1.0.0", "Width")]:
+        package = root / "packages/Stress.Bundle" / version
+        write_text(package / "package.knpkg.json", json.dumps({
+            "kind": "library", "name": "Stress.Bundle", "version": version,
+            "source_root": "src", "entry": "src/Bundle/Extra.kn",
+        }))
+        write_text(package / "src/Bundle/Extra.kn", "Unit Bundle.Extra;\nFunction int First() { Return 1; }\n")
+        write_text(package / "src/Parts/Widget.kn", f"Unit Bundle.Extra;\nClass Widget {{ Public int {field}; }}\n")
+    write_text(root / "src/UsePackage.kn", """Unit Stress.UsePackage;
+Get Bundle.Extra;
+Function int WidthOf(Bundle.Extra.Widget item) { Return item.Width; }
+""")
     write_text(
         root / "support" / "Support.kn",
         """Unit Stress.Support;
@@ -354,6 +368,25 @@ Function int Broken()
 }
 """,
     )
+    write_text(root / "src" / "MemberBase.kn", """Unit Stress.Main;
+Class BaseValue { Public int Value; Public int InheritedOnly; }
+Class MemberBase {
+    Public BaseValue Control;
+    Public Function int Evaluate() { Return 5; }
+}
+""")
+    write_text(root / "src" / "MemberScope.kn", """Unit Stress.Main;
+Class LocalValue { Public int Value; }
+LocalValue Control;
+Function int Evaluate() { Return 7; }
+Class MemberScope By MemberBase {
+    Public Function int FromGlobal() { Return Control.Value; }
+    Public Function int FromParam(LocalValue Control) { Return Control.Value; }
+    Public Function int FromMethod() { Return Evaluate(); }
+    Public Function int Explicit() { Return This.Control.Value; }
+    Public Function int FromBase() { Return Base.Control.Value; }
+}
+""")
     for i in range(generated_units):
         next_get = ""
         body = f"    Return {i};"
@@ -817,6 +850,115 @@ def run_startup_cycles(server: Path, repo_root: Path, out_dir: Path, profile: St
             return
 
 
+def check_duplicate_definition(client: LspClient, workspace: Path) -> None:
+    root = workspace / "duplicate-definition"
+    first, second = root / "ZEntry.kn", root / "AHelper.kn"
+    write_text(root / "kinal.knproj",
+               'Project Split { DefaultProfile="debug"; SourceSet "s" { Files=["ZEntry.kn","AHelper.kn"]; } '
+               'Profile "debug" { Source { Entry="ZEntry.kn"; Sets=["s"]; Mode=AllSources; } '
+               'Build { EntrySymbol="Split.Library.Main"; } } }')
+    source = "Unit Split.Library;\n\nStatic Function int Main() { Return 0; }\n"
+    write_text(first, source)
+    write_text(second, source)
+    uri = path_to_uri(second)
+    client.notify("textDocument/didOpen", {"textDocument": text_document(second)})
+    try:
+        diagnostics = client.wait_for_diagnostics(uri)
+        errors = [e for e in diagnostics if e.get("severity") == 1]
+        assert [(e["code"], e["range"]["start"]["line"]) for e in errors] == [("E-NAM-00006", 2)], diagnostics
+        seq = client.diag_seq[uri]
+        did_change_full(client, second, source.replace("Split.Library", "Split.Other"), 2)
+        assert not [e for e in client.wait_for_diagnostics(uri, seq) if e.get("severity") == 1]
+    finally:
+        client.notify("textDocument/didClose", {"textDocument": {"uri": uri}})
+
+
+def check_property_updates(client: LspClient, workspace: Path) -> None:
+    root = workspace / "property-updates"
+    path = root / "Main.kn"
+    write_text(root / "kinal.knproj",
+               'Project Edits { SourceSet "s" { Files=["Main.kn"]; } '
+               'Profile "debug" { Source { Entry="Main.kn"; Sets=["s"]; Mode=AllSources; } } }')
+    source = """Unit PropertyEdits;
+Class Meter {
+    Public int Count;
+    Public Property int Level { Get { Return Count; } Set { Count=value; } }
+}
+Static Function int Main() {
+    Meter meter=New Meter();
+    int first=meter.Level++;
+    Return first + --meter.Level;
+}
+"""
+    write_text(path, source)
+    uri = path_to_uri(path)
+    client.notify("textDocument/didOpen", {"textDocument": text_document(path)})
+    try:
+        errors = [d for d in client.wait_for_diagnostics(uri) if d.get("severity") == 1]
+        assert not errors, errors
+        seq = client.diag_seq[uri]
+        did_change_full(client, path, source.replace(" Set { Count=value; }", ""), 2)
+        errors = [d for d in client.wait_for_diagnostics(uri, seq) if d.get("severity") == 1]
+        assert sorted(d["range"]["start"]["line"] for d in errors) == [7, 8], errors
+        seq = client.diag_seq[uri]
+        did_change_full(client, path, source, 3)
+        errors = [d for d in client.wait_for_diagnostics(uri, seq) if d.get("severity") == 1]
+        assert not errors, errors
+    finally:
+        client.notify("textDocument/didClose", {"textDocument": {"uri": uri}})
+
+
+def check_semantic_deltas(client: LspClient, workspace: Path) -> None:
+    path = workspace / "TokenEdits.kn"
+    uri = path_to_uri(path)
+    document = {"textDocument": {"uri": uri}}
+    source = "Unit TokenEdits;\n// 雪😀\nFunction int Add(int value){ Return value + 1; }\n"
+    method = "textDocument/semanticTokens/full"
+
+    def full():
+        return client.request(method, document)[0]
+
+    def delta(previous):
+        return client.request(method + "/delta", {**document, "previousResultId": previous})[0]
+
+    def checked_delta(previous):
+        reply = delta(previous["resultId"])
+        data = previous["data"].copy()
+        for edit in sorted(reply["edits"], key=lambda e: e["start"], reverse=True):
+            start, removed = edit["start"], edit["deleteCount"]
+            assert 0 <= start <= len(previous["data"]) - removed
+            data[start:start + removed] = edit.get("data", [])
+        current = full()
+        assert current == {"resultId": reply["resultId"], "data": data}
+        return current, reply["edits"]
+
+    def open_doc():
+        client.notify("textDocument/didOpen", {"textDocument": text_document(path, source, 1)})
+
+    open_doc()
+    try:
+        first = full()
+        assert first["data"] and checked_delta(first)[1] == []
+        previous = first
+        for version, text in enumerate(("\n" + source, "", source), 2):
+            client.notify("textDocument/didChange", {"textDocument": {"uri": uri, "version": version},
+                          "contentChanges": [{"text": text}], "kinalDeferDiagnostics": True})
+            previous, edits = checked_delta(previous)
+            assert len(edits) == 1
+            if version == 2:
+                assert edits[0]["deleteCount"] == len(edits[0]["data"]) == 1
+            if not text:
+                assert not edits[0].get("data") and not previous["data"]
+        client.notify("kinal/validateDocument", {"uri": uri, "version": version})
+        previous, _ = checked_delta(previous)
+        assert delta(first["resultId"]) == delta("unknown") == previous
+        client.notify("textDocument/didClose", document)
+        open_doc()
+        assert "data" in delta(previous["resultId"])
+    finally:
+        client.notify("textDocument/didClose", document)
+
+
 def run_interactive_scenario(server: Path, repo_root: Path, out_dir: Path, profile: StressProfile, seed: int, metrics: Metrics) -> None:
     rng = random.Random(seed)
     paths = make_project(out_dir / "workspace", profile.generated_units)
@@ -833,6 +975,20 @@ def run_interactive_scenario(server: Path, repo_root: Path, out_dir: Path, profi
         except Exception as exc:
             metrics.check("initialize_capabilities", False, str(exc))
             return
+
+        try:
+            check_semantic_deltas(client, paths["root"])
+            check_duplicate_definition(client, paths["root"])
+            metrics.check("duplicate_function_location_and_entry_override", True)
+            metrics.check("semantic_delta_edit_validate_reopen", True)
+        except Exception as exc:
+            metrics.check("semantic_delta_edit_validate_reopen", False, repr(exc))
+
+        try:
+            check_property_updates(client, paths["root"])
+            metrics.check("property_updates_follow_unsaved_accessors", True)
+        except Exception as exc:
+            metrics.check("property_updates_follow_unsaved_accessors", False, repr(exc))
 
         seq = client.diag_seq.get(main_uri, 0)
         client.notify("textDocument/didOpen", {"textDocument": text_document(main_path, main_text, 1)})
@@ -866,6 +1022,78 @@ def run_interactive_scenario(server: Path, repo_root: Path, out_dir: Path, profi
                 metrics.check(f"request_{label}", ok, detail, elapsed)
             except Exception as exc:
                 metrics.check(f"request_{label}", False, str(exc))
+
+        package_user = paths["root"] / "src/UsePackage.kn"
+        package_code = package_user.read_text(encoding="utf-8")
+        package_doc = {"uri": path_to_uri(package_user)}
+        client.notify("textDocument/didOpen", {"textDocument": text_document(package_user, package_code, 1)})
+        try:
+            row, col = line_col(package_code, "item.Width", len("item."))
+            result, elapsed = client.request("textDocument/completion", {
+                "textDocument": package_doc, "position": {"line": row, "character": col}})
+            labels = {item["label"] for item in result["items"]}
+            metrics.check("package_subunit_sibling_completion", "Width" in labels and "Height" not in labels,
+                          str(sorted(labels)), elapsed)
+            result, elapsed = client.request("textDocument/definition", {
+                "textDocument": package_doc, "position": {"line": row, "character": col + 1}})
+            sibling = paths["root"] / "packages/Stress.Bundle/1.0.0/src/Parts/Widget.kn"
+            metrics.check("package_subunit_sibling_definition", len(result) == 1 and result[0]["uri"] == path_to_uri(sibling),
+                          str(result), elapsed)
+            row, col = line_col(package_code, "Get Bundle.Extra", len("Get Bundle."))
+            result, elapsed = client.request("textDocument/definition", {
+                "textDocument": package_doc, "position": {"line": row, "character": col}})
+            selected = sibling.parents[2]
+            expected = {path_to_uri(selected / path) for path in ("src/Parts/Widget.kn", "src/Bundle/Extra.kn")}
+            metrics.check("pinned_package_import_definition", {entry["uri"] for entry in result} == expected,
+                          str(result), elapsed)
+            manifest = paths["root"] / "kinal.knproj"
+            original = manifest.read_text(encoding="utf-8")
+            changes = {"changes": [{"uri": path_to_uri(manifest), "type": 2}]}
+            try:
+                # With both pins removed, the newest package exports Height.
+                write_text(manifest, original.replace('Pins = ["Stress.Bundle@1.0.0"];', '')
+                           .replace('Pins = ["Stress.Bundle@2.0.0"];', ''))
+                client.notify("workspace/didChangeWatchedFiles", changes)
+                row, col = line_col(package_code, "item.Width", len("item."))
+                result, elapsed = client.request("textDocument/completion", {
+                    "textDocument": package_doc, "position": {"line": row, "character": col}})
+                labels = {item["label"] for item in result["items"]}
+                metrics.check("updated_manifest_selects_latest_package", "Height" in labels and "Width" not in labels,
+                              str(sorted(labels)), elapsed)
+            finally:
+                write_text(manifest, original)
+                client.notify("workspace/didChangeWatchedFiles", changes)
+        except Exception as exc:
+            metrics.check("package_subunit_sibling_requests", False, str(exc))
+        client.notify("textDocument/didClose", {"textDocument": package_doc})
+
+        member_path = paths["root"] / "src" / "MemberScope.kn"
+        base_path = member_path.with_name("MemberBase.kn")
+        member_text = member_path.read_text(encoding="utf-8")
+        client.notify("textDocument/didOpen", {"textDocument": text_document(member_path, member_text, 1)})
+        member_doc = {"uri": path_to_uri(member_path)}
+        # Scope-sensitive lookup must follow each receiver type, even when the
+        # same file contains an unrelated field or a unit-level namesake.
+        for method, token, declared_in, expected in [
+            ("FromGlobal", "Control", member_path, "LocalValue Control;"),
+            ("FromParam", "Control", member_path, "FromParam(LocalValue Control)"),
+            ("FromMethod", "Evaluate", base_path, "int Evaluate()"),
+            ("Explicit", "Control", base_path, "BaseValue Control;"),
+            ("Explicit", "Value", base_path, "Class BaseValue"),
+            ("FromBase", "Value", base_path, "Class BaseValue"),
+        ]:
+            label = f"receiver_definition_{method}_{token}"
+            row = next(i for i, line in enumerate(member_text.splitlines()) if f"int {method}(" in line)
+            column = member_text.splitlines()[row].rindex(token) + 1
+            try:
+                result, elapsed = client.request("textDocument/definition", {
+                    "textDocument": member_doc, "position": {"line": row, "character": column}})
+                decl_line, _ = line_col(declared_in.read_text(encoding="utf-8"), expected, 0)
+                ok = len(result) == 1 and result[0]["uri"] == path_to_uri(declared_in) and result[0]["range"]["start"]["line"] == decl_line
+                metrics.check(label, ok, f"expected {declared_in.name}:{decl_line+1}, got {result}", elapsed)
+            except Exception as exc:
+                metrics.check(label, False, str(exc))
+        client.notify("textDocument/didClose", {"textDocument": member_doc})
 
         unicode_path = paths["unicode"]
         unicode_text = unicode_path.read_text(encoding="utf-8")

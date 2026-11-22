@@ -1,13 +1,13 @@
 # FFI — 外部函数接口
 
-Kinal 提供完整的 C 互操作能力，通过 `Extern`（声明 C 函数）和 `Delegate`（声明函数指针类型）实现与 C 库的零开销集成。
+Kinal 通过 `Extern` 声明 C 函数，通过 `Delegate` 声明函数指针签名。当前 Native ABI 支持有明确范围；必须匹配数值宽度、调用约定、结构布局和资源所有权，不能将托管类型直接当作 C 布局。
 
 ## Extern 函数
 
 `Extern` 声明一个外部 C 函数，调用约定由 `By` 指定：
 
 ```kinal
-Extern Function int printf(string fmt) By C;
+Extern Function int puts(string text) By C;
 Extern Function void* malloc(usize size) By C;
 Extern Function void  free(void* ptr)   By C;
 ```
@@ -50,7 +50,7 @@ Extern Function int MessageBoxA(byte* hWnd, string text, string caption, int typ
 
 ```kinal
 [LinkName("__kn_time_tick")]
-Extern Function int GetTimeTick() By C;
+Extern Function u64 GetTimeTick() By C;
 ```
 
 ### LinkLib 属性
@@ -96,7 +96,7 @@ Unsafe Function void DirectCall()
 `Delegate` 用于声明一个**可在运行时绑定的函数指针变量**：
 
 ```kinal
-[SymbolName("MyLib.Add")]
+[SymbolName("Add")]
 Delegate Function int dyn_add(int a, int b) By C;
 ```
 
@@ -119,7 +119,7 @@ Unit App.DynLoader;
 Get IO.Console;
 Get IO.System;
 
-[SymbolName("MyLib.Add")]
+[SymbolName("Add")]
 Delegate Function int dyn_add(int a, int b) By C;
 
 Unsafe Static Function int Main(string[] args)
@@ -225,10 +225,10 @@ Trusted Function usize GetLen(string s)
 
 ## 结构体与 C 结构体
 
-使用 `Struct By Packed` 确保布局与 C 匹配：
+必须逐项匹配 C 字段宽度、偏移、对齐与打包方式。仅当 C 声明也采用 packed 布局时才使用 By Packed；它不是通用 C 布局开关：
 
 ```kinal
-Struct CPoint By Packed
+Struct CPoint
 {
     i32 x;
     i32 y;
@@ -241,13 +241,13 @@ Unsafe Function void Demo()
     CPoint pt;
     pt.x = 10;
     pt.y = 20;
-    draw_point([CPoint*]([byte*](pt)));
+    draw_point(&pt);
 }
 ```
 
 ## Extern System 调用约定（Windows）
 
-Windows API（如 `CreateFile`、`VirtualAlloc` 等）使用 `stdcall` 约定：
+By System 选择平台系统调用约定；32 位 Windows 包含 stdcall，64 位 Windows 使用统一平台 ABI。声明应匹配实际目标 API：
 
 ```kinal
 [LinkName("VirtualAlloc")]
@@ -282,7 +282,7 @@ Get IO.Console;
 // 声明 C 标准库函数
 Extern Function int    puts(string s)    By C;
 Extern Function int    abs(int n)        By C;
-Extern Function double sqrt(double x)   By C;
+Extern Function f64 sqrt(f64 x)   By C;
 
 Trusted Function void Demo()
 {
@@ -304,3 +304,29 @@ Static Function int Main()
 - [Meta 元数据](meta.md)
 - [裸机与嵌入式](../advanced/freestanding.md)
 
+
+## 数组参数、所有权与部署
+
+C ABI 数组参数退化为数据指针。按 Kinal `T[]` 返回的 C 指针长度未知、为零，索引需要调用方自行掌握边界。Kinal 定长数组字段使用描述符／后备存储，不是内联 C 数组字段，不能只写 `T[N]` 就假定匹配含数组的 C 结构体。
+
+借用字符串／数组和回调必须在每次外部使用时仍有效。外部分配由匹配分配器释放；所有调用／回调停止后才能关闭动态库。原始函数对象表示转换不产生 C ABI 回调，应使用 `Delegate ... By C` 的适配路径。
+
+完整 sqrt 示例使用 f64，不存在语言类型 double。Linux 需要链接系统数学库，例如 `kinal build ffi.kn -l m -o ffi`；目标 CRT／链接配置应提供 puts、abs、sqrt。动态加载示例还需要目标兼容且导出 Add 的库，使用 kinal run 时在 `--` 后传入库路径。
+
+源码字符串是面向字节的 UTF-8 文本，但 Windows argv／文件系统／ANSI API 边界并不保证通用 UTF-8，应显式匹配外部 API 编码。Packed 仅适用于 C 声明本身也采用相应打包规则的布局，并非通用 C 布局开关。By System 在 32 位 Windows 对应 stdcall，64 位 Windows 使用统一 ABI。参见[内存与生命周期](../advanced/memory-management.md)。
+
+## 为动态加载示例创建 C 库
+
+将下面文件保存为 add.c。Windows 使用 clang -shared add.c -o add.dll；Linux 使用 clang -shared -fPIC add.c -o libadd.so；macOS 使用 clang -dynamiclib add.c -o libadd.dylib。随后运行 kinal run loader.kn -- 库的绝对路径。消费者示例应输出 42，并在最后一次调用后关闭库。
+
+```c
+#if defined(_WIN32)
+__declspec(dllexport)
+#endif
+int Add(int a, int b)
+{
+    return a + b;
+}
+```
+
+此处 C int 对应 Delegate 中的 Kinal int ABI 转换。By System 在 32 位 Windows 的栈清理约定与 By C 不同；x64／ARM64 遵循其目标平台 ABI，不能套用 32 位 stdcall 的栈规则。

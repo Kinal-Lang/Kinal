@@ -1,0 +1,49 @@
+Unit Tests.Calendar;
+
+Get IO.Console;
+Get IO.Time;
+
+Class Appointment By IO.Time.DateTime
+{
+    Public string Title;
+}
+
+Static Function int Main()
+{
+    IO.Time.DateTime first = IO.Time.Now();
+    IO.Time.DateTime second = IO.Time.Now();
+    If (first == second || first.Ticks <= 0 || first.Ticks % 1000 != first.Millisecond) Return 1;
+    If (first.Year < 1970 || first.Month < 1 || first.Month > 12 || first.Day < 1 || first.Day > 31) Return 2;
+    If (first.Hour < 0 || first.Hour > 23 || first.Minute < 0 || first.Minute > 59 ||
+        first.Second < 0 || first.Second > 60) Return 3;
+
+    Appointment date = New Appointment();
+    date.Ticks = 1;
+    date.Year = 2024;
+    date.Month = 2;
+    date.Day = 29;
+    date.Hour = 7;
+    date.Minute = 5;
+    date.Second = 9;
+    date.Millisecond = 7;
+    If (IO.Time.Format(date, null) != "2024-02-29 07:05:09") Return 4;
+    If (IO.Time.Format(date, "年月 yyyy年MM月dd日 HH:mm:ss.fff ✅") != "年月 2024年02月29日 07:05:09.007 ✅") Return 5;
+    If (IO.Time.Format(null, "") != "0000-00-00 00:00:00") Return 6;
+    If (IO.Time.Format(null, "纯文本🙂") != "纯文本🙂") Return 7;
+    If (IO.Time.Format(date, "yyyyyMMMddHmf") != "2024y02M29Hmf") Return 8;
+    date.Year = 12345;
+    date.Millisecond = 1234;
+    If (IO.Time.Format(date, "fff / yyyy / fff") != "1234 / 12345 / 1234") Return 9;
+    IO.Time.DateTime blank = New IO.Time.DateTime();
+    If (IO.Time.Format(blank, "fff") != "000") Return 10;
+    Object.Function now = IO.Time.Now;
+    Object.Function format = IO.Time.Format;
+    If ([string](format(date, "HH:mm")) != "07:05" || [IO.Time.DateTime](now()).Year < 1970) Return 11;
+
+    string pattern = "literal";
+    For (int i = 0; i < 7; i++) pattern += pattern;
+    If (IO.Time.Format(date, pattern + "yyyy" + pattern) != pattern + "12345" + pattern) Return 12;
+    If (IO.Time.__TimePad(7, 6) != "000007" || IO.Time.__TimePad(-1, 4) != "00-1") Return 13;
+    IO.Console.PrintLine("ok");
+    Return 0;
+}

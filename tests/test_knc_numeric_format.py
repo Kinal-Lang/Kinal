@@ -22,8 +22,11 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def program(version: int, *, integers: tuple[int, ...] = (),
             floats: tuple[float, ...] = (), code: bytes = b"\x3b",
-            flags: int = 0) -> bytes:
-    header = b"KNC2" + struct.pack("<HH7i", version, flags, 0, 0,
+            flags: int = 0, producer: bytes = b"99.8.7") -> bytes:
+    header = b"KNC2" + struct.pack("<HH", version, flags)
+    if version == 4:
+        header += struct.pack("<I", len(producer)) + producer
+    header += struct.pack("<7i", 0, 0,
                                   len(integers), len(floats), 0, 0, 1)
     integer_format = "<i" if version == 2 else "<q"
     constants = b"".join(struct.pack(integer_format, value) for value in integers)
@@ -148,13 +151,26 @@ class NumericFormatTests(unittest.TestCase):
                   (1 << 32) - 1, 1 << 32, (1 << 63) - 2, (1 << 63) - 1)
         self.assert_output(integer_program(3, values), list(map(str, values)))
 
+    def test_foreign_producer_runs_silently(self) -> None:
+        self.assert_output(integer_program(4, (314,)), ["314"])
+
+    def test_foreign_producer_error_context(self) -> None:
+        current = dict(line.split("=", 1) for line in (ROOT / "VERSION").read_text().splitlines() if "=" in line)["kinal"]
+        note = f"KNC compiler version mismatch: current compiler {current}, KNC producer 99.8.7"
+        self.assert_rejected(program(4)[:-1], note)
+        self.assert_rejected(program(4, code=b"\xff"), note)
+
+    def test_large_function_from_file_and_embedded(self) -> None:
+        # A single large code record exercises copying both the image and its code section.
+        self.assert_output(program(4, code=bytes((59,)) * (2 * 1024 * 1024)), [])
+
     def test_unknown_versions_rejected(self) -> None:
-        for version in (0, 1, 4, 65535):
+        for version in (0, 1, 5, 65535):
             with self.subTest(version=version):
                 self.assert_rejected(program(version), f"Unsupported .knc version: {version}")
 
-    def test_flags_rejected_for_both_versions(self) -> None:
-        for version in (2, 3):
+    def test_flags_rejected_for_supported_versions(self) -> None:
+        for version in (2, 3, 4):
             with self.subTest(version=version):
                 self.assert_rejected(program(version, flags=1), "Unsupported .knc flags: 1")
 

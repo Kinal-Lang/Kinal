@@ -56,6 +56,17 @@ Function string Greet(string name)
 }
 ```
 
+**models.kn**
+
+```kinal
+Unit App.Models;
+
+Class Message
+{
+    Public string Text;
+}
+```
+
 If you build by entry file outside project mode, the compiler can still auto-discover nearby files:
 
 ```bash
@@ -70,7 +81,7 @@ kinal build main.kn utils.kn models.kn -o myapp --no-module-discovery
 
 ## Multiple Units in One File
 
-A single file can contribute declarations to multiple units through nested blocks, but one unit per file is usually easier to maintain.
+The current parser accepts one front-section Unit declaration per source file. Use multiple files to define multiple Units; nested classes/types do not introduce another Unit.
 
 ## Package Structure
 
@@ -400,6 +411,7 @@ Supported fields:
 - `EntrySymbol`
 - `Linker`
 - `LinkerPath`
+- `HideConsole`
 - `Superloop`
 
 #### `Backend`
@@ -503,6 +515,10 @@ LinkerPath = "C:/toolchains/lld-link.exe";
 ```
 
 Use this when the linker executable is not on `PATH`.
+
+#### `HideConsole`
+
+Launch a Windows native or VM-packed application without allocating a console window. The default is `false`.
 
 #### `Superloop`
 
@@ -704,3 +720,5 @@ kinal pkg unpack MyLib.klib -o ./recovered/
 - [Language Overview](../language/overview.md)
 - [kinal Compiler CLI](../cli/compiler.md)
 - [Package System](../cli/packages.md)
+
+See the [Project File Reference](../cli/project-files.md) for the authoritative complete field table, path resolution exceptions, CLI precedence and tested two-file Native/VM project. Superloop is VM loop fusion, not an Async scheduler. A kernel profile additionally requires actual startup code/linker script and target runtime; the configuration sketch alone is not a bootable image.

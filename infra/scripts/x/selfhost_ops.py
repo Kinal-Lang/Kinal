@@ -18,7 +18,7 @@ from .context import (
 )
 from .llvm import detect_llvm_dir, llvm_bin_dir
 from .release_ops import build_official_stdpkg_klibs, create_kinalvm_stdpkg
-from .runtime_build import build_runtime_for_host
+from .runtime_build import build_runtime_for_host, kinalvm_host_project
 from .util import run
 from .vm_metadata import generate_kinalvm_build_info
 from .compiler_metadata import generate_selfhost_build_info
@@ -50,6 +50,18 @@ def selfhost_test_dir() -> Path:
 
 def selfhost_bridge_object() -> Path:
     return SELFHOST_OUT / "bridge" / "kn_selfhost_llvm.o"
+
+
+def build_selfhost_icon() -> Path | None:
+    if not is_windows():
+        return None
+    output = selfhost_bridge_object().with_name("kinal.res")
+    output.parent.mkdir(parents=True, exist_ok=True)
+    resource = ROOT / "apps/kinal/resources/kinal.rc"
+    # Compile the original resource script, including its original resource ID.
+    run([llvm_bin_dir(detect_llvm_dir()) / "llvm-rc.exe", "/FO", output,
+         resource.name], cwd=resource.parent)
+    return output
 
 
 def build_selfhost_bridge() -> Path:
@@ -129,12 +141,16 @@ def sync_selfhost_stdlib_native_assets(stage0: Path) -> None:
 
 
 def write_selfhost_clang_wrapper(stage1_root: Path) -> None:
-    if is_windows():
-        return
     llvm_dir = detect_llvm_dir()
-    clang = llvm_bin_dir(llvm_dir) / "clang"
+    clang = llvm_bin_dir(llvm_dir) / exe_name("clang")
     if not clang.is_file():
         raise SystemExit(f"LLVM clang was not found: {clang}")
+    if is_windows():
+        # Native IR/LTO compilation must also work outside a developer PATH.
+        target = stage1_root / "linker" / "clang.exe"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(clang, target)
+        return
     wrapper = stage1_root / "linker" / "clang"
     wrapper.parent.mkdir(parents=True, exist_ok=True)
     escaped = str(clang).replace("'", "'\\''")
@@ -326,8 +342,10 @@ def build_selfhost_vm_runner(compiler: Path) -> Path:
     """
     generate_kinalvm_build_info()
     runner = compiler.parent / exe_name("kinalvm")
-    run([compiler, "build", "--project", ROOT / "apps" / "kinalvm",
-         "--profile", "release", "-o", runner])
+    command = [compiler, "build", "--project", kinalvm_host_project(), "-o", runner]
+    if host_tag() == "win-x64":
+        command.append("--lto=thin")
+    run(command)
     return runner
 
 
@@ -356,7 +374,7 @@ def build_selfhost_stage1(stage0: Path) -> Path:
         bridge_runtime,
     ]
     if is_windows():
-        command.extend(["--link-arg", "/stack:16777216"])
+        command.extend(["--link-arg", "/stack:16777216", "--link-file", build_selfhost_icon()])
     elif host_tag().startswith("macos-"):
         command.extend(
             [

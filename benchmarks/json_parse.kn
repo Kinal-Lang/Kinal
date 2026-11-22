@@ -1,0 +1,28 @@
+Unit Benchmarks.JsonParse;
+
+Get IO.Console;
+Get IO.Json;
+Get IO.Text;
+Get IO.Time;
+
+Static Function int Main(string[] args)
+{
+    int count = args.Length() == 1 ? [int](args[0]) : 16000;
+    If (count < 1 || count > 1000000) Return 2;
+
+    string digits = "0,1,2,3,4,5,6,";
+    While (IO.Text.Length(digits) < 2 * count) digits = digits + digits;
+    string input = "[" + IO.Text.Slice(digits, 0, 2 * count - 1) + "]";
+
+    int start = IO.Time.GetNanoTick();
+    list rows = IO.Json.AsList(IO.Json.ParseValue(input));
+    int elapsed = IO.Time.GetNanoTick() - start;
+
+    If (rows.Count() != count) Return 1;
+    For (int index = 0; index < count; index++)
+    {
+        If ([int](rows.Fetch(index)) != index % 7) Return 1;
+    }
+    IO.Console.PrintLine(elapsed);
+    Return 0;
+}

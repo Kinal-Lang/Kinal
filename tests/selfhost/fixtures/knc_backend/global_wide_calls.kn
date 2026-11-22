@@ -1,0 +1,34 @@
+Unit Tests.GlobalWideCalls;
+
+Class Palette
+{
+    Public int Color;
+    Public Constructor(int color) { Color = color; }
+    Public Virtual Function int Sum(int a, int b, int c, int d) { Return Color + a + b + c + d; }
+    Public Function int Paint() { Return Sum(1, 2, 3, 4); }
+}
+Class Accent By Palette
+{
+    Public Constructor(int color) { Color = color; }
+    Public Override Function int Sum(int a, int b, int c, int d) { Return Color + a + b + c + d + 100; }
+}
+int calls = 0;
+Function Palette Make() { calls++; Return New Accent(9); }
+Palette plain = New Palette(3);
+Palette themed = Make();
+Palette alias = themed;
+
+Function int Sum(int a, int b, int c, int d, int e) { Return a + b + c + d + e; }
+IO.Type.Object.Function direct = Sum;
+IO.Type.Object.Function copied = direct;
+
+Static Function int Main()
+{
+    If (calls != 1 || plain.Paint() != 13 || alias.Paint() != 119) Return 1;
+    If (Sum(1, 2, 3, 4, 5) != 15 || copied(2, 3, 4, 5, 6) != 20) Return 2;
+    int offset = 7;
+    IO.Type.Object.Function closure = Function int(int a, int b, int c, int d, int e)
+    { Return a + b + c + d + e + offset; };
+    If (closure(1, 2, 3, 4, 5) != 22) Return 3;
+    Return 0;
+}

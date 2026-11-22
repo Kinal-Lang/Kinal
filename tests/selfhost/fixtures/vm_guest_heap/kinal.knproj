@@ -1,0 +1,9 @@
+Project GuestHeapLifetime
+{
+    SourceSet "test" { Roots = ["src", "../../../../apps/kinalvm/src/IO"]; Include = ["**/*.kn"]; RequireUnit = true; }
+    Profile "test"
+    {
+        Source { Entry = "src/Main.kn"; Sets = ["test"]; Mode = ReachableUnits; }
+        Build { Backend = Native; Environment = Hosted; }
+    }
+}

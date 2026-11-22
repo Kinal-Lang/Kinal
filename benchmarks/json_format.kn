@@ -1,0 +1,76 @@
+Unit Benchmarks.JsonFormat;
+
+Get IO.Console;
+Get IO.Json;
+Get IO.Text;
+Get IO.Time;
+
+Function string Repeat(string block, int count)
+{
+    string result = "";
+    While (count > 0)
+    {
+        If ((count & 1) != 0) result += block;
+        count /= 2;
+        If (count > 0) block += block;
+    }
+    Return result;
+}
+
+Static Function int Main(string[] args)
+{
+    If (args.Length() < 2 || args.Length() > 3) Return 2;
+    int count = [int](args[0]);
+    string mode = args[1];
+    bool pretty = args.Length() == 3 && args[2] == "pretty";
+    If (args.Length() == 3 && !pretty && args[2] != "compact") Return 2;
+    If (count < 1 || count > 1000000) Return 2;
+
+    any input = null;
+    string expected = "";
+    If (mode == "array")
+    {
+        list items = list.Create();
+        For (int i = 0; i < count; i++) items.Add(i % 7);
+        input = items;
+        string group = pretty ? "0, 1, 2, 3, 4, 5, 6, " : "0,1,2,3,4,5,6,";
+        int step = pretty ? 3 : 2;
+        string digits = Repeat(group, (count + 6) / 7);
+        expected = "[" + IO.Text.Slice(digits, 0, step * (count - 1) + 1) + "]";
+    }
+    Else If (mode == "objects" || mode == "floats")
+    {
+        list items = list.Create();
+        any element = 0.25f;
+        string rendered = "0.25";
+        If (mode == "objects")
+        {
+            dict record = dict.Create();
+            record.Set("value", 42);
+            element = record;
+            rendered = pretty ? "{\n\t\t\"value\":\t42\n\t}" : "{\"value\":42}";
+        }
+        For (int i = 0; i < count; i++) items.Add(element);
+        input = items;
+        expected = "[" + rendered + Repeat((pretty ? ", " : ",") + rendered, count - 1) + "]";
+    }
+    Else If (mode == "plain")
+    {
+        string text = Repeat("x", count);
+        input = text;
+        expected = "\"" + text + "\"";
+    }
+    Else If (mode == "escaped")
+    {
+        input = Repeat("a\n\"雪\\\t", count);
+        expected = "\"" + Repeat("a\\n\\\"雪\\\\\\t", count) + "\"";
+    }
+    Else Return 2;
+
+    int start = IO.Time.GetNanoTick();
+    string actual = IO.Json.Format(input, pretty);
+    int elapsed = IO.Time.GetNanoTick() - start;
+    If (actual != expected) Return 1;
+    IO.Console.PrintLine(elapsed);
+    Return 0;
+}

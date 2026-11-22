@@ -1,198 +1,101 @@
 # Compilation Pipeline
 
-This document describes the complete compilation pipeline from Kinal source files to executables.
+This page describes the C compiler. The Native and KNC backends share frontend analysis; KNC is generated from the typed program, not translated from LLVM IR.
 
----
+## Pipeline and Stop Points
 
-## Overview
-
-```
-.kn source file
-    │
-    ▼
-┌─────────────┐
-│   Lexer     │  kn_lexer.c
-│             │  Token stream
-└──────┬──────┘
-       │
-       ▼
-┌─────────────┐
-│   Parser    │  kn_parser.c + parser/*.inc
-│             │  Abstract Syntax Tree (AST)
-└──────┬──────┘
-       │
-       ▼
-┌─────────────┐
-│   Sema      │  kn_sema.c
-│             │  Type checking, name resolution, safety checks
-└──────┬──────┘
-       │
-       ▼
-┌─────────────┐
-│   Codegen   │  LLVM-based
-│             │  LLVM IR
-└──────┬──────┘
-       │
-       ├──────────────────────────────────┐
-       │                                  │
-       ▼                                  ▼
-┌─────────────┐                   ┌──────────────┐
-│  LLVM Back  │                   │  KNC Bytecode│
-│  Opt+Target │                   │  Generator   │
-│  Codegen    │                   └──────┬───────┘
-└──────┬──────┘                          │
-       │                                 ▼
-       ▼                          ┌──────────────┐
- Object file (.o)                 │  .knc bytecode│
-       │                          └──────┬───────┘
-       ▼                                 │
-┌─────────────┐                          ▼
-│   Linker    │                   ┌──────────────┐
-│ lld/zig/   │                   │  KinalVM     │
-│ msvc       │                   │  Execution   │
-└──────┬──────┘                  └──────────────┘
-       │
-       ▼
- Executable/Library
+```text
+CLI / project / package source selection
+                  |
+             Lexer + Parser
+                  |
+             Sema / typed AST
+                  |
+       Resolved Call + Binary HIR slices
+                /     \
+       Native LLVM     KNC writer
+            |              |
+      IR / asm / object    .knc
+            |              |
+      Native linker     KinalVM interpreter
+            |              |
+      executable/library   optional packed VM executable
 ```
 
----
+| Command / emit mode | Last relevant stage |
+|---------------------|---------------------|
+| `--emit tokens` | Lexical token summary |
+| `--emit ast` | Parser AST summary |
+| `--emit check` | Successful Sema/resolved-plan summary |
+| `--emit ir` | Native LLVM IR |
+| `--emit asm` / `obj` | Native target emission |
+| `build` with default `bin` | Native link |
+| `vm build` | KNC bytecode write |
+| `run` / `vm run` | Compilation as needed, then execution |
 
-## Phase Details
+Frontend summaries are deterministic test/inspection artifacts, not executable code or a stable package interface. A successful check does not validate backend support, linker inputs, runtime dependencies or program behavior.
 
-### 1. Lexer
+## Source Selection and Imports
 
-**Source file**: `apps/kinal/src/kn_lexer.c`
+The driver loads the selected project/profile, collects source candidates and resolves imported Units/packages while preparing the compilation. Explicit SourceSets constrain local membership; imports determine visibility, not unrestricted filesystem participation. Packages can provide source and native assets through manifests/archives.
 
-The lexer converts the source file byte stream into a token sequence.
+For entry-file discovery, the driver indexes the entry directory and adds participating same-Unit/imported-Unit files. Unsafe-alias files are local-only and cannot be imported as project Units. See [Project Files](../cli/project-files.md) and [Packages](../cli/packages.md).
 
-Key tasks:
-- Recognize keywords (`If`, `While`, `Function`, `Class`, etc., all PascalCase)
-- Recognize identifiers, numeric literals, and string literals
-- Handle string prefixes: `[r]"`, `[f]"`, `[c]"`
-- Skip comments (`//` and `/* */`)
-- Track source positions (line and column numbers) for error reporting
+## Lexer and Parser
 
-Generated token types are defined in `apps/kinal/include/kn/lexer.h`.
+The lexer recognizes source bytes, identifiers, keywords, literals, punctuation and comments, retaining source locations. Unicode identifiers are accepted; source byte columns must be converted at the LSP UTF-16 protocol boundary.
 
-### 2. Parser
+The parser builds declarations/statements/expressions and applies the file-local unsafe-alias token prepass. The C parser's included implementation files are:
 
-**Source file**: `apps/kinal/src/kn_parser.c` + `apps/kinal/src/parser/*.inc`
+| File under `apps/kinal/src/parser/` | Responsibility |
+|------------------------------------|----------------|
+| `kn_parser_decl.inc` | Declarations, modifiers, attributes and Meta |
+| `kn_parser_type_expr.inc` | Types, expressions, calls, casts and string-prefix handling |
+| `kn_parser_stmt.inc` | Statements and literal escape helpers |
+| `kn_parser_float.inc` | Floating literal parsing helpers |
 
-The parser converts the token sequence into an Abstract Syntax Tree (AST).
+A lexically valid token stream can still fail parsing. Inactive compile-time branches must remain syntactically valid. A declaration-only AST summary does not prove that names and types resolve.
 
-The parser is split into several segments (`.inc` files) by functionality:
+## Sema and Resolved Plans
 
-| File | Responsibility |
-|------|----------------|
-| `parse_decl.inc` | Top-level declarations (Unit, Function, Class, Struct, Enum, Meta) |
-| `parse_expr.inc` | Expressions (operators, function calls, member access, type casts) |
-| `parse_stmt.inc` | Statements (If, While, For, Return, Try, Throw, Block) |
-| `parse_type.inc` | Type expressions (primitive types, arrays, pointers, generics) |
+Sema validates types, scopes, imports, defaults, generics, overloads, safety, entry points and other language rules. The driver supplies the participating program; Sema does not fetch missing packages from a registry.
 
-Key syntax characteristics:
-- Type cast syntax `[type](expr)` is handled specially by the parser
-- String prefixes `[raw]"..."` / `[f]"..."` / `[c]"..."` are handled cooperatively between the lexer and parser
-- Generic function `Function T Name<T>` type parameters are parsed at the declaration stage
+After successful analysis, every bound direct/member call has a `KnResolvedCall`; each binary expression has a `KnResolvedBinary` describing selected operation kind, coercions, pointer side, unsignedness and target-aware integer width. Native and KNC consume those decisions rather than independently choosing call meaning or numeric coercion.
 
-AST node types are defined in `apps/kinal/include/kn/ast.h`.
+These are **incremental HIR slices**, not a complete backend-independent statement/expression IR. Other families still use typed AST data. Compile-time conditions select their active semantic branch; inactive platform syntax can intentionally remain unbound and must not inflate unresolved-plan counts.
 
-### 3. Semantic Analysis (Sema)
+`--emit check` writes `format=kinal-sema-v1`, `hir_format=kinal-call-hir-v1` and `binary_hir_format=kinal-binary-hir-v1` with structural counts. [Developer Architecture](../../dev/architecture.md) explains the boundary in more detail.
 
-**Source file**: `apps/kinal/src/kn_sema.c`
+## Native LLVM and Linking
 
-The semantic analyzer performs type checking and semantic validation on the AST.
+Native lowering emits target-specific LLVM types, functions, globals, runtime calls and GC roots. LLVM produces IR, assembly or an object as requested. The linker combines objects, startup/CRT files, runtime helpers and compatible package libraries.
 
-Key tasks:
-- **Name resolution**: Bind each identifier to its declaration
-- **Type inference**: Infer the type of `Var` declarations
-- **Type checking**: Validate type compatibility for expressions, assignments, and function calls
-- **Safety checking**: Ensure `Unsafe` APIs are only called in `Trusted`/`Unsafe` contexts
-- **Module resolution**: Process `Get` imports, locate standard library and user modules
-- **Built-in type injection**: `kn_builtins.c` injects `IO.Type.Object.Class`, `IO.Error`, etc. into the symbol table
-- **Standard library binding**: `kn_std.c` binds all standard library functions as callable built-ins
+The current CLI exposes LTO controls; internal optimization passes do not imply public `-O0`/`-O1`/`-O2`/`-O3` options. Use documented options and inspect the actual link command rather than assuming an optimization or library policy.
 
-### 4. Code Generation (Codegen)
+Objects/IR for a foreign target are not runnable host programs. Extern ABI declarations and runtime hooks must match that target. See [Linking](linking.md), [Cross-Compilation](cross-compilation.md) and [FFI](../language/ffi.md).
 
-After semantic validation, the code generator traverses the type-annotated AST to produce backend code.
+## KNC and Runtime Boundaries
 
-Kinal supports two backend paths:
+The KNC writer directly consumes the semantically bound program and emits supported bytecode operations. Unsupported features fail during emission, even when shared Sema succeeds. Superloop is recognized-loop fusion, not a task scheduler.
 
-#### LLVM Path
+The current writer emits KNC format 3; the magic remains KNC2, and current loaders also read version 2. The VM has its own values/registers and interpreter. Packed execution combines a compatible VM template with bytecode; it does not turn the program into LLVM native code. See [VM CLI](../cli/vm.md) and [Backend Support](backend-support.md).
 
-1. **LLVM IR generation**: Convert the AST to LLVM Intermediate Representation
-2. **LLVM optimization**: Apply LLVM optimization passes (`-O0`/`-O1`/`-O2`/`-O3`)
-3. **Target code generation**: LLVM backend generates target-platform assembly/object files
-4. **Linking**: lld/zig/msvc linker produces the final executable or library
+## Builtins and Standard Packages
 
-#### KNC Path
+`kn_builtins.c` injects compiler-owned object/error/collection/task support types. `kn_std.c` owns builtin identities, lowering ownership, profile availability and sparse KNC builtin IDs. This registry is not the implementation of every public standard-library function.
 
-1. **Bytecode generation**: Convert the AST to `.knc` bytecode
-2. **Optional packaging**: `kinal vm pack` bundles bytecode with KinalVM
+Versioned IO.Core/IO.Json/IO.Request/IO.UI/IO.Web and other packages supply ordinary Kinal declarations and narrow native bridges. C compiler use is compatible with Kinal-written standard packages; that is independent of compiler selfhosting. Package ABI/lifetime boundaries must be respected.
 
----
+## Diagnostics and Inspection
 
-## Built-in Type Injection
-
-Before semantic analysis begins, `kn_builtins.c` injects the following built-in types into the symbol table:
-
-| Type | Description |
-|------|-------------|
-| `IO.Type.Object.Class` | Root base class for all `Class` types, provides `ToString()` and other methods |
-| `IO.Type.Object.Function` | Function object type (contains `Invoke` and `Env` fields) |
-| `IO.Type.Object.Block` | Block object type (inherits from Function) |
-| `IO.Error` | Standard exception class (`Title`, `Message`, `Inner`, `Trace` fields) |
-| `IO.Time.DateTime` | Time struct (returned by `IO.Time.Now()`) |
-| `IO.Collection.list` | Built-in `list` type |
-| `IO.Collection.dict` | Built-in `dict` type |
-| `IO.Collection.set` | Built-in `set` type |
-
----
-
-## Standard Library Function Bindings
-
-`kn_std.c` contains a registry of all standard library functions (`g_*_funcs[]` arrays). Each entry contains:
-
-- Fully qualified function name (e.g., `IO.Console.PrintLine`)
-- Parameter type signature
-- Return type
-- Safety level requirement (`SAFE`/`TRUSTED`/`UNSAFE`)
-- Reference to the built-in function implementation
-
-The compiler uses this registry during semantic analysis to resolve standard library calls.
-
----
-
-## Error Reporting
-
-The Kinal compiler's diagnostic system supports:
-
-- Precise line/column location
-- Colored terminal output (`--color auto/always/never`)
-- Bilingual diagnostics in Chinese and English (`--lang zh/en`)
-- Custom locale files (`--locale-file`)
-
----
-
-## Compilation Cache and Intermediate Files
-
-Use `--keep-temps` to retain intermediate files generated during compilation:
+Diagnostics carry stage/code/location information and can be localized. Fix the earliest relevant stage first: an undefined Unit is not solved by adding an arbitrary linker library, and a missing native symbol is not generally a parser error.
 
 ```bash
-kinal build main.kn --emit ir --keep-temps
+kinal build main.kn --emit tokens -o out/main.tokens
+kinal build main.kn --emit ast -o out/main.ast
+kinal build main.kn --emit check -o out/main.kcheck
+kinal build main.kn --emit ir -o out/main.ll --trace --time
+kinal build main.kn -o out/main --show-link --show-link-search
 ```
 
-Retained files:
-- `main.ll` — LLVM IR
-- `main.s` — Assembly code
-- `main.o` — Object file
-
----
-
-## See Also
-
-- [Compiler CLI](../cli/compiler.md) — Complete compiler options
-- [KinalVM](../cli/vm.md) — Bytecode execution path
-- [Cross-Compilation](cross-compilation.md) — Multi-platform compilation
-- [Linking](linking.md) — Linker configuration
-- [IO.Runtime Constants](runtime-environment-constants.md) — Distinguishing native and VM backends in source code
+`--keep-temps` retains applicable intermediates for inspection. Temporary source/package extraction is not a general incremental-build cache or a public serialized compiler state.

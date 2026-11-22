@@ -1,6 +1,8 @@
 Unit IO.Kinal.Compiler.Lex.Token;
 
 Get IO.Text;
+Get IO.Kinal.Runtime;
+Get IO.Kinal.Compiler.Source.SourceFile;
 Get IO.Kinal.Compiler.Lex.TokenKind;
 
 Class Token
@@ -54,38 +56,33 @@ Safe Function string Dump(Token token)
            " '" + escaped + "'";
 }
 
-Safe Function string HexDigit(int value)
+Trusted Function string HexText(string text)
 {
-    If (value == 0) Return "0";
-    If (value == 1) Return "1";
-    If (value == 2) Return "2";
-    If (value == 3) Return "3";
-    If (value == 4) Return "4";
-    If (value == 5) Return "5";
-    If (value == 6) Return "6";
-    If (value == 7) Return "7";
-    If (value == 8) Return "8";
-    If (value == 9) Return "9";
-    If (value == 10) Return "A";
-    If (value == 11) Return "B";
-    If (value == 12) Return "C";
-    If (value == 13) Return "D";
-    If (value == 14) Return "E";
-    Return "F";
-}
-
-Safe Function string HexText(string text)
-{
-    char[] chars = text.ToChars();
-    string result = "";
-    int i = 0;
-    While (i < chars.Length())
+    int length = IO.Text.Length(text);
+    If (length == 0) Return "";
+    string digits = "0123456789ABCDEF";
+    If (IO.Runtime.IsNative)
     {
-        int value = [int](chars[i]);
-        result = result + HexDigit((value >> 4) & 15) + HexDigit(value & 15);
-        i = i + 1;
+        char* result = IO.Kinal.Runtime.AllocateText(length * 2);
+        If (result == null) Return "";
+        int i = 0;
+        While (i < length)
+        {
+            int value = [int](text[i]);
+            result[i * 2] = digits[(value >> 4) & 15];
+            result[i * 2 + 1] = digits[value & 15];
+            i = i + 1;
+        }
+        Return IO.Kinal.Compiler.Source.SourceFile.CopyTextSpan([string](result), 0, length * 2);
     }
-    Return result;
+    list encoded = list.Create();
+    For (int index = 0; index < length; index++)
+    {
+        int value = [int](text[index]);
+        encoded.Add([string](digits[(value >> 4) & 15]));
+        encoded.Add([string](digits[value & 15]));
+    }
+    Return IO.Text.Join(encoded, "");
 }
 
 Safe Function string MachineDump(Token token)

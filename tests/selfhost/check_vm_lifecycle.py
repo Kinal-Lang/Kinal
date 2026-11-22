@@ -23,9 +23,9 @@ def check_vm_lifecycle(compiler: Path, vm: Path, root: Path, out: Path) -> dict:
         nonlocal sequence
         sequence += 1
         command = [str(part) for part in arguments]
-        proc = subprocess.run(command, cwd=out, env=env, text=True, capture_output=True, timeout=180)
+        proc = subprocess.run(command, cwd=out, env=env, encoding="utf-8", capture_output=True, timeout=180)
         (logs / f"{sequence:03d}-{label}.log").write_text(
-            "command=" + repr(command) + "\nexit=" + str(proc.returncode) + "\n" + proc.stdout + proc.stderr)
+            "command=" + repr(command) + "\nexit=" + str(proc.returncode) + "\n" + proc.stdout + proc.stderr, encoding="utf-8")
         assert proc.returncode == code, (label, proc.returncode, proc.stdout, proc.stderr)
         if text is not None: assert text in proc.stdout + proc.stderr, (label, proc.stdout, proc.stderr)
         return proc
@@ -55,7 +55,9 @@ def check_vm_lifecycle(compiler: Path, vm: Path, root: Path, out: Path) -> dict:
 
     kept = invoke("run-keep", [compiler, "vm", "run", "--keep-temps", "--vm-path", vm,
                                 "--no-module-discovery", source], 7)
-    retained = Path(next(line[7:] for line in kept.stdout.splitlines() if line.startswith("output=")))
+    retained_dirs = set(temporary.iterdir()) - before
+    assert len(retained_dirs) == 1 and kept.stdout == "lifecycle-ok\n"
+    retained = next(iter(retained_dirs)) / "program.knc"
     assert retained.is_file()
     invoke("retained-bytecode", [vm, retained], 7, "lifecycle-ok")
     retained.unlink(); retained.parent.rmdir()
@@ -73,14 +75,16 @@ def check_vm_lifecycle(compiler: Path, vm: Path, root: Path, out: Path) -> dict:
         assert run.stdout == "lifecycle-ok\n" and not run.stderr
         assert set(temporary.iterdir()) == before
     # Use a copied bytecode stem, so default pack output cannot overlap source.
-    default_knc = out / "Default.knc"; shutil.copy2(bytecode, default_knc)
+    default_knc = out / "LifecycleStandalone.knc"; shutil.copy2(bytecode, default_knc)
     invoke("default-pack", [compiler, "vm", "pack", "--vm-path", vm, default_knc])
-    invoke("default-packed-run", [out / ("Default" + suffix)], 7, "lifecycle-ok")
+    invoke("default-packed-run", [default_knc.with_suffix(suffix)], 7, "lifecycle-ok")
 
     kept_exe = out / ("keep-packed" + suffix)
     kept = invoke("pack-keep", [compiler, "vm", "pack", "--keep-temps", "--vm-path", vm,
                                  "--no-module-discovery", source, "-o", kept_exe])
-    retained = Path(next(line[10:] for line in kept.stdout.splitlines() if line.startswith("temporary=")))
+    retained_dirs = set(temporary.iterdir()) - before
+    assert len(retained_dirs) == 1 and kept.stdout == ""
+    retained = next(iter(retained_dirs)) / "program.knc"
     assert retained.is_file() and kept_exe.is_file()
     invoke("keep-packed-run", [kept_exe], 7, "lifecycle-ok")
     retained.unlink(); retained.parent.rmdir()
@@ -94,10 +98,31 @@ def check_vm_lifecycle(compiler: Path, vm: Path, root: Path, out: Path) -> dict:
            "failed to locate kinalvm")
     invoke("missing-input", [compiler, "vm", "run", "--vm-path", vm, out / "missing.knc"], 1,
            "bytecode file not found")
-    invoke("non-bytecode-disasm", [compiler, "vm", "disasm", "--vm-path", vm, source], 2,
-           "requires one .knc")
-    invoke("runtime-arguments", [compiler, "vm", "run", "--vm-path", vm, bytecode, "--", "argument"], 2,
-           "runtime arguments are not supported")
+    invoke("non-bytecode-disasm", [compiler, "vm", "disasm", "--vm-path", vm, source], 1,
+           "requires a .knc file")
+    ignored = invoke("zero-parameter-entry", [compiler, "vm", "run", "--vm-path", vm,
+                                              bytecode, "--", "ignored"], 7)
+    assert ignored.stdout == "lifecycle-ok\n" and not ignored.stderr
+    argument_source = out / "Arguments.kn"
+    argument_source.write_text('Unit Tests.PassArgs; Get IO.Console; Static Function int Main(string[] args) { '
+                               'For (int i = 0; i < args.Length(); i++) IO.Console.PrintLine("[" + args[i] + "]"); '
+                               'Return 7; }\n', encoding="utf-8")
+    argument_project = out / "arguments.knproj"
+    argument_project.write_text(project.read_text(encoding="utf-8").replace(source.name, argument_source.name),
+                                encoding="utf-8")
+    packed_args = out / ("with-args" + suffix)
+    invoke("pack-arguments", [compiler, "vm", "pack", "--vm-path", vm, "--no-module-discovery",
+                              argument_source, "-o", packed_args])
+    for first in ("--disasm", "--version", "-V"):
+        values = [first, "", "two words", 'a"b', "尾📂\\"]
+        expected = "".join(f"[{value}]\n" for value in values)
+        for mode, command in (("packed", [packed_args]),
+                              ("project", [compiler, "vm", "run", "--vm-path", vm, "--project", argument_project, "--"]),
+                              ("source", [compiler, "vm", "run", "--vm-path", vm, "--no-module-discovery",
+                                          argument_source, "--"])):
+            got = invoke(mode + "-arguments", [*command, *values], 7)
+            assert got.stdout == expected and not got.stderr, (mode, got.stdout, got.stderr)
+    assert set(temporary.iterdir()) == before
     original = bytecode.read_bytes()
     invoke("overlapping-pack-output", [compiler, "vm", "pack", "--vm-path", vm, bytecode, "-o", bytecode], 1,
            "must differ from its inputs")
@@ -114,7 +139,7 @@ def check_vm_lifecycle(compiler: Path, vm: Path, root: Path, out: Path) -> dict:
     assert set(temporary.iterdir()) == before
     assert hashlib.sha256(vm.read_bytes()).hexdigest() == vm_hash
     result = {"name":"selfhost_vm_lifecycle", "ok":True, "commands":sequence,
-              "runner_sha256":vm_hash, "runtime_arguments":"explicitly unsupported"}
+              "runner_sha256":vm_hash, "runtime_arguments":"forwarded"}
     (out / "results.json").write_text(json.dumps(result, indent=2) + "\n")
     print(f"[OK] VM lifecycle: {sequence} commands", flush=True)
     return result

@@ -1,0 +1,24 @@
+Unit Benchmarks.FileAppend;
+
+Get IO.Console;
+Get IO.File;
+Get IO.Time;
+
+Static Function int Main(string[] args)
+{
+    If (args.Length() != 2) Return 2;
+    string path = args[0];
+    int rounds = [int](args[1]);
+    int initialSize = IO.File.Size(path);
+    If (initialSize < 0 || rounds < 1 || rounds > 100000) Return 2;
+
+    int start = IO.Time.GetNanoTick();
+    For (int i = 0; i < rounds; i++)
+    {
+        If (!IO.File.AppendLine(path, "0123456789abcdef")) Return 1;
+    }
+    int elapsed = IO.Time.GetNanoTick() - start;
+    If (IO.File.Size(path) != initialSize + rounds * 17) Return 1;
+    IO.Console.PrintLine(elapsed);
+    Return 0;
+}

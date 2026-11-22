@@ -100,6 +100,7 @@ Trusted Function string ConsoleReadLine()
 
 Trusted Function char* AllocateText(int length)
 {
+    If (length < 0 || [u64](length) >= [u64]([usize](0x7fffffffffffffff))) Return null;
     byte* memory = AllocateRaw([usize](length + 1));
     If (memory == null)
     {
@@ -146,6 +147,10 @@ Trusted Function void InitializeProcessArguments(i32 argc, char** argv)
 
 Trusted Function string[] ArgumentsFromArgv(i32 argc, char** argv)
 {
+    char** normalized = null;
+    If (IO.Target.OS == IO.Target.OS.Windows)
+        normalized = IO.Kinal.Runtime.Native.Utf8ProcessArgv(argc, argv);
+    If (normalized != null) argv = normalized;
     string[] arguments = {};
     int index = 1;
     While (index < [int](argc))
@@ -153,6 +158,7 @@ Trusted Function string[] ArgumentsFromArgv(i32 argc, char** argv)
         arguments = arguments.Add(CopyNativeText(argv[index]));
         index = index + 1;
     }
+    If (normalized != null) IO.Kinal.Runtime.Native.HeapFree([byte*](normalized));
     Return arguments;
 }
 
@@ -209,21 +215,40 @@ Trusted Function string StringConcat(string left, string right)
     {
         Return "";
     }
-    char* leftCharacters = [char*](left);
-    char* rightCharacters = [char*](right);
-    int index = 0;
-    While (index < leftLength)
-    {
-        result[index] = leftCharacters[index];
-        index = index + 1;
-    }
-    index = 0;
-    While (index < rightLength)
-    {
-        result[leftLength + index] = rightCharacters[index];
-        index = index + 1;
-    }
+    If (leftLength > 0)
+        IO.Kinal.Runtime.Native.MemoryCopy([byte*](result), [byte*](left), [u64](leftLength));
+    If (rightLength > 0)
+        IO.Kinal.Runtime.Native.MemoryCopy([byte*](result + leftLength), [byte*](right), [u64](rightLength));
     Return [string](result);
+}
+
+// Native lowering owns the two-word state on the caller's stack. A zero
+// capacity means left may have aliases and must be copied before any write.
+Unsafe Function string StringAppendLocal(string left, string right, int* state)
+{
+    int capacity = state[0];
+    int length = capacity > 0 ? state[1] : StringLength(left);
+    int extra = StringLength(right);
+    int limit = IO.Target.PointerBits == 32 ? 4294967294 : 9223372036854775806;
+    If (extra > limit - length) { state[0] = 0; Return ""; }
+    int needed = length + extra;
+    char* buffer = [char*](left);
+    If (capacity == 0 || needed > capacity)
+    {
+        int next = needed;
+        If (capacity <= limit / 2 && capacity * 2 > next) next = capacity * 2;
+        buffer = AllocateText(next);
+        If (buffer == null && next > needed) { next = needed; buffer = AllocateText(next); }
+        If (buffer == null) { state[0] = 0; Return ""; }
+        If (length > 0)
+            IO.Kinal.Runtime.Native.MemoryCopy([byte*](buffer), [byte*](left), [u64](length));
+        state[0] = next;
+    }
+    If (extra > 0)
+        IO.Kinal.Runtime.Native.MemoryCopy([byte*](buffer + length), [byte*](right), [u64](extra));
+    buffer[needed] = '\0';
+    state[1] = needed;
+    Return [string](buffer);
 }
 
 Trusted Function byte* StringToChars(string text, u64* outLength)

@@ -901,7 +901,7 @@ int kn_codegen(const char *out_path, MetaList *metas, FuncList *funcs, ImportLis
             }
         }
         functable_add(&g.funcs, s);
-        if (kn_strcmp(f->name, g.entry_name) == 0)
+        if (func_matches_entry(f, g.entry_name))
         {
             g.fn_main = s.fn;
             g.fn_main_ty = fn_ty;

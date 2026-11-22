@@ -1,6 +1,6 @@
 # IO.Path — 路径操作
 
-`IO.Path` 提供跨平台的文件路径拼接、分解和检查工具。所有操作均为纯字符串处理，不访问文件系统。
+`IO.Path` 提供跨平台的文件路径拼接、分解和检查工具。大部分辅助函数处理路径文本，CurrentDirectory／Cwd 会查询主机工作目录。文本规范化不会验证路径是否存在。
 
 ## 导入
 
@@ -35,7 +35,7 @@ string deep = IO.Path.Join3("base", "sub", "file.txt");
 |------|------|------|
 | `FileName(path)` | `string → string` | 文件名（含扩展名） |
 | `BaseName(path)` | `string → string` | 文件名（不含扩展名，也称 `Stem`） |
-| `Extension(path)` | `string → string` | 扩展名（含 `.`），如 `".txt"` |
+| `Extension(path)` | `string → string` | 文件名最后一个点后面的文本，如 `"txt"` |
 | `Directory(path)` | `string → string` | 所在目录（也称 `Parent`） |
 
 ```kinal
@@ -43,9 +43,11 @@ string path = "/home/user/docs/report.pdf";
 
 IO.Path.FileName(path);    // "report.pdf"
 IO.Path.BaseName(path);    // "report"
-IO.Path.Extension(path);   // ".pdf"
+IO.Path.Extension(path);   // "pdf"
 IO.Path.Directory(path);   // "/home/user/docs"
 ```
+
+本页的路径操作在 Native 和 KinalVM 中均可使用。可移植字节码遵循 VM 运行平台的路径规则。
 
 ### 变换
 
@@ -121,7 +123,7 @@ Static Function int Main()
 
     // 分解路径信息
     IO.Console.PrintLine(IO.Path.FileName(file));   // result.txt
-    IO.Console.PrintLine(IO.Path.Extension(file));  // .txt
+    IO.Console.PrintLine(IO.Path.Extension(file));  // txt
     IO.Console.PrintLine(IO.Path.Directory(file));  // /home/user/project/output
 
     // 修改扩展名
@@ -138,3 +140,5 @@ Static Function int Main()
 
 - [IO.File](filesystem.md) — 文件读写（使用路径字符串）
 - [IO.System](system.md) — `CommandLine`、`FileExists` 等系统接口
+
+公开别名还包括 Directory 对应的 Parent(path)、BaseName 对应的 Stem(path)、Cwd 对应的 CurrentDirectory()，参数／结果类型与原接口相同。分隔符、Windows 盘符／UNC 和绝对路径规则依据编译目标 IO.Target.OS，不是编译器主机；POSIX 示例展示 POSIX 输出，Windows 规范化可使用反斜杠。CurrentDirectory／Cwd 需要主机服务；大部分源码辅助函数为 Trusted，可由 Safe 调用。Normalize 是词法规范化，不是文件系统或符号链接的真实路径解析。

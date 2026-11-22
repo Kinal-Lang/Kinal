@@ -1,0 +1,8 @@
+Unit IO.Kinal.VM.DesktopMain;
+Get IO.Kinal.VM.Desktop;
+Get IO.Kinal.VM.Cli;
+
+Trusted Static Function int Main(string[] args)
+{
+    Return IO.Kinal.VM.Cli.Run(args);
+}

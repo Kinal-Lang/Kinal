@@ -1,169 +1,72 @@
-# IO.Async — Asynchronous Concurrency
+# IO.Async: Tasks and Child Processes
 
-`IO.Async` provides async primitives such as task spawning, waiting, and status querying, used together with the language-level `Async`/`Await` keywords.
+This is the Native API surface. General Await/Run lowering is not available in the current C KNC backend. Superloop fusion is a separate bytecode optimization.
 
-> **Safety requirement**: Most `IO.Async` functions (`Spawn`, `Wait`, `IsCompleted`, etc.) require a `Trusted` or `Unsafe` safety block. `Run`, `Sleep`, and `Yield` can be used in `Safe` contexts.
+Import `Get IO.Async;`. The namespace contains two distinct APIs: managed language Tasks, and host child-process handles. A process handle is not an IO.Async.Task.
 
-## Import
+## Complete API
 
-```kinal
-Get IO.Async;
-```
+| Function | Result | Safety / meaning |
+|----------|--------|------------------|
+| `Run(IO.Async.Task task)` | `any` | Safe; synchronously obtain a task result |
+| `Sleep(int ms)` | `IO.Async.Task` | Safe; wait task |
+| `Yield()` | `IO.Async.Task` | Safe; cooperative yield task |
+| `Spawn(string command)` | `byte*` | Trusted; start child process |
+| `IsCompleted(byte* handle)` | `bool` | Trusted; poll completion |
+| `Wait(byte* handle, int ms)` | `bool` | Trusted; wait with timeout |
+| `ExitCode(byte* handle)` | `int` | Trusted; inspect process exit status |
+| `Close(byte* handle)` | `bool` | Trusted; release process handle |
 
----
+Trusted APIs can be called from Safe code under the language call rules; raw pointer operations have their own restrictions. Process wrappers commonly use Trusted functions to keep host-resource handling in one place.
 
-## Language-Level Keywords
+## Tasks
 
-Before exploring `IO.Async`, understand the language-level async support:
+An Async function call creates a task. Pass `Compute()` to Run, not `Compute`. Await is only valid inside Async functions; Sleep/Yield return Tasks, not void. See the complete programs in [Async Programming](../language/async.md).
 
-### `Async Function`
+The API does not define `Spawn(Function)`, general thread creation, task cancellation, a task-combinator family or an automatic parallel map. Sequential Await does not prove overlapping execution. A blocking library call remains blocking unless that API defines otherwise.
 
-Declares an asynchronous function that returns a future-like task handle:
+## Process Lifecycle
 
-```kinal
-Async Function string FetchData()
-{
-    Await IO.Async.Sleep(100);
-    Return "result";
-}
-```
-
-### `Await`
-
-Waits for an asynchronous operation to complete and retrieves its result:
+The following Native-host example waits for a small child command, prints its exit code and closes the handle:
 
 ```kinal
-string data = Await FetchData();
-```
-
----
-
-## Function Reference
-
-### Task Management (requires Trusted context)
-
-| Function | Signature | Description |
-|----------|-----------|-------------|
-| `Spawn(fn)` | `Function → any` | Spawn an async task, returns a task handle |
-| `IsCompleted(task)` | `any → bool` | Query whether the task has completed |
-| `Wait(task)` | `any → any` | Block until the task completes and return the result |
-| `ExitCode(task)` | `any → int` | Get the task exit code |
-| `Close(task)` | `any → void` | Release task resources |
-
-```kinal
-Trusted
-{
-    any task = IO.Async.Spawn(MyAsyncFunc);
-
-    While (!IO.Async.IsCompleted(task))
-    {
-        IO.Async.Yield();
-    }
-
-    any result = IO.Async.Wait(task);
-    IO.Async.Close(task);
-}
-```
-
-### Scheduling Primitives (usable in Safe context)
-
-| Function | Signature | Description |
-|----------|-----------|-------------|
-| `Run(fn)` | `Function → void` | Run a task on the current scheduler |
-| `Sleep(ms)` | `int → void` | Async sleep for the specified number of milliseconds |
-| `Yield()` | `→ void` | Yield the CPU to other tasks |
-
-```kinal
-// Async sleep (does not block the main thread)
-Await IO.Async.Sleep(500);
-
-// Run a task
-IO.Async.Run(BackgroundWorker);
-```
-
----
-
-## Usage Patterns
-
-### Pattern 1: Async/Await (Recommended)
-
-The language-level `Async`/`Await` is the most concise way to write async code:
-
-```kinal
-Unit App.AsyncDemo;
-
+Unit Docs.Processes;
 Get IO.Console;
 Get IO.Async;
 
-Async Function string LoadConfig(string path)
+Trusted Function int RunChild(string command)
 {
-    Await IO.Async.Sleep(10);  // Simulate I/O delay
-    Return IO.File.ReadAllText(path);
+    byte* handle = IO.Async.Spawn(command);
+    If (handle == null) { Return -1; }
+    bool completed = IO.Async.Wait(handle, -1);
+    If (!completed)
+    {
+        IO.Async.Close(handle);
+        Return -1;
+    }
+    int code = IO.Async.ExitCode(handle);
+    IO.Async.Close(handle);
+    Return code;
 }
 
-Async Function int Main()
+Static Function int Main()
 {
-    IO.Console.PrintLine("Loading...");
-    string cfg = Await LoadConfig("config.json");
-    IO.Console.PrintLine("Load complete: " + cfg);
+    string command = "sh -c 'exit 7'";
+    If (IO.Target.OS == IO.Target.OS.Windows)
+    {
+        command = "cmd /c exit 7";
+    }
+    IO.Console.PrintLine(RunChild(command)); // 7
     Return 0;
 }
 ```
 
-### Pattern 2: Manual Task Spawning (Trusted)
+`Wait(handle, 0)` polls immediately; a positive value is a millisecond timeout; `-1` waits indefinitely. Query ExitCode after completion. Close releases the handle; it is not documented as a general child-termination API.
 
-Suitable for scenarios requiring finer control:
+Command strings follow the target host's process/shell conventions. This API is not an argv-array interface: do not construct commands by blindly concatenating untrusted input. The example above uses fixed commands and validates completion before reading the result.
 
-```kinal
-Trusted Function void ParallelWork()
-{
-    any t1 = IO.Async.Spawn(WorkA);
-    any t2 = IO.Async.Spawn(WorkB);
+## Runtime and Platform Boundaries
 
-    IO.Async.Wait(t1);
-    IO.Async.Wait(t2);
+Process operations require hosted OS services. The fact that their declarations exist does not provide those services to a freestanding image or every VM build. Runtime/VM support and task superloop options are covered by [Backend Support](../advanced/backend-support.md) and [VM CLI](../cli/vm.md).
 
-    IO.Async.Close(t1);
-    IO.Async.Close(t2);
-
-    IO.Console.PrintLine("Both tasks have completed");
-}
-```
-
-### Pattern 3: Polling Completion Status
-
-```kinal
-Trusted Function void PollTask()
-{
-    any task = IO.Async.Spawn(LongRunningJob);
-
-    While (!IO.Async.IsCompleted(task))
-    {
-        IO.Console.Print(".");
-        IO.Async.Sleep(100);
-        IO.Async.Yield();
-    }
-
-    IO.Console.PrintLine(" Done!");
-    IO.Async.Close(task);
-}
-```
-
----
-
-## Superloop
-
-KinalVM's async scheduler is based on a "superloop" model. By default, `IO.Async.Run` adds tasks to the event loop and automatically advances them.
-
-Compiler options:
-- `--superloop`: Enable superloop mode (default)
-- `--no-superloop`: Disable superloop (for embedded and similar scenarios)
-
----
-
-## See Also
-
-- [Async Programming](../language/async.md) — Async / Await language features in detail
-- [Safety Levels](../language/safety.md) — Trusted / Safe contexts
-- [IO.System](system.md) — Process-level operations such as `Exec`
-- [IO.Time](time.md) — Sleep and timing helpers
+Close external process resources explicitly; Kinal GC does not replace handle ownership. See [Memory and Lifetimes](../advanced/memory-management.md).

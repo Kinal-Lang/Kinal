@@ -414,6 +414,18 @@
     "auto_link": true
   },
   {
+    "name": "stdlib_text_builder",
+    "file": "tests/common/stdlib_text_builder.kn",
+    "expected": "ok\n",
+    "auto_link": true
+  },
+  {
+    "name": "stdlib_time_calendar",
+    "file": "tests/common/stdlib_time_calendar.kn",
+    "expected": "ok\n",
+    "auto_link": true
+  },
+  {
     "name": "stdlib_time_more",
     "file": "tests/common/stdlib_time_more.kn",
     "expected": "true\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\ntrue\n",
@@ -545,6 +557,11 @@
     "name": "collections_more",
     "file": "tests/common/collections_more.kn",
     "expected": "b\n0\n-1\nkinal\nnone\n"
+  },
+  {
+    "name": "collection_loop_storage",
+    "file": "tests/common/collection_loop_storage.kn",
+    "expected": "true\n"
   },
   {
     "name": "stdlib_collections_roundtrip",
@@ -808,6 +825,16 @@
     "expected": "base:derived\n"
   },
   {
+    "name": "property_incdec",
+    "file": "tests/common/property_incdec.kn",
+    "expected": "ok\n"
+  },
+  {
+    "name": "interface_dispatch",
+    "file": "tests/common/knc_interface_dispatch.kn",
+    "expected": "17\n42\n11\n4321\n1234\n3221\ntrue\n15\n"
+  },
+  {
     "name": "implicit_this",
     "file": "tests/common/implicit_this.kn",
     "expected": "5\n15\n6\n"
@@ -1013,12 +1040,30 @@
     "expected": "42\nnest\n"
   },
   {
+    "name": "generic_method_calls",
+    "file": "tests/common/generic_method_calls.kn",
+    "expected": "42\n"
+  },
+  {
     "name": "type_modules",
     "files": [
       "tests/common/type_modules_token.kn",
       "tests/common/type_modules_lexer.kn"
     ],
     "expected": "full\n"
+  },
+  {
+    "name": "unitless_import_scope",
+    "files": [
+      "tests/common/unitless_import_scope_main.kn",
+      "tests/common/unitless_import_scope_boxes.kn"
+    ],
+    "expected": "42\n42\n"
+  },
+  {
+    "name": "unitless_class_members",
+    "file": "tests/common/unitless_class_members.kn",
+    "expected": "ok\n"
   },
   {
     "name": "type_modules_usercase",
@@ -1481,6 +1526,11 @@
     "expect_error": "[Sema] Generic Function"
   },
   {
+    "name": "error_generic_method_body",
+    "file": "tests/common/error_generic_method_body.kn",
+    "expect_error": "[Sema] Missing Return"
+  },
+  {
     "name": "error_meta_unknown_attribute",
     "file": "tests/common/error_meta_unknown_attribute.kn",
     "expect_error": "[Sema] Unknown Attribute"
@@ -1642,6 +1692,12 @@
     "name": "stdlib_cat",
     "file": "tests/common/stdlib_cat.kn",
     "expected": "Rommy listened to \"hello\" and replied: \"Meow~\"\nRommy: \"Purr~\"\nRommy: \"Meow~ MEOW!!!\"\nRommy: \"Meow~ Meow~ Meow~\"\n",
+    "auto_link": true
+  },
+  {
+    "name": "stdlib_math_edges",
+    "file": "tests/common/knc_math_edges.kn",
+    "expected": "ok\n",
     "auto_link": true
   },
   {

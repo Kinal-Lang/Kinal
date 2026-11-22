@@ -8,6 +8,9 @@ Get IO.Kinal.Runtime.Thread;
 // GC startup precedes user initializers and may already have populated them
 // when declaration-ordered global initialization reaches this Unit.
 byte* ManagedBlocks;
+// Most recently returned private array buffers. The collector clears both before marking.
+byte* SpareLocalArray;
+byte* OlderSpareLocalArray;
 byte* GlobalRoots;
 int GlobalRootCount;
 int GlobalRootCapacity;
@@ -89,22 +92,23 @@ Trusted Function void SetBlockNext(byte* block, byte* next)
 
 Trusted Function byte* BlockData(byte* block)
 {
-    Return block == null ? null : [byte*]([usize](([u64*](block))[1]));
+    Return block == null ? null : block + [usize](16);
 }
 
+// Each allocation has a 16-byte prefix: next block, then payload size and mark bit.
 Trusted Function u64 BlockSize(byte* block)
 {
-    Return block == null ? [u64](0) : ([u64*](block))[2];
+    Return block == null ? [u64](0) : (([u64*](block))[1] & [u64](0x7fffffffffffffff));
 }
 
 Trusted Function bool BlockMarked(byte* block)
 {
-    Return block != null && ([u64*](block))[3] != [u64](0);
+    Return block != null && (([u64*](block))[1] >> 63) != [u64](0);
 }
 
 Trusted Function void SetBlockMarked(byte* block, bool marked)
 {
-    ([u64*](block))[3] = marked ? [u64](1) : [u64](0);
+    ([u64*](block))[1] = BlockSize(block) | ([u64](marked) << 63);
 }
 
 Trusted Function byte* Allocate(usize requestedSize)
@@ -115,7 +119,8 @@ Trusted Function byte* Allocate(usize requestedSize)
         SetStackBase([usize](&marker));
     }
     usize size = requestedSize == [usize](0) ? [usize](1) : requestedSize;
-    usize headerSize = MetadataWordBytes() * [usize](4);
+    usize headerSize = [usize](16);
+    If (size > [usize](0x7fffffffffffffff) - headerSize) Return null;
 
     IO.Kinal.Runtime.Native.SpinLock(&CollectorLock);
     byte* block = IO.Kinal.Runtime.Native.HeapAllocate([u64](headerSize + size));
@@ -124,17 +129,57 @@ Trusted Function byte* Allocate(usize requestedSize)
         IO.Kinal.Runtime.Native.SpinUnlock(&CollectorLock);
         Return null;
     }
-    RawZero(block, headerSize + size);
-    byte* memory = [byte*]([usize](block) + headerSize);
+    byte* memory = BlockData(block);
+    RawZero(memory, size);
     u64* words = [u64*](block);
     words[0] = [u64]([usize](ManagedBlocks));
-    words[1] = [u64]([usize](memory));
-    words[2] = [u64](size);
-    words[3] = [u64](0);
+    words[1] = [u64](size);
     ManagedBlocks = block;
     ManagedBytes = ManagedBytes + [u64](size);
     IO.Kinal.Runtime.Native.SpinUnlock(&CollectorLock);
     Return memory;
+}
+
+// The Native backend calls these only for fixed primitive arrays whose descriptor
+// and element addresses remain private. Active invocations keep ordinary GC roots.
+Unsafe Function byte* TakeLocalArray(byte* previous, usize size)
+{
+    // The same declaration can execute more than once in one activation.
+    If (previous != null)
+    {
+        RawZero(previous, size);
+        Return previous;
+    }
+    IO.Kinal.Runtime.Native.SpinLock(&CollectorLock);
+    byte* spare = SpareLocalArray;
+    If (spare != null && BlockSize(spare - 16) == [u64](size))
+    {
+        SpareLocalArray = OlderSpareLocalArray;
+        OlderSpareLocalArray = null;
+    }
+    Else
+    {
+        spare = OlderSpareLocalArray;
+        If (spare != null && BlockSize(spare - 16) == [u64](size)) OlderSpareLocalArray = null;
+        Else spare = null;
+    }
+    If (spare != null)
+    {
+        RawZero(spare, size);
+        IO.Kinal.Runtime.Native.SpinUnlock(&CollectorLock);
+        Return spare;
+    }
+    IO.Kinal.Runtime.Native.SpinUnlock(&CollectorLock);
+    Return Allocate(size);
+}
+
+Unsafe Function void ReturnLocalArray(byte* data)
+{
+    If (data == null) Return;
+    IO.Kinal.Runtime.Native.SpinLock(&CollectorLock);
+    OlderSpareLocalArray = SpareLocalArray;
+    SpareLocalArray = data;
+    IO.Kinal.Runtime.Native.SpinUnlock(&CollectorLock);
 }
 
 // Collection is requested only at compiler-inserted statement boundaries.
@@ -150,14 +195,47 @@ Trusted Function void MaybeCollect()
     }
 }
 
+// Frame words: parent, count, capacity, roots, borrowed roots, owns frame.
+// Generated functions supply stack storage; explicit runtime callers may
+// still use heap frames. Root-table growth preserves either storage owner.
+Trusted Function byte* PushFrameWithCount(byte* frame, byte* roots, usize capacity, usize count)
+{
+    If (frame == null) Return null;
+    u64* words = [u64*](frame);
+    words[0] = [u64]([usize](CurrentFrame()));
+    words[1] = [u64](count);
+    words[2] = [u64](capacity);
+    words[3] = [u64]([usize](roots));
+    words[4] = [u64]([usize](roots));
+    words[5] = [u64](0);
+    SetCurrentFrame(frame);
+    Return frame;
+}
+
+Trusted Function byte* PushFrameStorage(byte* frame, byte* roots, usize capacity)
+{
+    Return PushFrameWithCount(frame, roots, capacity, [usize](0));
+}
+
+Trusted Function byte* PushPlannedFrame(byte* frame, byte* roots, usize count)
+{
+    Return PushFrameWithCount(frame, roots, count, count);
+}
+
+Trusted Function void SetFrameRoot(byte* table, byte* address, usize size, usize index)
+{
+    u64* roots = [u64*](table);
+    roots[index * [usize](2)] = [u64]([usize](address));
+    roots[index * [usize](2) + [usize](1)] = [u64](size);
+}
+
 Trusted Function byte* PushFrame()
 {
     byte* frame = IO.Kinal.Runtime.Native.HeapAllocate(
-        [u64](MetadataWordBytes() * [usize](4)));
+        [u64](MetadataWordBytes() * [usize](6)));
     If (frame == null) Return null;
-    RawZero(frame, MetadataWordBytes() * [usize](4));
-    ([u64*](frame))[0] = [u64]([usize](CurrentFrame()));
-    SetCurrentFrame(frame);
+    PushFrameStorage(frame, null, [usize](0));
+    ([u64*](frame))[5] = [u64](1);
     Return frame;
 }
 
@@ -178,14 +256,13 @@ Trusted Function void AddRoot(byte* frame, byte* address, usize size)
         {
             RawCopy(roots, [byte*]([usize](words[3])),
                 [usize](count) * MetadataWordBytes() * [usize](2));
-            IO.Kinal.Runtime.Native.HeapFree([byte*]([usize](words[3])));
+            If (words[3] != words[4])
+                IO.Kinal.Runtime.Native.HeapFree([byte*]([usize](words[3])));
         }
         words[2] = [u64](nextCapacity);
         words[3] = [u64]([usize](roots));
     }
-    u64* roots = [u64*]([usize](words[3]));
-    roots[count * 2] = [u64]([usize](address));
-    roots[count * 2 + 1] = [u64](size);
+    SetFrameRoot([byte*]([usize](words[3])), address, size, [usize](count));
     words[1] = [u64](count + 1);
 }
 
@@ -225,9 +302,9 @@ Trusted Function void PopFrame(byte* frame)
     If (frame == null) Return;
     u64* words = [u64*](frame);
     SetCurrentFrame([byte*]([usize](words[0])));
-    If (words[3] != [u64](0))
+    If (words[3] != [u64](0) && words[3] != words[4])
         IO.Kinal.Runtime.Native.HeapFree([byte*]([usize](words[3])));
-    IO.Kinal.Runtime.Native.HeapFree(frame);
+    If (words[5] != [u64](0)) IO.Kinal.Runtime.Native.HeapFree(frame);
 }
 
 Trusted Function void IndexSiftDown(u64* items, int count, int root)
@@ -275,6 +352,55 @@ Trusted Function void IndexSort(u64* items, int count)
     }
 }
 
+// Sort addresses for conservative interior-pointer lookup. The mark stack is empty
+// until the index is ready, so it can hold one radix pass without growing the heap.
+Trusted Function void SortBlockIndex(u64* items, int count, u64* scratch)
+{
+    If (count < 1024) { IndexSort(items, count); Return; }
+    u64* offsets = [u64*](IO.Kinal.Runtime.Native.HeapAllocate([u64](2048)));
+    If (offsets == null) { IndexSort(items, count); Return; }
+    u64 first = items[0];
+    u64 varying = [u64](0);
+    For (int pos = 1; pos < count; pos++) varying = varying | (items[pos] ^ first);
+
+    u64* source = items;
+    u64* output = scratch;
+    int shift = 0;
+    While (varying != [u64](0))
+    {
+        If ((varying & [u64](255)) != [u64](0))
+        {
+            RawZero([byte*](offsets), [usize](2048));
+            For (int sample = 0; sample < count; sample++)
+            {
+                int bucket = [int]((source[sample] >> shift) & [u64](255));
+                offsets[bucket] = offsets[bucket] + [u64](1);
+            }
+            u64 position = [u64](0);
+            For (int bucket = 0; bucket < 256; bucket++)
+            {
+                u64 frequency = offsets[bucket];
+                offsets[bucket] = position;
+                position = position + frequency;
+            }
+            For (int entry = 0; entry < count; entry++)
+            {
+                u64 value = source[entry];
+                int bucket = [int]((value >> shift) & [u64](255));
+                output[[int](offsets[bucket])] = value;
+                offsets[bucket] = offsets[bucket] + [u64](1);
+            }
+            u64* swap = source;
+            source = output;
+            output = swap;
+        }
+        varying = varying >> 8;
+        shift = shift + 8;
+    }
+    If (source != items) RawCopy([byte*](items), [byte*](source), [usize](count) * MetadataWordBytes());
+    IO.Kinal.Runtime.Native.HeapFree([byte*](offsets));
+}
+
 Trusted Function byte* FindBlock(byte* pointer, u64* index, int count)
 {
     If (pointer == null || index == null || count <= 0) Return null;
@@ -313,16 +439,24 @@ Trusted Function int ScanRegion(byte* address, usize size,
                                 u64* index, int indexCount,
                                 u64* stack, int stackPointer, int capacity)
 {
-    If (address == null || size < PointerBytes()) Return stackPointer;
+    usize width = PointerBytes();
+    If (address == null || size < width || index == null || indexCount <= 0) Return stackPointer;
+    byte* first = [byte*]([usize](index[0]));
+    byte* last = [byte*]([usize](index[indexCount - 1]));
+    usize minimum = [usize](BlockData(first));
+    usize span = [usize](BlockData(last)) - minimum + [usize](BlockSize(last));
     usize offset = [usize](0);
-    While (offset + PointerBytes() <= size)
+    While (offset + width <= size)
     {
         // usize has i64 language storage even on x86. Scan actual pointer
         // slots so a 32-bit root is neither read past its end nor skipped.
-        byte* value = ([byte**](address))[offset / PointerBytes()];
-        stackPointer = MarkPointer(value, index, indexCount,
-            stack, stackPointer, capacity);
-        offset = offset + PointerBytes();
+        byte* value = ([byte**](address))[offset / width];
+        // Unsigned subtraction excludes words below the first block too.
+        // Interior pointers still go through the exact block lookup.
+        If ([usize](value) - minimum < span)
+            stackPointer = MarkPointer(value, index, indexCount,
+                stack, stackPointer, capacity);
+        offset = offset + width;
     }
     Return stackPointer;
 }
@@ -355,6 +489,8 @@ Trusted Function void Collect()
         Return;
     }
     Collecting = true;
+    SpareLocalArray = null;
+    OlderSpareLocalArray = null;
 
     int blockCount = 0;
     byte* block = ManagedBlocks;
@@ -391,7 +527,7 @@ Trusted Function void Collect()
         SetBlockMarked(block, false);
         block = BlockNext(block);
     }
-    IndexSort(index, indexCount);
+    SortBlockIndex(index, indexCount, stack);
 
     int stackPointer = ScanNativeStack(index, indexCount, stack, 0, blockCount);
     byte* frame = CurrentFrame();

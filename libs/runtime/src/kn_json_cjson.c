@@ -17,10 +17,17 @@
 
 typedef struct
 {
+    cJSON *value;
+    int first_child;
+    int child_count;
+} KnJsonNode;
+
+typedef struct
+{
     cJSON *root;
-    cJSON **nodes;
+    KnJsonNode *nodes;
+    int *children;
     int count;
-    int capacity;
 } KnJsonDocument;
 
 static KN_JSON_TLS char g_kn_json_error[512];
@@ -60,57 +67,49 @@ static char *kn_json_strdup_gc(const char *text)
     return copy;
 }
 
-static int kn_json_doc_add_node(KnJsonDocument *doc, cJSON *node)
+static int kn_json_count_nodes(const cJSON *node, int *count)
 {
-    cJSON **next_nodes;
-    int next_capacity;
-    if (!doc || !node)
-        return -1;
-    if (doc->count >= doc->capacity)
-    {
-        next_capacity = doc->capacity ? doc->capacity * 2 : 32;
-        next_nodes = (cJSON **)realloc(doc->nodes, sizeof(cJSON *) * (size_t)next_capacity);
-        if (!next_nodes)
-            return -1;
-        doc->nodes = next_nodes;
-        doc->capacity = next_capacity;
-    }
-    doc->nodes[doc->count] = node;
-    doc->count++;
-    return doc->count - 1;
-}
-
-static int kn_json_doc_index_tree(KnJsonDocument *doc, cJSON *node)
-{
-    cJSON *child;
-    if (kn_json_doc_add_node(doc, node) < 0)
+    const cJSON *child;
+    if (*count == INT_MAX)
         return 0;
-    child = node ? node->child : 0;
-    while (child)
-    {
-        if (!kn_json_doc_index_tree(doc, child))
+    ++*count;
+    for (child = node->child; child; child = child->next)
+        if (!kn_json_count_nodes(child, count))
             return 0;
-        child = child->next;
-    }
     return 1;
 }
 
-static int kn_json_doc_find_id(KnJsonDocument *doc, cJSON *node)
+/* IDs retain preorder numbering. Each container owns a contiguous range in
+   children, so accessing its i-th child never walks siblings or scans IDs. */
+static int kn_json_index_node(KnJsonDocument *doc, cJSON *node, int *next_child)
 {
-    int index;
-    if (!doc || !node)
-        return -1;
-    for (index = 0; index < doc->count; index++)
-        if (doc->nodes[index] == node)
-            return index;
-    return -1;
+    int id = doc->count++;
+    KnJsonNode *entry = &doc->nodes[id];
+    int slot = *next_child;
+    cJSON *child;
+    entry->value = node;
+    entry->first_child = slot;
+    for (child = node->child; child; child = child->next)
+        ++*next_child;
+    entry->child_count = *next_child - slot;
+    for (child = node->child; child; child = child->next)
+        doc->children[slot++] = kn_json_index_node(doc, child, next_child);
+    return id;
 }
 
 static cJSON *kn_json_doc_get(KnJsonDocument *doc, int node_id)
 {
     if (!doc || node_id < 0 || node_id >= doc->count)
         return 0;
-    return doc->nodes[node_id];
+    return doc->nodes[node_id].value;
+}
+
+static int kn_json_child_id(KnJsonDocument *doc, int parent, int index)
+{
+    if (!doc || parent < 0 || parent >= doc->count ||
+        index < 0 || index >= doc->nodes[parent].child_count)
+        return -1;
+    return doc->children[doc->nodes[parent].first_child + index];
 }
 
 static void kn_json_format_parse_error(const char *input, const char *error_ptr)
@@ -141,6 +140,8 @@ void *__kn_json_doc_parse(const char *text)
     const char *error_ptr = 0;
     cJSON *root;
     KnJsonDocument *doc;
+    int count = 0;
+    int next_child = 0;
 
     kn_json_clear_error();
     if (!text)
@@ -165,14 +166,22 @@ void *__kn_json_doc_parse(const char *text)
     }
 
     doc->root = root;
-    if (!kn_json_doc_index_tree(doc, root))
+    if (kn_json_count_nodes(root, &count) && (size_t)count <= SIZE_MAX / sizeof(*doc->nodes))
+    {
+        doc->nodes = (KnJsonNode *)malloc((size_t)count * sizeof(*doc->nodes));
+        if (count > 1)
+            doc->children = (int *)malloc((size_t)(count - 1) * sizeof(*doc->children));
+    }
+    if (!doc->nodes || (count > 1 && !doc->children))
     {
         cJSON_Delete(root);
         free(doc->nodes);
+        free(doc->children);
         free(doc);
         kn_json_set_error("Out of memory while indexing JSON document");
         return 0;
     }
+    kn_json_index_node(doc, root, &next_child);
     return doc;
 }
 
@@ -183,6 +192,7 @@ void __kn_json_doc_free(void *handle)
         return;
     cJSON_Delete(doc->root);
     free(doc->nodes);
+    free(doc->children);
     free(doc);
 }
 
@@ -268,7 +278,7 @@ int __kn_json_object_count(void *handle, int node_id)
     cJSON *node = kn_json_doc_get(doc, node_id);
     if (!node || !cJSON_IsObject(node))
         return 0;
-    return cJSON_GetArraySize(node);
+    return doc->nodes[node_id].child_count;
 }
 
 const char *__kn_json_object_key_at(void *handle, int node_id, int index)
@@ -278,7 +288,7 @@ const char *__kn_json_object_key_at(void *handle, int node_id, int index)
     cJSON *child;
     if (!node || !cJSON_IsObject(node) || index < 0)
         return "";
-    child = cJSON_GetArrayItem(node, index);
+    child = kn_json_doc_get(doc, kn_json_child_id(doc, node_id, index));
     if (!child || !child->string)
         return "";
     return kn_json_strdup_gc(child->string);
@@ -288,13 +298,9 @@ int __kn_json_object_value_at(void *handle, int node_id, int index)
 {
     KnJsonDocument *doc = (KnJsonDocument *)handle;
     cJSON *node = kn_json_doc_get(doc, node_id);
-    cJSON *child;
     if (!node || !cJSON_IsObject(node) || index < 0)
         return -1;
-    child = cJSON_GetArrayItem(node, index);
-    if (!child)
-        return -1;
-    return kn_json_doc_find_id(doc, child);
+    return kn_json_child_id(doc, node_id, index);
 }
 
 int __kn_json_array_count(void *handle, int node_id)
@@ -303,20 +309,16 @@ int __kn_json_array_count(void *handle, int node_id)
     cJSON *node = kn_json_doc_get(doc, node_id);
     if (!node || !cJSON_IsArray(node))
         return 0;
-    return cJSON_GetArraySize(node);
+    return doc->nodes[node_id].child_count;
 }
 
 int __kn_json_array_item_at(void *handle, int node_id, int index)
 {
     KnJsonDocument *doc = (KnJsonDocument *)handle;
     cJSON *node = kn_json_doc_get(doc, node_id);
-    cJSON *child;
     if (!node || !cJSON_IsArray(node) || index < 0)
         return -1;
-    child = cJSON_GetArrayItem(node, index);
-    if (!child)
-        return -1;
-    return kn_json_doc_find_id(doc, child);
+    return kn_json_child_id(doc, node_id, index);
 }
 
 const char *__kn_json_format_text(const char *text, int pretty)
@@ -365,6 +367,7 @@ const char *__kn_json_format_text(const char *text, int pretty)
 const char *__kn_json_format_number(double value)
 {
     char buffer[64];
+    cJSON number = {0};
 
     if (isnan(value) || isinf(value))
     {
@@ -372,8 +375,12 @@ const char *__kn_json_format_number(double value)
         return 0;
     }
 
-    buffer[0] = 0;
-    snprintf(buffer, sizeof(buffer), "%.17g", value);
-    buffer[sizeof(buffer) - 1] = 0;
+    number.type = cJSON_Number;
+    cJSON_SetNumberValue(&number, value);
+    if (!cJSON_PrintPreallocated(&number, buffer, sizeof(buffer), 0))
+    {
+        kn_json_set_error("Failed to format JSON number");
+        return 0;
+    }
     return kn_json_strdup_gc(buffer);
 }

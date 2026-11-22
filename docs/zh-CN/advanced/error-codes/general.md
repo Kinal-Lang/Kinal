@@ -2,7 +2,7 @@
 
 构造函数、常量、数组长度、泛型分发等通用规则。
 
-本文中的示例都是最小复现片段，用来说明该错误码最常见的触发方式；少数更偏内部的诊断会使用最接近用户代码的表面写法来说明。
+本页记录预注册模板。正确示例展示支持的写法；触发形态用于说明规则或解析状态，可能依赖外围声明，或在当前 C 编译器中先报告其他诊断。
 
 ---
 
@@ -17,8 +17,8 @@
 | `E-GEN-00005` | Const Assignment | Cannot modify const variable |
 | `E-GEN-00006` | Const Requires Init | Const variable must have initializer |
 | `E-GEN-00007` | Constructor | Constructor not found |
-| `E-GEN-00008` | Conversion Syntax Changed | Type conversion now use [type](value) syntax instead of type(value). For example: [int]("123") instead of int("123") |
-| `E-GEN-00009` | Conversion Syntax Changed | Type conversion now use [type](value) syntax instead of type(value).  |
+| `E-GEN-00008` | Conversion Syntax Changed | Type conversion now use `[type](value)` syntax instead of `type(value)`. For example: `[int]("123")` instead of `int("123")` |
+| `E-GEN-00009` | Conversion Syntax Changed | Type conversion now use `[type](value)` syntax instead of `type(value)`.  |
 | `E-GEN-00010` | Generic Arity | Wrong number of generic type arguments |
 | `E-GEN-00011` | Generic Function | Failed to resolve instantiated generic function |
 | `E-GEN-00012` | Generic Function | Generic call requires explicit type arguments |
@@ -239,7 +239,7 @@ Counter c = New Counter(1);
 ## E-GEN-00008 — Conversion Syntax Changed
 
 - 级别：错误
-- 默认详情：Type conversion now use [type](value) syntax instead of type(value). For example: [int]("123") instead of int("123")
+- 默认详情：Type conversion now use `[type](value)` syntax instead of `type(value)`. For example: `[int]("123")` instead of `int("123")`
 - 说明：旧式 `type(value)` 转换语法已经废弃。
 
 错误示例：
@@ -263,10 +263,10 @@ int value = [int]("123");
 ## E-GEN-00009 — Conversion Syntax Changed
 
 - 级别：错误
-- 默认详情：Type conversion now use [type](value) syntax instead of type(value). 
+- 默认详情：Type conversion now use `[type](value)` syntax instead of `type(value)`.
 - 说明：另一条兼容诊断，含义与旧转换语法变更相同。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
 float value = float("1.5");
@@ -324,7 +324,7 @@ int value = Identity<int>(1);
 - 默认详情：Failed to resolve instantiated generic function
 - 说明：显式实例化后的泛型函数没有成功解析出可调用目标。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
 Function T Identity<T>(T value)
@@ -358,7 +358,7 @@ int value = Identity<int>(1);
 - 默认详情：Generic call requires explicit type arguments
 - 说明：某些泛型调用无法完全依靠实参推导，必须显式给出类型参数。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
 Function T Identity<T>(T value)
@@ -393,7 +393,7 @@ int value = Identity<int>(1);
 - 默认详情：Generic function reference requires explicit type arguments
 - 说明：获取泛型函数引用时，也需要先显式实例化它。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
 Function T Identity<T>(T value)
@@ -412,7 +412,10 @@ Function T Identity<T>(T value)
     Return value;
 }
 
-IO.Type.Object.Function fn = Identity<int>;
+IO.Type.Object.Function fn = Function int(int value)
+{
+    Return Identity<int>(value);
+};
 ```
 
 原因：函数对象必须指向一个已经确定参数和返回类型的具体实例，而不是抽象的泛型模板。
@@ -515,7 +518,7 @@ Class Counter By IValue
 - 默认详情：Imported symbol must be called with module or alias qualifier
 - 说明：通过模块或别名导入的符号必须带限定名调用。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
 Unit App.Main;
@@ -531,13 +534,12 @@ Static Function int Main(string[] args)
 正确示例：
 
 ```kinal
-Unit App.Main;
+Get Console By IO.Console;
 
-Get U By App.Util;
-
-Static Function int Main(string[] args)
+Static Function int Main()
 {
-    Return U.Add(40, 2);
+    Console.PrintLine("qualified call");
+    Return 0;
 }
 ```
 
@@ -553,7 +555,7 @@ Static Function int Main(string[] args)
 - 默认详情：Generic methods are not supported
 - 说明：当前编译器不支持泛型方法。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
 Class Box
@@ -586,7 +588,7 @@ Function T Map<T>(T value)
 - 默认详情：Generic local named functions are not supported yet
 - 说明：局部命名函数当前不支持泛型。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
 Static Function int Main()

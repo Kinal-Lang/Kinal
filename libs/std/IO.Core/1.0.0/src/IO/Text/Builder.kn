@@ -1,0 +1,111 @@
+Unit IO.Text;
+
+Get IO.Error;
+Get IO.Target;
+Get IO.Runtime;
+Get IO.Kinal.Runtime;
+
+Public Class Builder
+{
+    Private byte* _Buffer;
+    Private int _Length;
+    Private int _Capacity;
+
+    Public Property int Length
+    {
+        Get { If (IO.Runtime.IsVM) Return __BuilderLength(This); Else Return _Length; }
+    }
+
+    Public Property int Capacity
+    {
+        Get { If (IO.Runtime.IsVM) Return __BuilderCapacity(This); Else Return _Capacity; }
+    }
+
+    Public Trusted Function void EnsureCapacity(int minimumBytes)
+    {
+        If (minimumBytes < 0) Throw New IO.Error("IO.Text.Builder", "Capacity cannot be negative");
+        If (IO.Runtime.IsVM) __BuilderReserve(This, minimumBytes);
+        Else If (minimumBytes > _Capacity) Grow(minimumBytes - _Length);
+    }
+
+    Private Trusted Function void Grow(int extra)
+    {
+        int limit = IO.Target.PointerBits == 32 ? 2147483646 : 9223372036854775806;
+        If (extra > limit - _Length) Throw New IO.Error("IO.Text.Builder", "Text is too long");
+        int capacity = _Length + extra;
+        If (_Capacity <= limit / 2 && _Capacity * 2 > capacity) capacity = _Capacity * 2;
+        If (capacity < 64) capacity = 64;
+        byte* next = IO.Kinal.Runtime.AllocateRaw([usize](capacity));
+        If (next == null) Throw New IO.Error("IO.Text.Builder", "Unable to allocate text buffer");
+        If (_Length > 0) IO.Kinal.Runtime.MemoryCopy(next, _Buffer, [usize](_Length));
+        _Buffer = next;
+        _Capacity = capacity;
+    }
+
+    Public Trusted Function void Append(string value, int maxBytes = -1)
+    {
+        If (IO.Runtime.IsVM) __BuilderAppend(This, value, maxBytes);
+        Else
+        {
+            byte* source = [byte*](value);
+            If (source == null) Return;
+            int count = 0;
+            If (maxBytes < 0) count = IO.Text.Length(value);
+            Else While (count < maxBytes && source[count] != 0) count++;
+            If (count == 0) Return;
+            If (count > _Capacity - _Length) Grow(count);
+            IO.Kinal.Runtime.MemoryCopy(_Buffer + _Length, source, [usize](count));
+            _Length += count;
+        }
+    }
+
+    Public Trusted Function void AppendChar(char value)
+    {
+        If (IO.Runtime.IsVM) __BuilderAppendChar(This, value);
+        Else
+        {
+            If (value == '\0') Throw New IO.Error("IO.Text.Builder", "Text cannot contain a NUL byte");
+            If (_Length == _Capacity) Grow(1);
+            _Buffer[_Length] = [byte](value);
+            _Length++;
+        }
+    }
+
+    Public Function void Clear()
+    {
+        If (IO.Runtime.IsVM) __BuilderClear(This);
+        Else
+        {
+            _Length = 0;
+        }
+    }
+
+    Public Trusted Function string Build()
+    {
+        If (IO.Runtime.IsVM) Return __BuilderBuild(This);
+        Else
+        {
+            If (_Length == 0) Return "";
+            char* result = IO.Kinal.Runtime.AllocateText(_Length);
+            If (result == null) Throw New IO.Error("IO.Text.Builder", "Unable to allocate text result");
+            IO.Kinal.Runtime.MemoryCopy([byte*](result), _Buffer, [usize](_Length));
+            Return [string](result);
+        }
+    }
+}
+
+// KNC bridges the guest receiver to its managed host builder.
+[IO.Kinal.Runtime.KncIntrinsic(287)]
+Trusted Function int __BuilderLength(Builder builder) { Return builder.Length; }
+[IO.Kinal.Runtime.KncIntrinsic(288)]
+Trusted Function int __BuilderCapacity(Builder builder) { Return builder.Capacity; }
+[IO.Kinal.Runtime.KncIntrinsic(289)]
+Trusted Function void __BuilderReserve(Builder builder, int minimumBytes) { builder.EnsureCapacity(minimumBytes); }
+[IO.Kinal.Runtime.KncIntrinsic(290)]
+Trusted Function void __BuilderAppend(Builder builder, string value, int maxBytes) { builder.Append(value, maxBytes); }
+[IO.Kinal.Runtime.KncIntrinsic(291)]
+Trusted Function void __BuilderAppendChar(Builder builder, char value) { builder.AppendChar(value); }
+[IO.Kinal.Runtime.KncIntrinsic(292)]
+Trusted Function void __BuilderClear(Builder builder) { builder.Clear(); }
+[IO.Kinal.Runtime.KncIntrinsic(293)]
+Trusted Function string __BuilderBuild(Builder builder) { Return builder.Build(); }

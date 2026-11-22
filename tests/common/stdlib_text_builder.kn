@@ -1,0 +1,60 @@
+Unit Tests.TextBuilder;
+
+Get IO.Console;
+Get IO.Text;
+Get IO.GC;
+Get IO.Error;
+
+Class TaggedBuilder By IO.Text.Builder
+{
+    Public int Tag;
+}
+
+Function void AppendPart(IO.Text.Builder output) { output.Append("abcdef", 3); }
+
+Static Function int Main()
+{
+    TaggedBuilder tagged = New TaggedBuilder();
+    tagged.Tag = 19;
+    IO.Text.Builder buffer = tagged;
+    IO.Text.Builder other = New IO.Text.Builder();
+    If (buffer.Length != 0 || buffer.Capacity != 0 || buffer.Build() != "") Return 1;
+    buffer.EnsureCapacity(67);
+    int reserved = buffer.Capacity;
+    If (reserved < 67 || buffer.Length != 0) Return 2;
+    buffer.Append(null);
+    buffer.Append("ignored", 0);
+    buffer.Append("雪尾", 1);
+    buffer.AppendChar([char](155));
+    buffer.AppendChar([char](170));
+    AppendPart(buffer);
+    buffer.Append("!", -2);
+    buffer.EnsureCapacity(12);
+    string first = buffer.Build();
+    If (buffer.Length != 7 || buffer.Capacity != reserved || first != "雪abc!") Return 3;
+    other.Append("独立");
+    buffer.Clear();
+    If (buffer.Length != 0 || buffer.Capacity != reserved || buffer.Build() != "") Return 4;
+    For (int i = 0; i < 260; i++) buffer.AppendChar('x');
+    IO.GC.Collect();
+    If (buffer.Length != 260 || buffer.Capacity < 260 || other.Build() != "独立" || tagged.Tag != 19) Return 5;
+    string second = buffer.Build();
+    buffer.Clear();
+    buffer.Append("final");
+    If (buffer.Build() != "final" || first != "雪abc!" || IO.Text.Length(second) != 260 ||
+        IO.Text.Count(second, "x") != 260) Return 6;
+    bool rejected = false;
+    Try { buffer.AppendChar('\0'); }
+    Catch (IO.Error error) { rejected = error.Title == "IO.Text.Builder"; }
+    If (!rejected || buffer.Build() != "final") Return 7;
+    rejected = false;
+    Try { buffer.EnsureCapacity(-9); }
+    Catch (IO.Error error) { rejected = error.Title == "IO.Text.Builder"; }
+    If (!rejected || buffer.Length != 5) Return 8;
+    rejected = false;
+    Try { buffer.EnsureCapacity(9223372036854775807); }
+    Catch (IO.Error error) { rejected = error.Title == "IO.Text.Builder"; }
+    If (!rejected || buffer.Build() != "final") Return 9;
+    IO.Console.PrintLine("ok");
+    Return 0;
+}

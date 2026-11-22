@@ -1,187 +1,100 @@
 # Safety Levels
 
-Kinal has a built-in three-tier safety model that explicitly layers memory operations and dangerous function calls. This is one of Kinal's key design differences from many other languages — you always know whether a piece of code involves potentially dangerous operations.
+Safety annotations control which operations and calls the compiler permits. They are a language boundary, not a proof that foreign code, raw addresses, resource ownership or every runtime behavior is correct.
 
-## The Three Levels
+## Call Rules and Defaults
 
-| Level | Keyword | Description |
-|-------|---------|-------------|
-| Safe | `Safe` | Can only call functions marked with `Safe`; pointer operations are strictly forbidden |
-| Trusted | `Trusted` | Can call both `Safe` and `Unsafe` functions; does not directly manipulate raw pointers |
-| Unsafe | `Unsafe` | Can perform all operations, including raw pointers and direct memory operations |
+| Caller | Safe callee | Trusted callee | Unsafe callee | Checked raw pointer operations |
+|--------|-------------|----------------|---------------|--------------------------------|
+| `Safe` | Allowed | Allowed | Rejected | Rejected |
+| `Trusted` | Allowed | Allowed | Allowed | Allowed |
+| `Unsafe` | Allowed | Allowed | Allowed | Allowed |
 
-When no safety level is specified, the default is unrestricted (equivalent to an uncontrolled environment).
+An ordinary unannotated function defaults to **Safe**, not unrestricted execution. Extern declarations default to Unsafe when no explicit stronger boundary is provided by the supported declaration rules. Calls through delegates and callable wrappers also need the appropriate safety context.
 
-## Safe
+`Trusted` deliberately exposes a callable interface to Safe callers while allowing its implementation to perform unsafe work. The author is responsible for validating inputs and maintaining that interface's contract. The current C compiler does not prohibit pointer manipulation merely because the body is Trusted.
 
-A `Safe` function guarantees it will not produce undefined behavior:
-
-```kinal
-Public Safe Function int Add(int a, int b)
-{
-    Return a + b;
-}
-
-Safe Function string BuildGreeting(string name)
-{
-    Return "Hello, " + name + "!";
-}
-```
-
-Inside a Safe function:
-- You cannot call `Trusted` or `Unsafe` functions
-- You cannot use raw pointers (`byte*`, `int*`, etc.)
-- You cannot use `Extern` FFI functions (unless the function is also annotated as `Safe`)
-
-## Trusted
-
-`Trusted` is the bridge between Safe and Unsafe:
+## Safe Code
 
 ```kinal
-Trusted Function int ReadTick()
+Unit Docs.SafeArithmetic;
+Get IO.Console;
+
+Safe Function int Add(int left, int right)
 {
-    Return __kn_time_tick();  // calling an external C function
+    Return left + right;
+}
+
+Static Safe Function int Main()
+{
+    IO.Console.PrintLine(Add(3, 4));
+    Return 0;
 }
 ```
 
-A Trusted function:
-- Can call `Unsafe` functions and `Extern` functions
-- Does not directly manipulate raw pointers itself
-- Can be called from `Safe` functions (hiding the dangerous details from the caller)
+Safe functions may use ordinary language values, managed allocation, control flow and permitted library calls. They cannot directly call an Unsafe function or perform the protected raw pointer dereference/arithmetic and pointer/integer conversion operations. A name such as `ReadAllText` does not determine safety: use the actual API declaration.
 
-Typical use: wrapping low-level C APIs for use by the safe layer.
+## Trusted FFI Bridge
 
-## Unsafe
-
-An `Unsafe` function can perform all operations:
+This is a Native example; arbitrary C calls are not a portable KNC feature:
 
 ```kinal
-Unsafe Function void Copy(byte* dst, byte* src, usize len)
+Unit Docs.TrustedBridge;
+Get IO.Console;
+
+Extern Unsafe Function int abs(int value) By C;
+
+Trusted Function int Absolute(int value)
 {
-    For (usize i = 0; i < len; i++)
-    {
-        dst[i] = src[i];
-    }
+    Return abs(value);
 }
 
-Unsafe Function byte* Allocate(usize size)
+Static Safe Function int Main()
 {
-    Return [byte*](IO.System.Malloc(size));
+    IO.Console.PrintLine(Absolute(-7)); // 7
+    Return 0;
 }
 ```
 
-Unsafe can:
-- Operate on raw pointers (read, write, arithmetic)
-- Call `Extern` C functions
-- Perform type pointer casts
+The Safe caller trusts `Absolute`'s contract. Passing an invalid foreign pointer, using the wrong ABI width or unloading a library too early is not repaired by marking a wrapper Trusted. See [FFI](ffi.md).
 
-## Safety Levels in Blocks
+## Raw Pointer Implementations
 
-`Block` literals also support safety annotations:
+Trusted and Unsafe implementations can perform raw memory operations. The choice communicates whether callers are meant to rely on an audited safe interface or must opt into an unsafe call boundary.
 
 ```kinal
-Unsafe Block UnsafeRegion </
-    byte* ptr = null;  // pointer operations are allowed
-/>
+Unsafe Function byte ReadByte(byte* address)
+{
+    Return address[0];
+}
 ```
 
-## Safety Level Propagation Rules
+The caller must supply a valid accessible address. Pointer syntax alone carries no allocation size, lifetime or ownership proof. `IO.Memory` provides Trusted byte-copy/fill/compare helpers with similarly explicit buffer obligations; see [Memory and Lifetimes](../advanced/memory-management.md).
 
-A function's safety level determines what it can call:
+## Blocks and Entry Points
 
-```
-Safe    → can only call Safe
-Trusted → can call Safe + Unsafe + Extern
-Unsafe  → can call anything
-```
-
-This rule is enforced **at compile time**; violations produce compile errors.
-
-## Why Safety Levels?
-
-### The Problem Without Layers
-
-If all code defaults to Unsafe, developers have a hard time distinguishing which code involves memory hazards.
-
-### Kinal's Approach
-
-- **Everyday code** is written in `Safe` functions; the compiler guarantees safety
-- **Low-level adapter code** is written in `Trusted` functions, wrapping C calls
-- **Extreme low-level code** is written in `Unsafe` functions, with explicit risk labeling
+Block literals can carry safety annotations:
 
 ```kinal
-// Safe layer: business logic
-Safe Function void ProcessFile(string path)
-{
-    string content = IO.File.ReadAllText(path);  // IO.File functions are Safe
-    // process content...
-}
-
-// Trusted layer: FFI wrapper
-Extern Function void* fopen(string path, string mode) By C;
-
-Trusted Function byte* OpenFileRaw(string path)
-{
-    Return [byte*](fopen(path, "rb"));  // wraps C function
-}
-
-// Unsafe layer: raw operations
-Unsafe Function int ReadByte(byte* fp)
-{
-    // directly call low-level read function
-}
+Unsafe Block RawRegion </
+    byte* address = null;
+/>;
 ```
 
-## Practical Use Cases
+An explicitly Unsafe Block is an intentional boundary; it does not mark all code in the enclosing file as audited. `Unsafe Alias` is a separate file-local token-preprocessing feature, not another spelling for an ordinary unsafe memory block. See [Blocks](blocks.md) and [Modules](modules.md).
 
-### Interop Wrapping (Common Pattern)
+A hosted Main can be Safe, Trusted or Unsafe, but Unsafe Main produces a warning. That warning is not a linker failure. With `--Werror`, a warning can become a build failure. Prefer a narrow bridge or explicit unsafe region when only a small operation requires it.
 
-```kinal
-// 1. Declare C function (Extern has no safety level)
-Extern Function int __kn_sys_file_read(byte* fp, byte* buf, int len) By C;
+## What Annotations Do Not Promise
 
-// 2. Trusted bridge layer
-Trusted Function int FileRead(byte* fp, byte* buf, int len)
-{
-    Return __kn_sys_file_read(fp, buf, len);
-}
+- Safe code can still throw exceptions, fail allocations, exhaust resources or call an incorrectly implemented Trusted wrapper.
+- A Trusted declaration does not automatically sanitize paths, check lengths, secure network transport or release handles.
+- Unsafe permits operations; it does not make invalid operations valid.
+- Native and VM share frontend safety checks, but backend/runtime support remains a separate requirement.
 
-// 3. Safe business layer (callers don't need to know low-level details)
-Safe Function string ReadChunk(byte* fp, int len)
-{
-    // indirectly calls C via Trusted from within a Safe function
-    Return BuildStringFromResult(FileRead(fp, null, len));
-}
-```
+## See Also
 
-### Constraining Dangerous FFI Function Calls
-
-```kinal
-Extern Function void* LoadLibrary(string path) By C;
-
-// Calling LoadLibrary directly requires the function to be Trusted or Unsafe
-Trusted Function byte* LoadLib(string path)
-{
-    Return [byte*](LoadLibrary(path));
-}
-```
-
-## Safety of the Program Entry Point
-
-The `Main` function can be at any level, but annotating `Main` as `Unsafe` will generate a compile warning:
-
-```kinal
-// Recommended:
-Static Safe Function int Main() { ... }
-Static Function int Main() { ... }
-
-// Will warn:
-Static Unsafe Function int Main() { ... }
-```
-
-## Next Steps
-
-- [FFI External Function Interface](ffi.md)
-- [Async Programming](async.md)
-- [Bare-Metal and Embedded](../advanced/freestanding.md)
-
+- [Functions](functions.md)
+- [FFI](ffi.md)
+- [Memory and Lifetimes](../advanced/memory-management.md)
+- [Backend Support](../advanced/backend-support.md)

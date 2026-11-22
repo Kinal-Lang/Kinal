@@ -1,10 +1,11 @@
-#include "kn/hir.h"
+#include "kn_func_index.h"
 
 #include "kn/std.h"
 
 typedef struct
 {
     FuncList *funcs;
+    const FuncNameIndex *symbols;
     ClassList *classes;
     InterfaceList *interfaces;
 } KnHirContext;
@@ -29,15 +30,8 @@ static const char *hir_interface_name(const InterfaceDecl *decl)
 
 static Func *hir_find_func(const KnHirContext *ctx, const char *name)
 {
-    if (!ctx || !ctx->funcs || !name) return 0;
-    for (int i = 0; i < ctx->funcs->count; i++)
-    {
-        Func *func = &ctx->funcs->items[i];
-        const char *candidate = hir_func_name(func);
-        if (candidate && kn_strcmp(candidate, name) == 0)
-            return func;
-    }
-    return 0;
+    int i = funcindex_first(ctx->symbols, name);
+    return i < 0 ? 0 : &ctx->funcs->items[i];
 }
 
 static ClassDecl *hir_find_class(const KnHirContext *ctx, const char *name)
@@ -243,7 +237,11 @@ static void hir_lower_expr(const KnHirContext *ctx, Expr *expr)
         hir_lower_expr(ctx, expr->v.binary.left);
         hir_lower_expr(ctx, expr->v.binary.right);
         break;
-    case EXPR_UNARY: hir_lower_expr(ctx, expr->v.unary.expr); break;
+    case EXPR_UNARY:
+        hir_lower_expr(ctx, expr->v.unary.expr);
+        if (expr->v.unary.property_setter)
+            hir_resolve_member_call(ctx, expr->v.unary.property_setter);
+        break;
     case EXPR_ARRAY: hir_lower_expr_list(ctx, &expr->v.array.items); break;
     case EXPR_PACKAGE: hir_lower_expr_list(ctx, &expr->v.package.items); break;
     case EXPR_DICT:
@@ -307,8 +305,26 @@ static void hir_lower_params(const KnHirContext *ctx, ParamList *params)
 void kn_hir_lower_calls(FuncList *funcs, ClassList *classes, InterfaceList *interfaces,
                         StmtList *globals)
 {
+    FuncNameIndex symbols = {0};
+    if (funcs && funcs->count)
+    {
+        funcindex_resize(&symbols, funcindex_capacity(funcs->count));
+        for (int i = 0; i < funcs->count; i++)
+        {
+            const char *name = hir_func_name(&funcs->items[i]);
+            if (name) funcindex_add(&symbols, name, i);
+        }
+    }
+    kn_hir_lower_calls_indexed(funcs, classes, interfaces, globals, &symbols);
+    funcindex_free(&symbols);
+}
+
+void kn_hir_lower_calls_indexed(FuncList *funcs, ClassList *classes, InterfaceList *interfaces,
+                                StmtList *globals, const FuncNameIndex *symbols)
+{
     KnHirContext ctx;
     ctx.funcs = funcs;
+    ctx.symbols = symbols;
     ctx.classes = classes;
     ctx.interfaces = interfaces;
 
@@ -318,8 +334,11 @@ void kn_hir_lower_calls(FuncList *funcs, ClassList *classes, InterfaceList *inte
     if (funcs)
         for (int i = 0; i < funcs->count; i++)
         {
-            hir_lower_params(&ctx, &funcs->items[i].params);
-            hir_lower_stmt(&ctx, funcs->items[i].body);
+            Func *f = &funcs->items[i];
+            // Only a concrete specialization has semantically resolved operands.
+            if (f->type_param_count > 0 && !f->is_generic_instance) continue;
+            hir_lower_params(&ctx, &f->params);
+            hir_lower_stmt(&ctx, f->body);
         }
     if (classes)
         for (int i = 0; i < classes->count; i++)
@@ -469,7 +488,15 @@ static void hir_stats_expr(const Expr *expr, KnHirStats *stats)
         hir_stats_expr(expr->v.binary.left, stats);
         hir_stats_expr(expr->v.binary.right, stats);
         break;
-    case EXPR_UNARY: hir_stats_expr(expr->v.unary.expr, stats); break;
+    case EXPR_UNARY:
+        hir_stats_expr(expr->v.unary.expr, stats);
+        if (expr->v.unary.property_setter)
+        {
+            stats->expressions++;
+            stats->typed_expressions++;
+            hir_stats_call(expr->v.unary.property_setter, stats);
+        }
+        break;
     case EXPR_ARRAY: hir_stats_expr_list(&expr->v.array.items, stats); break;
     case EXPR_PACKAGE: hir_stats_expr_list(&expr->v.package.items, stats); break;
     case EXPR_DICT:
@@ -542,8 +569,10 @@ void kn_hir_collect_stats(const FuncList *funcs, const ClassList *classes,
     if (funcs)
         for (int i = 0; i < funcs->count; i++)
         {
-            hir_stats_params(&funcs->items[i].params, out);
-            hir_stats_stmt(funcs->items[i].body, out);
+            const Func *f = &funcs->items[i];
+            if (f->type_param_count > 0 && !f->is_generic_instance) continue;
+            hir_stats_params(&f->params, out);
+            hir_stats_stmt(f->body, out);
         }
     if (classes)
         for (int i = 0; i < classes->count; i++)

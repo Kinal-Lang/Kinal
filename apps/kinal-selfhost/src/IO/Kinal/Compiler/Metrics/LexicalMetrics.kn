@@ -1,0 +1,166 @@
+Unit IO.Kinal.Compiler.Metrics.LexicalMetrics;
+
+Get IO.Text;
+Get IO.Kinal.Compiler.Metrics.Model;
+Get IO.Kinal.Compiler.Lex.Token;
+Get IO.Kinal.Compiler.Lex.TokenKind;
+
+// Range reduction plus the convergent atanh series; avoids a native math
+// dependency in the analysis command. Relative error is below 1e-12 here.
+Safe Function f64 Log(f64 value)
+{
+    If (value <= 0.0) Return 0.0;
+    int exponent = 0;
+    While (value >= 2.0) { value = value / 2.0; exponent++; }
+    While (value < 1.0) { value = value * 2.0; exponent--; }
+    f64 x = (value - 1.0) / (value + 1.0);
+    f64 term = x;
+    f64 sum = 0.0;
+    int denominator = 1;
+    While (denominator <= 31)
+    { sum = sum + term / [f64](denominator); term = term * x * x; denominator = denominator + 2; }
+    Return 2.0 * sum + [f64](exponent) * 0.6931471805599453;
+}
+
+Safe Function void FinishLine(MetricFile file, int flags)
+{
+    file.Lines++;
+    If ((flags & 1) != 0) file.CodeLines++;
+    If ((flags & 2) != 0) file.CommentLines++;
+    If (flags == 0) file.BlankLines++;
+    If (flags == 2) file.CommentOnlyLines++;
+    If (flags == 3) file.MixedLines++;
+}
+
+Safe Function void FileLines(MetricFile file)
+{
+    char[] chars = file.Unit.Source.Text.ToChars();
+    int index = 0; int line = 1; int column = 1; int tokenIndex = 0;
+    int tokenRemaining = 0; int flags = 0;
+    int blockStart = -1;
+    bool blockComment = false; bool lineComment = false;
+    list tokens = file.Unit.Tokens;
+    Token token = tokens.Count() == 0 ? null : [Token](tokens.Fetch(0));
+    While (index < chars.Length())
+    {
+        char current = chars[index];
+        If (token != null && token.Kind != TokenKind.Eof && line == token.Line && column == token.Column)
+        {
+            tokenRemaining = IO.Text.Length(token.Text);
+            file.Tokens++;
+            tokenIndex++;
+            token = tokenIndex < tokens.Count() ? [Token](tokens.Fetch(tokenIndex)) : null;
+        }
+        If (tokenRemaining > 0) { flags = flags | 1; tokenRemaining--; }
+        Else
+        {
+            If (!blockComment && !lineComment && current == '/' && index + 1 < chars.Length())
+            {
+                If (chars[index + 1] == '/') lineComment = true;
+                ElseIf (chars[index + 1] == '*') { blockComment = true; blockStart = index; }
+            }
+            If (blockComment || lineComment) flags = flags | 2;
+            If (blockComment && current == '/' && index > blockStart + 2 && chars[index - 1] == '*') blockComment = false;
+        }
+        If (current == '\n')
+        {
+            FinishLine(file, flags); flags = 0; line++; column = 1; lineComment = false;
+        }
+        Else column++;
+        index++;
+    }
+    // A terminal newline terminates the previous line; it does not create an
+    // extra phantom blank line. Empty files have zero physical lines.
+    If (chars.Length() > 0 && chars[chars.Length() - 1] != '\n') FinishLine(file, flags);
+}
+
+Safe Function bool IsOperand(TokenKind kind)
+{
+    Return kind == TokenKind.Identifier || kind == TokenKind.Number || kind == TokenKind.String ||
+        kind == TokenKind.Character || kind == TokenKind.KwTrue || kind == TokenKind.KwFalse ||
+        kind == TokenKind.KwNull || kind == TokenKind.KwDefault || kind == TokenKind.KwThis || kind == TokenKind.KwBase;
+}
+
+Safe Function bool IsDelimiter(TokenKind kind)
+{
+    Return kind == TokenKind.LeftBrace || kind == TokenKind.RightBrace ||
+        kind == TokenKind.LeftParen || kind == TokenKind.RightParen ||
+        kind == TokenKind.Comma || kind == TokenKind.Semicolon || kind == TokenKind.Eof;
+}
+
+Safe Function int FirstToken(list tokens, int line, int column)
+{
+    int low = 0; int high = tokens.Count();
+    While (low < high)
+    {
+        int mid = low + (high - low) / 2;
+        Token token = [Token](tokens.Fetch(mid));
+        If (IO.Kinal.Compiler.Metrics.Model.Before(token.Line, token.Column, line, column)) low = mid + 1;
+        Else high = mid;
+    }
+    Return low;
+}
+
+Safe Function void FunctionTokens(MetricFunction function)
+{
+    If (function.Kind == "initializer") Return;
+    list tokens = function.File.Unit.Tokens;
+    int index = FirstToken(tokens, function.StartLine, function.StartColumn);
+    int lastLine = -1;
+    While (index < tokens.Count())
+    {
+        Token token = [Token](tokens.Fetch(index));
+        If (!IO.Kinal.Compiler.Metrics.Model.Before(token.Line, token.Column, function.EndLine, function.EndColumn)) Break;
+        bool nested = false;
+        int child = 0;
+        While (child < function.Children.Count())
+        {
+            MetricFunction item = [MetricFunction](function.Children.Fetch(child));
+            If (IO.Kinal.Compiler.Metrics.Model.ContainsPosition(item, token.Line, token.Column))
+            {
+                index = FirstToken(tokens, item.EndLine, item.EndColumn);
+                nested = true; Break;
+            }
+            child++;
+        }
+        If (nested) Continue;
+        int endLine = token.Line;
+        char[] text = token.Text.ToChars();
+        int character = 0;
+        While (character < text.Length())
+        { If (text[character] == '\n' && character + 1 < text.Length()) endLine++; character++; }
+        int line = token.Line > lastLine ? token.Line : lastLine + 1;
+        If (endLine >= line) function.CodeLines = function.CodeLines + endLine - line + 1;
+        lastLine = endLine;
+        If (IsOperand(token.Kind))
+        {
+            function.Operands++;
+            function.OperandKinds.Add([string]([int](token.Kind)) + ":" + token.Text);
+        }
+        ElseIf (!IsDelimiter(token.Kind))
+        {
+            function.Operators++;
+            function.OperatorKinds.Add([string]([int](token.Kind)));
+        }
+        index++;
+    }
+    int vocabulary = function.OperatorKinds.Items.Count() + function.OperandKinds.Items.Count();
+    function.Volume = [f64](function.Operators + function.Operands) * Log([f64](vocabulary)) / 0.6931471805599453;
+    If (function.OperandKinds.Items.Count() > 0)
+        function.Difficulty = [f64](function.OperatorKinds.Items.Count()) / 2.0 *
+            [f64](function.Operands) / [f64](function.OperandKinds.Items.Count());
+    function.Effort = function.Volume * function.Difficulty;
+    f64 score = (171.0 - 5.2 * Log(function.Volume > 1.0 ? function.Volume : 1.0) -
+        0.23 * [f64](function.Cyclomatic) - 16.2 * Log([f64](function.CodeLines > 1 ? function.CodeLines : 1))) * 100.0 / 171.0;
+    If (score < 0.0) score = 0.0;
+    If (score > 100.0) score = 100.0;
+    function.Maintainability = [int](score + 0.5);
+}
+
+Safe Function void AnalyzeLexical(MetricReport report)
+{
+    int index = 0;
+    While (index < report.Files.Count()) { FileLines([MetricFile](report.Files.Fetch(index))); index++; }
+    index = 0;
+    While (index < report.Functions.Count()) { FunctionTokens([MetricFunction](report.Functions.Fetch(index))); index++; }
+}

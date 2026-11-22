@@ -1,135 +1,80 @@
-# kinal fmt — Code Formatter
+# `kinal fmt`: Code Formatter
 
-`kinal fmt` is the official code formatting subcommand for the Kinal language. It is built into the `kinal` toolchain and requires no separate installation.
+`fmt` is built into the C compiler tool. It formats source text; it does not replace parsing, semantic checking, or runtime tests.
 
-## Usage
-
-```bash
-kinal fmt <file.kn>
-kinal fmt <dir/>
-kinal fmt <file1.kn> <file2.kn> ...
-```
-
-Formatting **modifies files in-place**, replacing file contents with Kinal-compliant formatting.
-
----
-
-## Options
-
-| Option | Description |
-|--------|-------------|
-| `--check` | Only check whether files are already formatted; do not modify them |
-| `--stdin` | Read source code from standard input |
-| `--stdout` | Write formatted output to standard output (do not modify files) |
-| `--stdin-filepath <path>` | Provide a file path context for stdin input |
-| `-h, --help` | Show fmt help |
-
----
-
-## Examples
-
-### Format a single file
+## Commands and Exit Status
 
 ```bash
 kinal fmt main.kn
-```
-
-### Format all .kn files in a directory
-
-```bash
 kinal fmt src/
+kinal fmt main.kn helpers.kn
+kinal fmt --check src/
+kinal fmt --stdout main.kn
 ```
 
-### Format multiple files
+Normal file mode replaces changed files in place. Directory arguments recursively collect `.kn` files; pass other supported source-file spellings explicitly when needed. `--check` leaves files unchanged and returns nonzero when formatting differs. Invalid options, read failures and other errors can also return nonzero.
+
+| Option | Meaning |
+|--------|---------|
+| `--check` | Compare against formatted text without writing files |
+| `--stdin` | Read source from standard input |
+| `--stdout` | Write formatted text to standard output |
+| `--stdin-filepath <path>` | Virtual filename supplied by editor integrations |
+| `-h`, `--help` | Show formatter help |
+
+`--stdin` emits formatted text unless `--check` suppresses it; `--stdout` explicitly requests output. In file mode, `--stdout` previews instead of overwriting. With multiple files the outputs are concatenated; use one file for an editor replacement. `--stdin-filepath` is context metadata, not a project-selection or output option.
+
+## Standard Input
 
 ```bash
-kinal fmt main.kn utils.kn helpers.kn
+# POSIX shell
+kinal fmt --stdin --stdout --stdin-filepath src/Main.kn < src/Main.kn
 ```
 
----
+```powershell
+# PowerShell
+Get-Content -Raw -Encoding utf8 src/Main.kn | kinal fmt --stdin --stdout --stdin-filepath src/Main.kn
+```
 
-## Kinal Code Style
+For an integration that already has a text buffer, pass that buffer directly to the subprocess stdin. The VS Code extension uses this path instead of writing the source file merely to request formatting.
 
-`kinal fmt` follows these formatting rules:
+## Formatting Style
 
-### Indentation
-
-- Use **4 spaces** for indentation (no tabs)
-- Each nesting level adds 4 spaces
-
-### Parentheses and Braces
-
-- The opening brace `{` for function bodies, class bodies, and control flow statements is on the same line as the statement
-- The closing brace `}` is on its own line
+The current formatter uses four-space indentation, spaces around ordinary binary operators, spaces after commas, and opening block braces on their own line:
 
 ```kinal
-// Correct
 Function int Add(int a, int b)
 {
     Return a + b;
 }
 ```
 
-### Keywords and Identifiers
+It does not rename symbols or convert localized alias tokens into canonical spellings. Naming conventions such as PascalCase function names are project guidance, not automatic formatter rewrites. Keep comments and string contents meaningful and review changes to unusual syntax as part of normal source review.
 
-- Keywords use initial capital letters (`If`, `While`, `Function`, etc.) as enforced by the compiler; `fmt` does not recase keywords
-- Class names use PascalCase (`MyClass`)
-- Function names use PascalCase (`GetValue`)
-- Variable names use camelCase (`myValue`)
-
-### Spacing
-
-- One space before and after operators: `a + b`, `x == y`
-- One space after commas: `Function int Add(int a, int b)`
-- No spaces inside parentheses: `Add(a, b)` not `Add( a, b )`
-
-### Blank Lines
-
-- One blank line between top-level declarations
-- Blank lines between logical sections inside a function are allowed but limited to one
-
----
-
-## Checking Formatting in CI
-
-Use `--check` to verify formatting compliance in CI:
+## CI and Editor Setup
 
 ```bash
 kinal fmt --check src/
+kinal build --project . --emit check -o out/project.kcheck
 ```
 
-`--check` mode does not modify files; it exits with a non-zero status code only when formatting differences exist.
+The first command checks formatting; the second checks language semantics. Neither proves runtime correctness. Reformat locally, review the diff, and then repeat the non-mutating check in CI.
 
-You can also use the `git diff` approach:
-
-```bash
-kinal fmt src/
-git diff --exit-code
-```
-
----
-
-## Editor Integration
-
-### VS Code
-
-After installing the Kinal language extension, configure `kinal fmt` as the format-on-save formatter:
+For VS Code, place this JSON in `.vscode/settings.json`:
 
 ```json
-// .vscode/settings.json
 {
-    "[kinal]":
-    {
+    "[kinal]": {
         "editor.formatOnSave": true,
-        "editor.defaultFormatter": "kinal-lang.kinal"
+        "editor.defaultFormatter": "kinal.kinal"
     }
 }
 ```
 
----
+Set `kinal.path` when the compiler is not on PATH. This formatter is registered for Kinal source documents, not for `.knproj` configuration files. Compiler and LSP diagnostic language settings are separate from format-on-save.
 
 ## See Also
 
-- [CLI Overview](compiler.md) — Overview of all subcommands
-- [Project Structure](../getting-started/project-structure.md) — Recommended directory layout
-- [CLI Specification](cli-spec.md) — CLI design specification (developer reference)
+- [Compiler CLI](compiler.md)
+- [Project Files](project-files.md)
+- [CLI Design Specification](cli-spec.md)

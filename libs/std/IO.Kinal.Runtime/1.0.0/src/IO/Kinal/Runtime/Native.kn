@@ -77,6 +77,9 @@ Extern Unsafe Function char* ExecutablePath() By C;
 [LinkName("kn_native_process_initialize_arguments")]
 Extern Unsafe Function void InitializeProcessArguments(i32 argc, char** argv) By C;
 
+[LinkName("kn_native_process_utf8_argv")]
+Extern Unsafe Function char** Utf8ProcessArgv(i32 argc, char** argv) By C;
+
 [LinkName("kn_native_process_run")]
 Extern Unsafe Function int ProcessRun(string executable,
                                       string[] arguments,

@@ -1,5 +1,7 @@
 # Kinal 语言文档
 
+本文档以当前 C 编译器、运行时和标准库为准，自举专用入口单独标注。建议先阅读安装与 Hello World，再查项目、语言和 API 参考。[Native／VM 支持](advanced/backend-support.md)说明后端限制。
+
 > **Kinal** 是一门静态类型、面向对象的通用编译型语言，基于 LLVM 构建原生代码，并内置 KNC 字节码虚拟机（KinalVM）以双链路使用。设计目标是：语法清晰直观、安全等级分明、工具链完整。
 
 ---
@@ -39,16 +41,18 @@
 | 文档 | 说明 |
 |------|------|
 | [标准库概览](stdlib/overview.md) | IO.* 命名空间总览 |
+| [IO.Type](stdlib/types.md) | 类型转换、any／string 成员检查及表示边界 |
 | [IO.Console](stdlib/console.md) | 控制台输入输出 |
 | [IO.Text](stdlib/text.md) | 字符串操作 |
 | [IO.File / IO.Directory](stdlib/filesystem.md) | 文件与目录操作 |
 | [IO.Path](stdlib/path.md) | 路径处理 |
-| [IO.Collections](stdlib/collections.md) | list、dict、set |
+| [IO.Collection](stdlib/collections.md) | list、dict、set |
 | [IO.Async](stdlib/async.md) | 协程任务与进程管理 |
 | [IO.Time](stdlib/time.md) | 时间与计时 |
 | [IO.System](stdlib/system.md) | 系统调用、动态库 |
 | [IO.Meta](stdlib/meta.md) | 运行时元数据查询 |
 | [IO.Core](stdlib/core.md) | `IO.Char` 与 `IO.Math` |
+| [IO.Json](stdlib/json.md) | JSON 对象、列表、格式化与包装类型 |
 | [IO.Request](stdlib/request.md) | 对外 HTTP 客户端 |
 | [IO.UI](stdlib/ui.md) | 原生桌面 UI 包 |
 | [IO.Web](stdlib/web.md) | 内嵌 HTTP 服务包 |
@@ -58,6 +62,8 @@
 | 文档 | 说明 |
 |------|------|
 | [kinal 编译器](cli/compiler.md) | 完整编译器选项参考 |
+| [项目文件](cli/project-files.md) | kinal.knproj 全字段、源码模式、Profile 与 LSP 规则 |
+| [项目复杂度](cli/metrics.md) | 自举版复杂度分析和终端/JSON/HTML 报告 |
 | [KinalVM](cli/vm.md) | 字节码虚拟机与 `.knc` 格式 |
 | [代码格式化](cli/fmt.md) | `kinal fmt` 使用说明 |
 | [Package 系统](cli/packages.md) | `.knpkg.json`、`.klib` 与包管理 |
@@ -66,11 +72,13 @@
 | 文档 | 说明 |
 |------|------|
 | [编译流程详解](advanced/compilation-pipeline.md) | 词法 → 解析 → 语义 → 代码生成 |
+| [后端支持](advanced/backend-support.md) | Native／KNC 能力、限制及格式兼容 |
+| [内存与生命周期](advanced/memory-management.md) | 值与共享存储、GC、原始内存、FFI 所有权 |
 | [错误码参考](advanced/error-codes/index.md) | 编译器与 LSP 共享诊断码、错误示例、原因与修复方式 |
 | [裸机与嵌入式](advanced/freestanding.md) | `--freestanding`、`--runtime`、无宿主环境 |
 | [跨平台交叉编译](advanced/cross-compilation.md) | `--target`、目标三元组与平台别名 |
 | [链接与 LTO](advanced/linking.md) | 链接器后端、LTO、静态/动态库 |
-| [运行时环境常量提案](advanced/runtime-environment-constants.md) | 区分 KinalVM 与原生运行时的编译期常量设计 |
+| [运行时环境常量](advanced/runtime-environment-constants.md) | 区分 KinalVM 与原生后端的编译期常量 |
 | [IO.Version 版本常量](advanced/version-constants.md) | 在源码中获取编译器与 KinalVM 版本信息的编译期常量 |
 
 ---
@@ -107,8 +115,14 @@ kinal vm run hello.kn
 - **静态类型** — 所有变量在编译期确定类型，支持 `Var` 类型推断
 - **三级安全模型** — `Safe` / `Trusted` / `Unsafe` 细粒度控制危险操作
 - **原生 OOP** — 类、接口、虚方法、继承，语法直观
-- **Block 对象** — 独特的"可暂停代码块"机制，支持标签跳转
-- **完整异步** — `Async`/`Await` 一等公民，与同步代码无缝协作
+- **Block 对象** — 代码块对象，支持显式标签和区间执行
+- **Native 异步** — `Async`/`Await`，后端限制另有说明
 - **双后端** — LLVM 原生编译 + 内置 KinalVM 字节码解释器
-- **C 互操作** — `Extern` / `Delegate` 零开销调用 C 函数库
-- **Meta 元数据** — 编译期或运行时可查询的自定义注解系统
+- **C 互操作** — 使用 `Extern` / `Delegate`，明确遵循 C ABI 与资源所有权
+- **Meta 元数据** — 自定义属性与运行时保留元数据查询
+
+## 示例约定
+
+标明“完整示例”且带 Main 的程序可保存为独立 .kn 文件；多文件示例需同时创建列出的各文件。其余语法片段省略外围声明、导入或前文定义，带 ... 的内容为占位示意。诊断章节中的错误示例刻意不能通过编译。Native、VM、freestanding 与平台要求按所在页说明选择，不能从高亮颜色或前端检查成功推断运行支持。命令中的多行反斜杠续行面向 POSIX shell；PowerShell 可合并为一行，运行当前目录 Windows exe 使用 .\program.exe。
+
+本参考跟随当前 C 源码，已安装的旧发行版可能行为不同；报告问题时附上工具版本、最小源码、完整命令和实际诊断。

@@ -6,6 +6,9 @@ Get IO.Kinal.Runtime;
 [LinkName("kn_sh_llvm_version_major")]
 Extern Function int NativeVersionMajor() By C;
 
+[LinkName("kn_sh_llvm_discard_value_names")]
+Extern Function void NativeDiscardValueNames(byte* module) By C;
+
 [LinkName("kn_sh_llvm_module_create")]
 Extern Function byte* NativeModuleCreate(string name) By C;
 
@@ -20,6 +23,18 @@ Extern Function int NativeBuildProbe(byte* module, string functionName, int retu
 
 [LinkName("kn_sh_llvm_module_ir")]
 Extern Function char* NativeModuleIr(byte* module) By C;
+
+[LinkName("kn_sh_llvm_write_ir")]
+Extern Function i32 NativeWriteIr(byte* module, string path) By C;
+
+[LinkName("kn_sh_llvm_write_bitcode")]
+Extern Function i32 NativeWriteBitcode(byte* module, string pipeline, string path) By C;
+
+[LinkName("kn_sh_llvm_erase_isolated_calls")]
+Extern Function void NativeEraseIsolatedCalls(byte* function, byte* calls, i32 count) By C;
+
+[LinkName("kn_sh_llvm_has_uses")]
+Extern Function i32 NativeHasUses(byte* value) By C;
 
 [LinkName("kn_sh_llvm_emit_object")]
 Extern Function int NativeEmitObject(byte* module, string targetTriple, string outputPath) By C;
@@ -100,6 +115,8 @@ Extern Function int NativeSetInitializer(byte* global, byte* value) By C;
 Extern Function int NativeSetPrivateLinkage(byte* global) By C;
 [LinkName("kn_sh_llvm_set_call_convention")]
 Extern Function int NativeSetCallConvention(byte* function, int convention) By C;
+[LinkName("kn_sh_llvm_add_function_enum_attribute")]
+Extern Function i32 NativeAddFunctionEnumAttribute(byte* function, string name, u64 value) By C;
 [LinkName("kn_sh_llvm_set_alignment")]
 Extern Function int NativeSetAlignment(byte* value, int alignment) By C;
 [LinkName("kn_sh_llvm_set_volatile")]
@@ -254,8 +271,19 @@ Trusted Function string LastError()
     Return IO.Kinal.Runtime.CopyNativeText(NativeLastError());
 }
 
+// The C bridge consumes contiguous LLVM handles. Common calls and GEPs
+// fit in the object's own storage; wider signatures grow on demand.
+Struct LlvmInlineHandles
+{
+    byte* First;
+    byte* Second;
+    byte* Third;
+    byte* Fourth;
+}
+
 Class LlvmHandles
 {
+    Private LlvmInlineHandles Inline;
     Private byte* Items;
     Private int CountValue;
     Private int Capacity;
@@ -263,10 +291,8 @@ Class LlvmHandles
     Public Trusted Constructor()
     {
         This.CountValue = 0;
-        This.Capacity = 8;
-        This.Items = IO.Kinal.Runtime.AllocateRaw(
-            [usize](This.Capacity * (IO.Target.PointerBits / 8)));
-        If (This.Items == null) This.Capacity = 0;
+        This.Capacity = 4;
+        This.Items = [byte*](&This.Inline);
     }
 
     Public Safe Function bool IsValid()
@@ -280,7 +306,7 @@ Class LlvmHandles
         byte** items = [byte**](This.Items);
         If (This.CountValue >= This.Capacity)
         {
-            int nextCapacity = This.Capacity <= 0 ? 8 : This.Capacity * 2;
+            int nextCapacity = This.Capacity * 2;
             byte** next = [byte**](IO.Kinal.Runtime.AllocateRaw(
                 [usize](nextCapacity * (IO.Target.PointerBits / 8))));
             If (next == null) Return false;
@@ -348,6 +374,16 @@ Class LlvmModule
         Return IO.Kinal.Runtime.AdoptNativeText(NativeModuleIr(This.Handle));
     }
 
+    Public Trusted Function bool WriteIr(string path)
+    {
+        Return NativeWriteIr(This.Handle, path) != 0;
+    }
+
+    Public Trusted Function bool WriteBitcode(string pipeline, string path)
+    {
+        Return NativeWriteBitcode(This.Handle, pipeline, path) != 0;
+    }
+
     Public Trusted Function bool EmitObject(string targetTriple, string outputPath)
     {
         If (This.Handle == null) Return false;
@@ -360,6 +396,7 @@ Class LlvmModule
         Return NativeEmitAssembly(This.Handle, targetTriple, outputPath) != 0;
     }
 
+    Public Trusted Function void DiscardValueNames() { NativeDiscardValueNames(This.Handle); }
     Public Trusted Function byte* VoidType() { Return NativeTypeVoid(This.Handle); }
     Public Trusted Function byte* IntType(int bits) { Return NativeTypeInt(This.Handle, bits); }
     Public Trusted Function byte* FloatType(int bits) { Return NativeTypeFloat(This.Handle, bits); }
@@ -439,6 +476,11 @@ Class LlvmModule
     Public Trusted Function bool SetCallConvention(byte* function, int convention)
     {
         Return NativeSetCallConvention(function, convention) != 0;
+    }
+
+    Public Trusted Function bool AddFunctionAttribute(byte* function, string name, u64 value)
+    {
+        Return NativeAddFunctionEnumAttribute(function, name, value) != 0;
     }
     Public Trusted Function bool SetAlignment(byte* value, int alignment)
     {

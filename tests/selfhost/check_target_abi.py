@@ -152,7 +152,8 @@ def check_runtime_layout(ir: str) -> None:
                      r"ptr [^\n]+, i32 0, i32 1", value), value
 
 
-def check_target_abi(compiler: Path, stage0: Path, root: Path, out: Path) -> dict[str, object]:
+def check_target_abi(compiler: Path, stage0: Path, root: Path, out: Path,
+                     *, stage0_reference: bool = True) -> dict[str, object]:
     from check_targets import invoke, check_object
 
     out.mkdir(parents=True, exist_ok=True)
@@ -181,7 +182,10 @@ def check_target_abi(compiler: Path, stage0: Path, root: Path, out: Path) -> dic
         command = [str(executable), "build", "--project", str(capture), "--target", "win86"]
         invoke(command + ["--emit", "ir", "-o", str(path)], root)
         ir = path.read_text(encoding="utf-8")
-        assert re.search(r"ptrtoint ptr [^\n]+ to i32", ir)
+        # Published v0.9.0 predates capture-cell alignment. Still verify its
+        # win86 object below, but check current lowering only on current compilers.
+        if role == "self" or stage0_reference:
+            assert re.search(r"ptrtoint ptr [^\n]+ to i32", body(ir, "MakeCapture")), path
         obj = path.with_suffix(".obj")
         invoke(command + ["--emit", "obj", "-o", str(obj)], root)
         check_object(obj, 1, 1)
@@ -243,10 +247,12 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--compiler", type=Path, required=True)
     parser.add_argument("--stage0", type=Path, required=True)
+    parser.add_argument("--stage0-role", choices=("reference", "bootstrap"), default="reference")
     parser.add_argument("--out-dir", type=Path, required=True)
     args = parser.parse_args()
     print(json.dumps(check_target_abi(args.compiler.resolve(), args.stage0.resolve(),
-                                     Path(__file__).resolve().parents[2], args.out_dir.resolve())))
+                                     Path(__file__).resolve().parents[2], args.out_dir.resolve(),
+                                     stage0_reference=args.stage0_role == "reference")))
 
 
 if __name__ == "__main__":

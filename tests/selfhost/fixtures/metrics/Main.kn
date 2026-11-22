@@ -1,0 +1,129 @@
+Unit Tests.Metrics;
+
+int GlobalValue = 1 > 0 ? 2 : 3;
+Object.Function GlobalFactory = Function int() { If (true) Return 1; Return 0; };
+
+// Comment markers and control keywords in literals are not decisions.
+Static Function string Text() { Return "If While && // /* </script> 中文"; }
+
+Static Function int Straight() { Return 1; }
+
+Static Function int Nested(int x, bool a, bool b)
+{
+    If (a && b)
+    {
+        While (x > 0) { x--; }
+    }
+    ElseIf (x == 0) { Return 1; }
+    Else { Return 2; }
+    Return x;
+}
+
+Static Function bool Logical(bool a, bool b, bool c, bool d)
+{
+    Return a && b && c || d;
+}
+
+Static Function int Choose(int value)
+{
+    Switch (value)
+    {
+        Case(0) { Return 10; }
+        Case(1) { Return 20; }
+        Case(default) { Return 30; }
+    }
+}
+
+Static Function int Expressions(int value)
+{
+    int a = value > 0 ? 1 : 2;
+    int b = If (value == 0) { 3; } Else { 4; };
+    Return Switch (value) { Case(0) { a; } Case(default) { b; } };
+}
+
+Static Function int Recover(int value)
+{
+    Try { Return Choose(value); }
+    Catch { Return 0; }
+}
+
+Static Function int Loops()
+{
+    int result = 0;
+    For (int index = 0; index < 3; index++)
+    {
+        If (index == 1) Continue;
+        result = result + index;
+    }
+    int[] values = {1, 2};
+    Foreach (int value In values) result = result + value;
+    Return result;
+}
+
+Static Function int JumpFlow()
+{
+    int result = 0;
+    Unsafe Block Flow </ Jump End; Record End result = 1; />
+    Return result;
+}
+
+Static Function Object.Block MakeBlock()
+{
+    Return Block </ Record Start int value = 0; If (value == 1) Jump Start; />;
+}
+
+Function Object.Function GenericFactory<T>(T value)
+{
+    Return Function T() { Return value; };
+}
+
+Function T Identity<T>(T value) { Return value; }
+
+Function T UnusedGeneric<T>(T value, bool flag)
+{
+    If (flag) Return value;
+    Return value;
+}
+
+Static Function int A(int value)
+{
+    If (value <= 0) Return 0;
+    Return B(value - 1);
+}
+
+Static Function int B(int value)
+{
+    If (value <= 0) Return 0;
+    Return A(value - 1);
+}
+
+Static Function Object.Function Factory(int captured)
+{
+    Return Function int(int value) { If (value > 0) Return captured; Return 0; };
+}
+
+Class BaseCounter
+{
+    Public int Value;
+    Public Virtual Function int Read() { Return Value; }
+}
+
+Class Counter By BaseCounter
+{
+    Public Constructor(int value) { Value = value; }
+    Public Override Function int Read() { Return Value + 1; }
+    Public Function BaseCounter Peer(BaseCounter other) { Return other; }
+    Public Property int Current { Get { Return Value; } Set { Value = value; } }
+}
+
+Static Function int Main()
+{
+    int initial = Identity<int>(1);
+    Counter counter = New Counter(initial);
+    string name = Identity<string>(Text());
+    Object.Function closure = Factory(2);
+    Object.Function genericOne = GenericFactory<int>(1);
+    Object.Function genericTwo = GenericFactory<string>("two");
+    int captured = [int](closure(1));
+    Return counter.Read() + captured + Nested(2, true, false) + Choose(1) + A(3);
+}

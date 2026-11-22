@@ -11,6 +11,7 @@ import tempfile
 from pathlib import Path
 
 from check_targets import check_targets
+from check_lexer_spans import check_lexer_spans
 from check_freestanding import check_freestanding
 from check_freestanding_profiles import check_profiles
 from check_array_types import check_array_types
@@ -19,13 +20,19 @@ from check_switch_loop_control import check_switch_loop_control
 from check_scalar_types import check_scalar_types
 from check_project_probes import check_project_probes
 from check_startup_arguments import check_startup_arguments
+from check_function_names import check_function_names
+from check_symbol_aliases import check_symbol_aliases
+from check_property_access import check_property_access
 from check_cli_workflows import check_cli_workflows
 from check_driver_parity import check_driver_parity, check_shared_metadata_cli
 from check_driver_target_linking import check_driver_target_linking
 from check_metadata_artifacts import check_metadata_artifacts
 from check_format_diagnostics import check_formatter, check_diagnostics
+from check_cli_presentation import check_cli_presentation
+from check_cli_console import check_cli_console
 from check_package_cli import check_package_cli
 from check_vm_cli import check_vm_cli
+from check_vm_executor import check_vm_executor
 from check_vm_lifecycle import check_vm_lifecycle
 from check_knc_backend import check_knc_backend, check_knc_workflow
 from check_knc_model import check_knc_model
@@ -33,6 +40,7 @@ from check_global_initialization import check_global_initialization
 from check_gc_frames import check_gc_frames
 from check_archive_cache import check_archive_cache
 from check_function_summary import check_function_summary
+from check_metrics import check_metrics
 from run_bootstrap import copy_stage_support
 
 
@@ -144,7 +152,8 @@ def check_project_build_diagnostics(compiler: Path, project: Path,
              "-o", str(out_dir / f"invalid-profile-{mode}.output")],
             cwd=root,
         )
-        require(invalid.returncode == 1 and "[Project] Unknown profile" in invalid.stdout,
+        diagnostic = invalid.stderr if mode == "build" else invalid.stdout
+        require(invalid.returncode == 1 and "requested profile was not found" in diagnostic,
                 f"{mode} lost the unknown-profile diagnostic", invalid)
     malformed = out_dir / "malformed-build-project.knproj"
     malformed.write_text("Project Invalid { NotAField = true; }\n", encoding="utf-8")
@@ -153,7 +162,7 @@ def check_project_build_diagnostics(compiler: Path, project: Path,
          "-o", str(out_dir / "invalid-project.output")],
         cwd=root,
     )
-    require(invalid.returncode == 1 and "[Project] Unknown Field" in invalid.stdout,
+    require(invalid.returncode == 1 and "[Project][E-RES-00024][error] Unknown Field" in invalid.stderr,
             "build lost project-parser diagnostics before profile selection", invalid)
 
 
@@ -279,13 +288,14 @@ def check_installed_stdlib_extraction(compiler: Path, project: Path,
         copy_stage_support(compiler.parent, bundle)
         isolated = bundle / compiler.name
         shutil.copy2(compiler, isolated)
-        cache = bundle / "stdlib-cache"
+        cache = bundle / "package-cache"
         require(not cache.exists(), "isolated stdlib extraction must start without a cache")
         checked = run([str(isolated), "check", str(project), "test"], cwd=root)
         require(checked.returncode == 0, "isolated installed-stdlib check failed", checked)
+        generations = [marker.parent for marker in cache.glob("*/.klib-ready")]
         require(
-            any(cache.glob("*/IO.Core/1.0.0/src/IO/Text.kn"))
-            and any(cache.glob("*/IO.Kinal.Runtime/1.0.0/src/IO/Kinal/Runtime/Core.kn")),
+            any((gen / "src/IO/Text.kn").is_file() for gen in generations)
+            and any((gen / "src/IO/Kinal/Runtime/Core.kn").is_file() for gen in generations),
             "stage1 did not validate and extract its packaged .klib standard library",
         )
 
@@ -322,14 +332,14 @@ def main() -> int:
     results: list[dict[str, object]] = []
     versions = dict(line.split("=", 1) for line in (root / "VERSION").read_text(encoding="utf-8").splitlines()
                     if "=" in line)
-    for option in ("version", "--version", "-V"):
+    for option in ("--version", "-V"):
         version = run([str(compiler), option], cwd=out_dir)
         require(version.returncode == 0
-                and version.stdout.replace("\r\n", "\n") == f"Kinal selfhost {versions['kinal']}\n"
-                and not version.stderr, "selfhost version metadata differs", version)
+                and version.stderr == f"Kinal {versions['kinal']}\n"
+                and not version.stdout, "selfhost version metadata differs", version)
     require((compiler.parent / "VERSION").read_bytes() == (root / "VERSION").read_bytes(),
             "selfhost packaged VERSION differs from canonical VERSION")
-    results.append({"name": "version", "ok": True, "cases": 3, "version": versions["kinal"]})
+    results.append({"name": "version", "ok": True, "cases": 2, "version": versions["kinal"]})
 
     probe_object = out_dir / ("llvm-probe.obj" if compiler.suffix.lower() == ".exe" else "llvm-probe.o")
     llvm_probe = run([str(compiler), "llvm-probe", str(probe_object)], cwd=root)
@@ -364,18 +374,28 @@ def main() -> int:
                                      stage0_reference=args.stage0_role == "reference"))
     results.append(check_project_probes(compiler, stage0, root, out_dir / "project-probes",
                                        stage0_reference=args.stage0_role == "reference"))
+    results.append(check_metrics(compiler, root, out_dir / "metrics"))
     results.append(check_startup_arguments(compiler, stage0, root, out_dir / "startup-arguments",
                                           stage0_reference=args.stage0_role == "reference"))
+    results.append(check_function_names(compiler, stage0, out_dir / "function-names",
+                                        stage0_reference=args.stage0_role == "reference"))
     results.append(check_cli_workflows(compiler, stage0, root, out_dir / "cli-workflows",
                                       stage0_reference=args.stage0_role == "reference"))
     if args.stage0_role == "reference":
+        presentation = check_cli_presentation(compiler, stage0, root, out_dir / "cli-presentation", manifest=True)
+        require(not presentation["failures"] and
+                (presentation["icons"] is None or presentation["icons"]["passed"]),
+                f"public CLI presentation differs: {presentation['failures']}")
+        results.append({"name": "cli_presentation", "ok": True, **presentation})
+        console = check_cli_console(compiler, stage0, root, out_dir / "cli-console")
+        results.append({"name": "cli_console", "ok": True, **console})
         results.append(check_driver_parity(compiler, stage0, root, out_dir / "driver-parity"))
         results.append(check_driver_target_linking(compiler, stage0, root, out_dir / "driver-target-linking"))
         results.append(check_shared_metadata_cli(compiler, stage0, root, out_dir / "shared-metadata-cli"))
         results.append(check_metadata_artifacts(compiler, stage0, root, out_dir / "metadata-artifacts"))
         formatter = check_formatter(compiler, stage0, root, out_dir / "formatter")
         results.append({"name": "formatter_cli", "ok": True, **formatter})
-    diagnostic_policy = check_diagnostics(compiler, root, out_dir / "diagnostic-policy")
+    diagnostic_policy = check_diagnostics(compiler, stage0, root, out_dir / "diagnostic-policy")
     results.append({"name": "diagnostic_policy", "ok": True, **diagnostic_policy})
     results.append(check_package_cli(compiler, stage0, root, out_dir / "package-cli",
                                     stage0_reference=args.stage0_role == "reference"))
@@ -388,6 +408,7 @@ def main() -> int:
     results.append(check_vm_cli(compiler, stage0, vm, root, out_dir / "vm-cli",
                                 stage0_reference=args.stage0_role == "reference"))
     results.append(check_vm_lifecycle(compiler, vm, root, out_dir / "vm-lifecycle"))
+    results.append(check_vm_executor(compiler, root, out_dir / "vm-executor"))
     results.append(check_knc_model(compiler, root, out_dir / "knc-model", vm))
     if args.stage0_role == "reference":
         reference_vm = stage0.parent / ("kinalvm.exe" if os.name == "nt" else "kinalvm")
@@ -1110,21 +1131,15 @@ def main() -> int:
     results.append({"name": "project_self", "ok": True, "files": len(project_source_files)})
 
     stage0_project_ast_path = out_dir / "stage0-project.kast"
-    stage0_project_ast = run(
-        [
-            str(stage0),
-            "build",
-            "--project",
-            str(project_file.parent),
-            "--profile",
-            "stage1",
-            "--emit",
-            "ast",
-            "-o",
-            str(stage0_project_ast_path),
-        ],
-        cwd=root,
-    )
+    project_inputs = ["--project", str(project_file.parent), "--profile", "stage1"]
+    if args.stage0_role == "bootstrap":
+        # The published driver counts implicitly discovered stdlib units too.
+        # Compare the same source set; the matching reference checks discovery.
+        entry = project_file.parent / "src" / "Main.kn"
+        project_inputs = ["--no-module-discovery", str(entry),
+                          *(str(path) for path in project_source_files if path.resolve() != entry.resolve())]
+    stage0_project_ast = run([str(stage0), "build", *project_inputs, "--emit", "ast",
+                              "-o", str(stage0_project_ast_path)], cwd=root)
     require(stage0_project_ast.returncode == 0, "stage0 project syntax emit failed", stage0_project_ast)
     stage1_project_ast = run(
         [str(compiler), "project-ast", str(project_argument), "stage1"], cwd=root
@@ -1316,7 +1331,7 @@ def main() -> int:
         require(package_checks.returncode == 0,
                 f"{role} project package contract failed", package_checks)
     results.append({"name": "project_package_contract", "ok": True,
-                    "cases_per_compiler": 36, "compilers": len(checked_compilers)})
+                    "cases_per_compiler": 42, "compilers": len(checked_compilers)})
 
     bundle_checks = run(
         [sys.executable, str(root / "tests" / "selfhost" / "test_stage0_bundle.py")],
@@ -1717,13 +1732,13 @@ def main() -> int:
     results.append({"name": "package_values", "ok": True})
 
     package_errors = (
-        ("error_package_index_runtime.kn", "[Sema] Invalid Package Index"),
-        ("error_package_index_bool_constant.kn", "[Sema] Type Mismatch"),
-        ("error_package_index_large_constant.kn", "[Sema] Invalid Package Index"),
-        ("error_local_const_assignment.kn", "[Sema] Const Assignment"),
-        ("error_local_const_missing_init.kn", "[Sema] Const Requires Init"),
-        ("error_package_field_count.kn", "[Sema] Package Field Count"),
-        ("error_package_array_cast.kn", "[Sema] Invalid Cast"),
+        ("error_package_index_runtime.kn", "Sema:Invalid Package Index"),
+        ("error_package_index_bool_constant.kn", "Sema:Type Mismatch"),
+        ("error_package_index_large_constant.kn", "Sema:Invalid Package Index"),
+        ("error_local_const_assignment.kn", "Sema:Const Assignment"),
+        ("error_local_const_missing_init.kn", "Sema:Const Requires Init"),
+        ("error_package_field_count.kn", "Sema:Package Field Count"),
+        ("error_package_array_cast.kn", "Sema:Invalid Cast"),
     )
     for source_name, expected_error in package_errors:
         source = root / "tests" / "common" / source_name
@@ -1733,7 +1748,7 @@ def main() -> int:
         )
         require(package_error.returncode != 0, f"stage1 accepted {source_name}", package_error)
         require(
-            expected_error in (package_error.stdout + package_error.stderr),
+            expected_error in compiler_diagnostic_titles(package_error),
             f"stage1 diagnostic differs for {source_name}",
             package_error,
         )
@@ -2004,7 +2019,7 @@ def main() -> int:
         "true\n4\n4\nRED\nblue\nGREEN\nfallback\ntrue\nfalse\n2\n-1\ntail\n"
         "blue\ntail\n2\ntrue\n3\n3\nkinal\n8\nfallback\n8\ntrue\nfalse\n3\n"
         "true\n3\ntrue\ntrue\nfalse\ntrue\n2\n2\ntrue\nfalse\n2\ntrue\ntrue\n"
-        "false\ntrue"
+        "false\ntrue\n20\n40\n99\n99\n4"
     )
     require(
         collection_run.returncode == 0
@@ -2016,6 +2031,14 @@ def main() -> int:
         collection_run,
     )
     results.append({"name": "collection_runtime", "ok": True})
+
+    slots = out_dir / f"list-discarded-slots{executable_suffix}"
+    slots_build = run([str(compiler), "build", "--no-module-discovery",
+                       str(collection_project.parent / "DiscardedSlots.kn"), "-o", str(slots)], cwd=root)
+    require(slots_build.returncode == 0, "selfhost list storage fixture build failed", slots_build)
+    slots_run = run([str(slots)], cwd=root)
+    require(slots_run.returncode == 0, "discarded list slots retain references", slots_run)
+    results.append({"name": "list_discarded_slots", "ok": True})
 
     runtime_gc_project = (
         root / "tests" / "selfhost" / "fixtures" / "runtime_gc" / "kinal.knproj"
@@ -2444,22 +2467,8 @@ def main() -> int:
     )
     results.append({"name": "same_unit", "ok": True})
 
-    aliases_project = root / "tests" / "selfhost" / "fixtures" / "symbol_aliases" / "kinal.knproj"
-    aliases_executable = out_dir / f"symbol-aliases{executable_suffix}"
-    aliases_build = run(
-        [str(compiler), "build", str(aliases_project), str(aliases_executable), "test"],
-        cwd=root,
-    )
-    require(aliases_build.returncode == 0, "stage1 symbol-alias fixture build failed", aliases_build)
-    require(aliases_executable.is_file(), "stage1 symbol-alias fixture executable is missing")
-    aliases_run = run([str(aliases_executable)], cwd=root)
-    require(aliases_run.returncode == 0, "stage1 symbol-alias fixture execution failed", aliases_run)
-    require(
-        aliases_run.stdout.replace("\r\n", "\n").strip() == "method\n7",
-        "stage1 symbol-alias fixture output differs",
-        aliases_run,
-    )
-    results.append({"name": "symbol_aliases", "ok": True})
+    results.append(check_symbol_aliases(compiler, root, out_dir / "symbol-aliases"))
+    results.append(check_property_access(compiler, root, out_dir / "property-access"))
 
     delegates_project = root / "tests" / "selfhost" / "fixtures" / "delegates" / "kinal.knproj"
     delegates_executable = out_dir / f"delegates{executable_suffix}"
@@ -2652,10 +2661,16 @@ def main() -> int:
     generic_run = run([str(generic_executable)], cwd=root)
     require(generic_run.returncode == 0, "stage1 generic fixture execution failed", generic_run)
     require(
-        generic_run.stdout.replace("\r\n", "\n").strip() == "42\nnest\n3",
+        generic_run.stdout.splitlines() == ["42", "nest", "3", "17"],
         "stage1 generic fixture output differs",
         generic_run,
     )
+    generic_vm = run(
+        [str(compiler), "vm", "run", "--project", str(generic_project), "--profile", "vm"],
+        cwd=out_dir,
+    )
+    require(generic_vm.returncode == 0 and generic_vm.stdout.splitlines() == ["42", "nest", "3", "17"],
+            "stage1 generic VM fixture output differs", generic_vm)
     generic_stage0_ast_path = out_dir / "generic-stage0.kast"
     generic_stage0_ast = run(
         [
@@ -2801,6 +2816,18 @@ def main() -> int:
         kinalvm_disasm,
     )
     results.append({"name": "kinalvm_selfhost", "ok": True, "sources": len(kinalvm_source_files)})
+    results.append(check_lexer_spans(compiler, stage0, kinalvm_executable, root, out_dir / "lexer-spans",
+                                     stage0_reference=args.stage0_role == "reference"))
+
+    heap_project = root / "tests/selfhost/fixtures/vm_guest_heap/kinal.knproj"
+    for label, producer in (("stage0", stage0), ("selfhost", compiler)):
+        executable = out_dir / f"vm-heap-{label}{executable_suffix}"
+        built = run([str(producer), "build", "--project", str(heap_project),
+                     "--profile", "test", "-o", str(executable)], cwd=root)
+        require(built.returncode == 0, f"{label} VM heap fixture build failed", built)
+        checked = run([str(executable)], cwd=root)
+        require(checked.returncode == 0, f"{label} VM heap lifetime check failed", checked)
+    results.append({"name": "vm_guest_heap_lifetime", "ok": True})
 
     for source in source_files:
         proc = run([str(compiler), "lex", str(source)], cwd=root)

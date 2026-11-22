@@ -24,7 +24,7 @@ def check_capture_ir(body: str, *, loop: str | None = None, aligned: bool = Fals
         label = re.match(r"([\w.]+):", line)
         if label:
             block = label[1]
-        region = re.search(r"@__kn_sh_IO_Kinal_Runtime_GarbageCollector_AddRoot_3"
+        region = re.search(r"@__kn_sh_IO_Kinal_Runtime_GarbageCollector_SetFrameRoot_4"
                            r"\(ptr [^,]+, ptr (%[\w.]+),", line)
         if region:
             assert region[1] in stack_slots, f"heap scan region: {line}"

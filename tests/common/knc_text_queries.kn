@@ -1,0 +1,19 @@
+Unit Tests.KncTextQueries;
+
+Get IO.Console;
+Get IO.Text;
+
+Static Function int Main()
+{
+    string empty = null;
+    If (!IO.Text.IsEmpty(empty) || IO.Text.Length(empty) != 0) Return 1;
+    If (IO.Text.Length("雪ab雪") != 8 || IO.Text.IndexOf("雪ab雪", "ab") != 3) Return 2;
+    If (IO.Text.LastIndexOf("ababa", "aba") != 2 || IO.Text.Count("ababa", "aba") != 1) Return 3;
+    If (!IO.Text.StartsWith("雪a", "雪") || !IO.Text.EndsWith("a雪", "雪")) Return 4;
+    If (!IO.Text.Contains("hello", empty) || IO.Text.Contains(empty, "z")) Return 5;
+    If (IO.Text.Trim("  雪\n") != "雪" || IO.Text.Slice("a雪b", 1, 3) != "雪") Return 6;
+    If (IO.Text.ToUpper("ab雪") != "AB雪" || IO.Text.ToLower("AB雪") != "ab雪") Return 7;
+    If (IO.Text.Replace("a::b::", "::", "-") != "a-b-" || IO.Text.Replace("a", "a", empty) != "") Return 8;
+    IO.Console.PrintLine("ok");
+    Return 0;
+}

@@ -1,0 +1,272 @@
+Unit IO.Kinal.Compiler.Metrics.SemanticMetrics;
+
+Get IO.Text;
+Get IO.Kinal.Compiler.Metrics.Model;
+Get IO.Kinal.Compiler.Metrics.SyntaxMetrics;
+Get IO.Kinal.Compiler.Sema.SemanticCompilation;
+Get IO.Kinal.Compiler.Sema.Symbols;
+Get IO.Kinal.Compiler.Types.TypeSymbol;
+Get IO.Kinal.Compiler.Syntax.SyntaxTree;
+Get IO.Kinal.Compiler.Syntax.Nodes;
+Get IO.Kinal.Compiler.Hir.HirModel;
+
+Safe Function void Couple(MetricNames names, TypeSymbol type, string owner)
+{
+    If (type == null) Return;
+    If (type.Declaration != null && type.QualifiedName() != owner) names.Add(type.QualifiedName());
+    If (type.ElementType != null) Couple(names, type.ElementType, owner);
+    PackageElementType item = type.FirstPackageElement;
+    While (item != null) { Couple(names, item.Type, owner); item = item.Next; }
+}
+
+Safe Function MetricFunction FindFunction(MetricReport report, FunctionSymbol symbol)
+{
+    If (symbol == null || symbol.Syntax == null || symbol.Declaration == null) Return null;
+    Return [MetricFunction](report.FunctionMap.TryFetch(IO.Kinal.Compiler.Metrics.Model.FunctionKey(IO.Kinal.Compiler.Metrics.SyntaxMetrics.PathKey(symbol.Syntax.Source.Path),
+        symbol.Declaration.Line, symbol.Declaration.Column), null));
+}
+
+Safe Function int SourceCallIndex(MetricFunction function, HirExpression expression)
+{
+    int index = 0;
+    While (index < function.SourceExpressions.Count())
+    {
+        If ([ExpressionNode](function.SourceExpressions.Fetch(index)) == expression.Syntax) Return index;
+        index++;
+    }
+    Return -1;
+}
+
+Safe Function void AddCall(MetricReport report, MetricFunction caller, HirExpression expression)
+{
+    int sourceIndex = SourceCallIndex(caller, expression);
+    // Ignore lowering helpers and copies of another declaration's defaults.
+    If (sourceIndex < 0) Return;
+    string site = [string](sourceIndex);
+    caller.BoundCallSites.Add(site);
+    MetricEdge edge = New MetricEdge();
+    edge.Caller = caller.Id; edge.Line = expression.Syntax.Line; edge.Column = expression.Syntax.Column;
+    FunctionSymbol symbol = expression.Function;
+    bool dynamic = expression.CallKind == [int](HirCallKind.DynamicFunction) ||
+        expression.CallKind == [int](HirCallKind.Delegate);
+    If (dynamic)
+    {
+        edge.Dispatch = "dynamic";
+        caller.DynamicSites.Add(site);
+        edge.Name = IO.Text.IsEmpty(expression.Target) ? "<dynamic>" : expression.Target;
+    }
+    ElseIf (symbol != null)
+    {
+        Couple(caller.CoupledTypes, symbol.OwnerType, caller.Owner);
+        Couple(caller.CoupledTypes, symbol.ReturnType, caller.Owner);
+        MetricFunction target = FindFunction(report, symbol);
+        edge.Name = target == null ? symbol.QualifiedName() : target.Name;
+        edge.Target = target == null ? "external:" + edge.Name : target.Id;
+        bool virtual = expression.CallKind == [int](HirCallKind.InstanceMethod) &&
+            (symbol.Declaration.IsVirtual || symbol.Declaration.IsOverride || symbol.Declaration.IsAbstract);
+        If (virtual) { edge.Dispatch = "virtual"; caller.VirtualSites.Add(site); }
+        ElseIf (symbol.Declaration.IsExtern || symbol.Declaration.IsDelegate) edge.Dispatch = "extern";
+        caller.Callees.Add(edge.Target);
+        If (target != null) target.Callers.Add(caller.Id);
+    }
+    Else
+    {
+        edge.Dispatch = expression.CallKind == [int](HirCallKind.RuntimeBuiltin) ? "builtin" : "unresolved";
+        edge.Name = IO.Text.IsEmpty(expression.Target) ? expression.Name : expression.Target;
+        If (edge.Dispatch == "builtin") { edge.Target = "builtin:" + edge.Name; caller.Callees.Add(edge.Target); }
+    }
+    string key = caller.Id + "|" + site + "|" + edge.Dispatch + "|" + edge.Target;
+    If (!report.EdgeMap.Contains(key)) { report.EdgeMap.Set(key, true); caller.Edges.Add(edge); }
+}
+
+Safe Function void Expression(MetricReport report, MetricFunction function, HirExpression expression)
+{
+    If (expression == null) Return;
+    Couple(function.CoupledTypes, expression.Type, function.Owner);
+    Couple(function.CoupledTypes, expression.OperandType, function.Owner);
+    If (expression.Kind == [int](HirExpressionKind.Call) || expression.Kind == [int](HirExpressionKind.NewObject))
+        AddCall(report, function, expression);
+    Expression(report, function, expression.Left);
+    Expression(report, function, expression.Right);
+    Expression(report, function, expression.Third);
+    HirExpression argument = expression.FirstArgument;
+    While (argument != null) { Expression(report, function, argument); argument = argument.Next; }
+}
+
+Safe Function void Statements(MetricReport report, MetricFunction function, HirStatement statement)
+{
+    While (statement != null)
+    {
+        Couple(function.CoupledTypes, statement.DeclaredType, function.Owner);
+        Expression(report, function, statement.Expression);
+        Expression(report, function, statement.SecondExpression);
+        Expression(report, function, statement.ThirdExpression);
+        Statements(report, function, statement.Initializer);
+        Statements(report, function, statement.FirstChild);
+        Statements(report, function, statement.ElseBranch);
+        statement = statement.Next;
+    }
+}
+
+Class GraphFrame
+{
+    Public MetricFunction Function;
+    Public int Next;
+    Public Safe Constructor(MetricFunction function) { This.Function = function; This.Next = 0; }
+}
+
+// Iterative Kosaraju: no recursion-depth limit and linear in the scoped graph.
+// Only direct edges participate; a virtual declared target is not proof of a
+// runtime cycle and dynamic dispatch has no statically known target.
+Safe Function void FindRecursion(MetricReport report)
+{
+    dict byId = dict.Create(); dict forward = dict.Create(); dict reverse = dict.Create();
+    int index = 0;
+    While (index < report.Functions.Count())
+    {
+        MetricFunction function = [MetricFunction](report.Functions.Fetch(index));
+        byId.Set(function.Id, function);
+        forward.Set(function.Id, New MetricNames()); reverse.Set(function.Id, New MetricNames()); index++;
+    }
+    index = 0;
+    While (index < report.Functions.Count())
+    {
+        MetricFunction function = [MetricFunction](report.Functions.Fetch(index)); int edgeIndex = 0;
+        While (edgeIndex < function.Edges.Count())
+        {
+            MetricEdge edge = [MetricEdge](function.Edges.Fetch(edgeIndex));
+            If (edge.Dispatch == "direct" && byId.Contains(edge.Target))
+            {
+                [MetricNames](forward.Fetch(function.Id)).Add(edge.Target);
+                [MetricNames](reverse.Fetch(edge.Target)).Add(function.Id);
+            }
+            edgeIndex++;
+        }
+        index++;
+    }
+    dict visited = dict.Create(); list order = list.Create(); list stack = list.Create(); index = 0;
+    While (index < report.Functions.Count())
+    {
+        MetricFunction root = [MetricFunction](report.Functions.Fetch(index)); index++;
+        If (visited.Contains(root.Id)) Continue;
+        visited.Set(root.Id, true); stack.Add(New GraphFrame(root));
+        While (stack.Count() > 0)
+        {
+            GraphFrame frame = [GraphFrame](stack.Fetch(stack.Count() - 1));
+            MetricNames targets = [MetricNames](forward.Fetch(frame.Function.Id));
+            If (frame.Next < targets.Items.Count())
+            {
+                string target = [string](targets.Items.Fetch(frame.Next)); frame.Next++;
+                If (!visited.Contains(target))
+                { visited.Set(target, true); stack.Add(New GraphFrame([MetricFunction](byId.Fetch(target)))); }
+            }
+            Else { order.Add(frame.Function); stack.Pop(); }
+        }
+    }
+    visited = dict.Create(); index = order.Count() - 1;
+    While (index >= 0)
+    {
+        MetricFunction root = [MetricFunction](order.Fetch(index)); index--;
+        If (visited.Contains(root.Id)) Continue;
+        list component = list.Create(); stack.Add(root); visited.Set(root.Id, true);
+        While (stack.Count() > 0)
+        {
+            MetricFunction function = [MetricFunction](stack.Pop()); component.Add(function);
+            MetricNames targets = [MetricNames](reverse.Fetch(function.Id)); int next = 0;
+            While (next < targets.Items.Count())
+            {
+                string target = [string](targets.Items.Fetch(next)); next++;
+                If (!visited.Contains(target)) { visited.Set(target, true); stack.Add(byId.Fetch(target)); }
+            }
+        }
+        bool recursive = component.Count() > 1 || [MetricNames](forward.Fetch(root.Id)).Seen.Contains(root.Id);
+        If (recursive)
+        {
+            int next = 0; MetricNames members = New MetricNames();
+            While (next < component.Count())
+            {
+                MetricFunction function = [MetricFunction](component.Fetch(next)); next++;
+                function.Recursive = true; function.Component = report.RecursiveComponents.Count();
+                function.Counts.Cognitive++; members.Add(function.Id);
+            }
+            report.RecursiveComponents.Add(members);
+        }
+    }
+}
+
+Safe Function void AnalyzeSemantics(MetricReport report, SemanticCompilation semantics)
+{
+    FunctionSymbol symbol = semantics.FirstFunction;
+    While (symbol != null)
+    {
+        MetricFunction function = FindFunction(report, symbol);
+        If (function != null)
+        {
+            Couple(function.CoupledTypes, symbol.ReturnType, function.Owner);
+            ParameterSymbol parameter = symbol.FirstParameter;
+            While (parameter != null) { Couple(function.CoupledTypes, parameter.Type, function.Owner); parameter = parameter.Next; }
+            CaptureSymbol capture = symbol.FirstCapture;
+            While (capture != null) { function.Captures.Add(capture.Name); capture = capture.Next; }
+        }
+        symbol = symbol.Next;
+    }
+    HirModule module = semantics.FirstHirModule;
+    While (module != null)
+    {
+        HirFunction body = module.FirstFunction;
+        While (body != null)
+        {
+            MetricFunction function = FindFunction(report, body.Symbol);
+            If (function != null && body.Body != null) { function.Bound = true; Statements(report, function, body.Body); }
+            body = body.Next;
+        }
+        HirGlobal global = module.FirstGlobal;
+        While (global != null)
+        {
+            If (global.Symbol.Syntax != null)
+            {
+                MetricFunction function = [MetricFunction](report.FunctionMap.TryFetch(IO.Kinal.Compiler.Metrics.Model.FunctionKey(IO.Kinal.Compiler.Metrics.SyntaxMetrics.PathKey(global.Symbol.Syntax.Source.Path),
+                    global.Symbol.Declaration.Line, global.Symbol.Declaration.Column), null));
+                If (function != null) { function.Bound = true; Expression(report, function, global.Initializer); }
+            }
+            global = global.Next;
+        }
+        module = module.Next;
+    }
+    TypeSymbol type = semantics.FirstType;
+    While (type != null)
+    {
+        MetricType item = [MetricType](report.TypeMap.TryFetch(type.QualifiedName(), null));
+        If (item != null && item.Declaration == type.Declaration)
+        {
+            TypeSymbol base = type.BaseType;
+            While (base != null) { item.InheritanceDepth++; item.Bases.Add(base.QualifiedName()); base = base.BaseType; }
+            If (type.BaseType != null)
+            {
+                MetricType parent = [MetricType](report.TypeMap.TryFetch(type.BaseType.QualifiedName(), null));
+                If (parent != null) parent.DerivedTypes++;
+                Couple(item.CoupledTypes, type.BaseType, item.Name);
+            }
+            InterfaceTypeLink link = type.FirstInterface;
+            While (link != null)
+            { item.Interfaces.Add(link.Type.QualifiedName()); Couple(item.CoupledTypes, link.Type, item.Name); link = link.Next; }
+            FieldDecl field = item.Declaration.FirstField;
+            While (field != null)
+            { Couple(item.CoupledTypes, semantics.ResolveFieldType(type.Syntax, field), item.Name); field = field.Next; }
+        }
+        type = type.Next;
+    }
+    FindRecursion(report);
+    int index = 0;
+    While (index < report.Functions.Count())
+    {
+        MetricFunction function = [MetricFunction](report.Functions.Fetch(index)); index++;
+        MetricType owner = [MetricType](report.TypeMap.TryFetch(function.Owner, null));
+        If (owner != null)
+        {
+            owner.CoupledTypes.Merge(function.CoupledTypes);
+            If (IO.Text.IsEmpty(function.Parent) && function.Kind != "initializer")
+                owner.WeightedMethods = owner.WeightedMethods + function.Cyclomatic;
+        }
+    }
+}

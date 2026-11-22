@@ -215,7 +215,7 @@ Class ProjectReader
         This.SkipUnknownField();
     }
 
-    Public Safe Function void ReadPackages(list roots, list officialRoots)
+    Public Safe Function void ReadPackages(list roots, list officialRoots, list pins)
     {
         If (!This.ExpectKind(TokenKind.LeftBrace, "Expected '{'",
                              "Packages body is missing")) Return;
@@ -227,6 +227,7 @@ Class ProjectReader
                 This.CopyList(roots, This.ReadListAssignment());
             ElseIf (field == "officialroots")
                 This.CopyList(officialRoots, This.ReadListAssignment());
+            ElseIf (field == "pins") This.CopyList(pins, This.ReadListAssignment());
             Else This.RejectUnknownField("Packages", field);
         }
         This.ExpectKind(TokenKind.RightBrace, "Expected '}'",
@@ -323,6 +324,7 @@ Class ProjectReader
             ElseIf (field == "target") profile.Target = This.ReadScalarAssignment();
             ElseIf (field == "output") profile.Output = This.ReadScalarAssignment();
             ElseIf (field == "entrysymbol") profile.EntrySymbol = This.ReadScalarAssignment();
+            ElseIf (field == "hideconsole") profile.HideConsole = This.ReadBooleanAssignment("Build.HideConsole");
             ElseIf (field == "linker") profile.Linker = IO.Text.ToLower(This.ReadScalarAssignment());
             ElseIf (field == "linkerpath") profile.LinkerPath = This.ReadScalarAssignment();
             ElseIf (field == "superloop") { profile.Superloop = This.ReadBooleanAssignment("Build.Superloop"); profile.SuperloopExplicit = true; }
@@ -366,7 +368,7 @@ Class ProjectReader
             ElseIf (section == "build") This.ReadProfileBuild(profile);
             ElseIf (section == "link") This.ReadProfileLink(profile);
             ElseIf (section == "packages")
-                This.ReadPackages(profile.PackageRoots, profile.OfficialPackageRoots);
+                This.ReadPackages(profile.PackageRoots, profile.OfficialPackageRoots, profile.PackagePins);
             Else This.RejectUnknownField("Profile", section);
         }
         This.ExpectKind(TokenKind.RightBrace, "Expected '}'", "Profile body is not closed");
@@ -389,7 +391,7 @@ Class ProjectReader
             ElseIf (field == "sourceset") project.AddSourceSet(This.ReadSourceSet());
             ElseIf (field == "profile") project.AddProfile(This.ReadProfile());
             ElseIf (field == "packages")
-                This.ReadPackages(project.PackageRoots, project.OfficialPackageRoots);
+                This.ReadPackages(project.PackageRoots, project.OfficialPackageRoots, project.PackagePins);
             ElseIf (field == "workspace") This.ReadWorkspace(project);
             ElseIf (field == "lsp") This.ReadLsp();
             Else This.RejectUnknownField("Project", field);

@@ -1,5 +1,6 @@
 #include "kn/sema.h"
 #include "kn/hir.h"
+#include "kn_func_index.h"
 #include "kn/diag.h"
 #include "kn/source.h"
 #include "kn/std.h"
@@ -34,15 +35,10 @@ struct Scope
 
 typedef struct
 {
-    const char *qname;
-    Func *func;
-} FuncSym;
-
-typedef struct
-{
-    FuncSym *items;
+    Func **items;
     int count;
     int cap;
+    FuncNameIndex names, symbols;
 } FuncTable;
 
 typedef struct
@@ -67,7 +63,7 @@ typedef struct
     InterfaceList *interfaces;
     StructList *structs;
     EnumList *enums;
-    FuncList *func_list;
+    FuncNameIndex class_names, interface_names, struct_names, enum_names;
     StmtList *globals;
     int array_length_depth;
     FuncTable funcs;
@@ -125,7 +121,6 @@ static bool type_equal(Type a, Type b);
 static bool params_equal(const ParamList *a, const ParamList *b);
 static bool funcs_share_visible_name(const Func *a, const Func *b);
 static bool funcs_can_overload(const Func *a, const Func *b);
-static const char *func_symbol_identity(const Func *f);
 static const char *qualify_text_name(const char *unit, const char *name);
 static bool methods_share_visible_name(const Method *a, const Method *b);
 static bool methods_can_overload(const Method *a, const Method *b);
@@ -157,7 +152,6 @@ static void check_ptr_safety(Sema *s, int line, int col, int len, const char *de
 static void check_int_to_ptr_safety(Sema *s, Type dst, Type src, Expr *expr);
 static void check_byte_literal_range(Sema *s, Type dst, Expr *src);
 static bool func_is_generic_template(const Func *f);
-static bool func_is_generic_instance(const Func *f);
 static const KnStdFunc *resolve_std_by_qualified_name(Sema *s, const char *qname);
 static void retype_prepared_args(Sema *s, ExprList *args, ParamList *typed_args,
                                  const Param *params, int param_count, const char *default_detail);
@@ -308,14 +302,20 @@ static const char *prepend_unit_name(const char *unit, const char *name)
     return out;
 }
 
+static bool import_in_current_unit(const Sema *s, const ImportMap *m)
+{
+    const char *owner = m->unit ? m->unit : "";
+    const char *unit = s->current_unit ? s->current_unit : "";
+    return owner == unit || kn_strcmp(owner, unit) == 0;
+}
+
 static bool import_has_alias_for_module(Sema *s, const char *module)
 {
     if (!s || !s->imports || !module) return false;
     for (int i = 0; i < s->imports->count; i++)
     {
         ImportMap *m = &s->imports->items[i];
-        if (m->unit && m->unit[0] && s->current_unit && s->current_unit[0] &&
-            kn_strcmp(m->unit, s->current_unit) != 0)
+        if (!import_in_current_unit(s, m))
             continue;
         if (m->kind != IMPORT_ALIAS || !m->module) continue;
         if (kn_strcmp(m->module, module) == 0)
@@ -330,8 +330,7 @@ static bool import_has_open_module(Sema *s, const char *module)
     for (int i = 0; i < s->imports->count; i++)
     {
         ImportMap *m = &s->imports->items[i];
-        if (m->unit && m->unit[0] && s->current_unit && s->current_unit[0] &&
-            kn_strcmp(m->unit, s->current_unit) != 0)
+        if (!import_in_current_unit(s, m))
             continue;
         if (m->kind != IMPORT_OPEN || !m->module) continue;
         if (kn_strcmp(m->module, module) == 0)
@@ -357,8 +356,7 @@ static bool import_has_module_symbol(Sema *s, const char *module, const char *sy
     for (int i = 0; i < s->imports->count; i++)
     {
         ImportMap *m = &s->imports->items[i];
-        if (m->unit && m->unit[0] && s->current_unit && s->current_unit[0] &&
-            kn_strcmp(m->unit, s->current_unit) != 0)
+        if (!import_in_current_unit(s, m))
             continue;
         if (m->kind != IMPORT_SYMBOL || !m->module || !m->remote)
             continue;
@@ -374,8 +372,7 @@ static bool qname_uses_hidden_module_alias(Sema *s, const char *name)
     for (int i = 0; i < s->imports->count; i++)
     {
         ImportMap *m = &s->imports->items[i];
-        if (m->unit && m->unit[0] && s->current_unit && s->current_unit[0] &&
-            kn_strcmp(m->unit, s->current_unit) != 0)
+        if (!import_in_current_unit(s, m))
             continue;
         if (m->kind != IMPORT_ALIAS || !m->module || !m->module[0]) continue;
         size_t ulen = kn_strlen(m->module);
@@ -433,8 +430,7 @@ static const char *expand_local_symbol_alias(Sema *s, const char *name)
         for (int i = 0; i < s->imports->count; i++)
         {
             ImportMap *m = &s->imports->items[i];
-            if (m->unit && m->unit[0] && s->current_unit && s->current_unit[0] &&
-                kn_strcmp(m->unit, s->current_unit) != 0)
+            if (!import_in_current_unit(s, m))
                 continue;
             if (!m->local || !m->remote || kn_strcmp(m->local, current) != 0)
                 continue;
@@ -487,8 +483,7 @@ static const char *expand_alias_qualified_name(Sema *s, const char *name)
     for (int i = 0; i < s->imports->count; i++)
     {
         ImportMap *m = &s->imports->items[i];
-        if (m->unit && m->unit[0] && s->current_unit && s->current_unit[0] &&
-            kn_strcmp(m->unit, s->current_unit) != 0)
+        if (!import_in_current_unit(s, m))
             continue;
         if (m->kind != IMPORT_ALIAS || !m->local || !m->module) continue;
         if (kn_strlen(m->local) != alias_len) continue;
@@ -512,8 +507,7 @@ static const char *expand_imported_symbol_qualified_name(Sema *s, const char *na
     for (int i = 0; i < s->imports->count; i++)
     {
         ImportMap *m = &s->imports->items[i];
-        if (m->unit && m->unit[0] && s->current_unit && s->current_unit[0] &&
-            kn_strcmp(m->unit, s->current_unit) != 0)
+        if (!import_in_current_unit(s, m))
             continue;
         if (m->kind != IMPORT_SYMBOL || m->global || !m->module ||
             !m->local || !m->remote)
@@ -529,12 +523,37 @@ static const char *expand_imported_symbol_qualified_name(Sema *s, const char *na
     return name;
 }
 
-static int named_decl_match_score(Sema *s, const char *raw, const char *decl_name,
+static const char *qname_last_component(const char *name)
+{
+    if (!name) return 0;
+    const char *last = name;
+    for (const char *p = name; *p; p++)
+        if (*p == '.')
+            last = p + 1;
+    return last;
+}
+
+typedef struct
+{
+    const char *raw;
+    const char *name;
+    const char *leaf;
+} TypeNameQuery;
+
+static TypeNameQuery type_name_query(Sema *s, const char *input)
+{
+    TypeNameQuery query;
+    query.raw = expand_local_symbol_alias(s, input);
+    query.name = expand_builtin_core_alias(query.raw);
+    query.leaf = qname_last_component(query.name);
+    return query;
+}
+
+static int named_decl_match_score(Sema *s, const TypeNameQuery *query, const char *decl_name,
                                   const char *decl_unit, const char *decl_qname)
 {
-    if (!raw || !decl_name) return 0;
-    raw = expand_local_symbol_alias(s, raw);
-    const char *name = expand_builtin_core_alias(raw);
+    const char *raw = query->raw;
+    const char *name = query->name;
     if (decl_qname && builtin_type_qname_globally_visible(name) && kn_strcmp(name, decl_qname) == 0)
         return qname_has_dot(raw) ? 100 : 85;
     if (decl_qname && kn_strcmp(raw, decl_qname) == 0)
@@ -568,8 +587,7 @@ static int named_decl_match_score(Sema *s, const char *raw, const char *decl_nam
         for (int i = 0; i < s->imports->count; i++)
         {
             ImportMap *m = &s->imports->items[i];
-            if (m->unit && m->unit[0] && s->current_unit && s->current_unit[0] &&
-                kn_strcmp(m->unit, s->current_unit) != 0)
+            if (!import_in_current_unit(s, m))
                 continue;
             if (m->kind != IMPORT_OPEN || !m->module) continue;
             const char *open_q = join_qualified_name(m->module, name);
@@ -581,12 +599,11 @@ static int named_decl_match_score(Sema *s, const char *raw, const char *decl_nam
     return 0;
 }
 
-static int visible_decl_match_score(Sema *s, const char *raw, const char *decl_name,
+static int visible_decl_match_score(Sema *s, const TypeNameQuery *query, const char *decl_name,
                                     const char *decl_unit, const char *decl_qname)
 {
-    if (!raw || !decl_name) return 0;
-    raw = expand_local_symbol_alias(s, raw);
-    const char *name = expand_builtin_core_alias(raw);
+    const char *raw = query->raw;
+    const char *name = query->name;
     if (builtin_type_qname_globally_visible(name) &&
         qname_matches_decl(name, decl_name, decl_unit, decl_qname))
         return qname_has_dot(raw) ? 100 : 85;
@@ -631,8 +648,7 @@ static int visible_decl_match_score(Sema *s, const char *raw, const char *decl_n
         for (int i = 0; i < s->imports->count; i++)
         {
             ImportMap *m = &s->imports->items[i];
-            if (m->unit && m->unit[0] && s->current_unit && s->current_unit[0] &&
-                kn_strcmp(m->unit, s->current_unit) != 0)
+            if (!import_in_current_unit(s, m))
                 continue;
             if (m->kind != IMPORT_OPEN || !m->module) continue;
             const char *open_q = join_qualified_name(m->module, name);
@@ -651,15 +667,64 @@ static const char *type_decl_lookup_name(const char *name, const char *qname, co
     return name;
 }
 
+static void reserve_type_names(FuncNameIndex *index, int count)
+{
+    if (!count) return;
+    if (count > INT_MAX / 2) kn_die("too many type declarations");
+    funcindex_resize(index, funcindex_capacity(2 * count));
+}
+
+// Each declaration can contribute two spellings. Both slots map back to its
+// ordinal, so equal-score candidates retain their original declaration order.
+static void index_type_name(FuncNameIndex *index, int ordinal, const char *name,
+                            const char *qname, const char *owner)
+{
+    const char *leaf = qname_last_component(type_decl_lookup_name(name, qname, owner));
+    if (!leaf) return;
+    funcindex_add(index, leaf, 2 * ordinal);
+    const char *qualified_leaf = qname_last_component(qname);
+    if (qualified_leaf && kn_strcmp(leaf, qualified_leaf) != 0)
+        funcindex_add(index, qualified_leaf, 2 * ordinal + 1);
+}
+
+static void index_type_declarations(Sema *s)
+{
+    reserve_type_names(&s->class_names, s->classes->count);
+    for (int i = 0; i < s->classes->count; i++)
+    {
+        ClassDecl *c = &s->classes->items[i];
+        index_type_name(&s->class_names, i, c->name, c->qname, c->owner_type_qname);
+    }
+    reserve_type_names(&s->interface_names, s->interfaces->count);
+    for (int i = 0; i < s->interfaces->count; i++)
+    {
+        InterfaceDecl *it = &s->interfaces->items[i];
+        index_type_name(&s->interface_names, i, it->name, it->qname, it->owner_type_qname);
+    }
+    reserve_type_names(&s->struct_names, s->structs->count);
+    for (int i = 0; i < s->structs->count; i++)
+    {
+        StructDecl *st = &s->structs->items[i];
+        index_type_name(&s->struct_names, i, st->name, st->qname, st->owner_type_qname);
+    }
+    reserve_type_names(&s->enum_names, s->enums->count);
+    for (int i = 0; i < s->enums->count; i++)
+    {
+        EnumDecl *en = &s->enums->items[i];
+        index_type_name(&s->enum_names, i, en->name, en->qname, en->owner_type_qname);
+    }
+}
+
 static ClassDecl *find_visible_class(Sema *s, const char *name)
 {
     ClassDecl *best = 0;
     int best_score = 0;
-    if (!s || !name) return 0;
-    for (int i = 0; i < s->classes->count; i++)
+    if (!s || !name || !s->classes || !s->classes->count) return 0;
+    TypeNameQuery query = type_name_query(s, name);
+    for (int slot = funcindex_first(&s->class_names, query.leaf); slot >= 0; slot = s->class_names.next[slot])
     {
-        ClassDecl *c = &s->classes->items[i];
-        int score = visible_decl_match_score(s, name,
+        ClassDecl *c = &s->classes->items[slot / 2];
+        int score = visible_decl_match_score(s, &query,
                                              type_decl_lookup_name(c->name, c->qname, c->owner_type_qname),
                                              c->unit, c->qname);
         if (score > best_score)
@@ -675,11 +740,12 @@ static InterfaceDecl *find_visible_interface(Sema *s, const char *name)
 {
     InterfaceDecl *best = 0;
     int best_score = 0;
-    if (!s || !name) return 0;
-    for (int i = 0; i < s->interfaces->count; i++)
+    if (!s || !name || !s->interfaces || !s->interfaces->count) return 0;
+    TypeNameQuery query = type_name_query(s, name);
+    for (int slot = funcindex_first(&s->interface_names, query.leaf); slot >= 0; slot = s->interface_names.next[slot])
     {
-        InterfaceDecl *it = &s->interfaces->items[i];
-        int score = visible_decl_match_score(s, name,
+        InterfaceDecl *it = &s->interfaces->items[slot / 2];
+        int score = visible_decl_match_score(s, &query,
                                              type_decl_lookup_name(it->name, it->qname, it->owner_type_qname),
                                              it->unit, it->qname);
         if (score > best_score)
@@ -695,11 +761,12 @@ static StructDecl *find_visible_struct(Sema *s, const char *name)
 {
     StructDecl *best = 0;
     int best_score = 0;
-    if (!s || !name) return 0;
-    for (int i = 0; i < s->structs->count; i++)
+    if (!s || !name || !s->structs || !s->structs->count) return 0;
+    TypeNameQuery query = type_name_query(s, name);
+    for (int slot = funcindex_first(&s->struct_names, query.leaf); slot >= 0; slot = s->struct_names.next[slot])
     {
-        StructDecl *st = &s->structs->items[i];
-        int score = visible_decl_match_score(s, name,
+        StructDecl *st = &s->structs->items[slot / 2];
+        int score = visible_decl_match_score(s, &query,
                                              type_decl_lookup_name(st->name, st->qname, st->owner_type_qname),
                                              st->unit, st->qname);
         if (score > best_score)
@@ -715,11 +782,12 @@ static EnumDecl *find_visible_enum(Sema *s, const char *name)
 {
     EnumDecl *best = 0;
     int best_score = 0;
-    if (!s || !name) return 0;
-    for (int i = 0; i < s->enums->count; i++)
+    if (!s || !name || !s->enums || !s->enums->count) return 0;
+    TypeNameQuery query = type_name_query(s, name);
+    for (int slot = funcindex_first(&s->enum_names, query.leaf); slot >= 0; slot = s->enum_names.next[slot])
     {
-        EnumDecl *en = &s->enums->items[i];
-        int score = visible_decl_match_score(s, name,
+        EnumDecl *en = &s->enums->items[slot / 2];
+        int score = visible_decl_match_score(s, &query,
                                              type_decl_lookup_name(en->name, en->qname, en->owner_type_qname),
                                              en->unit, en->qname);
         if (score > best_score)
@@ -1044,11 +1112,6 @@ static int int_bits(TypeKind k);
 static bool func_is_generic_template(const Func *f)
 {
     return f && f->type_param_count > 0 && !f->is_generic_instance;
-}
-
-static bool func_is_generic_instance(const Func *f)
-{
-    return f && f->is_generic_instance;
 }
 
 static Method *find_method_sig(ClassDecl *c, const Method *sig, int *out_index)

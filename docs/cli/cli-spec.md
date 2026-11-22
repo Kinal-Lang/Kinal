@@ -1,5 +1,7 @@
 # Kinal CLI Design Specification
 
+This is a developer design reference. Example command names such as `test`, `init`, and `clean`, and the later `test` implementation walkthrough, illustrate extension conventions; they are not implemented C compiler subcommands. Use [Compiler CLI](compiler.md) for current commands.
+
 This document defines the design conventions for the `kinal` command-line tool. All new CLI features must follow this specification.
 
 ---

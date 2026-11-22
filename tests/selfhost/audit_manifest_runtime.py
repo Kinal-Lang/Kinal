@@ -22,7 +22,7 @@ from audit_manifest_native import (
 )
 
 
-EXPECTED_HOST_RUNTIME_CASES = {"windows": 189, "linux": 187, "macos": 185}
+EXPECTED_HOST_RUNTIME_CASES = {"windows": 198, "linux": 196, "macos": 194}
 ANSI_ESCAPE_RE = re.compile(r"\x1b\[[0-9;]*m")
 
 
@@ -191,7 +191,7 @@ def build_case(
     executable.unlink(missing_ok=True)
     try:
         proc = subprocess.run(
-            [str(compiler), "build", str(project), str(executable), "native"],
+            [str(compiler), "build", "--project", str(project), "--profile", "native", "-o", str(executable)],
             cwd=root,
             text=True,
             capture_output=True,

@@ -1,0 +1,13 @@
+Unit Tests.FileAppendWorker;
+
+Get IO.File;
+
+Static Function int Main(string[] args)
+{
+    If (args.Length() != 2) Return 2;
+    For (int i = 0; i < 128; i++)
+    {
+        If (!IO.File.AppendLine(args[0], args[1] + "-" + [string](i))) Return 1;
+    }
+    Return 0;
+}

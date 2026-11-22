@@ -71,7 +71,7 @@ def check_vm_cli(compiler: Path, stage0: Path, vm: Path, root: Path, out: Path,
         nonlocal sequence
         sequence += 1
         values = [str(value) for value in command]
-        proc = subprocess.run(values, cwd=out, text=True, capture_output=True, timeout=180)
+        proc = subprocess.run(values, cwd=out, encoding="utf-8", capture_output=True, timeout=180)
         (logs / f"{sequence:03d}-{label}.log").write_text(
             "command=" + repr(values) + "\nexit=" + str(proc.returncode) + "\n" +
             proc.stdout + proc.stderr, encoding="utf-8")
@@ -81,7 +81,8 @@ def check_vm_cli(compiler: Path, stage0: Path, vm: Path, root: Path, out: Path,
         return proc
 
     def execute(label: str, output: Path, expected: str) -> None:
-        assert output.read_bytes()[:8] == b"KNC2" + struct.pack("<HH", 3, 0), output
+        revision = (3, 4) if label.startswith("stage0") else (4,)
+        assert output.read_bytes()[:8] in [b"KNC2" + struct.pack("<HH", n, 0) for n in revision], output
         run = invoke(label, [vm, output])
         assert run.stdout.replace("\r\n", "\n") == expected, (label, run.stdout, expected)
         assert not run.stderr, (label, run.stderr)
@@ -109,6 +110,24 @@ def check_vm_cli(compiler: Path, stage0: Path, vm: Path, root: Path, out: Path,
         run = invoke(label + "-native-execute", [native])
         assert run.stdout.replace("\r\n", "\n") == expected_native, (label, run.stdout)
         cases += 2
+
+    if os.name == "nt":
+        # Use the installed UI package from a project without vendored dependencies.
+        ui = out / "desktop-sdk"
+        ui.mkdir(exist_ok=True)
+        (ui / "Main.kn").write_text(
+            'Unit App; Get UI By IO.UI;\nStatic Function int Main() {\n'
+            '    UI.Panel panel = New UI.Panel(UI.LayoutMode.Absolute);\n'
+            '    panel.Add(New UI.Button("OK", 8, 8, 80, 24));\n'
+            '    Return panel.ChildCount == 1 ? 0 : 1;\n}\n', encoding="utf-8")
+        manifest = ui / "kinal.knproj"
+        manifest.write_text('Project App { Profile "vm" { Source { Entry = "Main.kn"; } '
+                            'Build { Backend = VM; } } }\n', encoding="utf-8")
+        for label, arguments in [("source", [ui / "Main.kn"]), ("project", ["--project", manifest])]:
+            artifact = ui / (label + ".knc")
+            invoke("desktop-ui-" + label, [compiler, "vm", "build", *arguments, "-o", artifact])
+            execute("desktop-ui-execute-" + label, artifact, "")
+            cases += 1
 
     # No -o uses the first source's base name in the invoking directory.
     invoke("default-output", [compiler, "vm", "build", "--no-module-discovery", source])
@@ -164,12 +183,33 @@ def check_vm_cli(compiler: Path, stage0: Path, vm: Path, root: Path, out: Path,
     cases += 3
 
     args = out / "Arguments.kn"
-    args.write_text('Unit Tests.VmArguments; Static Function int Main(string[] args) { Return args.Length(); }\n',
-                    encoding="utf-8")
-    args_output = out / "args.knc"
-    invoke("empty-entry-args", [compiler, "vm", "build", "--no-module-discovery", args, "-o", args_output])
-    execute("empty-entry-args-execute", args_output, "")
-    cases += 1
+    guest_args = ["--version", "", "two words", 'a"b', "end\\", 'slash\\"quote', "雪📂", "--", "--help"]
+    for globals_first in (False, True):
+        init = "int Ready = Initialize(); Function int Initialize(){IO.GC.Collect(); Return 19;}" if globals_first else ""
+        check = "If (Ready != 19) Return 99;" if globals_first else ""
+        args.write_text(f'''Unit Tests.VmArguments;
+Get IO.Console;
+Get IO.GC;
+{init}
+Static Function int Main(string[] args) {{
+    {check}
+    IO.GC.Collect();
+    For (int i = 0; i < args.Length(); i++) IO.Console.PrintLine("[" + args[i] + "]");
+    Return 0;
+}}
+''', encoding="utf-8")
+        for label, tool in tools:
+            output = out / f"{label}-args-{int(globals_first)}.knc"
+            invoke(label + "-args-build", [tool, "vm", "build", "--no-module-discovery", args, "-o", output])
+            execute(label + "-empty-args", output, "")
+            # The C emitter can enter Main directly or through its global-init wrapper.
+            for values in (guest_args, [str(i) for i in range(300)]):
+                expected = "".join(f"[{value}]\n" for value in values)
+                for name, command in (("runner", [vm, output]),
+                                      ("cli", [tool, "vm", "run", "--vm-path", vm, output, "--"])):
+                    got = invoke(label + "-args-" + name, [*command, *values])
+                    assert got.stdout == expected and not got.stderr, (label, name, got.stdout, got.stderr)
+            cases += 1
 
     invalid = out / "Invalid.kn"
     invalid.write_text('Unit Tests.InvalidVm; Static Function int Main() { Return Missing(); }\n', encoding="utf-8")
@@ -192,11 +232,13 @@ def check_vm_cli(compiler: Path, stage0: Path, vm: Path, root: Path, out: Path,
         ("runtime-arguments", ["vm", "build", source, "--", "program-argument"]),
     ):
         invoke("rejected-" + label, [compiler, *arguments], code=2)
-    invoke("vm-help", [compiler, "vm", "build", "--help"], text="vm build <source>")
-    invoke("vm-group-help", [compiler, "vm", "--help"], text="vm build <source>")
+    for label, args in (("vm-help", ["vm", "build", "--help"]), ("vm-group-help", ["vm", "--help"])):
+        reference = invoke(label + "-reference", [stage0, *args])
+        actual = invoke(label, [compiler, *args])
+        assert (actual.stdout, actual.stderr) == (reference.stdout, reference.stderr), label
     cases += 10
     result = {"name": "selfhost_vm_cli", "ok": True, "cases": cases, "commands": sequence,
-              "stage0_reference": stage0_reference, "backend": "pure-Kinal scalar KNC v3"}
+              "stage0_reference": stage0_reference, "backend": "pure-Kinal scalar KNC v4"}
     (out / "results.json").write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
     print(f"[OK] selfhost VM CLI: {cases} cases, {sequence} commands", flush=True)
     return result

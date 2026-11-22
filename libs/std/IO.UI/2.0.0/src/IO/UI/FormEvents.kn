@@ -1,0 +1,35 @@
+Unit IO.UI;
+
+// For code-behind that exposes controls as unit variables. Instance methods do
+// not need a context. Each form factory keeps one context for its own variables.
+Public Class FormEventContext
+{
+    Private IO.Type.Object.Function _active;
+
+    Public Trusted Function void Activate(IO.Type.Object.Function expose)
+    {
+        If (_active == expose) Return;
+        _active = expose;
+        If (expose != null) expose();
+    }
+
+    Public Trusted Function IO.UI.Event Bind(IO.UI.EventKind kind, IO.Type.Object.Function expose,
+                               IO.Type.Object.Function handler, bool withArgs = false)
+    {
+        FormEventContext context = This;
+        IO.Type.Object.Function dispatch = Function void(IO.Type.Object.Class sender, IO.UI.EventArgs args)
+        {
+            IO.Type.Object.Function previous = context._active;
+            context.Activate(expose);
+            Try
+            {
+                If (withArgs) handler(sender, args);
+                Else handler();
+            }
+            Catch (IO.Error err) { context.Activate(previous); Throw err; }
+            context.Activate(previous);
+        };
+        Return New IO.UI.Event(kind, dispatch);
+    }
+}
+

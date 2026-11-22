@@ -1,0 +1,109 @@
+Unit Tests.GcFrames;
+
+Get IO.Kinal.Runtime.GarbageCollector;
+Get IO.Kinal.Runtime.Native;
+Get IO.Async;
+
+// Both the recursive caller and callee must see freshly zeroed, distinct arrays.
+Function int NestedFixedArray(int depth)
+{
+    int[4096] data;
+    int[4096] peer;
+    int[8192] wide;
+    If (data[0] != 0 || data[4095] != 0 || peer[4095] != 0 || wide[8191] != 0) Return -1;
+    data[0] = depth + 1;
+    data[4095] = depth + 9;
+    peer[4095] = depth + 17;
+    wide[8191] = depth + 23;
+    If (depth > 0 && NestedFixedArray(depth - 1) != depth) Return -2;
+    If (data.Length() != 4096 || data[4095] != depth + 9) Return -3;
+    If (peer[4095] != depth + 17 || wide[8191] != depth + 23) Return -4;
+    Return data[0];
+}
+
+Function bool ReenteredFixedArray(int count)
+{
+    For (int i = 0; i < count; i++)
+    {
+        int[4096] data;
+        If (data[0] != 0 || data[4095] != 0) Return false;
+        data[0] = i + 1;
+        data[4095] = i + 2;
+        If (data[4095] != data[0] + 1) Return false;
+    }
+    Return true;
+}
+
+Function int[] PublishedFixedArray(int marker)
+{
+    int[4096] data;
+    data[7] = marker;
+    Return data;
+}
+
+Trusted Function int* PublishedArrayElement(int marker)
+{
+    int[4096] data;
+    data[7] = marker;
+    Return &data[7];
+}
+
+Function Object.Function CapturedFixedArray(int marker)
+{
+    int[4096] data;
+    data[7] = marker;
+    Return Function int() { Return data[7]; };
+}
+
+Function void ThrowFromFixedArray()
+{
+    int[4096] data;
+    data[0] = 71;
+    Throw [string](data[0]);
+}
+
+i32 FirstArrayReady;
+i32 SecondArrayReady;
+
+Trusted Async Function int OverlappingFixedArray(int marker)
+{
+    int[4096] data;
+    int[8192] wide;
+    If (data[0] != 0 || wide[8191] != 0) Return -1;
+    data[0] = marker;
+    wide[8191] = marker + 3;
+    i32* ready = marker == 41 ? &FirstArrayReady : &SecondArrayReady;
+    i32* peer = marker == 41 ? &SecondArrayReady : &FirstArrayReady;
+    IO.Kinal.Runtime.Native.AtomicStoreI32(ready, [i32](1));
+    int attempts = 0;
+    While (IO.Kinal.Runtime.Native.AtomicLoadI32(peer) == 0 && attempts < 5000)
+    {
+        IO.Kinal.Runtime.Native.SleepMilliseconds(1);
+        attempts++;
+    }
+    Return attempts == 5000 || wide[8191] != marker + 3 ? -2 : data[0];
+}
+
+Trusted Function bool CheckFixedArrayLifetimes()
+{
+    If (!ReenteredFixedArray(40) || !ReenteredFixedArray(0)) Return false;
+    int[] first = PublishedFixedArray(40);
+    int[] second = PublishedFixedArray(80);
+    int* interior = PublishedArrayElement(19);
+    Object.Function captured = CapturedFixedArray(31);
+    For (int round = 0; round < 6; round++)
+    {
+        Try { ThrowFromFixedArray(); Return false; }
+        Catch (string value) { If (value != "71") Return false; }
+        If (NestedFixedArray(4) != 5) Return false;
+        IO.Kinal.Runtime.GarbageCollector.Collect();
+    }
+    IO.Kinal.Runtime.Native.AtomicStoreI32(&FirstArrayReady, [i32](0));
+    IO.Kinal.Runtime.Native.AtomicStoreI32(&SecondArrayReady, [i32](0));
+    Var leftTask = OverlappingFixedArray(41);
+    Var rightTask = OverlappingFixedArray(82);
+    int left = IO.Async.Run(leftTask);
+    int right = IO.Async.Run(rightTask);
+    If (left != 41 || right != 82) Return false;
+    Return first[7] == 40 && second[7] == 80 && interior[0] == 19 && [int](captured()) == 31;
+}

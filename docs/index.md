@@ -1,5 +1,7 @@
 # Kinal Language Documentation
 
+This documentation follows the current C compiler, runtime and standard library. Selfhost-only entries are explicitly marked. Start with installation and Hello World, then use the project, language and API references. [Native/VM support](advanced/backend-support.md) describes backend-specific limits.
+
 > **Kinal** is a statically typed, object-oriented general-purpose compiled language. It builds native code via LLVM and includes a built-in KNC bytecode virtual machine (KinalVM) for dual-mode execution. Design goals: clear and intuitive syntax, clearly defined safety levels, and a complete toolchain.
 
 ---
@@ -39,16 +41,18 @@
 | Document | Description |
 |----------|-------------|
 | [Standard Library Overview](stdlib/overview.md) | Overview of the IO.* namespace |
+| [IO.Type](stdlib/types.md) | Conversions, any/string helpers and representation boundaries |
 | [IO.Console](stdlib/console.md) | Console input and output |
 | [IO.Text](stdlib/text.md) | String operations |
 | [IO.File / IO.Directory](stdlib/filesystem.md) | File and directory operations |
 | [IO.Path](stdlib/path.md) | Path handling |
-| [IO.Collections](stdlib/collections.md) | list, dict, set |
+| [IO.Collection](stdlib/collections.md) | list, dict, set |
 | [IO.Async](stdlib/async.md) | Coroutine tasks and process management |
 | [IO.Time](stdlib/time.md) | Time and timing |
 | [IO.System](stdlib/system.md) | System calls and dynamic libraries |
 | [IO.Meta](stdlib/meta.md) | Runtime metadata queries |
 | [IO.Core](stdlib/core.md) | `IO.Char` and `IO.Math` |
+| [IO.Json](stdlib/json.md) | JSON objects, lists, formatting and wrappers |
 | [IO.Request](stdlib/request.md) | Outbound HTTP client |
 | [IO.UI](stdlib/ui.md) | Native desktop UI package |
 | [IO.Web](stdlib/web.md) | Embedded HTTP server package |
@@ -58,6 +62,8 @@
 | Document | Description |
 |----------|-------------|
 | [kinal Compiler](cli/compiler.md) | Complete compiler options reference |
+| [Project Files](cli/project-files.md) | Complete kinal.knproj fields, source modes, profiles and LSP rules |
+| [Project Metrics](cli/metrics.md) | Selfhost complexity analysis and text/JSON/HTML reports |
 | [KinalVM](cli/vm.md) | Bytecode virtual machine and `.knc` format |
 | [Code Formatter](cli/fmt.md) | `kinal fmt` usage |
 | [Package System](cli/packages.md) | `.knpkg.json`, `.klib`, and package management |
@@ -66,11 +72,13 @@
 | Document | Description |
 |----------|-------------|
 | [Compilation Pipeline](advanced/compilation-pipeline.md) | Lexing → Parsing → Semantics → Code Generation |
+| [Backend Support](advanced/backend-support.md) | Native/KNC capabilities, limitations and format compatibility |
+| [Memory and Lifetimes](advanced/memory-management.md) | Values, shared backing, GC, raw memory and FFI ownership |
 | [Diagnostic Code Reference](advanced/error-codes/index.md) | Shared compiler and LSP diagnostic codes, examples, explanations, and fixes |
 | [Freestanding / Embedded](advanced/freestanding.md) | `--freestanding`, `--runtime`, hostless environments |
 | [Cross-Compilation](advanced/cross-compilation.md) | `--target`, target triples, and platform aliases |
 | [Linking and LTO](advanced/linking.md) | Linker backends, LTO, static/dynamic libraries |
-| [Runtime Environment Constants Proposal](advanced/runtime-environment-constants.md) | Compile-time constants for distinguishing KinalVM vs. native runtime |
+| [Runtime Environment Constants](advanced/runtime-environment-constants.md) | Compile-time constants for distinguishing KinalVM vs. native runtime |
 | [IO.Version Constants](advanced/version-constants.md) | Compile-time constants for compiler and KinalVM version information |
 
 ---
@@ -95,7 +103,7 @@ kinal build hello.kn -o hello
 ./hello
 ```
 
-**Run via KinalVM (no LLVM required):**
+**Compile and run bytecode via KinalVM:**
 ```bash
 kinal vm run hello.kn
 ```
@@ -108,7 +116,13 @@ kinal vm run hello.kn
 - **Three-tier safety model** — `Safe` / `Trusted` / `Unsafe` for fine-grained control over dangerous operations
 - **Native OOP** — Classes, interfaces, virtual methods, and inheritance with intuitive syntax
 - **Block objects** — A unique "suspendable code block" mechanism with label-based jumps
-- **Full async** — First-class `Async`/`Await` that integrates seamlessly with synchronous code
+- **Native async** — `Async`/`Await` with documented backend limits
 - **Dual backends** — LLVM native compilation + built-in KinalVM bytecode interpreter
-- **C interop** — Zero-overhead `Extern` / `Delegate` calls to C function libraries
-- **Meta annotations** — A custom annotation system queryable at compile time or runtime
+- **C interop** — Explicit `Extern` / `Delegate` declarations with C ABI and ownership rules
+- **Meta annotations** — Custom annotations and runtime-retained metadata queries
+
+## Example Conventions
+
+Complete examples with Main can be saved as standalone .kn files; multi-file examples require every listed file. Other syntax fragments omit enclosing declarations, imports or earlier definitions; ... denotes a placeholder. Incorrect diagnostic examples are deliberately invalid. Select Native, VM, freestanding and platform requirements as stated on each page; highlighting or frontend success does not prove runtime support. Backslash command continuations use POSIX shell syntax; in PowerShell combine the command into one line and run current-directory Windows executables as .\program.exe.
+
+This reference follows current C source. An older installed release may behave differently. Include tool versions, minimal source, the complete command and actual diagnostics when reporting a problem.

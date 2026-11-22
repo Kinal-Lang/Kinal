@@ -1,34 +1,9 @@
 # ────────────────────────────────────────────────────────────────
 #  Kinal CI — build & test on every push / pull-request
 # ────────────────────────────────────────────────────────────────
-name: CI
+name: C maintenance CI
 
 on:
-  push:
-    branches: [ main, dev, "release/**" ]
-    paths:
-      - ".github/workflows/ci.yml"
-      - "CMakeLists.txt"
-      - "CMakePresets.json"
-      - "VERSION"
-      - "x.py"
-      - "apps/**"
-      - "dev/**"
-      - "infra/**"
-      - "libs/**"
-      - "tests/**"
-  pull_request:
-    paths:
-      - ".github/workflows/ci.yml"
-      - "CMakeLists.txt"
-      - "CMakePresets.json"
-      - "VERSION"
-      - "x.py"
-      - "apps/**"
-      - "dev/**"
-      - "infra/**"
-      - "libs/**"
-      - "tests/**"
   workflow_dispatch:
     inputs:
       run_windows_x64:
@@ -139,7 +114,7 @@ jobs:
               {
                   "id": "macos-arm64",
                   "name": "macOS arm64",
-                  "runs_on": "macos-14",
+                  "runs_on": "macos-15",
                   "timeout": 45,
                   "family": "macos",
                   "msvc_arch": "",

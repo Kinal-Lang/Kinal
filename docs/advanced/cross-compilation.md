@@ -1,147 +1,94 @@
 # Cross-Compilation
 
-Kinal is built on the LLVM backend and natively supports cross-compilation — compiling executables for another platform on one machine.
+Native cross-compilation emits code for another OS/architecture. Selecting a triple is one part of a complete target toolchain; it does not automatically provide a target SDK, every runtime library, or host execution of the result.
 
----
-
-## Core Options
+## Select Target and Output Stage
 
 ```bash
-kinal --target <triple> [other options] <file.kn> -o <output>
+kinal build main.kn --target linux-arm64 --emit ir -o out/main-aarch64.ll
+kinal build main.kn --target linux-arm64 --emit obj -o out/main-aarch64.o
 ```
 
----
+IR/object emission is useful before target linking is configured. To create a runnable executable, additionally provide a compatible linker, target startup/CRT/system libraries and package native assets. The command begins with `kinal build`; placing build options directly after kinal is not the documented subcommand interface.
 
-## Built-in Platform Aliases
+## Main Target Aliases
 
-Kinal provides a set of platform shorthand aliases so you don't need to memorize full LLVM triples:
+| Alias | Triple |
+|-------|--------|
+| `win86` | `i686-pc-windows-msvc` |
+| `win64` | `x86_64-pc-windows-msvc` |
+| `win-arm64` | `aarch64-pc-windows-msvc` |
+| `linux64` | `x86_64-pc-linux-gnu` |
+| `linux-arm64` | `aarch64-unknown-linux-gnu` |
+| `mac64` | `x86_64-apple-darwin` |
+| `macos-arm64` | `aarch64-apple-darwin` |
+| `bare64` | `x86_64-unknown-none-elf` |
+| `bare-arm64` | `aarch64-unknown-none-elf` |
 
-| Alias | Equivalent Triple | Description |
-|-------|------------------|-------------|
-| `win86` | `i686-windows-msvc` | Windows 32-bit |
-| `win64` | `x86_64-windows-msvc` | Windows 64-bit |
-| `linux64` | `x86_64-linux-gnu` | Linux x86_64 |
-| `linux-arm64` | `aarch64-linux-gnu` | Linux ARM64 |
-| `bare64` | `x86_64-unknown-none` | Bare-metal x86_64 |
-| `bare-arm64` | `aarch64-unknown-none` | Bare-metal ARM64 |
+A supported full triple can also be passed. Aliases normalize platform spelling; they do not change available target libraries. Artifact suffixes and ABI follow the target, even when compiling on another host.
 
----
-
-## Common Cross-Compilation Scenarios
-
-### Compiling a Windows Program on Linux
+## Linking a Foreign Target
 
 ```bash
-kinal --target win64 main.kn -o main.exe --linker zig
+kinal build main.kn --target linux-arm64 --linker zig -o out/app-linux-arm64
+kinal build main.kn --target win64 --linker lld -o out/app-windows.exe
 ```
 
-> Using `--linker zig` is recommended for Windows cross-compilation, as the zig toolchain includes C runtime headers for Windows targets.
+These commands require the respective target dependencies. Zig can supply parts of a cross toolchain, but cannot guarantee every vendor SDK, Windows MSVC library, Apple SDK or third-party native dependency. LLD/MSVC also require suitable target inputs. Hosted Linux/macOS defaults prefer an available Zig and otherwise warn/fall back to LLD; explicitly selecting a backend overrides that default.
 
-### Compiling a Linux Program on Windows
+Kinal currently has no general `--sysroot` CLI option. Supply target library search paths with `-L`/project Link fields and use backend-appropriate `--link-arg` options when required. Do not assume `-L` alone supplies headers, startup files or a complete SDK. Foreign FFI libraries must match architecture and ABI, not only a filename extension.
 
-```bash
-kinal --target linux64 main.kn -o main --linker zig
-```
+## Target, Host and Runtime Constants
 
-### Compiling for ARM64 Linux
+| Constant family | Meaning |
+|-----------------|---------|
+| `IO.Target.OS`, `.Arch`, `.Env` | Compiled artifact's OS, architecture and hosted/freestanding environment |
+| `IO.Host.OS`, `.Arch`, `.Env` | Compiler host's corresponding properties |
+| `IO.Target.PointerBits` / `IO.Host.PointerBits` | Pointer width of the relevant machine |
+| `.PathSeparator`, `.NewLine`, `.ExeSuffix`, `.ObjectSuffix`, `.DynamicLibrarySuffix`, `.StaticLibrarySuffix` | Platform spelling for the chosen family |
+| `IO.Runtime.*` | Native versus VM output backend, independent of the above environment/profile |
 
-```bash
-kinal --target linux-arm64 main.kn -o main
-```
+Target OS constants include Windows/Linux/MacOS/Unknown; Arch includes X86/X64/Arm64/Unknown; Env includes Hosted/Freestanding/Unknown. Compare constants instead of hard-coding their integer values.
 
----
-
-## Linker Selection
-
-| Linker | Option | Use Case |
-|--------|--------|----------|
-| `lld` | `--linker lld` (default) | Native compilation, fastest |
-| `zig` | `--linker zig` | Cross-compilation, includes cross toolchain |
-| `msvc` | `--linker msvc` | Windows native, requires MSVC installation |
-
-The zig toolchain (`zig cc`) is the most recommended cross-compilation option because it has built-in sysroots for multiple platforms, eliminating the need to install separate cross-compilation toolchains:
-
-```bash
-# Install zig (used as clang frontend + cross linker)
-# Then use directly:
-kinal --target linux-arm64 main.kn -o myapp --linker zig
-```
-
----
-
-## Sysroot
-
-When compilation requires system headers and libraries, you may need to specify a sysroot:
-
-```bash
-kinal --target linux-arm64 \
-      -L /path/to/arm64-sysroot/lib \
-      main.kn -o myapp
-```
-
----
-
-## Static Linking (Recommended for Release)
-
-Static linking is recommended for cross-compilation to avoid dynamic library version issues on the target platform:
-
-```bash
-kinal --target linux64 \
-      --linker zig \
-      -o myapp-linux \
-      main.kn
-```
-
----
-
-## Build Matrix Example
-
-A script to build for multiple platforms simultaneously:
-
-```bash
-#!/bin/bash
-TARGETS=(
-    "win64:main-windows.exe"
-    "linux64:main-linux"
-    "linux-arm64:main-linux-arm64"
-)
-
-for entry in "${TARGETS[@]}"; do
-    target="${entry%%:*}"
-    output="${entry##*:}"
-    echo "Compiling $target -> $output ..."
-    kinal --target "$target" --linker zig main.kn -o "dist/$output"
-done
-```
-
----
-
-## Notes
-
-### Platform-Specific Code
-
-Use `IO.Target.OS` conditions to handle platform differences:
 ```kinal
-Static Function string GetConfigPath()
+Unit Docs.Platform;
+Get IO.Console;
+
+Static Function int Main()
 {
     If (IO.Target.OS == IO.Target.OS.Windows)
     {
-        Return IO.Path.Combine(IO.System.GetEnv("APPDATA"), "myapp");
+        IO.Console.PrintLine("Windows target");
     }
-    Return IO.Path.Combine(IO.System.GetEnv("HOME"), ".config/myapp");
+    Else
+    {
+        IO.Console.PrintLine("non-Windows target");
+    }
+    IO.Console.PrintLine(IO.Target.PointerBits);
+    IO.Console.PrintLine(IO.Target.DynamicLibrarySuffix);
+    Return 0;
 }
-
 ```
 
-### Availability of C Standard Library Functions
+Compile-time inactive branches remain syntax-checked but are not semantically bound. Use target properties for program path/ABI policy; the compiler host is not the deployed program's platform. Cross-compiling does not fix Windows native argv/filesystem encoding boundaries.
 
-When cross-compiling, C functions called via `Extern` FFI must exist on the target platform. When using `--linker zig`, zig is responsible for providing the C runtime for the target platform.
+## Freestanding Targets
 
----
+```bash
+kinal build kernel.kn --target bare-arm64 --freestanding --runtime none \
+    --panic trap --no-crt --link-script board.ld -o out/kernel.elf
+```
 
-## See Also
+The target must supply its boot/startup contract and a real linker script. Alloc/GC profiles additionally require target runtime hooks. Producing an ELF is not evidence that a board boots it. See [Freestanding](freestanding.md).
 
-- [Compiler CLI](../cli/compiler.md) — `--target`, `--linker` options
-- [Linking](linking.md) — Linker backend details
-- [Freestanding Development](freestanding.md) — No-OS targets
-- [FFI](../language/ffi.md) — Platform-specific C interfaces
+## Static Linking and Deployment
+
+Choosing Zig or enabling LTO does not automatically make a GNU Linux target fully static or remove package/system dependencies. `--kind static` creates a static library; it is not a switch for a fully static executable. `--crt static` selects a supported CRT mode, not an arbitrary CRT file or a complete dependency-free deployment policy.
+
+Inspect the emitted binary and actual linked libraries on the target platform. Confirm runtime assets, library search paths and OS compatibility using the final distribution layout. See [Linking](linking.md).
+
+## Verification
+
+A useful order is semantic checks, target IR/object emission, target link, then execution on the target host. Keep those results distinct. The hosted CI matrix and seven-target stage emission checks establish different forms of evidence; neither substitutes for testing your application's native dependencies and behavior.
+
+For a target matrix, build each output into a separate directory/name so one target does not overwrite another. Project profiles can encode common target/link/source choices; see [Project Files](../cli/project-files.md).

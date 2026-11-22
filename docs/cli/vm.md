@@ -4,15 +4,68 @@
 
 ## Bytecode compatibility
 
-The compiler writes KNC format version **3** (the four-byte magic remains
-`KNC2`). Version 3 stores integer constants as signed 64-bit little-endian
-values, preserving all `int`/`i64` bits and the bit patterns used by `u64`.
-The VM continues to read version 2 files with sign-extended 32-bit constants.
-Both standalone `.knc` files and packed executables use these rules.
+The compiler emits KNC2 wire revision 4. Immediately after the magic, little-endian u16 revision and u16 flags comes the producer compiler version (u32 byte length followed by UTF-8). The remaining layout matches revision 3. KinalVM reads revisions 2 and 3 as well. Revision 2 uses signed 32-bit integer constants. Revisions 3 and 4 use signed 64-bit constants.
 
-Update the compiler and VM together. An older, version-2-only VM rejects new
-files with `Unsupported .knc version: 3`; it cannot execute the new format.
-New `f32` rounding/conversion instructions also require the updated VM.
+A different producer compiler version is allowed. Successful execution is silent. If decoding or execution fails after the producer is known, the diagnostic includes the current compiler version expected by the runner and the KNC producer version. A guest returning a nonzero integer is a normal return. Legacy images contain no producer metadata. Runners that understand only revisions 2 and 3 require an update to read revision 4.
+
+## Compile and run in a Native host
+
+The executor itself runs in a Native host. A KNC guest cannot instantiate it inside the standard runner.
+
+Import the optional `IO.Kinal.VM.Executor` package to compile a source string in process and retrieve its bytecode.
+
+```kinal
+Unit Host;
+Get VM By IO.Kinal.VM.Executor;
+
+Static Function int Main()
+{
+    VM.Executor compiler = New VM.Executor();
+    compiler.Compile("Static Function int Main() { Return 42; }");
+    byte[] image = compiler.Knc;
+    VM.Executor runner = New VM.Executor();
+    runner.LoadBytes(image);
+    Return runner.Run();
+}
+```
+
+Use `LoadFile(path)` to read a complete KNC file or `LoadBytes(data)` for a caller-supplied image. `Run(arguments)` starts a fresh guest and returns its entry point result. Uncaught guest exceptions reach the host as `IO.Error`. A failed compile or load preserves the previous image.
+
+For imports in runtime-compiled code, deploy the guest's standard-library packages in `stdpkg` next to the host or set `compiler.StandardLibraryRoot`. Set `compiler.CacheDirectory` to a writable package extraction directory when required. Source and KNC data stay in memory throughout compilation. The optional package includes the KNC frontend and backend. Ordinary Native apps can be distributed independently of it.
+
+## Array storage
+
+KinalVM allocates a contiguous zeroed buffer for an integer, character, floating-point
+or boolean array. Booleans use one byte per element. String and object arrays create
+storage in 64-element pages on the first write. An untouched string element reads as
+`""`, and an untouched object element reads as `null`.
+
+Assigning an array to another variable shares its indexed storage. `array.Add(value)`
+returns an independent array. Either array can subsequently replace an element.
+Object references stored in both arrays still refer to the same object. Existing
+`.knc` files use this implementation with an updated runner. Repack standalone VM
+executables to include it.
+
+Native hosts embedding `IO.Kinal.VM` can access guest arrays through
+`ExecutionContext.ArrayLengthOf`, `ArrayGetValue` and `ArraySetValue`. Hosts
+that accessed the old typed fields of `HeapArray` directly must migrate to these
+methods when rebuilding against the updated package.
+
+## Guest object handles
+
+The VM stores object, array, pointer and capture-cell handles in 256-slot pages.
+Growing the heap adds pages as needed. A live object's handle stays valid across
+guest collections. The collector can reuse a released handle for another object.
+
+Native hosts can look up a single slot with `ExecutionContext.ObjectAt`,
+`ArrayAt`, `PointerAt` or `CellAt`. Each returns `null` for a vacant or
+out-of-range slot. To retain a guest object across a callback, use
+`ctx.Heap.Pin(value)` and later `ctx.Heap.Unpin(token)`.
+
+The `Objects`, `Arrays`, `Pointers` and `Cells` properties still expose mutable,
+exact-length arrays. Reading one materializes that entire table and switches it
+to flat storage. Indexed writes are shared until an append creates a new array.
+Use the single-slot methods in loops to keep paged storage.
 
 ---
 
@@ -30,6 +83,8 @@ New `f32` rounding/conversion instructions also require the updated VM.
 ## kinal vm build
 
 Compile source files to `.knc` KinalVM bytecode.
+
+The selfhost compiler indexes bound functions and globals once per build and grows its bytecode buffers as needed. This reduces compilation time for projects with many event handlers, functions, or global initializers.
 
 ```bash
 kinal vm build <file.kn> [-o <output.knc>]
@@ -91,8 +146,15 @@ kinal vm run main.kn
 kinal vm run --project .
 
 # Pass arguments
-kinal vm run main.knc -- arg1 arg2
+kinal vm run main.knc -- one "two words"
+kinalvm main.knc one "two words"
 ```
+
+Both commands pass `["one", "two words"]` to `Main(string[] args)`. With no
+arguments the array is empty. A packed executable takes its arguments directly,
+including `--version` and `--disasm`. To receive arguments in existing bytecode
+built by an older selfhost compiler, rebuild it with the updated compiler and run
+it with the matching VM.
 
 ---
 
@@ -116,7 +178,9 @@ kinalvm --disasm main.knc
 
 ## kinal vm pack
 
-Bundle bytecode together with KinalVM into a standalone executable (vm-exe) for zero-dependency deployment.
+Bundle bytecode together with KinalVM into a standalone executable (vm-exe) for deployment with a matching VM template and its host dependencies.
+
+An existing `.knc` picks up interpreter performance improvements when launched with the updated runner. A packed executable carries its own interpreter. Repack the same bytecode with the new VM to update a standalone application.
 
 ```bash
 kinal vm pack <file.kn|file.knc> [-o <output>]
@@ -175,18 +239,17 @@ kinal vm run main.knc
 
 `.knc` is Kinal's native bytecode format:
 
-- **Platform-independent** — The same `.knc` file runs on any platform with KinalVM installed
-- **Compact** — Smaller than LLVM IR
-- **Fast startup** — Skips the linking phase
+- **Portable bytecode** — Requires a compatible VM and supported runtime/platform operations; compile-time target constants remain fixed
+- **Structured binary** — Contains constant, function, type and instruction tables; size depends on the program
+- **Direct execution** — Running existing bytecode skips source compilation and native linking
 
 ---
 
-## Superloop Scheduling Model
+## Superloop Fusion
 
-KinalVM's async runtime is event-loop based:
+Superloop is a bytecode optimization for recognized integer loop patterns, including eligible empty counting loops, sums and array fill/sum loops. It replaces repeated interpreter dispatch with specialized loop instructions while preserving supported loop semantics.
 
-- **Enabled** (default): Supports `IO.Async.Spawn`, `Await`, and coroutine scheduling
-- **Disabled** (`--no-superloop`): Single-threaded sequential execution, suitable for synchronous programs or embedded scenarios
+Fusion is enabled by default. Use `--no-superloop` when compiling source to compare the general lowering, and inspect `--listing`/disassembly to see the chosen instructions. The flag does not supply Async/Await support, create a task scheduler, switch threading models or make the VM freestanding. Current C KNC rejects general Await and IO.Async.Run.
 
 ---
 
@@ -205,10 +268,10 @@ kinalvm --disasm <file.knc>
 
 | Feature | KinalVM (`.knc`) | Native Compilation |
 |---------|-----------------|-------------------|
-| Execution speed | Slower (interpreted/JIT) | Fast (machine code) |
-| Startup time | Fast (no linking) | Slower (linking required) |
-| Platform independence | Yes | No |
-| Deployment requirements | Requires KinalVM | No extra dependencies |
+| Execution | Bytecode interpreter; no documented JIT | Compiled machine code |
+| Startup | Loads bytecode into the VM | Loads an already linked executable |
+| Portability | Compatible VM/runtime required | Rebuild for the target OS/ABI |
+| Deployment requirements | Matching VM or packed template, plus host dependencies | Target runtime/system/package dependencies |
 | Use case | Development, scripting, embedding | Production deployment |
 
 ---
@@ -221,3 +284,5 @@ kinalvm --disasm <file.knc>
 - [IO.Runtime Constants](../advanced/runtime-environment-constants.md) — Detecting the current execution backend in source code
 - [IO.Version Constants](../advanced/version-constants.md) — Reading compiler and VM version information in source code
 - [CLI Specification](cli-spec.md) — CLI design specification (developer reference)
+
+See [Backend Support](../advanced/backend-support.md) for language limitations, numeric behavior and deployment requirements. The standalone VM supports `--version` and `--disasm`; use `kinal vm --help` for CLI help.

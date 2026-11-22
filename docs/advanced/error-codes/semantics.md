@@ -2,7 +2,7 @@
 
 Diagnostics emitted during semantic checking after syntax analysis succeeds.
 
-The examples in this document are minimal reproductions of the most common way each diagnostic code is triggered. A few diagnostics that are more implementation-oriented use the closest surface-level form that user code can express.
+This page records the registered templates. Corrected examples show the supported form. A trigger sketch illustrates a rule or parser state and may require surrounding declarations or report an earlier/different diagnostic in the current C compiler.
 
 ---
 
@@ -110,10 +110,10 @@ Fix: Use public methods to encapsulate access instead, or move member access ins
 - Default Detail: Protected member not accessible
 - Description: The `Protected` member was accessed by a non-derived class context.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
-Class Base
+Class ParentClass
 {
     Protected int value;
 }
@@ -125,12 +125,12 @@ int v = b.value;
 Correct Example:
 
 ```kinal
-Class Base
+Class ParentClass
 {
     Protected int value;
 }
 
-Class Derived By Base
+Class Derived By ParentClass
 {
     Public Function int Value()
     {
@@ -154,7 +154,7 @@ Fix: Access it in a derived class, or use a public API instead to expose the req
 Incorrect Example:
 
 ```kinal
-Class Base
+Class ParentClass
 {
     Public Abstract Function int Value();
 }
@@ -163,7 +163,7 @@ Class Base
 Correct Example:
 
 ```kinal
-Abstract Class Base
+Abstract Class ParentClass
 {
     Public Abstract Function int Value();
 }
@@ -300,7 +300,7 @@ Fix: Write the value to a separate variable rather than trying to modify the enu
 - Default Detail: Cannot modify enum constant
 - Description: Enumeration members are constants and cannot be assigned values.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
 Enum State
@@ -386,7 +386,7 @@ Fix: Make sure the left-hand side is a variable, field, index expression, or oth
 - Default Detail: Target is not assignable
 - Description: The left side of the assignment must be a writable target.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
 1 = 2;
@@ -411,7 +411,7 @@ Fix: Make sure the left-hand side is a variable, field, index expression, or oth
 - Default Detail: Attributes are not supported on global variables
 - Description: Global variables currently do not support attribute annotations.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
 [My.Tag]
@@ -421,10 +421,21 @@ int value = 1;
 Correct Example:
 
 ```kinal
-[My.Tag]
+Meta Tag()
+{
+    On @function;
+    Keep @runtime;
+}
+
+[Tag]
 Function int Value()
 {
     Return 1;
+}
+
+Static Function int Main()
+{
+    Return Value();
 }
 ```
 
@@ -455,12 +466,14 @@ Class Derived By BaseType
 Correct Example:
 
 ```kinal
+Class BaseType
+{
+    Public Virtual Function string Kind() { Return "base"; }
+}
+
 Class Derived By BaseType
 {
-    Public Override Function string Kind()
-    {
-        Return Base.Kind();
-    }
+    Public Override Function string Kind() { Return Base.Kind(); }
 }
 ```
 
@@ -476,7 +489,7 @@ Fix: Put the logic into instance methods, or call static members directly throug
 - Default Detail: Class has no base type
 - Description: The current class has no base class, but uses `Base`.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
 Class User
@@ -520,7 +533,7 @@ Fix: Verify that the current class indeed inherits from a base class, or remove 
 - Default Detail: Block object must use Run/Jump APIs
 - Description: Block objects cannot be called directly like ordinary functions.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
 IO.Type.Object.Block flow = Block Demo</
@@ -552,7 +565,7 @@ Fix: Use the specialized methods provided by the Block object instead.
 - Default Detail: Call target is not a function object
 - Description: The calling target is not a function object.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
 int value = 42;
@@ -582,7 +595,7 @@ Fix: Verify that the type of the called expression is a function object, or remo
 - Default Detail: Static method requires class name
 - Description: The calling target is not a function object.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
 int value = 42;
@@ -712,15 +725,19 @@ Fix: Change the underlying type to an integer type such as `u8`, `i32`.
 - Default Detail: Builtin function does not accept generic type arguments
 - Description: Built-in functions do not accept explicit generic parameters.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
+Get IO.Console;
+
 IO.Console.PrintLine<int>(1);
 ```
 
 Correct Example:
 
 ```kinal
+Get IO.Console;
+
 IO.Console.PrintLine(1);
 ```
 
@@ -739,6 +756,8 @@ Fix: Remove `<...>`.
 Incorrect Example:
 
 ```kinal
+Get IO.Console;
+
 IO.Type.Object.Function fn = IO.Console.PrintLine;
 fn<int>(1);
 ```
@@ -746,6 +765,8 @@ fn<int>(1);
 Correct Example:
 
 ```kinal
+Get IO.Console;
+
 IO.Type.Object.Function fn = IO.Console.PrintLine;
 fn(1);
 ```
@@ -762,7 +783,7 @@ Fix: Call the function object directly; if generic instantiation is required, in
 - Default Detail: Type arguments are only valid for generic function calls
 - Description: The current call target is not a generic function, but type parameters are appended.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
 Function int Add(int a, int b)
@@ -863,7 +884,7 @@ Fix: Move `Get` to the appropriate location at the top of the file.
 - Default Detail: Only variable declarations are allowed at global scope
 - Description: Only variable declarations are allowed at the top level, and direct execution statements are not allowed.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
 If (true)
@@ -938,11 +959,11 @@ Class Child By Final
 Correct Example:
 
 ```kinal
-Class Base
+Class ParentClass
 {
 }
 
-Class Child By Base
+Class Child By ParentClass
 {
 }
 ```
@@ -959,7 +980,7 @@ Fix: Change to inheriting from a non-sealed base class, or remove inheritance fr
 - Default Detail: Class cannot inherit from itself
 - Description: Classes cannot inherit from themselves.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
 Class Loop By Loop
@@ -970,11 +991,11 @@ Class Loop By Loop
 Correct Example:
 
 ```kinal
-Class Base
+Class ParentClass
 {
 }
 
-Class Derived By Base
+Class Derived By ParentClass
 {
 }
 ```
@@ -991,7 +1012,7 @@ Fix: Change to a real base class, or remove the inheritance clause.
 - Default Detail: Interface methods must be abstract
 - Description: Interface methods must remain abstract declarations and do not provide method bodies.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
 Interface IValue
@@ -1024,7 +1045,7 @@ Fix: Remove the method body and keep the abstract signature.
 - Default Detail: Interface members not supported yet
 - Description: The interface does not currently support non-method members such as fields.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
 Interface IValue
@@ -1054,7 +1075,7 @@ Fix: Change the members into method form, or put the state into a concrete class
 - Default Detail: Member access requires class instance
 - Description: The left side of a member access or member call must be a class instance.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
 int value = 1;
@@ -1136,14 +1157,14 @@ Class User
 Correct Example:
 
 ```kinal
-Class Base
+Class ParentClass
 {
     Public Virtual Function void Run()
     {
     }
 }
 
-Class User By Base
+Class User By ParentClass
 {
     Public Override Sealed Function void Run()
     {
@@ -1197,25 +1218,25 @@ Fix: Remove these modifiers, or change the method to an instance method.
 - Default Detail: Cannot instantiate abstract class
 - Description: Abstract classes cannot be instantiated directly.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
-Abstract Class Base
+Abstract Class ParentClass
 {
 }
 
-Base value = New Base();
+ParentClass value = New Base();
 ```
 
 Correct Example:
 
 ```kinal
-Abstract Class Base
+Abstract Class ParentClass
 {
     Public Abstract Function int Value();
 }
 
-Class Derived By Base
+Class Derived By ParentClass
 {
     Public Override Function int Value()
     {
@@ -1223,7 +1244,7 @@ Class Derived By Base
     }
 }
 
-Base value = New Derived();
+ParentClass value = New Derived();
 ```
 
 Reason: Abstract classes only describe interfaces and shared implementations, and do not represent a complete constructible object.
@@ -1238,7 +1259,7 @@ Fix: Instantiate a concrete derived class.
 - Default Detail: Unknown binary operator
 - Description: The current binary operator is not in Kinal's set of defined operators.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
 int value = 1 <=> 2;
@@ -1262,7 +1283,7 @@ Fix: Use operators defined in the documentation instead.
 - Default Detail: Unknown unary operator
 - Description: The current unary operator is not in Kinal's set of defined operators.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
 int value = ^^1;
@@ -1289,14 +1310,14 @@ Fix: Change to a supported unary operator or equivalent expression.
 Incorrect Example:
 
 ```kinal
-Class Base
+Class ParentClass
 {
     Public Virtual Function void Run()
     {
     }
 }
 
-Class Mid By Base
+Class Mid By ParentClass
 {
     Public Override Sealed Function void Run()
     {
@@ -1314,6 +1335,16 @@ Class Leaf By Mid
 Correct Example:
 
 ```kinal
+Class ParentClass
+{
+    Public Virtual Function void Run() {}
+}
+
+Class Mid By ParentClass
+{
+    Public Override Sealed Function void Run() {}
+}
+
 Class Leaf By Mid
 {
 }
@@ -1334,14 +1365,14 @@ Fix: Delete the override, or move the custom logic to a new method name.
 Incorrect Example:
 
 ```kinal
-Class Base
+Class ParentClass
 {
     Public Function void Run()
     {
     }
 }
 
-Class Leaf By Base
+Class Leaf By ParentClass
 {
     Public Override Function void Run()
     {
@@ -1352,14 +1383,14 @@ Class Leaf By Base
 Correct Example:
 
 ```kinal
-Class Base
+Class ParentClass
 {
     Public Virtual Function void Run()
     {
     }
 }
 
-Class Leaf By Base
+Class Leaf By ParentClass
 {
     Public Override Function void Run()
     {
@@ -1484,7 +1515,7 @@ Fix: Add the correct `Get` statement at the top of the file.
 Incorrect Example:
 
 ```kinal
-Class Base
+Class ParentClass
 {
     Public Virtual Function int Value()
     {
@@ -1492,7 +1523,7 @@ Class Base
     }
 }
 
-Class Derived By Base
+Class Derived By ParentClass
 {
     Public Function int Value()
     {
@@ -1504,7 +1535,7 @@ Class Derived By Base
 Correct Example:
 
 ```kinal
-Class Base
+Class ParentClass
 {
     Public Virtual Function int Value()
     {
@@ -1512,7 +1543,7 @@ Class Base
     }
 }
 
-Class Derived By Base
+Class Derived By ParentClass
 {
     Public Override Function int Value()
     {
@@ -1609,7 +1640,7 @@ Fix: Put the call into a `Trusted` / `Unsafe` context, or provide an encapsulate
 - Default Detail: Generic type arguments are only supported on named function calls
 - Description: Explicit generic parameters can only be attached to named function calls.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
 (GetAdder())<int>(1, 2);
@@ -1618,7 +1649,12 @@ Incorrect Example:
 Correct Example:
 
 ```kinal
-Add<int>(1, 2);
+Function T Add<T>(T a, T b)
+{
+    Return a + b;
+}
+
+int result = Add<int>(1, 2);
 ```
 
 Reason: Only named function call paths can stably carry generic instantiation information.
@@ -1657,7 +1693,7 @@ Fix: Write the external interface as a specific signature, and provide generic w
 - Default Detail: Generic type arguments on member access require a call
 - Description: When appending generic parameters to a member access, it must be followed by a call.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
 user.Map<int>;
@@ -1666,7 +1702,9 @@ user.Map<int>;
 Correct Example:
 
 ```kinal
-user.Map<int>(1);
+Function T Map<T>(T value) { Return value; }
+
+int result = Map<int>(1);
 ```
 
 Reason: Only the "member call" syntax path consumes type parameters; individual member access does not.
@@ -1675,13 +1713,16 @@ Fix: If you want to call a member generic method, add the parameter list; if you
 
 ---
 
+
+The current C implementation does not support generic instance methods. Parentheses are only a syntax requirement; they do not make user.Map<T> a supported method. The corrected example uses a top-level generic function.
+
 ## E-SEM-00050 — Invalid Generic Type
 
 - Severity: Error
 - Default Detail: Expected a type argument
 - Description: The real type is missing from the generic type argument list.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
 Identity<>(1);
@@ -1690,7 +1731,12 @@ Identity<>(1);
 Correct Example:
 
 ```kinal
-Identity<int>(1);
+Function T Identity<T>(T value)
+{
+    Return value;
+}
+
+int result = Identity<int>(1);
 ```
 
 Reason: Each position within the angle brackets must be a legal type name.

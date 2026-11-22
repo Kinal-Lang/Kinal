@@ -1,0 +1,37 @@
+Unit Tests.WeakBuffers;
+
+Get GC By IO.Kinal.Runtime.GarbageCollector;
+
+byte* Small;
+byte* Large;
+
+Static Unsafe Function int Main()
+{
+    // Keep both allocations alive through Collect so a fresh allocation cannot
+    // coincidentally receive the same address from the underlying allocator.
+    GC.AddGlobalRoot([byte*](&Small), GC.PointerBytes());
+    GC.AddGlobalRoot([byte*](&Large), GC.PointerBytes());
+    usize smallSize = [usize](32768);
+    usize largeSize = [usize](65536);
+    Small = GC.TakeLocalArray(null, smallSize);
+    Large = GC.TakeLocalArray(null, largeSize);
+    If (Small == null || Large == null || Small == Large) Return 1;
+    Small[32767] = [byte](7);
+    Large[65535] = [byte](9);
+    GC.ReturnLocalArray(Small);
+    GC.ReturnLocalArray(Large);
+
+    byte* miss = GC.TakeLocalArray(null, [usize](98304));
+    If (miss == null || miss == Small || miss == Large) Return 2;
+    byte* first = GC.TakeLocalArray(null, smallSize);
+    byte* second = GC.TakeLocalArray(null, largeSize);
+    If (first != Small || second != Large || first[32767] != 0 || second[65535] != 0) Return 3;
+
+    GC.ReturnLocalArray(first);
+    GC.ReturnLocalArray(second);
+    GC.Collect();
+    first = GC.TakeLocalArray(null, smallSize);
+    second = GC.TakeLocalArray(null, largeSize);
+    If (first == null || second == null || first == second || first == Small || second == Large) Return 4;
+    Return 0;
+}

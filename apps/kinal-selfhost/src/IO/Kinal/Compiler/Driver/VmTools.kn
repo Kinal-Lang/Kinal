@@ -1,17 +1,9 @@
 Unit IO.Kinal.Compiler.Driver.VmTools;
 
 Get IO.File;
+Get IO.Kinal.Compiler.Core.NativeIO;
 Get IO.Path;
 Get IO.Kinal.Compiler.Source.SourcePath;
-
-[LinkName("fopen")]
-Extern Unsafe Function byte* NativeOpen(string path, string mode) By C;
-[LinkName("fclose")]
-Extern Unsafe Function i32 NativeClose(byte* file) By C;
-[LinkName("fread")]
-Extern Unsafe Function usize NativeRead(byte[] buffer, usize size, usize count, byte* file) By C;
-[LinkName("fwrite")]
-Extern Unsafe Function usize NativeWrite(byte[] buffer, usize size, usize count, byte* file) By C;
 
 // Byte ownership and the established KNCE container format stay in Kinal.
 // C supplies only buffered file I/O; no host compiler or C KNC emitter is used.
@@ -29,15 +21,37 @@ Class VmPacker
         {
             int amount = expected - total;
             If (amount > 65536) amount = 65536;
-            usize count = NativeRead(buffer, [usize](1), [usize](amount), input);
+            usize count = IO.Kinal.Compiler.Core.NativeIO.ReadBytes(buffer, [usize](1), [usize](amount), input);
             If (count != [usize](amount)) Return false;
-            If (NativeWrite(buffer, [usize](1), count, output) != count) Return false;
+            If (IO.Kinal.Compiler.Core.NativeIO.WriteBytes(buffer, [usize](1), count, output) != count) Return false;
             total = total + amount;
         }
         Return true;
     }
 
-    Public Trusted Function bool Pack(string executable, string bytecode, string output)
+    // A packed program keeps the runner's CRT entry point. Windows chooses whether
+    // to allocate a console from the optional header before that entry point runs.
+    Private Trusted Function bool CopyWindowedRunner(byte* input, byte* output, int size)
+    {
+        byte[64] dos;
+        byte[94] pe; // signature, COFF header, optional header through Subsystem
+        If (size < 158 || IO.Kinal.Compiler.Core.NativeIO.ReadBytes(dos, 1, 64, input) != 64 ||
+            dos[0] != 77 || dos[1] != 90) Return false;
+        u32 offset = [u32](dos[60]) | ([u32](dos[61]) << 8) | ([u32](dos[62]) << 16) | ([u32](dos[63]) << 24);
+        If (offset < 64 || offset > [u32](size - 94)) Return false;
+        If (IO.Kinal.Compiler.Core.NativeIO.WriteBytes(dos, 1, 64, output) != 64 ||
+            !This.CopyBytes(input, output, [int](offset) - 64) ||
+            IO.Kinal.Compiler.Core.NativeIO.ReadBytes(pe, 1, 94, input) != 94) Return false;
+        int optionalSize = [int](pe[20]) | ([int](pe[21]) << 8);
+        If (pe[0] != 80 || pe[1] != 69 || pe[2] != 0 || pe[3] != 0 ||
+            optionalSize < 70 || optionalSize > size - [int](offset) - 24 ||
+            pe[24] != 11 || (pe[25] != 1 && pe[25] != 2)) Return false;
+        pe[92] = 2; pe[93] = 0; // IMAGE_SUBSYSTEM_WINDOWS_GUI (PE32 and PE32+)
+        Return IO.Kinal.Compiler.Core.NativeIO.WriteBytes(pe, 1, 94, output) == 94 &&
+            This.CopyBytes(input, output, size - [int](offset) - 94);
+    }
+
+    Public Trusted Function bool Pack(string executable, string bytecode, string output, bool hideConsole = false)
     {
         This.Error = "";
         string outputPath = IO.Kinal.Compiler.Source.SourcePath.Canonical(output);
@@ -54,38 +68,40 @@ Class VmPacker
             This.Error = "cannot read VM executable or bytecode size";
             Return false;
         }
-        byte* executableFile = NativeOpen(executable, "rb");
+        byte* executableFile = IO.Kinal.Compiler.Core.NativeIO.OpenFile(executable, "rb");
         If (executableFile == null) { This.Error = "cannot open VM executable"; Return false; }
-        byte* bytecodeFile = NativeOpen(bytecode, "rb");
+        byte* bytecodeFile = IO.Kinal.Compiler.Core.NativeIO.OpenFile(bytecode, "rb");
         If (bytecodeFile == null)
         {
-            NativeClose(executableFile);
+            IO.Kinal.Compiler.Core.NativeIO.CloseFile(executableFile);
             This.Error = "cannot open bytecode";
             Return false;
         }
-        byte* outputFile = NativeOpen(output, "wb");
+        byte* outputFile = IO.Kinal.Compiler.Core.NativeIO.OpenFile(output, "wb");
         If (outputFile == null)
         {
-            NativeClose(bytecodeFile);
-            NativeClose(executableFile);
+            IO.Kinal.Compiler.Core.NativeIO.CloseFile(bytecodeFile);
+            IO.Kinal.Compiler.Core.NativeIO.CloseFile(executableFile);
             This.Error = "cannot create packed output";
             Return false;
         }
-        bool ok = This.CopyBytes(executableFile, outputFile, executableSize) &&
-            This.CopyBytes(bytecodeFile, outputFile, bytecodeSize);
+        bool ok = hideConsole ? This.CopyWindowedRunner(executableFile, outputFile, executableSize) :
+            This.CopyBytes(executableFile, outputFile, executableSize);
+        If (!ok && hideConsole) This.Error = "failed to copy Windows PE runner for Build.HideConsole";
+        If (ok) ok = This.CopyBytes(bytecodeFile, outputFile, bytecodeSize);
         byte[8] footer = {
             [byte](bytecodeSize & 255), [byte]((bytecodeSize >> 8) & 255),
             [byte]((bytecodeSize >> 16) & 255), [byte]((bytecodeSize >> 24) & 255),
             [byte]('K'), [byte]('N'), [byte]('C'), [byte]('E')
         };
-        If (ok) ok = NativeWrite(footer, [usize](1), [usize](8), outputFile) == [usize](8);
-        If (NativeClose(outputFile) != 0) ok = false;
-        NativeClose(bytecodeFile);
-        NativeClose(executableFile);
+        If (ok) ok = IO.Kinal.Compiler.Core.NativeIO.WriteBytes(footer, [usize](1), [usize](8), outputFile) == [usize](8);
+        If (IO.Kinal.Compiler.Core.NativeIO.CloseFile(outputFile) != 0) ok = false;
+        IO.Kinal.Compiler.Core.NativeIO.CloseFile(bytecodeFile);
+        IO.Kinal.Compiler.Core.NativeIO.CloseFile(executableFile);
         If (!ok)
         {
             IO.File.DeleteIfExists(output);
-            This.Error = "failed to copy VM or bytecode into packed output";
+            If (This.Error == "") This.Error = "failed to copy VM or bytecode into packed output";
         }
         Return ok;
     }

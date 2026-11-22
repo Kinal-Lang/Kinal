@@ -1,0 +1,316 @@
+Unit IO.Kinal.VM.Desktop;
+
+Get Context By IO.Kinal.VM.Context;
+Get Bytecode By IO.Kinal.VM.Bytecode;
+Get IO.Kinal.VM.Stdlib;
+Get Native By IO.__UI;
+Get UI By IO.UI;
+Get IO.Console;
+
+// An HWND never enters guest registers. Tokens belong to one VM and expire on WM_DESTROY.
+Class SurfaceBinding
+{
+    Public Context.ExecutionContext Context;
+    Public byte* Window;
+    Public int Token;
+    Public int GuestRoot;
+    Public int Callback;
+}
+SurfaceBinding[] Windows = {};
+
+Trusted Function byte* WindowAt(Context.ExecutionContext ctx, int reg)
+{
+    Context.FunctionFrame frame = ctx.CurrentFrame();
+    If (frame.Kinds[reg] == [int](Bytecode.ValueKind.Null)) Return null;
+    int token = frame.GetPointer(reg);
+    For (int i = 0; i < Windows.Length(); i++)
+        If (Windows[i].Context == ctx && Windows[i].Token == token) Return Windows[i].Window;
+    Throw "Unknown or closed IO.UI window handle";
+}
+
+Trusted Function isize SurfaceMessage(byte* hwnd, u32 message, usize first, isize second)
+{
+    For (int i = 0; i < Windows.Length(); i++)
+    {
+        SurfaceBinding surface = Windows[i];
+        If (surface.Window != hwnd) Continue;
+        Context.ExecutionContext ctx = surface.Context;
+        int result = 0;
+        If (!ctx.Halted)
+        {
+            Try
+            {
+                Context.VMValue[] args = {Context.VMValue.FromPointer(surface.Token), Context.VMValue.FromInt([int](message)),
+                    Context.VMValue.FromInt([int](first)), Context.VMValue.FromInt([int](second))};
+                IO.Type.Object.Function invoke = ctx.InvokeCallback;
+                Context.VMValue value = [Context.VMValue](invoke(surface.Callback, args));
+                If (value != null) result = value.IntValue;
+                Else Native.QuitLoop();
+            }
+            Catch (IO.Error error)
+            {
+                IO.Console.PrintLine(error.Message);
+                IO.Console.PrintLine(ctx.BuildTrace());
+                ctx.ExitCode = 1; ctx.Halted = true; Native.QuitLoop();
+            }
+        }
+        If (message == 19)
+        {
+            SurfaceBinding[] live = {};
+            For (int j = 0; j < Windows.Length(); j++) If (Windows[j] != surface) live = live.Add(Windows[j]);
+            Windows = live;
+            ctx.Heap.Unpin(surface.GuestRoot);
+        }
+        Return [isize](result);
+    }
+    Return 0;
+}
+
+[IO.Kinal.VM.Stdlib.VmRangeBuiltin(180, "IO.UI.OpenSurface", 6)]
+Trusted Function void OpenSurface(Context.ExecutionContext ctx, int dst, int first)
+{
+    Context.FunctionFrame frame = ctx.CurrentFrame();
+    SurfaceBinding surface = New SurfaceBinding();
+    surface.Context = ctx;
+    surface.Callback = ctx.FunctionPointerTarget(frame.GetPointer(first + 5));
+    surface.Token = ctx.NewHostHandle();
+    surface.GuestRoot = ctx.Heap.Pin(Context.VMValue.FromPointer(surface.Token));
+    Try
+    {
+        surface.Window = Native.OpenSurface(frame.GetNullableString(first), frame.GetInt(first+1), frame.GetInt(first+2),
+            frame.GetInt(first+3), frame.GetInt(first+4), &SurfaceMessage);
+    }
+    Catch (IO.Error error) { ctx.Heap.Unpin(surface.GuestRoot); Throw error; }
+    Windows = Windows.Add(surface);
+    If (dst != 255) frame.ImportValue(dst, Context.VMValue.FromPointer(surface.Token));
+}
+
+[IO.Kinal.VM.Stdlib.VmBuiltin(181, "IO.UI.RunMessages")]
+Trusted Function void Host_RunMessages(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    int result = Native.RunMessages();
+    If (dst != 255) ctx.SetInt(dst, result);
+}
+
+[IO.Kinal.VM.Stdlib.VmBuiltin(182, "IO.UI.ShowSurface")]
+Trusted Function void Host_ShowSurface(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    Native.ShowSurface(WindowAt(ctx, a0));
+}
+
+[IO.Kinal.VM.Stdlib.VmBuiltin(183, "IO.UI.CloseSurface")]
+Trusted Function void Host_CloseSurface(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    Native.CloseSurface(WindowAt(ctx, a0));
+}
+
+[IO.Kinal.VM.Stdlib.VmBuiltin(184, "IO.UI.ClientExtent")]
+Trusted Function void Host_ClientExtent(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    Context.FunctionFrame frame = ctx.CurrentFrame();
+    int result = Native.ClientExtent(WindowAt(ctx, a0), frame.GetBool(a1));
+    If (dst != 255) ctx.SetInt(dst, result);
+}
+
+[IO.Kinal.VM.Stdlib.VmBuiltin(185, "IO.UI.RequestLayout")]
+Trusted Function void Host_RequestLayout(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    bool result = Native.RequestLayout(WindowAt(ctx, a0));
+    If (dst != 255) ctx.SetBool(dst, result);
+}
+
+[IO.Kinal.VM.Stdlib.VmBuiltin(186, "IO.UI.Repaint")]
+Trusted Function void Host_Repaint(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    Native.Repaint(WindowAt(ctx, a0));
+}
+
+[IO.Kinal.VM.Stdlib.VmBuiltin(187, "IO.UI.SetTitle")]
+Trusted Function void Host_SetTitle(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    Context.FunctionFrame frame = ctx.CurrentFrame();
+    Native.SetTitle(WindowAt(ctx, a0), frame.GetNullableString(a1));
+}
+
+[IO.Kinal.VM.Stdlib.VmBuiltin(188, "IO.UI.QuitLoop")]
+Trusted Function void Host_QuitLoop(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    Native.QuitLoop();
+}
+
+[IO.Kinal.VM.Stdlib.VmBuiltin(189, "IO.UI.CopyText")]
+Trusted Function void Host_CopyText(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    Context.FunctionFrame frame = ctx.CurrentFrame();
+    Native.CopyText(WindowAt(ctx, a0), frame.GetNullableString(a1));
+}
+
+[IO.Kinal.VM.Stdlib.VmRangeBuiltin(190, "IO.UI.DrawText", 11)]
+Trusted Function void Host_DrawText(Context.ExecutionContext ctx, int dst, int first)
+{
+    Context.FunctionFrame frame = ctx.CurrentFrame();
+    Native.DrawText(WindowAt(ctx, first), frame.GetNullableString(first + 1), [i32](frame.GetInt(first + 2)),
+        [i32](frame.GetInt(first + 3)), [i32](frame.GetInt(first + 4)), [i32](frame.GetInt(first + 5)),
+        [i32](frame.GetInt(first + 6)), [i32](frame.GetInt(first + 7)), [i32](frame.GetInt(first + 8)),
+        [u32](frame.GetInt(first + 9)), [i32](frame.GetInt(first + 10)));
+}
+
+[IO.Kinal.VM.Stdlib.VmRangeBuiltin(191, "IO.UI.DrawCode", 7)]
+Trusted Function void Host_DrawCode(Context.ExecutionContext ctx, int dst, int first)
+{
+    Context.FunctionFrame frame = ctx.CurrentFrame();
+    Native.DrawCode(WindowAt(ctx, first), frame.GetNullableString(first + 1), frame.GetNullableString(first + 2),
+        [i32](frame.GetInt(first + 3)), [i32](frame.GetInt(first + 4)), [i32](frame.GetInt(first + 5)),
+        [u32](frame.GetInt(first + 6)));
+}
+
+[IO.Kinal.VM.Stdlib.VmRangeBuiltin(192, "IO.UI.kn_ui_box", 8)]
+Trusted Function void Host_kn_ui_box(Context.ExecutionContext ctx, int dst, int first)
+{
+    Context.FunctionFrame frame = ctx.CurrentFrame();
+    Native.kn_ui_box(WindowAt(ctx, first), [i32](frame.GetInt(first + 1)), [i32](frame.GetInt(first + 2)),
+        [i32](frame.GetInt(first + 3)), [i32](frame.GetInt(first + 4)), [u32](frame.GetInt(first + 5)),
+        [i32](frame.GetInt(first + 6)), [i32](frame.GetInt(first + 7)));
+}
+
+[IO.Kinal.VM.Stdlib.VmRangeBuiltin(193, "IO.UI.kn_ui_gradient", 8)]
+Trusted Function void Host_kn_ui_gradient(Context.ExecutionContext ctx, int dst, int first)
+{
+    Context.FunctionFrame frame = ctx.CurrentFrame();
+    Native.kn_ui_gradient(WindowAt(ctx, first), [i32](frame.GetInt(first + 1)), [i32](frame.GetInt(first + 2)),
+        [i32](frame.GetInt(first + 3)), [i32](frame.GetInt(first + 4)), [u32](frame.GetInt(first + 5)),
+        [u32](frame.GetInt(first + 6)), [i32](frame.GetInt(first + 7)));
+}
+
+[IO.Kinal.VM.Stdlib.VmRangeBuiltin(194, "IO.UI.kn_ui_clip", 6)]
+Trusted Function void Host_kn_ui_clip(Context.ExecutionContext ctx, int dst, int first)
+{
+    Context.FunctionFrame frame = ctx.CurrentFrame();
+    Native.kn_ui_clip(WindowAt(ctx, first), [i32](frame.GetInt(first + 1)), [i32](frame.GetInt(first + 2)),
+        [i32](frame.GetInt(first + 3)), [i32](frame.GetInt(first + 4)), [i32](frame.GetInt(first + 5)));
+}
+
+[IO.Kinal.VM.Stdlib.VmRangeBuiltin(195, "IO.UI.kn_ui_line", 7)]
+Trusted Function void Host_kn_ui_line(Context.ExecutionContext ctx, int dst, int first)
+{
+    Context.FunctionFrame frame = ctx.CurrentFrame();
+    Native.kn_ui_line(WindowAt(ctx, first), [i32](frame.GetInt(first + 1)), [i32](frame.GetInt(first + 2)),
+        [i32](frame.GetInt(first + 3)), [i32](frame.GetInt(first + 4)), [u32](frame.GetInt(first + 5)),
+        [i32](frame.GetInt(first + 6)));
+}
+
+[IO.Kinal.VM.Stdlib.VmRangeBuiltin(196, "IO.UI.kn_ui_triangle", 8)]
+Trusted Function void Host_kn_ui_triangle(Context.ExecutionContext ctx, int dst, int first)
+{
+    Context.FunctionFrame frame = ctx.CurrentFrame();
+    Native.kn_ui_triangle(WindowAt(ctx, first), [i32](frame.GetInt(first + 1)), [i32](frame.GetInt(first + 2)),
+        [i32](frame.GetInt(first + 3)), [i32](frame.GetInt(first + 4)), [i32](frame.GetInt(first + 5)),
+        [i32](frame.GetInt(first + 6)), [u32](frame.GetInt(first + 7)));
+}
+
+[IO.Kinal.VM.Stdlib.VmBuiltin(197, "IO.UI.kn_ui_timer")]
+Trusted Function void Host_kn_ui_timer(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    Context.FunctionFrame frame = ctx.CurrentFrame();
+    Native.kn_ui_timer(WindowAt(ctx, a0), [i32](frame.GetInt(a1)));
+}
+
+[IO.Kinal.VM.Stdlib.VmBuiltin(198, "IO.UI.kn_ui_client_size")]
+Trusted Function void Host_kn_ui_client_size(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    Context.FunctionFrame frame = ctx.CurrentFrame();
+    Native.kn_ui_client_size(WindowAt(ctx, a0), [i32](frame.GetInt(a1)), [i32](frame.GetInt(a2)));
+}
+
+[IO.Kinal.VM.Stdlib.VmBuiltin(199, "IO.UI.kn_ui_dark_title")]
+Trusted Function void Host_kn_ui_dark_title(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    Context.FunctionFrame frame = ctx.CurrentFrame();
+    Native.kn_ui_dark_title(WindowAt(ctx, a0), [i32](frame.GetInt(a1)));
+}
+
+[IO.Kinal.VM.Stdlib.VmBuiltin(200, "IO.UI.kn_ui_ime")]
+Trusted Function void Host_kn_ui_ime(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    Context.FunctionFrame frame = ctx.CurrentFrame();
+    Native.kn_ui_ime(WindowAt(ctx, a0), [i32](frame.GetInt(a1)), [i32](frame.GetInt(a2)));
+}
+
+[IO.Kinal.VM.Stdlib.VmBuiltin(201, "IO.UI.kn_ui_paste")]
+Trusted Function void Host_kn_ui_paste(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    string result = Native.kn_ui_paste(WindowAt(ctx, a0));
+    If (dst != 255) ctx.SetString(dst, result);
+}
+
+[IO.Kinal.VM.Stdlib.VmBuiltin(202, "IO.UI.__UI_Key")]
+Trusted Function void Host___UI_Key(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    Context.FunctionFrame frame = ctx.CurrentFrame();
+    bool result = UI.__UI_Key(frame.GetInt(a0));
+    If (dst != 255) ctx.SetBool(dst, result);
+}
+
+[IO.Kinal.VM.Stdlib.VmBuiltin(203, "IO.UI.NextChar")]
+Trusted Function void Host_NextChar(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    Context.FunctionFrame frame = ctx.CurrentFrame();
+    int result = UI.NextChar(frame.GetNullableString(a0), frame.GetInt(a1));
+    If (dst != 255) ctx.SetInt(dst, result);
+}
+
+[IO.Kinal.VM.Stdlib.VmBuiltin(204, "IO.UI.PreviousChar")]
+Trusted Function void Host_PreviousChar(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    Context.FunctionFrame frame = ctx.CurrentFrame();
+    int result = UI.PreviousChar(frame.GetNullableString(a0), frame.GetInt(a1));
+    If (dst != 255) ctx.SetInt(dst, result);
+}
+
+[IO.Kinal.VM.Stdlib.VmBuiltin(205, "IO.UI.Utf16Column")]
+Trusted Function void Host_Utf16Column(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    Context.FunctionFrame frame = ctx.CurrentFrame();
+    int result = UI.Utf16Column(frame.GetNullableString(a0), frame.GetInt(a1));
+    If (dst != 255) ctx.SetInt(dst, result);
+}
+
+[IO.Kinal.VM.Stdlib.VmBuiltin(206, "IO.UI.Utf8Column")]
+Trusted Function void Host_Utf8Column(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    Context.FunctionFrame frame = ctx.CurrentFrame();
+    int result = UI.Utf8Column(frame.GetNullableString(a0), frame.GetInt(a1));
+    If (dst != 255) ctx.SetInt(dst, result);
+}
+
+[IO.Kinal.VM.Stdlib.VmBuiltin(207, "IO.UI.CharacterText")]
+Trusted Function void Host_CharacterText(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    Context.FunctionFrame frame = ctx.CurrentFrame();
+    string result = UI.CharacterText(frame.GetInt(a0));
+    If (dst != 255) ctx.SetString(dst, result);
+}
+
+[IO.Kinal.VM.Stdlib.VmRangeBuiltin(208, "IO.UI.TextPosition", 6)]
+Trusted Function void Host_TextPosition(Context.ExecutionContext ctx, int dst, int first)
+{
+    Context.FunctionFrame frame = ctx.CurrentFrame();
+    int result = UI.TextPosition(WindowAt(ctx, first), frame.GetNullableString(first + 1), frame.GetInt(first + 2),
+        frame.GetBool(first + 3), frame.GetInt(first + 4), frame.GetBool(first + 5));
+    If (dst != 255) ctx.SetInt(dst, result);
+}
+
+[IO.Kinal.VM.Stdlib.VmBuiltin(209, "IO.UI.MotionEnabled")]
+Trusted Function void Host_MotionEnabled(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    bool result = UI.MotionEnabled();
+    If (dst != 255) ctx.SetBool(dst, result);
+}
+
+[IO.Kinal.VM.Stdlib.VmBuiltin(210, "IO.UI.ShowMessage")]
+Trusted Function void Host_ShowMessage(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    Context.FunctionFrame frame = ctx.CurrentFrame();
+    int result = Native.ShowMessage(frame.GetNullableString(a0), frame.GetNullableString(a1), frame.GetInt(a2));
+    If (dst != 255) ctx.SetInt(dst, result);
+}

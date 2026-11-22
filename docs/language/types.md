@@ -18,7 +18,7 @@ Literals: `true` / `false`
 | Type | Bit Width | Signed | Range |
 |------|-----------|--------|-------|
 | `byte` | 8 | No | 0 ~ 255 |
-| `int` | 64 (platform-dependent) | Yes | Platform-native integer |
+| `int` | 64 | Yes | Signed 64-bit language integer |
 | `i8` | 8 | Yes | -128 ~ 127 |
 | `i16` | 16 | Yes | -32768 ~ 32767 |
 | `i32` | 32 | Yes | -2147483648 ~ 2147483647 |
@@ -43,7 +43,7 @@ byte b = 0xFF;
 
 | Type | Standard |
 |------|----------|
-| `float` | Platform default float (typically 64-bit) |
+| `float` | IEEE 754 binary64, like `f64` |
 | `f16` | IEEE 754 half precision |
 | `f32` | IEEE 754 single precision |
 | `f64` | IEEE 754 double precision |
@@ -65,7 +65,7 @@ char quote = '\'';
 int code = [int](c);   // 65
 ```
 
-Escape sequences: `\0`, `\n`, `\r`, `\t`, `\\`, `\'`, `\"`
+Escape sequences: `\0`, `\n`, `\r`, `\t`, `\b`, `\\`, `\'`, `\"`
 
 ### String Type
 
@@ -80,6 +80,8 @@ Strings can be concatenated directly with `+`:
 ```kinal
 string greeting = "Hello, " + name + "!";
 ```
+
+In a loop, `text += part;` and `text = text + part;` can reuse the space reserved for a local string in KinalNative. A saved value keeps its original contents. For example, after `string saved = text;`, later appends to `text` leave `saved` intact. Use `IO.Text.Builder.EnsureCapacity` when you know the expected output size in advance.
 
 String prefixes (see [String Features](strings.md)):
 ```kinal
@@ -117,9 +119,11 @@ If (x.IsInt())
 ### Fixed-Length Arrays
 
 ```kinal
-int a[3] = { 1, 2, 3 };
-int b[5] = { 1, 2 };    // remaining elements default to zero
+int[3] a = { 1, 2, 3 };
+int[5] b = { 1, 2 };    // remaining elements default to zero
 ```
+
+A local numeric array starts with zeroed elements each time its declaration executes, including inside a loop. KinalNative can reuse the backing storage of large fixed arrays that are only indexed locally. Recursive or concurrent calls have independent active arrays. Returning an array, capturing it in a closure, or returning a pointer to one of its elements preserves the original storage.
 
 ### Dynamic Arrays
 
@@ -217,7 +221,7 @@ Empty packages are not supported. Package v1 does not support destructuring, nam
 
 ## Pointers
 
-Pointers are an `Unsafe` feature and must be used in an `Unsafe` context:
+Raw pointer operations require a Trusted or Unsafe context; an Unsafe function makes the caller boundary explicit:
 
 ```kinal
 Unsafe Function void Demo()
@@ -317,7 +321,7 @@ bool has = s.Contains("a"); // true
 
 ### struct
 
-`struct` is value-semantic (stack-allocated); fields are accessed directly:
+`Struct` has value semantics: assignments copy its fields. Its storage can be local, global, inside another value, or retained by a managed capture; value semantics do not promise stack-only allocation. Fields are accessed directly:
 
 ```kinal
 Struct Point
@@ -329,3 +333,33 @@ Struct Point
 
 See [Structs and Enums](structs-enums.md) for details.
 
+
+## Representation, Aliasing and Backend Boundaries
+
+Language int is 64-bit, while the By C boundary maps it to 32-bit C int. Native target support for f16/f128 is separate from VM precision. Array assignment copies a descriptor and shares elements; Add allocates new outer storage. Fixed-length declaration initializers may zero-pad, while later assignment, argument and return-length checks do not mean every conversion pads. See [Memory and Lifetimes](../advanced/memory-management.md) for complete examples.
+
+any uses a dynamic representation rather than full source-level reflection; TypeOf() and TypeName() differ. See [IO.Type](../stdlib/types.md) for all conversion/value helpers, and [Collections](../stdlib/collections.md) for list/dict/set creation and key/value constraints. Both KNC emitters support these collections.
+
+## Explicit Conversion and Builtin Object Types
+
+Use `[type](value)` for conversions. Both KNC compilers can unbox scalar values, for example `[int](items.Fetch(0))`. Use `Is` to check a dynamic type when the caller requires a particular kind of value.
+
+| Type | Purpose |
+|------|---------|
+| `IO.Type.Object.Class` | Builtin class-object root; strings/arrays do not thereby share its layout |
+| `IO.Type.Object.Function` | Function objects and supported callable references |
+| `IO.Type.Object.Block` | Block objects with explicit execution APIs |
+| `IO.Type.Object.Package` / `Object.Package` | Placeholder used to infer a concrete structural Package from its initializer |
+| `IO.Error` | Standard error class with Title, Message, Inner and Trace |
+
+```kinal
+Get IO.Console;
+
+IO.Type.Object.Function fn = Function int(int value) { Return value + 1; };
+int result = fn(41);
+IO.Type.Object.Class obj = fn;
+IO.Console.PrintLine(result);        // 42
+IO.Console.PrintLine(obj.TypeOf());  // static type spelling
+```
+
+The example is a fragment; put the local declarations and calls inside Main when running it. See [Functions](functions.md), [Packages](functions.md), [Blocks](blocks.md), [Exceptions](exceptions.md), and [IO.Type](../stdlib/types.md) for their contracts.

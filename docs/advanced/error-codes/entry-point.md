@@ -2,7 +2,10 @@
 
 Diagnostics related to `Main` / `KMain` entry-point signatures and uniqueness.
 
-The examples in this document are minimal reproductions of the most common way each diagnostic code is triggered. A few diagnostics that are more implementation-oriented use the closest surface-level form that user code can express.
+This page records the registered templates. Corrected examples show the supported form. A trigger sketch illustrates a rule or parser state and may require surrounding declarations or report an earlier/different diagnostic in the current C compiler.
+
+
+Use kinal build main.kn to validate the entry; --emit check does not require an entry. The Native driver checks Static, return type and parameters after selecting an entry. E-ENT-00001/00002 are registered templates; current paths with different details may receive other IDs.
 
 ---
 
@@ -24,18 +27,20 @@ The examples in this document are minimal reproductions of the most common way e
 - Default Detail: Multiple Main functions found
 - Description: There can only be one `Main` for program entry.
 
-Incorrect Example:
+Place the entries in distinct Units to avoid a same-Unit duplicate-function diagnostic. Run `kinal build first.kn second.kn`. Current C reports Entry Ambiguous / Multiple entry functions found; its automatically assigned number can differ.
+
+**first.kn**
 
 ```kinal
-Static Function int Main()
-{
-    Return 0;
-}
+Unit Entry.A;
+Static Function int Main() { Return 0; }
+```
 
-Static Function int Main(string[] args)
-{
-    Return 0;
-}
+**second.kn**
+
+```kinal
+Unit Entry.B;
+Static Function int Main() { Return 0; }
 ```
 
 Correct Example:
@@ -58,6 +63,8 @@ Fix: Only one `Main` that conforms to the specification is retained, and the rem
 - Severity: Error
 - Default Detail: Main must be Static
 - Description: The program entry must be declared as `Static`.
+
+Current C native builds report Entry Signature / Entry point must be Static. The older registered ID need not be emitted.
 
 Incorrect Example:
 

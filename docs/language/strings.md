@@ -4,6 +4,8 @@ Kinal strings support multiple literal prefixes, format strings, and char array 
 
 ## Basic Strings
 
+Double-quoted literals end on the same source line. To include a line break in the value, write `\n`. A trailing backslash before a physical line break leaves the next line available to the parser. The compiler reports the unfinished literal at its opening quote.
+
 ```kinal
 string s = "Hello, World!";
 string path = "C:\\Users\\test";  // using escape sequences
@@ -16,6 +18,7 @@ Standard escape sequences:
 | `\n` | Newline |
 | `\r` | Carriage return |
 | `\t` | Tab |
+| `\b` | Backspace |
 | `\\` | Backslash |
 | `\"` | Double quote |
 | `\'` | Single quote |
@@ -29,15 +32,15 @@ In a raw string, backslashes are not treated as escape characters:
 
 ```kinal
 string raw = [r]"C:\Users\test\n";
-// raw has the literal value "C:\Users\test\n" (6 characters, no newline)
-Console.PrintLine(raw.Length());  // 18 (actual character count)
+// raw has the literal value "C:\Users\test\n" (no newline)
+Console.PrintLine(raw.Length());  // 15 bytes
 ```
 
 Equivalent alias: `[raw]`
 
 ### `[f]`/`[format]` — Format String (String Interpolation)
 
-Insert expressions inside double curly braces:
+Insert expressions inside single braces; doubled braces escape a literal brace:
 
 ```kinal
 int value = 42;
@@ -77,7 +80,7 @@ Equivalent alias: `[chars]`
 
 ### Combining Prefixes
 
-Prefixes can be combined; they are applied left to right:
+Prefixes combine feature flags; raw decoding, interpolation and char-array materialization are not a general left-to-right transformation pipeline:
 
 ```kinal
 int val = 7;
@@ -134,7 +137,7 @@ IO.Text.Split(s, ", ");         // list: ["Hello", "World!"]
 Built-in string methods (call directly, no `IO.Text` needed):
 
 ```kinal
-s.Length();    // character length
+s.Length();    // byte length, not Unicode character count
 s.Equals(t);  // content comparison
 s.ToString(); // returns self (any interface compatibility)
 ```
@@ -191,3 +194,5 @@ bool b2 = [bool]("true");  // true
 
 - [IO.Text Standard Library](../stdlib/text.md)
 - [Type System](types.md)
+
+Strings are null-terminated byte sequences in the current Native/runtime interfaces. Length, slicing and indexing operate on bytes, not Unicode scalar values or grapheme clusters; embedded NUL can terminate text for these APIs. ASCII case conversion does not imply Unicode case folding. Raw literals suppress escape decoding, not platform encoding constraints. Borrowed C string pointers and allocation lifetimes are covered by [FFI](ffi.md) and [Memory and Lifetimes](../advanced/memory-management.md).

@@ -1,0 +1,103 @@
+Unit Tests.GuestHeapLifetime;
+
+Get Ctx By IO.Kinal.VM.Context;
+Get BC By IO.Kinal.VM.Bytecode;
+Get Std By IO.Kinal.VM.Stdlib;
+Get VM By IO.Kinal.VM.VM;
+
+Trusted Function int CheckCallbackDispatch()
+{
+    BC.FunctionInfo entry = New BC.FunctionInfo();
+    entry.RegisterCount = 3;
+    entry.Code = {
+        [byte](BC.OpCode.LoadInt), 0, 0, 0,
+        [byte](BC.OpCode.CallBuiltin), 1, 17, 0, 1, 0, 0, 0, 0,
+        [byte](BC.OpCode.AddInt), 2, 0, 1,
+        [byte](BC.OpCode.Ret), 2
+    };
+    BC.FunctionInfo callback = New BC.FunctionInfo();
+    callback.ParamCount = 1;
+    callback.RegisterCount = 2;
+    callback.Code = {
+        [byte](BC.OpCode.AddInt), 1, 0, 0,
+        [byte](BC.OpCode.Ret), 1
+    };
+    BC.Program program = New BC.Program();
+    program.IntConstants = {7};
+    program.Functions = {entry, callback};
+    Std.StdlibRegistry registry = New Std.StdlibRegistry();
+    registry.Present[17] = true;
+    registry.Handlers[17] = Function void(Ctx.ExecutionContext ctx, int dst, int src, int b, int c, int d)
+    {
+        Ctx.FunctionFrame caller = ctx.CurrentFrame();
+        Ctx.VMValue[] args = {caller.ExportValue(src)};
+        IO.Type.Object.Function invoke = ctx.InvokeCallback;
+        Ctx.VMValue result = [Ctx.VMValue](invoke(1, args));
+        int[] registers = {};
+        For (int i = 0; i < caller.IntRegisters.Length(); i++) registers = registers.Add(caller.IntRegisters[i]);
+        caller.IntRegisters = registers;
+        caller.SetInt(dst, result.IntValue);
+    };
+    VM.VirtualMachine machine = New VM.VirtualMachine(registry);
+    Return machine.Execute(program);
+}
+
+Trusted Function int CheckFrameReturns()
+{
+    BC.FunctionInfo fn = New BC.FunctionInfo();
+    fn.RegisterCount = 12;
+    BC.Program program = New BC.Program();
+    program.Functions = {fn};
+    Ctx.ExecutionContext ctx = New Ctx.ExecutionContext(program);
+    ctx.PushEntry(0);
+    Ctx.FunctionFrame root = ctx.CurrentFrame();
+    Ctx.VMValue[] values = {
+        Ctx.VMValue.FromString("雪"), Ctx.VMValue.FromInt(-17), Ctx.VMValue.FromFloat(1.25),
+        Ctx.VMValue.FromBool(true), Ctx.VMValue.FromChar('x'), Ctx.VMValue.FromArray(0),
+        Ctx.VMValue.FromObject(3), Ctx.VMValue.FromPointer(5), Ctx.VMValue.FromCell(9),
+        Ctx.VMValue.NullValue()
+    };
+    For (int i = 0; i < values.Length(); i++)
+    {
+        root.ImportValue(1, values[i]);
+        ctx.PushCall(0, -1, 32, 2, root, 1, 1, 0, 0, 0);
+        Ctx.FunctionFrame callee = ctx.CurrentFrame();
+        If (callee.Kinds[7] != [int](BC.ValueKind.Null) || callee.StringRegisters[7] != "") Return 1;
+        callee.SetString(7, "previous invocation");
+        ctx.ReturnFromCurrent(0);
+        If (ctx.FrameCount != 1 || root.Pc != 32 || root.Kinds[2] != values[i].Kind) Return 2;
+        Ctx.VMValue actual = root.ExportValue(2);
+        If (actual.IntValue != values[i].IntValue || actual.BoolValue != values[i].BoolValue ||
+            actual.FloatValue != values[i].FloatValue || actual.StringValue != values[i].StringValue) Return 3;
+    }
+    root.SetString(2, "keep");
+    ctx.PushCall(0, -1, 48, 255, root, 0, 0, 0, 0, 0);
+    bool rejected = false;
+    Try { ctx.ReturnFromCurrent(fn.RegisterCount); }
+    Catch (string error) { rejected = error == "Invalid return register"; }
+    If (!rejected || ctx.FrameCount != 2) Return 8;
+    ctx.ReturnFromCurrent(255);
+    If (root.Pc != 48 || root.GetString(2) != "keep") Return 4;
+    ctx.PushCall(0, -1, 50, 2, root, 0, 0, 0, 0, 0);
+    ctx.ReturnFromCurrent(255);
+    If (root.GetInt(2) != 0) Return 5;
+
+    Ctx.FunctionFrame host = ctx.PushCallback(0, {});
+    host.SetString(0, "callback");
+    ctx.ReturnFromCurrent(0);
+    Ctx.VMValue snapshot = host.HostResult;
+    host = ctx.PushCallback(0, {});
+    ctx.ReturnFromCurrent(255);
+    If (ctx.FrameCount != 1 || snapshot.StringValue != "callback" ||
+        host.HostResult.Kind != [int](BC.ValueKind.Int) || host.HostResult.IntValue != 0) Return 6;
+    root.SetInt(0, 27);
+    ctx.ReturnFromCurrent(0);
+    If (!ctx.Halted || ctx.ExitCode != 27) Return 7;
+    ctx = New Ctx.ExecutionContext(program);
+    ctx.PushEntry(0);
+    ctx.CurrentFrame().SetBool(0, true);
+    ctx.ReturnFromCurrent(0);
+    If (!ctx.Halted || ctx.ExitCode != 0) Return 9;
+    If (CheckCallbackDispatch() != 21) Return 10;
+    Return 0;
+}

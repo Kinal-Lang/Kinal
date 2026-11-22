@@ -2,6 +2,8 @@ Unit Tests.StdlibTextRoundtrip;
 
 Get Console By IO.Console;
 Get IO.Text;
+Get IO.Error;
+Get IO.GC;
 
 Static Function int Main()
 {
@@ -25,5 +27,47 @@ Static Function int Main()
     Console.PrintLine(IO.Text.Join(parts, "|"));
     Console.PrintLine(lines.Count());
     Console.PrintLine([string](lines.Fetch(1)));
+    If (!IO.Text.StartsWith(null, "") || !IO.Text.StartsWith("abc", null) ||
+        IO.Text.StartsWith(null, "a") || IO.Text.StartsWith("ab", "abc") ||
+        !IO.Text.StartsWith("雪山", "雪") || IO.Text.StartsWith("雪山", "雪地")) Return 1;
+    If (IO.Text.Slice(null, 0, 1) != "" || IO.Text.Slice("abc", -1, 2) != "ab" ||
+        IO.Text.Slice("abc", 1, -1) != "" || IO.Text.Slice("abc", 1, 9223372036854775807) != "bc" ||
+        IO.Text.Slice("abc", 9223372036854775807, 4) != "" ||
+        IO.Text.Slice("a雪z", 1, 3) != "雪") Return 2;
+    IO.Text.Builder builder = New IO.Text.Builder();
+    builder.Append(null);
+    builder.Append("xyz", 0);
+    If (builder.Length != 0 || builder.Build() != "") Return 3;
+    builder.Append("雪山", 3);
+    builder.AppendChar('x');
+    string saved = builder.Build();
+    builder.Append(saved, 99);
+    If (builder.Length != 8 || builder.Build() != "雪x雪x") Return 4;
+    builder.Clear();
+    For (int i = 0; i < 513; i++) builder.AppendChar('z');
+    IO.GC.Collect();
+    string grown = builder.Build();
+    If (saved != "雪x" || IO.Text.Length(grown) != 513 || IO.Text.Count(grown, "z") != 513) Return 5;
+    Try { builder.AppendChar('\0'); Return 6; }
+    Catch (IO.Error e) { If (builder.Length != 513) Return 7; }
+    If (IO.Text.IndexOf(null, null) != 0 || IO.Text.IndexOf(null, "x") != -1 ||
+        IO.Text.LastIndexOf("a雪", null) != 4 || IO.Text.Count("a", "") != 0 ||
+        IO.Text.Replace(null, "x", "Y") != "" || IO.Text.Split(null, "#").Count() != 1) Return 8;
+    If (IO.Text.LastIndexOf("aaaa", "aaa") != 1 || IO.Text.Count("aaaa", "aaa") != 1 ||
+        IO.Text.Replace("aaaa", "aaa", null) != "a" || IO.Text.IndexOf("雪山雪", "山") != 3) Return 9;
+
+    string needle = "ababababababababa";
+    string periodic = "x" + needle + "baba";
+    If (IO.Text.IndexOf(periodic, needle) != 1 || IO.Text.LastIndexOf(periodic, needle) != 5 ||
+        IO.Text.Count(periodic, needle) != 1 || IO.Text.Replace(periodic, needle, "Q") != "xQbaba") Return 10;
+    list edges = IO.Text.Split(needle + needle + "雪" + needle, needle);
+    If (edges.Count() != 4 || [string](edges.Fetch(0)) != "" || [string](edges.Fetch(1)) != "" ||
+        [string](edges.Fetch(2)) != "雪" || [string](edges.Fetch(3)) != "") Return 11;
+    If (IO.Text.Replace("::a::::", "::", "雪") != "雪a雪雪" ||
+        IO.Text.Replace("::a::::", "::", "xy") != "xyaxyxy" ||
+        IO.Text.Replace("abc", "", "?") != "abc") Return 12;
+    list whole = IO.Text.Split("雪山", null);
+    If (whole.Count() != 1 || [string](whole.Fetch(0)) != "雪山" ||
+        IO.Text.IndexOf("ab", needle) != -1 || IO.Text.LastIndexOf("ab", needle) != -1) Return 13;
     Return 0;
 }

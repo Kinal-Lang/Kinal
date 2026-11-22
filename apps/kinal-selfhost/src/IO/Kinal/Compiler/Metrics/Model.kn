@@ -1,0 +1,327 @@
+Unit IO.Kinal.Compiler.Metrics.Model;
+
+Get IO.Text;
+Get IO.Kinal.Compiler.Core.CompileSession;
+Get IO.Kinal.Compiler.Syntax.SyntaxTree;
+Get IO.Kinal.Compiler.Syntax.Nodes;
+Get IO.Kinal.Compiler.Types.TypeSymbol;
+
+Class MetricCounts
+{
+    Public int Statements;
+    Public int Decisions;
+    Public int Cognitive;
+    Public int Nesting;
+    Public int Parameters;
+    Public int Locals;
+    Public int Returns;
+    Public int Throws;
+    Public int Catches;
+    Public int Loops;
+    Public int Switches;
+    Public int Cases;
+    Public int LogicalOperators;
+    Public int Jumps;
+    Public int Records;
+    Public int Breaks;
+    Public int Continues;
+    Public int UnsafeBlocks;
+    Public int Calls;
+    Public int Allocations;
+    Public int Awaits;
+
+    Public Safe Constructor()
+    {
+        This.Statements = 0;
+        This.Decisions = 0;
+        This.Cognitive = 0;
+        This.Nesting = 0;
+        This.Parameters = 0;
+        This.Locals = 0;
+        This.Returns = 0;
+        This.Throws = 0;
+        This.Catches = 0;
+        This.Loops = 0;
+        This.Switches = 0;
+        This.Cases = 0;
+        This.LogicalOperators = 0;
+        This.Jumps = 0;
+        This.Records = 0;
+        This.Breaks = 0;
+        This.Continues = 0;
+        This.UnsafeBlocks = 0;
+        This.Calls = 0;
+        This.Allocations = 0;
+        This.Awaits = 0;
+    }
+}
+
+Class MetricNames
+{
+    Public dict Seen;
+    Public list Items;
+
+    Public Safe Constructor()
+    {
+        This.Seen = dict.Create();
+        This.Items = list.Create();
+    }
+
+    Public Safe Function void Add(string value)
+    {
+        If (!IO.Text.IsEmpty(value) && !This.Seen.Contains(value))
+        { This.Seen.Set(value, true); This.Items.Add(value); }
+    }
+    Public Safe Function void Merge(MetricNames source)
+    {
+        int i = 0;
+        While (i < source.Items.Count()) { This.Add([string](source.Items.Fetch(i))); i++; }
+    }
+}
+
+Class MetricFunction
+{
+    Public string Id;
+    Public string Name;
+    Public string Owner;
+    Public string Parent;
+    Public string Kind;
+    Public MetricFile File;
+    Public FunctionDecl Declaration;
+    Public ExpressionNode Literal;
+    Public int Line;
+    Public int Column;
+    Public int StartLine;
+    Public int StartColumn;
+    Public int EndLine;
+    Public int EndColumn;
+    Public bool HasBody;
+    Public bool Generic;
+    Public bool Bound;
+    Public bool IsAsync;
+    Public bool IsExtern;
+    Public int Safety;
+    Public MetricCounts Counts;
+    Public int Cyclomatic;
+    Public int CodeLines;
+    Public int Operators;
+    Public int Operands;
+    Public MetricNames OperatorKinds;
+    Public MetricNames OperandKinds;
+    Public f64 Volume;
+    Public f64 Difficulty;
+    Public f64 Effort;
+    Public int Maintainability;
+    Public MetricNames CoupledTypes;
+    Public MetricNames Callees;
+    Public MetricNames Callers;
+    Public list SourceExpressions;
+    Public MetricNames SourceCallSites;
+    Public MetricNames BoundCallSites;
+    Public MetricNames DynamicSites;
+    Public MetricNames VirtualSites;
+    Public MetricNames Captures;
+    Public list Children;
+    Public list Edges;
+    Public bool Recursive;
+    Public int Component;
+
+    Public Safe Constructor()
+    {
+        This.Id = "";
+        This.Name = "";
+        This.Owner = "";
+        This.Parent = "";
+        This.Kind = "function";
+        This.File = null;
+        This.Declaration = null;
+        This.Literal = null;
+        This.Line = 0;
+        This.Column = 0;
+        This.StartLine = 0;
+        This.StartColumn = 0;
+        This.EndLine = 0;
+        This.EndColumn = 0;
+        This.HasBody = false;
+        This.Generic = false;
+        This.Bound = false;
+        This.IsAsync = false;
+        This.IsExtern = false;
+        This.Safety = 0;
+        This.Counts = New MetricCounts();
+        This.Cyclomatic = 0;
+        This.CodeLines = 0;
+        This.Operators = 0;
+        This.Operands = 0;
+        This.OperatorKinds = New MetricNames();
+        This.OperandKinds = New MetricNames();
+        This.Volume = 0.0;
+        This.Difficulty = 0.0;
+        This.Effort = 0.0;
+        This.Maintainability = 100;
+        This.CoupledTypes = New MetricNames();
+        This.Callees = New MetricNames();
+        This.Callers = New MetricNames();
+        This.SourceExpressions = list.Create();
+        This.SourceCallSites = New MetricNames();
+        This.BoundCallSites = New MetricNames();
+        This.DynamicSites = New MetricNames();
+        This.VirtualSites = New MetricNames();
+        This.Captures = New MetricNames();
+        This.Children = list.Create();
+        This.Edges = list.Create();
+        This.Recursive = false;
+        This.Component = -1;
+    }
+}
+
+Class MetricFile
+{
+    Public CompilationUnit Unit;
+    Public string Path;
+    Public bool Dependency;
+    Public int Lines;
+    Public int CodeLines;
+    Public int CommentLines;
+    Public int CommentOnlyLines;
+    Public int BlankLines;
+    Public int MixedLines;
+    Public int Tokens;
+    Public int Globals;
+    Public int Imports;
+    Public list Functions;
+    Public list Types;
+    Public MetricNames Dependencies;
+
+    Public Safe Constructor()
+    {
+        This.Unit = null;
+        This.Path = "";
+        This.Dependency = false;
+        This.Lines = 0;
+        This.CodeLines = 0;
+        This.CommentLines = 0;
+        This.CommentOnlyLines = 0;
+        This.BlankLines = 0;
+        This.MixedLines = 0;
+        This.Tokens = 0;
+        This.Globals = 0;
+        This.Imports = 0;
+        This.Functions = list.Create();
+        This.Types = list.Create();
+        This.Dependencies = New MetricNames();
+    }
+}
+
+Class MetricType
+{
+    Public string Name;
+    Public string Kind;
+    Public MetricFile File;
+    Public TypeDecl Declaration;
+    Public int Line;
+    Public int Fields;
+    Public int Methods;
+    Public int WeightedMethods;
+    Public int InheritanceDepth;
+    Public int DerivedTypes;
+    Public MetricNames Bases;
+    Public MetricNames Interfaces;
+    Public MetricNames CoupledTypes;
+
+    Public Safe Constructor()
+    {
+        This.Name = "";
+        This.Kind = "";
+        This.File = null;
+        This.Declaration = null;
+        This.Line = 0;
+        This.Fields = 0;
+        This.Methods = 0;
+        This.WeightedMethods = 0;
+        This.InheritanceDepth = 0;
+        This.DerivedTypes = 0;
+        This.Bases = New MetricNames();
+        This.Interfaces = New MetricNames();
+        This.CoupledTypes = New MetricNames();
+    }
+}
+
+Class MetricEdge
+{
+    Public string Caller;
+    Public string Target;
+    Public string Name;
+    Public string Dispatch;
+    Public int Line;
+    Public int Column;
+
+    Public Safe Constructor()
+    {
+        This.Caller = "";
+        This.Target = "";
+        This.Name = "";
+        This.Dispatch = "direct";
+        This.Line = 0;
+        This.Column = 0;
+    }
+}
+
+Class MetricReport
+{
+    Public CompileSession Session;
+    Public string Root;
+    Public string Profile;
+    Public string Mode;
+    Public bool IncludeDependencies;
+    Public int ExcludedFiles;
+    Public list Files;
+    Public list Functions;
+    Public list Types;
+    Public dict FileMap;
+    Public dict FunctionMap;
+    Public dict TypeMap;
+    Public dict EdgeMap;
+    Public list RecursiveComponents;
+    Public int WarningCount;
+
+    Public Safe Constructor()
+    {
+        This.Session = null;
+        This.Root = "";
+        This.Profile = "";
+        This.Mode = "";
+        This.IncludeDependencies = false;
+        This.ExcludedFiles = 0;
+        This.Files = list.Create();
+        This.Functions = list.Create();
+        This.Types = list.Create();
+        This.FileMap = dict.Create();
+        This.FunctionMap = dict.Create();
+        This.TypeMap = dict.Create();
+        This.EdgeMap = dict.Create();
+        This.RecursiveComponents = list.Create();
+        This.WarningCount = 0;
+    }
+}
+
+Safe Function string SiteKey(int line, int column)
+{
+    Return [string](line) + ":" + [string](column);
+}
+
+Safe Function string FunctionKey(string path, int line, int column)
+{
+    Return path + ":" + SiteKey(line, column);
+}
+
+Safe Function bool Before(int line, int column, int endLine, int endColumn)
+{
+    Return line < endLine || (line == endLine && column < endColumn);
+}
+
+Safe Function bool ContainsPosition(MetricFunction function, int line, int column)
+{
+    Return !Before(line, column, function.StartLine, function.StartColumn) &&
+        Before(line, column, function.EndLine, function.EndColumn);
+}

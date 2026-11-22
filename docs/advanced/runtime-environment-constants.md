@@ -121,3 +121,25 @@ All three constant groups are folded at the semantic phase, differing in origin 
 - [KinalVM](../cli/vm.md) — `kinal vm build`, `kinal vm run` commands
 - [Freestanding and Embedded](freestanding.md) — `--runtime` memory modes
 - [Cross-Compilation](cross-compilation.md) — `IO.Target.*` and platform info constants
+
+## Complete Verification Program
+
+Save this as versions.kn and run kinal run versions.kn and kinal vm run versions.kn. Native prints Kinal.Native/false; VM prints Kinal.VM/true. Version text follows the actual build. Compiler and VM component versions can change independently; do not assume matching major/minor versions. KNC file-format version is a separate dimension.
+
+```kinal
+Get IO.Console;
+
+Static Function int Main()
+{
+    IO.Console.PrintLine(IO.Runtime.Name);
+    IO.Console.PrintLine(IO.Version);
+    IO.Console.PrintLine(IO.Runtime.IsVM);
+    If (IO.Runtime.IsVM)
+    {
+        IO.Console.PrintLine(IO.Version.VM);
+    }
+    Return 0;
+}
+```
+
+An IO.Runtime.IsVM branch does not add missing VM functionality. Only an inactive compile-time branch avoids its semantic/backend path; an active Await, collection or native-bridge operation still needs [backend support](backend-support.md).

@@ -16,10 +16,13 @@ Kinal's core design goals:
 
 Identifiers can use ordinary UTF-8 names, including Chinese and Japanese spellings, as long as they do not collide with reserved keywords or ASCII operator/punctuation tokens.
 
+This complete overview example uses Native interface dispatch. For VM code, use a concrete receiver where supported and consult [Backend Support](../advanced/backend-support.md); interface method dispatch is not generally portable to the current VM.
+
 ```kinal
 Unit App.Demo;
 
 Get IO.Console;
+Get IO.Async;
 
 // Interface definition
 Interface IShape
@@ -46,7 +49,8 @@ Class Circle By IShape
 // Generic function
 Function T Max<T>(T a, T b)
 {
-    Return a > b ? a : b;  // Note: Kinal has no ternary operator, this is illustrative only
+    If (a > b) { Return a; }
+    Return b;
 }
 
 // Async function
@@ -87,14 +91,14 @@ Static Function int Main()
 ```kinal
 Unit MyApp;                      // Declares the unit name for the current file
 Get IO.Console;                  // Opens the entire module
-Get IO.Console;       // Import module with an alias
+Get Console By IO.Console;       // Import module with an alias
 Get PrintLine By IO.Console.PrintLine; // Import a single symbol
 ```
 
 ### Safety Levels
 
 ```kinal
-Safe Function void SafeOp() { ... }       // Can only call Safe functions
+Safe Function void SafeOp() { ... }       // Can call Safe or Trusted functions
 Trusted Function void BridgeOp() { ... }  // Can call Unsafe functions
 Unsafe Function void DangerOp() { ... }   // Can perform pointer operations
 ```
@@ -123,6 +127,14 @@ Class Dog By Animal
 ### Async/Concurrency
 
 ```kinal
+Get IO.Async;
+
+Async Function int Compute()
+{
+    Await IO.Async.Yield();
+    Return 42;
+}
+
 Static Async Function int Main()
 {
     int result = Await Compute();

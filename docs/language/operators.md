@@ -25,6 +25,14 @@ float result = x / y;  // 3.333...
 
 When the resolved integer type is unsigned, `/` and `%` use unsigned division
 and remainder semantics in both Native and VM builds.
+Signed integer division rounds toward zero. For example, `-7 / 3` is `-2`
+and `-7 % 3` is `-1`.
+
+In a Native loop such as `hash = (hash * 31 + [int](bytes[i])) % 1000000007`,
+the compiler can group consecutive updates when the accumulator is already in
+the range from zero through the modulus minus one. It checks that the combined
+arithmetic fits the integer type. Negative seeds, larger initial values, and
+the trailing elements of a partial group use the original operations.
 
 ### String Concatenation
 
@@ -58,7 +66,8 @@ n %= 4;   // 2
 All comparison operators return `bool`:
 
 ```kinal
-int a = 5, b = 3;
+int a = 5;
+int b = 3;
 bool eq = a == b;   // false
 bool ne = a != b;   // true
 bool lt = a < b;    // false
@@ -93,7 +102,8 @@ When numeric coercion resolves an integer comparison to an unsigned type,
 | `!` | Logical NOT | Inverts a boolean value |
 
 ```kinal
-bool a = true, b = false;
+bool a = true;
+bool b = false;
 
 bool and_result = a && b;   // false
 bool or_result  = a || b;   // true
@@ -103,7 +113,7 @@ bool not_result = !a;       // false
 **Short-circuit evaluation**: `&&` does not evaluate the right side if the left is `false`; `||` does not evaluate the right side if the left is `true`.
 
 ```kinal
-bool safeCheck(string s)
+Function bool SafeCheck(string s)
 {
     Return s != null && s.Length() > 0;  // Length() is not called if s is null
 }
@@ -122,7 +132,7 @@ int or  = a | b;    // 0111 = 7  (bitwise OR)
 int xor = a ^ b;    // 0110 = 6  (bitwise XOR)
 int shl = a << 1;   // 1010 = 10 (left shift)
 int shr = a >> 1;   // 0010 = 2  (right shift)
-int inv = ~a;       // bitwise NOT (result is platform-dependent)
+int inv = ~a;       // bitwise NOT: -6 for this signed int
 ```
 
 For an unsigned resolved integer type, `>>` is a logical right shift and fills
@@ -151,7 +161,7 @@ any a = 3.14;
 float pi = [float](a);
 
 // string to char array
-char[] chars = [c]("abc");   // ['a', 'b', 'c']
+char[] chars = [c]"abc";   // ['a', 'b', 'c']
 ```
 
 Using `IO.Type.*` prefix is also available for conversions (equivalent to `[type](...)`):
@@ -228,6 +238,19 @@ If (a Is Dog d)
 }
 ```
 
+## Conditional Expressions
+
+Both ternary and If expressions are supported. Only the selected result expression is evaluated:
+
+```kinal
+int left = 3;
+int right = 7;
+int maximum = left > right ? left : right;
+int same = If (left > right) { left } Else { right };
+```
+
+The condition is boolean and branch results must have compatible types. `?:` binds below ordinary binary operators and above assignment; use parentheses when nesting it. The old claim that Kinal has no ternary operator is obsolete.
+
 ## Operator Precedence
 
 From highest to lowest (same level is left-to-right):
@@ -245,7 +268,8 @@ From highest to lowest (same level is left-to-right):
 | 9 | `\|` |
 | 10 | `&&` |
 | 11 | `\|\|` |
-| 12 (lowest) | `=`, `+=`, `-=`, `*=`, `/=`, `%=` |
+| 12 | `? :` |
+| 13 (lowest) | `=`, `+=`, `-=`, `*=`, `/=`, `%=` |
 
 Using parentheses to clarify precedence is recommended:
 

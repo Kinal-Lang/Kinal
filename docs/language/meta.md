@@ -1,6 +1,6 @@
 # Meta (Metadata Annotations)
 
-Meta is Kinal's custom attribute system, allowing you to attach metadata to functions, classes, methods, fields, and other declarations, and query that information at compile time or at runtime.
+Meta is Kinal's custom attribute system, allowing you to attach metadata to functions, classes, methods, fields, and other declarations, and query retained records at runtime with IO.Meta. Compile-time retention is used by compiler features; it does not expose a general user-code compile-time reflection API.
 
 ## Defining Meta
 
@@ -38,15 +38,15 @@ Specifies which declarations the Meta can be applied to:
 | `@struct` | Structs |
 | `@enum` | Enums |
 | `@interface` | Interfaces |
-| `@method` | Methods (member methods of classes/structs) |
+| `@method` | Class/interface methods |
 | `@field` | Fields |
 
-Multiple targets are separated by `|`:
+Multiple targets are separated by commas:
 
 ```kinal
 Meta Tag(string name)
 {
-    On @class | @method | @field;
+    On @class, @method, @field;
     Keep @runtime;
 }
 ```
@@ -155,20 +155,20 @@ dict attr = IO.Meta.Find(MyFunc, "Version");
 string version = [string](attr.Fetch("arg.text"));
 
 // Query all matching attributes (returns list)
-list allTags = IO.Meta.Of("Tag");
+list allTags = IO.Meta.Query("Tag");
 
 // Check if an attribute exists
-bool has = IO.Meta.Has("Version", MyFunc);
+bool has = IO.Meta.Has(MyFunc, "Version");
 ```
 
 ### IO.Meta Function Reference
 
-| Function | Parameters | Return | Description |
-|----------|------------|--------|-------------|
-| `IO.Meta.Find(target, name)` | `any, string` | `dict` | Find a named attribute on the specified declaration; returns an attribute dict |
-| `IO.Meta.Of(name)` | `string` | `list` | Find all declarations with the specified attribute name |
-| `IO.Meta.Query(name)` | `string` | `list` | Same as `Of` |
-| `IO.Meta.Has(name, target)` | `string, any` | `bool` | Check whether the specified declaration has the specified attribute |
+| Function | Parameters | Return | Meaning |
+|----------|------------|--------|---------|
+| `IO.Meta.Find(owner, name)` | `declaration/string, string` | `dict` | One matching retained record |
+| `IO.Meta.Of(owner)` | `declaration/string` | `list` | Retained records on one owner |
+| `IO.Meta.Query(name)` | `string` | `list` | Retained records matching an attribute name |
+| `IO.Meta.Has(owner, name)` | `declaration/string, string` | `bool` | Whether that owner has the attribute |
 
 ### Attribute Dictionary Key Format
 
@@ -261,3 +261,5 @@ See [FFI](ffi.md) for details.
 
 - [FFI External Function Interface](ffi.md)
 - [IO.Meta Standard Library](../stdlib/meta.md)
+
+The current query contract is Query(attributeName) -> list, Of(owner) -> list, Has(owner, attributeName) -> bool, Find(owner, attributeName) -> dict. A declaration reference may be resolved to an owner string; an instance method value is not universally a supported query target. Custom compile-only attributes do not automatically add compiler behavior. See the [complete IO.Meta reference](../stdlib/meta.md) for record fields and a tested Repeatable example. Compiler attributes also include `[Cast]` for explicit class conversion methods and `[Variadic]` for supported final-array parameter packing; this is not C varargs support.

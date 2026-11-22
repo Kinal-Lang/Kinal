@@ -2,7 +2,10 @@
 
 与 Main / KMain 入口点签名和唯一性有关的诊断。
 
-本文中的示例都是最小复现片段，用来说明该错误码最常见的触发方式；少数更偏内部的诊断会使用最接近用户代码的表面写法来说明。
+本页记录预注册模板。正确示例展示支持的写法；触发形态用于说明规则或解析状态，可能依赖外围声明，或在当前 C 编译器中先报告其他诊断。
+
+
+验证入口使用 kinal build main.kn，不要用不要求入口的 --emit check。Native 驱动选择入口后才检查 Static、返回类型和参数。E-ENT-00001／00002 为预注册模板，当前实际诊断细节不同的路径可能分配其他编号。
 
 ---
 
@@ -24,18 +27,20 @@
 - 默认详情：Multiple Main functions found
 - 说明：程序入口只能有一个 `Main`。
 
-错误示例：
+将两个入口放在不同 Unit，避免同一 Unit 的重复函数诊断；运行 `kinal build first.kn second.kn`。当前 C 版报告 Entry Ambiguous / Multiple entry functions found，自动编号可不同。
+
+**first.kn**
 
 ```kinal
-Static Function int Main()
-{
-    Return 0;
-}
+Unit Entry.A;
+Static Function int Main() { Return 0; }
+```
 
-Static Function int Main(string[] args)
-{
-    Return 0;
-}
+**second.kn**
+
+```kinal
+Unit Entry.B;
+Static Function int Main() { Return 0; }
 ```
 
 正确示例：
@@ -58,6 +63,8 @@ Static Function int Main(string[] args)
 - 级别：错误
 - 默认详情：Main must be Static
 - 说明：程序入口必须声明为 `Static`。
+
+当前 C 原生构建对此报告 Entry Signature / Entry point must be Static；旧模板编号不一定出现。
 
 错误示例：
 

@@ -1,0 +1,66 @@
+Unit Tests.PropertyAccess;
+Get IO.Console;
+Alias SetTotal By Tests.PropertyAccess.Meter.Total;
+
+int trace = 0;
+
+Interface ISink { Property int Value { Set; } }
+
+Class Meter By ISink
+{
+    Public int Stored;
+    Public Static int Shared;
+
+    Public Virtual Property int Value { Set { trace = trace * 10 + 3; Stored = value; } }
+    Public Virtual Property int Reading { Get { Return Stored; } }
+    Public Property string Caption { Get { Return "meter"; } Set { } }
+    Public Static Property int Total { Set { Shared = value; } }
+    Public Property int Level
+    {
+        Get { trace = trace * 10 + 2; Return Stored; }
+        Set { trace = trace * 10 + 3; Stored = value; }
+    }
+    Public Function void Put(int n) { Value = n; }
+    Public Static Function void PutStatic(int n) { Total = n; }
+}
+
+Class Derived By Meter
+{
+    Public Override Property int Value { Set { trace = trace * 10 + 4; Stored = value + 100; } }
+    Public Override Property int Reading { Get { Return Stored + 1; } }
+    Public Function void PutBase(int n) { Base.Value = n; }
+    Public Function int ReadBase() { Return Base.Reading; }
+}
+
+Class Other { Public int Value; }
+
+Function ISink Receiver(ISink target) { trace = trace * 10 + 1; Return target; }
+Function Meter ReadMeter(Meter target) { trace = trace * 10 + 1; Return target; }
+Function int Right() { trace = trace * 10 + 2; Return 7; }
+
+Static Function int Main()
+{
+    Derived meter = New Derived();
+    ISink sink = meter;
+    int assigned = Receiver(sink).Value = Right();
+    If (trace != 124 || assigned != 7 || meter.Reading != 108 || meter.ReadBase() != 107) Return 1;
+    meter.PutBase(3);
+    If (meter.Stored != 3) Return 2;
+    meter.Put(6);
+    If (meter.Stored != 106) Return 3;
+    Meter.PutStatic(8);
+    If (Meter.Shared != 8) Return 4;
+    Meter.Total = 9;
+    If (Meter.Shared != 9) Return 5;
+    SetTotal = 42;
+    trace = 0;
+    int previous = ReadMeter(meter).Level++;
+    If (trace != 123 || previous != 106 || meter.Stored != 107) Return 6;
+    trace = 0;
+    int current = --ReadMeter(meter).Level;
+    If (trace != 123 || current != 106 || meter.Stored != 106) Return 7;
+    Other other = New Other();
+    other.Value = Meter.Shared;
+    IO.Console.PrintLine(other.Value);
+    Return 0;
+}

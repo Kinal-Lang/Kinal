@@ -51,7 +51,7 @@ Trusted Function void Sleep(int milliseconds)
     __TimeSleep([i32](milliseconds));
 }
 
-[IO.Kinal.Runtime.KncUnsupported("IO.Time.Now is not mapped in the bootstrap KNC emitter yet")]
+[IO.Kinal.Runtime.KncIntrinsic(14)]
 Trusted Function DateTime Now()
 {
     i32 year = 0;
@@ -79,82 +79,68 @@ Trusted Function DateTime Now()
 
 Trusted Function string __TimePad(int value, int width)
 {
-    string result = [string](value);
-    While (IO.Text.Length(result) < width)
+    string digits = [string](value);
+    int length = IO.Text.Length(digits);
+    If (width <= length) Return digits;
+    int missing = width - length;
+    While (missing > 3)
     {
-        result = "0" + result;
+        digits = "000" + digits;
+        missing -= 3;
     }
-    Return result;
+    If (missing == 1) Return "0" + digits;
+    If (missing == 2) Return "00" + digits;
+    Return "000" + digits;
 }
 
+[IO.Kinal.Runtime.KncIntrinsic(18)]
 Trusted Function string Format(DateTime value, string pattern)
 {
-    If (pattern == null || pattern == "")
-    {
-        pattern = "yyyy-MM-dd HH:mm:ss";
-    }
-
-    DateTime dateTime = value;
-    If (dateTime == null)
-    {
-        dateTime = New DateTime();
-    }
+    If (pattern == null || pattern == "") pattern = "yyyy-MM-dd HH:mm:ss";
 
     char* characters = [char*](pattern);
     int length = IO.Text.Length(pattern);
+    int literal = 0;
     int index = 0;
-    string result = "";
+    IO.Text.Builder output = null;
     While (index < length)
     {
-        If (index + 3 < length &&
-            characters[index] == 'y' && characters[index + 1] == 'y' &&
-            characters[index + 2] == 'y' && characters[index + 3] == 'y')
+        char first = characters[index];
+        int width = 0;
+        If (first == 'y') width = 4;
+        ElseIf (first == 'f') width = 3;
+        ElseIf (first == 'M' || first == 'd' || first == 'H' || first == 'm' || first == 's') width = 2;
+
+        If (width == 0 || width > length - index || characters[index + 1] != first ||
+            (width >= 3 && characters[index + 2] != first) || (width == 4 && characters[index + 3] != first))
         {
-            result = result + __TimePad(dateTime.Year, 4);
-            index = index + 4;
+            index++;
+            Continue;
         }
-        ElseIf (index + 1 < length &&
-                characters[index] == 'M' && characters[index + 1] == 'M')
+
+        int part = 0;
+        If (value != null)
         {
-            result = result + __TimePad(dateTime.Month, 2);
-            index = index + 2;
+            part = Switch (first)
+            {
+                Case ('y') { value.Year }
+                Case ('M') { value.Month }
+                Case ('d') { value.Day }
+                Case ('H') { value.Hour }
+                Case ('m') { value.Minute }
+                Case ('s') { value.Second }
+                Case (default) { value.Millisecond }
+            };
         }
-        ElseIf (index + 1 < length &&
-                characters[index] == 'd' && characters[index + 1] == 'd')
-        {
-            result = result + __TimePad(dateTime.Day, 2);
-            index = index + 2;
-        }
-        ElseIf (index + 1 < length &&
-                characters[index] == 'H' && characters[index + 1] == 'H')
-        {
-            result = result + __TimePad(dateTime.Hour, 2);
-            index = index + 2;
-        }
-        ElseIf (index + 1 < length &&
-                characters[index] == 'm' && characters[index + 1] == 'm')
-        {
-            result = result + __TimePad(dateTime.Minute, 2);
-            index = index + 2;
-        }
-        ElseIf (index + 1 < length &&
-                characters[index] == 's' && characters[index + 1] == 's')
-        {
-            result = result + __TimePad(dateTime.Second, 2);
-            index = index + 2;
-        }
-        ElseIf (index + 2 < length &&
-                characters[index] == 'f' && characters[index + 1] == 'f' &&
-                characters[index + 2] == 'f')
-        {
-            result = result + __TimePad(dateTime.Millisecond, 3);
-            index = index + 3;
-        }
-        Else
-        {
-            result = result + [string](characters[index]);
-            index = index + 1;
-        }
+        string digits = __TimePad(part, width);
+        If (width == length) Return digits;
+        If (output == null) output = New IO.Text.Builder();
+        If (literal < index) output.Append([string](characters + literal), index - literal);
+        output.Append(digits);
+        index += width;
+        literal = index;
     }
-    Return result;
+    If (output == null) Return pattern;
+    If (literal < length) output.Append([string](characters + literal), length - literal);
+    Return output.Build();
 }

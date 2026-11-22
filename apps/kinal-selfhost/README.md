@@ -278,8 +278,10 @@ explicit `--vm-path`. The normal bootstrap builds that runner using the newly
 built selfhost compiler, then carries it into later stages. Source runs use a
 fresh temporary bytecode file and preserve the program's exit status; temporary
 files are removed after success or failure unless `--keep-temps` is selected.
-A `Main(string[] args)` entry receives an empty array. Nonempty runtime arguments
-are explicitly rejected because argument injection is not part of this VM ABI.
+`kinal vm run program.kn -- one "two words"` delivers two strings to
+`Main(string[] args)`. A standalone runner takes the bytecode path first, followed
+by guest arguments. A packed executable takes guest arguments directly, including
+options such as `--version`.
 
 `vm pack` accepts the same source/project or existing-bytecode inputs, and
 creates a standalone host executable by appending bytecode and the established

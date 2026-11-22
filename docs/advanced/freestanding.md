@@ -244,7 +244,7 @@ When using `--runtime none`, the following language features are unavailable:
 
 Features that remain available:
 
-- `Struct` and `Enum` (value types, stack-allocated)
+- `Struct` and `Enum` (value types; storage follows their containing variable)
 - Primitive types (`int`, `float`, `bool`, etc.)
 - Fixed-size arrays (`int[16]`, etc.)
 - Functions, primitive arithmetic and bitwise operations
@@ -260,6 +260,24 @@ to 511 bytes plus a terminator; float formatting truncates to an integer. These
 results are temporary and are overwritten as the scratch slots are reused.
 String parsing, aggregate boxing and dynamically allocated string storage still
 require a runtime.
+
+## Volatile and Panic APIs
+
+These are Trusted compiler builtins. Safe functions may call Trusted APIs; obtaining and manipulating raw pointers remains subject to safety rules.
+
+| Signature | Purpose |
+|-----------|---------|
+| `u8 IO.Volatile.Read8(u8* address)` | Volatile read; valid address and target alignment required |
+| `void IO.Volatile.Write8(u8* address, u8 value)` | Volatile write |
+| `u16 IO.Volatile.Read16(u16* address)` | Volatile read; valid address and target alignment required |
+| `void IO.Volatile.Write16(u16* address, u16 value)` | Volatile write |
+| `u32 IO.Volatile.Read32(u32* address)` | Volatile read; valid address and target alignment required |
+| `void IO.Volatile.Write32(u32* address, u32 value)` | Volatile write |
+| `u64 IO.Volatile.Read64(u64* address)` | Volatile read; valid address and target alignment required |
+| `void IO.Volatile.Write64(u64* address, u64 value)` | Volatile write |
+| `void IO.Panic.Abort()` / `void IO.Panic.Halt()` | Non-recoverable termination; not an exception recovery API |
+
+Volatile does not provide atomicity, thread synchronization or device memory barriers. Those requirements belong to the target protocol.
 
 ## See Also
 

@@ -1,0 +1,52 @@
+Unit Benchmarks.ListRelease;
+
+Get IO.Console;
+Get IO.GC;
+Get IO.Text;
+
+Function list Batch(string mode, string prefix, int group)
+{
+    list items = list.Create();
+    For (int i = 0; i < 16; i++) items.Add(prefix + [string](group * 16 + i));
+    If (mode == "clear") items.Clear();
+    Else
+    {
+        For (int n = 0; n < 16; n++)
+        {
+            int index = mode == "pop" ? items.Count() - 1 : items.Count() / 2;
+            string expected = [string](items.Fetch(index));
+            any removed = mode == "pop" ? items.Pop() : items.RemoveAt(index);
+            If ([string](removed) != expected || IO.Text.Length(expected) <= IO.Text.Length(prefix))
+                Return null;
+        }
+    }
+    If (!items.IsEmpty()) Return null;
+    items.Add(group);
+    Return items;
+}
+
+Static Function int Main(string[] args)
+{
+    If (args.Length() != 2) Return 2;
+    string mode = args[0];
+    int groups = [int](args[1]);
+    If ((mode != "clear" && mode != "pop" && mode != "remove") || groups < 1 || groups > 1024) Return 2;
+    string prefix = "x";
+    For (int bit = 0; bit < 15; bit++) prefix = prefix + prefix;
+    list kept = list.Create();
+    For (int group = 0; group < groups; group++)
+    {
+        list batch = Batch(mode, prefix, group);
+        If (batch == null) Return 1;
+        kept.Add(batch);
+        If ((group & 7) == 7) IO.GC.Collect();
+    }
+    IO.GC.Collect();
+    For (int j = 0; j < groups; j++)
+    {
+        list batch = [list](kept.Fetch(j));
+        If (batch.Count() != 1 || [int](batch.Fetch(0)) != j) Return 1;
+    }
+    IO.Console.PrintLine(groups);
+    Return 0;
+}

@@ -1,0 +1,121 @@
+Unit IO.UI;
+
+Get Native By IO.__UI;
+
+Enum SurfaceEvent By int
+{
+    Paint = 1, Resize = 2, PointerMove = 3, PointerDown = 4, PointerUp = 5,
+    PointerLeave = 6, Wheel = 7, KeyDown = 8, Character = 9, DoubleClick = 10,
+    CaptureLost = 11, Focus = 12, Blur = 13, Frame = 14, ContextMenu = 15, Command = 16, KeyUp = 17, Closing = 18, Destroyed = 19, Layout = 20, Moved = 21, Composition = 22, Wake = 23, Settled = 24, Moving = 25, MiddleDown = 26, MiddleUp = 27
+}
+
+Enum TextAlignment By int { Start = 0, Center = 1, End = 2 }
+
+Public Class SurfaceInput
+{
+    Public SurfaceEvent Kind;
+    Public int First;
+    Public int Second;
+    Public Constructor(SurfaceEvent kind, int first, int second)
+    {
+        Kind = kind; First = first; Second = second;
+    }
+}
+
+Public Class DrawingContext
+{
+    Private byte* _Surface;
+    Public Property byte* Surface { Get { Return _Surface; } }
+    Public int Left; Public int Top; Public int Scale;
+    Public Constructor(byte* surface) { _Surface = surface; Scale=100; }
+    Public Function DrawingContext View(int x,int y,int zoom=100)
+    {
+        DrawingContext next=New DrawingContext(_Surface);next.Left=Left+x*Scale/100;next.Top=Top+y*Scale/100;
+        next.Scale=Scale*zoom/100;Return next;
+    }
+    Public Trusted Function void Line(int x,int y,int endX,int endY,u32 color,int thickness=1)
+    {
+        Native.kn_ui_line(_Surface,[i32](Left+x*Scale/100),[i32](Top+y*Scale/100),[i32](Left+endX*Scale/100),[i32](Top+endY*Scale/100),color,[i32](thickness));
+    }
+
+    Public Trusted Function void Triangle(int ax,int ay,int bx,int by,int cx,int cy,u32 color)
+    {
+        Native.kn_ui_triangle(_Surface,[i32](Left+ax*Scale/100),[i32](Top+ay*Scale/100),
+            [i32](Left+bx*Scale/100),[i32](Top+by*Scale/100),[i32](Left+cx*Scale/100),[i32](Top+cy*Scale/100),color);
+    }
+    Public Trusted Function void Box(int x, int y, int width, int height, u32 argb, int radius = 0, int stroke = 0)
+    {
+        Native.kn_ui_box(_Surface, [i32](Left+x*Scale/100), [i32](Top+y*Scale/100), [i32](width*Scale/100), [i32](height*Scale/100), argb, [i32](radius*Scale/100), [i32](stroke));
+    }
+
+    Public Trusted Function void Gradient(int x,int y,int width,int height,u32 fromColor,u32 toColor,bool vertical=false)
+    {
+        int left=x*Scale/100;int top=y*Scale/100;
+        Native.kn_ui_gradient(_Surface,[i32](Left+left),[i32](Top+top),
+            [i32]((x+width)*Scale/100-left),[i32]((y+height)*Scale/100-top),fromColor,toColor,vertical?1:0);
+    }
+    Public Trusted Function void Write(string text, int x, int y, int width, int height, u32 argb,
+                                       int size = 13, int weight = 400, bool mono = false, TextAlignment alignment = TextAlignment.Start)
+    {
+        i32 fixedFont = 0;
+        If (mono) { fixedFont = 1; }
+        Native.DrawText(_Surface, text, [i32](Left+x*Scale/100), [i32](Top+y*Scale/100), [i32](width*Scale/100), [i32](height*Scale/100),
+                          [i32](size*Scale/100), [i32](weight), fixedFont, argb, [i32]([int](alignment)));
+    }
+
+    Public Trusted Function void CodeLine(string text,string runs,int x,int y,int size,u32 color){Native.DrawCode(_Surface,text,runs,[i32](Left+x*Scale/100),[i32](Top+y*Scale/100),[i32](size*Scale/100),color);}
+    Public Trusted Function void PushClip(int x, int y, int width, int height)
+    {
+        Native.kn_ui_clip(_Surface, [i32](Left+x*Scale/100), [i32](Top+y*Scale/100), [i32](width*Scale/100), [i32](height*Scale/100), 1);
+    }
+
+    Public Trusted Function void PopClip() { Native.kn_ui_clip(_Surface, 0, 0, 0, 0, 0); }
+}
+
+Public Class Canvas By Component
+{
+    Public Constructor(int x = 0, int y = 0, int width = 320, int height = 240)
+    {
+        _X = x; _Y = y; _Width = width; _Height = height;
+        _Events = {};
+    }
+
+
+    Public Override Function void Draw(IO.UI.DrawingContext context) {}
+    Protected Override Safe Function bool SupportsEventCode(int code)
+    {
+        EventKind kind = [EventKind](code);
+        Return kind==EventKind.OnMouseDown || kind==EventKind.OnMouseUp || kind==EventKind.OnMouseMove ||
+               kind==EventKind.OnMouseEnter || kind==EventKind.OnMouseLeave || kind==EventKind.OnKeyDown ||
+               kind==EventKind.OnKeyUp || kind==EventKind.OnFocus || kind==EventKind.OnBlur;
+    }
+    Public Override Function void OnSurfaceEvent(IO.UI.SurfaceInput input)
+    {
+        SurfaceEvent kind=input.Kind;
+        If(kind==SurfaceEvent.PointerMove)
+        {
+            If(!Hovered){Hovered=true;TriggerEvent(EventKind.OnMouseEnter);}
+            TriggerEvent(EventKind.OnMouseMove,[usize](input.First),[isize](input.Second));
+        }
+        Else If(kind==SurfaceEvent.PointerLeave){Hovered=false;TriggerEvent(EventKind.OnMouseLeave);}
+        Else If(kind==SurfaceEvent.PointerDown){Pressed=true;TriggerEvent(EventKind.OnMouseDown,[usize](input.First),[isize](input.Second));}
+        Else If(kind==SurfaceEvent.PointerUp){Pressed=false;TriggerEvent(EventKind.OnMouseUp,[usize](input.First),[isize](input.Second));}
+        Else If(kind==SurfaceEvent.CaptureLost)Pressed=false;
+        Else If(kind==SurfaceEvent.KeyDown)TriggerEvent(EventKind.OnKeyDown,[usize](input.First));
+        Else If(kind==SurfaceEvent.KeyUp)TriggerEvent(EventKind.OnKeyUp,[usize](input.First));
+        Else If(kind==SurfaceEvent.Focus)TriggerEvent(EventKind.OnFocus);
+        Else If(kind==SurfaceEvent.Blur)TriggerEvent(EventKind.OnBlur);
+    }
+
+
+    Public Trusted Function void RequestFrames(bool active)
+    {
+        If (Owner != null)
+        {
+            i32 enabled = 0;
+            If (active) { enabled = 1; }
+            Owner.SetFrames(This, active);
+        }
+    }
+}
+

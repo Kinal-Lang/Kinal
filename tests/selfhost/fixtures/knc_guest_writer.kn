@@ -1,0 +1,17 @@
+Unit Tests.Selfhost.KncGuestWriter;
+
+Get IO.Kinal.Compiler.Backend.KncModel;
+
+Static Function int Main()
+{
+    KncByteBuffer output = New KncByteBuffer();
+    output.BeginBuild();
+    output.WriteU8(7);
+    output.WriteI32(9);
+    output.WriteString("é雪");
+    output.PatchU16(1, 4321);
+    output.FinishBuild();
+    If (output.Count != 14 || output.Data.Length() != 14 ||
+        output.Data[1] != 225 || output.Data[2] != 16 || output.Data[13] != 170) Return 1;
+    Return 0;
+}

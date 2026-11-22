@@ -1657,9 +1657,32 @@ static bool register_manifest_into_module_map(const KnPkgManifest *manifest, Mod
     return register_manifest_into_module_map_depth(manifest, map, official_root, 0);
 }
 
+// Pins use the exact manifest version text; ordinary selection still compares dotted versions.
+static const char *package_pin_separator(const char *spec)
+{
+    const char *separator = NULL;
+    for (const char *p = spec; *p; ++p) {
+        if (*p != '@') continue;
+        if (separator || p == spec || !p[1]) return NULL;
+        separator = p;
+    }
+    return separator;
+}
+
+static int find_package_pin(const KnPackagePins *pins, const char *name, size_t length)
+{
+    if (!pins) return -1;
+    for (int i = 0; i < pins->count; ++i) {
+        const char *spec = pins->items[i];
+        if (kn_strncmp(spec, name, length) == 0 && spec[length] == '@') return i;
+    }
+    return -1;
+}
+
 static bool scan_package_roots_into_module_map_impl(const char **roots, int root_count, ModuleMap *map,
                                                     int official_root, KnPkgSelectedManifest *selected,
-                                                    int selected_cap, KnPkgManifest *manifest)
+                                                    int selected_cap, KnPkgManifest *manifest,
+                                                    const KnPackagePins *pins, unsigned char *matched_pins)
 {
     StrList manifests = {0};
     int selected_count = 0;
@@ -1689,6 +1712,14 @@ static bool scan_package_roots_into_module_map_impl(const char **roots, int root
         {
             pkg_fail("reserved package namespace 'IO.*' is only allowed in stdpkg", manifest->name);
             goto cleanup;
+        }
+        if (pins && pins->count) {
+            size_t length = kn_strlen(manifest->name);
+            int pin = find_package_pin(pins, manifest->name, length);
+            if (pin >= 0) {
+                if (kn_strcmp(pins->items[pin] + length + 1, manifest->version) != 0) continue;
+                matched_pins[pin] = 1;
+            }
         }
         {
             int existing = -1;
@@ -1736,7 +1767,8 @@ cleanup:
     return result;
 }
 
-static bool scan_package_roots_into_module_map(const char **roots, int root_count, ModuleMap *map, int official_root)
+static bool scan_package_roots_into_module_map(const char **roots, int root_count, ModuleMap *map, int official_root,
+                                               const KnPackagePins *pins, unsigned char *matched_pins)
 {
     KnPkgSelectedManifest *selected;
     KnPkgManifest *manifest;
@@ -1753,7 +1785,7 @@ static bool scan_package_roots_into_module_map(const char **roots, int root_coun
         return false;
     }
     result = scan_package_roots_into_module_map_impl(roots, root_count, map, official_root, selected,
-                                                     KN_PKG_SELECTED_MANIFEST_CAP, manifest);
+                                                     KN_PKG_SELECTED_MANIFEST_CAP, manifest, pins, matched_pins);
     kn_free(manifest);
     kn_free(selected);
     return result;

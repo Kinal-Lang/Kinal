@@ -1,9 +1,6 @@
 name: Release
 
 on:
-  push:
-    tags:
-      - "v*"
   workflow_dispatch:
     inputs:
       draft:
@@ -132,7 +129,7 @@ jobs:
               {
                   "id": "macos-arm64",
                   "name": "macOS arm64",
-                  "runs_on": "macos-14",
+                  "runs_on": "macos-15",
                   "timeout": 60,
                   "family": "macos",
                   "msvc_arch": "",
@@ -220,9 +217,12 @@ jobs:
         if: matrix.family == 'linux'
         run: |
           wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc
-          echo "deb http://apt.llvm.org/jammy/ llvm-toolchain-jammy-21 main" | sudo tee /etc/apt/sources.list.d/llvm-21.list
+          source /etc/os-release
+          echo "deb https://apt.llvm.org/${VERSION_CODENAME}/ llvm-toolchain-${VERSION_CODENAME}-21 main" | sudo tee /etc/apt/sources.list.d/llvm-21.list
           sudo apt-get update
           sudo apt-get install -y llvm-21-dev clang-21 lld-21 libclang-21-dev
+          echo "LLVM_DIR=$(llvm-config-21 --cmakedir)" >> "$GITHUB_ENV"
+          echo "$(llvm-config-21 --bindir)" >> "$GITHUB_PATH"
 
       - name: Install LLVM 21
         if: matrix.family == 'macos'
@@ -298,30 +298,6 @@ jobs:
         working-directory: Kinal
         run: python -m infra.scripts.release_assets merge --input-dir ../release-assets --output ../release-assets/SHA256SUMS.txt
 
-      - name: Render release preamble
-        shell: bash
-        env:
-          KINAL_VERSION: ${{ needs.metadata.outputs.version }}
-          KINAL_VM_VERSION: ${{ needs.metadata.outputs.vm_version }}
-        run: |
-          cat > release-body.md <<EOF
-          <p align="center">
-            <img width="80" alt="Kinal" src="https://github.com/user-attachments/assets/26568c19-2ed3-4e05-8e9c-ce6dbcdc7b30" />
-          </p>
-          <div align="center">
-            <h3>Kinal — v${KINAL_VERSION}</h3>
-          </div>
-
-          ---
-
-          This release records:
-
-          ```text
-          kinal=${KINAL_VERSION}
-          kinalvm=${KINAL_VM_VERSION}
-          ```
-          EOF
-
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
         with:
@@ -330,7 +306,7 @@ jobs:
           name: ${{ needs.metadata.outputs.release_name }}
           draft: ${{ needs.metadata.outputs.draft == 'true' }}
           prerelease: ${{ needs.metadata.outputs.prerelease == 'true' }}
-          body_path: release-body.md
+          body_path: Kinal/dev/releases/${{ needs.metadata.outputs.version }}.md
           generate_release_notes: ${{ needs.metadata.outputs.generate_release_notes == 'true' }}
           files: |
             release-assets/*

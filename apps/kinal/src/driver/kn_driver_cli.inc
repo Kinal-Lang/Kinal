@@ -612,7 +612,6 @@ enum
     KN_BUILD_RAW_LINK_CAP = 256,
     KN_BUILD_LINK_CAP = 512,
     KN_BUILD_LINK_STORAGE_CAP = 512,
-    KN_RUN_PROGRAM_ARG_CAP = 256,
     KN_RUN_RAW_LINK_CAP = 128,
     KN_RUN_LINK_CAP = 256,
     KN_RUN_LINK_STORAGE_CAP = 256
@@ -627,7 +626,6 @@ typedef struct
 
 typedef struct
 {
-    const char *program_args[KN_RUN_PROGRAM_ARG_CAP];
     KnLinkItem raw_link_items[KN_RUN_RAW_LINK_CAP];
     KnLinkItem link_items[KN_RUN_LINK_CAP];
     char link_item_storage[KN_RUN_LINK_STORAGE_CAP][KN_MAX_PATH];
@@ -690,6 +688,7 @@ static int kn_build_main_with_storage(int argc, char **argv, KnBuildCliStorage *
     const char *link_script = 0;
     int no_crt = 0;
     int no_default_libs = 0;
+    int hide_console = 0;
     int env_explicit = 0;
     int runtime_explicit = 0;
     int panic_explicit = 0;
@@ -701,6 +700,8 @@ static int kn_build_main_with_storage(int argc, char **argv, KnBuildCliStorage *
     const char *project_profile = 0;
     StrList pkg_roots = {0};
     StrList stdpkg_roots = {0};
+    KnPackagePins package_pins;
+    package_pins.count = 0;
     StrList local_project_sources = {0};
     int project_source_mode = KN_PROJ_SOURCE_MODE_UNSET;
     int auto_link_explicit = 0;
@@ -865,8 +866,13 @@ static int kn_build_main_with_storage(int argc, char **argv, KnBuildCliStorage *
                 knproj_free_config(project_cfg);
                 return 1;
             }
+            hide_console = project->hide_console;
             append_project_package_roots(&pkg_roots, project_cfg, project, 0);
             append_project_package_roots(&stdpkg_roots, project_cfg, project, 1);
+            if (!append_project_package_pins(&package_pins, project_cfg, project)) {
+                knproj_free_config(project_cfg);
+                return 1;
+            }
             if (path_join(local_pkg_root, sizeof(local_pkg_root), project_cfg->project_dir, "kpkg"))
                 append_root_list(&pkg_roots, local_pkg_root);
             if (!out && project->out_path[0] && knproj_resolve_path(project_cfg, project->out_path, manifest_out, sizeof(manifest_out)))
@@ -1009,6 +1015,7 @@ static int kn_build_main_with_storage(int argc, char **argv, KnBuildCliStorage *
     cfg.package_root_count = pkg_roots.count;
     cfg.official_package_roots = stdpkg_roots.items;
     cfg.official_package_root_count = stdpkg_roots.count;
+    cfg.package_pins = &package_pins;
     cfg.project_local_sources = local_project_sources.items;
     cfg.project_local_source_count = local_project_sources.count;
     cfg.link_items = link_items;
@@ -1026,6 +1033,7 @@ static int kn_build_main_with_storage(int argc, char **argv, KnBuildCliStorage *
     cfg.panic_mode = panic_mode;
     cfg.crt_mode = crt_mode;
     cfg.no_crt = no_crt;
+    cfg.hide_console = hide_console;
     cfg.no_default_libs = no_default_libs;
     cfg.entry_symbol = entry_symbol;
     cfg.link_script = link_script;
@@ -1065,17 +1073,20 @@ static int kn_run_main_with_storage(int argc, char **argv, KnRunCliStorage *stor
     const char *locale_file = 0;
     int auto_link = 1;
     int keep_temps = 0;
+    int hide_console = 0;
     int color_mode = KN_COLOR_AUTO;
     int warn_as_error = 0;
     int warn_level = 1;
     const char *input = 0;
     const char *project_manifest = 0;
     const char *project_profile = 0;
-    const char **prog_args = storage->program_args;
+    const char *entry_symbol = "Main";
+    const char *const *prog_args = NULL;
     int prog_argc = 0;
-    int dashdash = 0;
     StrList pkg_roots = {0};
     StrList stdpkg_roots = {0};
+    KnPackagePins package_pins;
+    package_pins.count = 0;
     StrList local_project_sources = {0};
     int project_source_mode = KN_PROJ_SOURCE_MODE_UNSET;
     int auto_link_explicit = 0;
@@ -1088,13 +1099,6 @@ static int kn_run_main_with_storage(int argc, char **argv, KnRunCliStorage *stor
     for (int i = 1; i < argc; i++)
     {
         const char *arg = argv[i];
-        if (dashdash)
-        {
-            /* Everything after -- is forwarded to the compiled program */
-            if (prog_argc < KN_RUN_PROGRAM_ARG_CAP)
-                prog_args[prog_argc++] = arg;
-            continue;
-        }
         if (kn_strcmp(arg, "-h") == 0 || kn_strcmp(arg, "--help") == 0) { print_run_help(); return 0; }
         if (kn_strcmp(arg, "--no-module-discovery") == 0) { auto_link = 0; auto_link_explicit = 1; continue; }
         if (kn_strcmp(arg, "--keep-temps") == 0) { keep_temps = 1; continue; }
@@ -1142,7 +1146,11 @@ static int kn_run_main_with_storage(int argc, char **argv, KnRunCliStorage *stor
             if (!link_item_add(raw_link_items, &raw_link_item_count, KN_RUN_RAW_LINK_CAP, KN_CLI_LINK_FILE, argv[++i])) { kn_write_str("too many link items\n"); return 1; }
             continue;
         }
-        if (kn_strcmp(arg, "--") == 0) { dashdash = 1; continue; }
+        if (kn_strcmp(arg, "--") == 0) {
+            prog_args = (const char *const *)(argv + i + 1);
+            prog_argc = argc - i - 1;
+            break;
+        }
         if (arg[0] == '-' && arg[1]) { kn_write_str("unknown option: "); kn_write_str(arg); kn_write_str("\n"); print_run_help(); return 2; }
         if (!input) input = arg;
         else { kn_write_str("'kinal run' accepts exactly one input file\n"); return 2; }
@@ -1187,8 +1195,14 @@ static int kn_run_main_with_storage(int argc, char **argv, KnRunCliStorage *stor
                 knproj_free_config(project_cfg);
                 return 1;
             }
+            hide_console = project->hide_console;
+            if (project->entry_symbol[0]) entry_symbol = dup_str(project->entry_symbol);
             append_project_package_roots(&pkg_roots, project_cfg, project, 0);
             append_project_package_roots(&stdpkg_roots, project_cfg, project, 1);
+            if (!append_project_package_pins(&package_pins, project_cfg, project)) {
+                knproj_free_config(project_cfg);
+                return 1;
+            }
             if (path_join(local_pkg_root, sizeof(local_pkg_root), project_cfg->project_dir, "kpkg"))
                 append_root_list(&pkg_roots, local_pkg_root);
             if (!input && project->entry[0] && knproj_resolve_path(project_cfg, project->entry, manifest_entry, sizeof(manifest_entry)))
@@ -1295,6 +1309,7 @@ static int kn_run_main_with_storage(int argc, char **argv, KnRunCliStorage *stor
 
     KnCompileConfig cfg;
     kn_memset(&cfg, 0, sizeof(cfg));
+    cfg.hide_console = hide_console;
     cfg.out_path = temp_exe;
     cfg.auto_link = auto_link;
     cfg.project_source_mode = project_source_mode;
@@ -1306,11 +1321,12 @@ static int kn_run_main_with_storage(int argc, char **argv, KnRunCliStorage *stor
     cfg.runtime_mode = KN_RUNTIME_GC;
     cfg.panic_mode = KN_PANIC_TRAP;
     cfg.crt_mode = KN_CRT_AUTO;
-    cfg.entry_symbol = "Main";
+    cfg.entry_symbol = entry_symbol;
     cfg.package_roots = pkg_roots.items;
     cfg.package_root_count = pkg_roots.count;
     cfg.official_package_roots = stdpkg_roots.items;
     cfg.official_package_root_count = stdpkg_roots.count;
+    cfg.package_pins = &package_pins;
     cfg.project_local_sources = local_project_sources.items;
     cfg.project_local_source_count = local_project_sources.count;
     cfg.link_items = link_items;
@@ -1373,6 +1389,7 @@ static int kn_vm_build_main(int argc, char **argv)
     const char *input = 0;
     const char *project_manifest = 0;
     const char *project_profile = 0;
+    const char *entry_symbol = "Main";
     int auto_link = 1;
     int knc_superloop = 1;
     int color_mode = KN_COLOR_AUTO;
@@ -1382,6 +1399,8 @@ static int kn_vm_build_main(int argc, char **argv)
     int superloop_explicit = 0;
     StrList pkg_roots = {0};
     StrList stdpkg_roots = {0};
+    KnPackagePins package_pins;
+    package_pins.count = 0;
     StrList local_project_sources = {0};
     int project_source_mode = KN_PROJ_SOURCE_MODE_UNSET;
 
@@ -1451,8 +1470,13 @@ static int kn_vm_build_main(int argc, char **argv)
                 knproj_free_config(project_cfg);
                 return 1;
             }
+            if (project->entry_symbol[0]) entry_symbol = dup_str(project->entry_symbol);
             append_project_package_roots(&pkg_roots, project_cfg, project, 0);
             append_project_package_roots(&stdpkg_roots, project_cfg, project, 1);
+            if (!append_project_package_pins(&package_pins, project_cfg, project)) {
+                knproj_free_config(project_cfg);
+                return 1;
+            }
             if (path_join(local_pkg_root, sizeof(local_pkg_root), project_cfg->project_dir, "kpkg"))
                 append_root_list(&pkg_roots, local_pkg_root);
             if (!input && project->entry[0] && knproj_resolve_path(project_cfg, project->entry, manifest_entry, sizeof(manifest_entry)))
@@ -1545,13 +1569,14 @@ static int kn_vm_build_main(int argc, char **argv)
     cfg.linker_kind = default_hosted_linker_kind(cfg.target_triple);
     cfg.env_kind = KN_ENV_HOSTED;
     cfg.runtime_mode = KN_RUNTIME_GC;
-    cfg.entry_symbol = "Main";
+    cfg.entry_symbol = entry_symbol;
     cfg.knc_superloop = knc_superloop;
     cfg.knc_listing_path = listing_path;
     cfg.package_roots = pkg_roots.items;
     cfg.package_root_count = pkg_roots.count;
     cfg.official_package_roots = stdpkg_roots.items;
     cfg.official_package_root_count = stdpkg_roots.count;
+    cfg.package_pins = &package_pins;
     cfg.project_local_sources = local_project_sources.items;
     cfg.project_local_source_count = local_project_sources.count;
     cfg.project_mode = project_manifest ? 1 : 0;
@@ -1568,6 +1593,7 @@ static int kn_vm_run_main(int argc, char **argv)
     const char *input = 0;
     const char *project_manifest = 0;
     const char *project_profile = 0;
+    const char *entry_symbol = "Main";
     const char *vm_path = 0;
     int knc_superloop = 1;
     int auto_link = 1;
@@ -1577,11 +1603,12 @@ static int kn_vm_run_main(int argc, char **argv)
     const char *locale_file = 0;
     int warn_as_error = 0;
     int warn_level = 1;
-    const char *prog_args[256];
+    const char *const *prog_args = NULL;
     int prog_argc = 0;
-    int dashdash = 0;
     StrList pkg_roots = {0};
     StrList stdpkg_roots = {0};
+    KnPackagePins package_pins;
+    package_pins.count = 0;
     StrList local_project_sources = {0};
     int project_source_mode = KN_PROJ_SOURCE_MODE_UNSET;
     int auto_link_explicit = 0;
@@ -1590,12 +1617,6 @@ static int kn_vm_run_main(int argc, char **argv)
     for (int i = 1; i < argc; i++)
     {
         const char *arg = argv[i];
-        if (dashdash)
-        {
-            if (prog_argc < (int)(sizeof(prog_args) / sizeof(prog_args[0])))
-                prog_args[prog_argc++] = arg;
-            continue;
-        }
         if (kn_strcmp(arg, "-h") == 0 || kn_strcmp(arg, "--help") == 0) {
             kn_write_str("Usage: kinal vm run [options] <file.kn|file.knc> [-- program-args...]\n\n"
                 "  --project <file|dir>  Run from kinal.knproj or a legacy project manifest\n"
@@ -1623,7 +1644,11 @@ static int kn_vm_run_main(int argc, char **argv)
         if (kn_strcmp(arg, "--color") == 0 && i + 1 < argc) { if (!parse_color_mode(argv[i + 1], &color_mode)) { kn_write_str("unknown color mode\n"); return 1; } i++; continue; }
         if (kn_strcmp(arg, "--Werror") == 0) { warn_as_error = 1; continue; }
         if (kn_strcmp(arg, "--warn-level") == 0 && i + 1 < argc) { warn_level = 0; const char *w = argv[++i]; while (*w >= '0' && *w <= '9') { warn_level = warn_level * 10 + (*w - '0'); w++; } continue; }
-        if (kn_strcmp(arg, "--") == 0) { dashdash = 1; continue; }
+        if (kn_strcmp(arg, "--") == 0) {
+            prog_args = (const char *const *)(argv + i + 1);
+            prog_argc = argc - i - 1;
+            break;
+        }
         if (arg[0] == '-' && arg[1]) { kn_write_str("unknown option: "); kn_write_str(arg); kn_write_str("\n"); return 2; }
         if (!input) input = arg;
         else { kn_write_str("'kinal vm run' accepts exactly one input file\n"); return 2; }
@@ -1662,8 +1687,13 @@ static int kn_vm_run_main(int argc, char **argv)
                 knproj_free_config(project_cfg);
                 return 1;
             }
+            if (project->entry_symbol[0]) entry_symbol = dup_str(project->entry_symbol);
             append_project_package_roots(&pkg_roots, project_cfg, project, 0);
             append_project_package_roots(&stdpkg_roots, project_cfg, project, 1);
+            if (!append_project_package_pins(&package_pins, project_cfg, project)) {
+                knproj_free_config(project_cfg);
+                return 1;
+            }
             if (path_join(local_pkg_root, sizeof(local_pkg_root), project_cfg->project_dir, "kpkg"))
                 append_root_list(&pkg_roots, local_pkg_root);
             if (!input && project->entry[0] && knproj_resolve_path(project_cfg, project->entry, manifest_entry, sizeof(manifest_entry)))
@@ -1754,12 +1784,13 @@ static int kn_vm_run_main(int argc, char **argv)
         cfg.runtime_mode = KN_RUNTIME_GC;
         cfg.panic_mode = KN_PANIC_TRAP;
         cfg.crt_mode = KN_CRT_AUTO;
-        cfg.entry_symbol = "Main";
+        cfg.entry_symbol = entry_symbol;
         cfg.knc_superloop = knc_superloop;
         cfg.package_roots = pkg_roots.items;
         cfg.package_root_count = pkg_roots.count;
         cfg.official_package_roots = stdpkg_roots.items;
         cfg.official_package_root_count = stdpkg_roots.count;
+        cfg.package_pins = &package_pins;
         cfg.project_local_sources = local_project_sources.items;
         cfg.project_local_source_count = local_project_sources.count;
         cfg.project_mode = project_manifest ? 1 : 0;
@@ -1863,6 +1894,7 @@ static int kn_vm_pack_main(int argc, char **argv)
     const char *input = 0;
     const char *project_manifest = 0;
     const char *project_profile = 0;
+    const char *entry_symbol = "Main";
     const char *vm_path = 0;
     const char *target_raw = default_target_triple();
     int color_mode = KN_COLOR_AUTO;
@@ -1870,12 +1902,15 @@ static int kn_vm_pack_main(int argc, char **argv)
     const char *locale_file = 0;
     int auto_link = 1;
     int knc_superloop = 1;
+    int hide_console = 0;
     int keep_temps = 0;
     int auto_link_explicit = 0;
     int superloop_explicit = 0;
     int target_explicit = 0;
     StrList pkg_roots = {0};
     StrList stdpkg_roots = {0};
+    KnPackagePins package_pins;
+    package_pins.count = 0;
     StrList local_project_sources = {0};
     int project_source_mode = KN_PROJ_SOURCE_MODE_UNSET;
 
@@ -1948,8 +1983,14 @@ static int kn_vm_pack_main(int argc, char **argv)
                 knproj_free_config(project_cfg);
                 return 1;
             }
+            hide_console = project->hide_console;
+            if (project->entry_symbol[0]) entry_symbol = dup_str(project->entry_symbol);
             append_project_package_roots(&pkg_roots, project_cfg, project, 0);
             append_project_package_roots(&stdpkg_roots, project_cfg, project, 1);
+            if (!append_project_package_pins(&package_pins, project_cfg, project)) {
+                knproj_free_config(project_cfg);
+                return 1;
+            }
             if (path_join(local_pkg_root, sizeof(local_pkg_root), project_cfg->project_dir, "kpkg"))
                 append_root_list(&pkg_roots, local_pkg_root);
             if (!input && project->entry[0] && knproj_resolve_path(project_cfg, project->entry, manifest_entry, sizeof(manifest_entry)))
@@ -2049,13 +2090,14 @@ static int kn_vm_pack_main(int argc, char **argv)
         knc_cfg.linker_kind = default_hosted_linker_kind(knc_cfg.target_triple);
         knc_cfg.env_kind = KN_ENV_HOSTED;
         knc_cfg.runtime_mode = KN_RUNTIME_GC;
-        knc_cfg.entry_symbol = "Main";
+        knc_cfg.entry_symbol = entry_symbol;
         knc_cfg.knc_superloop = knc_superloop;
         collect_default_official_package_roots(&stdpkg_roots);
         knc_cfg.package_roots = pkg_roots.items;
         knc_cfg.package_root_count = pkg_roots.count;
         knc_cfg.official_package_roots = stdpkg_roots.items;
         knc_cfg.official_package_root_count = stdpkg_roots.count;
+        knc_cfg.package_pins = &package_pins;
         knc_cfg.project_local_sources = local_project_sources.items;
         knc_cfg.project_local_source_count = local_project_sources.count;
         knc_cfg.project_mode = project_manifest ? 1 : 0;
@@ -2074,7 +2116,7 @@ static int kn_vm_pack_main(int argc, char **argv)
     /* Resolve VM executable for embedding */
     char vm_exe[KN_MAX_PATH];
     if (resolve_vm_executable(vm_exe, sizeof(vm_exe), vm_path)) {
-        int rc = embed_knc_into_exe(vm_exe, bundle_knc_input, out);
+        int rc = embed_knc_into_exe(vm_exe, bundle_knc_input, out, hide_console && target_is_windows(target_triple));
         if (cleanup_bundle_knc) try_delete_file(bundle_knc_input);
         return rc;
     }
@@ -2116,7 +2158,7 @@ static int kn_vm_pack_main(int argc, char **argv)
     kn_diag_print_summary();
     if (rc != 0) { if (cleanup_bundle_knc) try_delete_file(bundle_knc_input); try_delete_file(temp_exe); return 1; }
 
-    rc = embed_knc_into_exe(temp_exe, bundle_knc_input, out);
+    rc = embed_knc_into_exe(temp_exe, bundle_knc_input, out, hide_console && target_is_windows(target_triple));
     if (cleanup_bundle_knc) try_delete_file(bundle_knc_input);
     try_delete_file(temp_exe);
     return rc;
@@ -2334,7 +2376,7 @@ static int kn_run_cli_session(int argc, char **argv)
     kn_compile_session_leave(session);
     kn_compile_session_destroy(session);
     int keep_package_cache = 0;
-    for (int i = 1; i < argc; i++)
+    for (int i = 1; i < argc && kn_strcmp(argv[i], "--") != 0; i++)
         if (kn_strcmp(argv[i], "--keep-temps") == 0)
             keep_package_cache = 1;
     if (g_pkg_cache_root[0] && !keep_package_cache &&
@@ -2346,16 +2388,8 @@ static int kn_run_cli_session(int argc, char **argv)
     return result;
 }
 
-#if defined(_WIN32)
-int main(void)
-{
-    KnArgs args = kn_parse_cmdline();
-    return kn_run_cli_session(args.argc, args.argv);
-}
-#else
 int main(int argc, char **argv)
 {
     return kn_run_cli_session(argc, argv);
 }
-#endif
 #endif

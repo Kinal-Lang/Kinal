@@ -13,11 +13,16 @@ def entry_ir(*, legacy: bool = False) -> str:
         lines.append(f"  %slot{index} = alloca ptr, align 8")
     if legacy:
         lines.append("  %gc.frame = call ptr @__kn_gc_push_frame()")
+    else:
+        lines.extend(["  %frame = alloca [6 x i64]", "  %roots = alloca [10 x i64]"])
     for index in range(5):
         lines.append(f"  store ptr null, ptr %slot{index}, align 8")
-        function = "__kn_gc_add_root" if legacy else "__kn_sh_IO_Kinal_Runtime_GarbageCollector_AddRoot_3"
-        frame = "%gc.frame" if legacy else "%frame"
-        lines.append(f"  call void @{function}(ptr {frame}, ptr %slot{index}, i64 8)")
+        function = "__kn_gc_add_root" if legacy else "__kn_sh_IO_Kinal_Runtime_GarbageCollector_SetFrameRoot_4"
+        frame = "%gc.frame" if legacy else "%roots"
+        suffix = "" if legacy else f", i64 {index}"
+        lines.append(f"  call void @{function}(ptr {frame}, ptr %slot{index}, i64 8{suffix})")
+    if not legacy:
+        lines.append("  %live = call ptr @__kn_sh_IO_Kinal_Runtime_GarbageCollector_PushPlannedFrame_3(ptr %frame, ptr %roots, i64 5)")
     return "\n".join(lines + ["  ret i1 true", "}", ""])
 
 
@@ -55,7 +60,7 @@ class ConvertedArgumentRootTests(unittest.TestCase):
         for index in range(7):
             lines.extend([
                 f"  %root{index} = alloca {{ i64, i64 }}, align 8",
-                f"  call void @__kn_sh_IO_Kinal_Runtime_GarbageCollector_AddRoot_3(ptr %frame, ptr %root{index}, i64 16)",
+                f"  call void @__kn_sh_IO_Kinal_Runtime_GarbageCollector_SetFrameRoot_4(ptr %roots, ptr %root{index}, i64 16, i64 {index})",
                 f"  %box{index} = insertvalue {{ i64, i64 }} {{ i64 6, i64 undef }}, i64 %payload{index}, 1",
                 f"  store {{ i64, i64 }} %box{index}, ptr %root{index}, align 8",
                 f"  %ignored{index} = call i64 @Tests_CollectCallArgument_0()",
@@ -81,7 +86,7 @@ class CharacterArgumentRootTests(unittest.TestCase):
     IR = "\n".join([
         "define i1 @Tests_CheckConvertedArguments_0() {", "entry:",
         "  %root = alloca ptr, align 8",
-        "  call void @__kn_sh_IO_Kinal_Runtime_GarbageCollector_AddRoot_3(ptr %frame, ptr %root, i64 8)",
+        "  call void @__kn_sh_IO_Kinal_Runtime_GarbageCollector_SetFrameRoot_4(ptr %roots, ptr %root, i64 8, i64 0)",
         "  %text = call ptr @__kn_sh_IO_Kinal_Runtime_CharToString_1(i8 120)",
         "  store ptr %text, ptr %root, align 8",
         "  %ignored = call i64 @Tests_CollectCallArgument_0()",
@@ -146,7 +151,7 @@ class AssignmentAddressRootTests(unittest.TestCase):
             lines.extend([
                 f"  %gc_assignment_address{index} = alloca ptr, align 8",
                 f"  store ptr null, ptr %gc_assignment_address{index}, align 8",
-                f"  call void @__kn_sh_IO_Kinal_Runtime_GarbageCollector_AddRoot_3(ptr %frame, ptr %gc_assignment_address{index}, i64 8)",
+                f"  call void @__kn_sh_IO_Kinal_Runtime_GarbageCollector_SetFrameRoot_4(ptr %roots, ptr %gc_assignment_address{index}, i64 8, i64 {index})",
             ])
         for index in range(4):
             lines.extend([
@@ -174,12 +179,14 @@ class AssignmentAddressRootTests(unittest.TestCase):
 
     def test_accepts_legacy_stage0_address_roots(self):
         ir = self.fixture_ir().replace("gc_assignment_address", "gc.assignment.address")
-        ir = ir.replace("__kn_sh_IO_Kinal_Runtime_GarbageCollector_AddRoot_3", "__kn_gc_add_root")
+        ir = re.sub(r"@__kn_sh_IO_Kinal_Runtime_GarbageCollector_SetFrameRoot_4\(ptr %roots, "
+                    r"(ptr %gc\.assignment\.address\d+, i64 8), i64 \d+\)",
+                    r"@__kn_gc_add_root(ptr %frame, \1)", ir)
         check_assignment_address_roots(ir, legacy_stage0=True)
 
     def test_rejects_duplicate_address_registration(self):
         ir = self.fixture_ir()
-        line = next(line for line in ir.splitlines() if "AddRoot_3" in line)
+        line = next(line for line in ir.splitlines() if "SetFrameRoot_4" in line)
         ir = ir.replace(line, line + "\n" + line, 1)
         with self.assertRaisesRegex(AssertionError, "register once"):
             check_assignment_address_roots(ir)

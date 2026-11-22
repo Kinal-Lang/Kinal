@@ -17,6 +17,7 @@ double __kn_math_tanh(double x) { return tanh(x); }
 
 /* Power / exponential */
 double __kn_math_sqrt(double x)            { return sqrt(x); }
+double __kn_math_hypot(double x, double y) { return hypot(x, y); }
 double __kn_math_cbrt(double x)            { return cbrt(x); }
 double __kn_math_pow(double b, double e)   { return pow(b, e); }
 double __kn_math_exp(double x)             { return exp(x); }

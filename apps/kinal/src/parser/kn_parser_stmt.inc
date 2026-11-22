@@ -412,22 +412,8 @@ static bool looks_like_type_decl(Parser *p)
     }
     while (peek(p, off)->type == TOK_STAR)
         off++;
-    if (peek(p, off)->type == TOK_LBRACKET)
-    {
-        off++;
-        int depth = 0;
-        while ((peek(p, off)->type != TOK_RBRACKET || depth > 0) && peek(p, off)->type != TOK_EOF)
-        {
-            if (peek(p, off)->type == TOK_LPAREN || peek(p, off)->type == TOK_LBRACKET)
-                depth++;
-            else if (peek(p, off)->type == TOK_RPAREN || peek(p, off)->type == TOK_RBRACKET)
-                depth--;
-            off++;
-        }
-        if (peek(p, off)->type != TOK_RBRACKET)
-            return false;
-        off++;
-    }
+    if (!scan_array_suffixes(p, &off))
+        return false;
     if (peek(p, off)->type == TOK_LPAREN)
         return false;
     if (peek(p, off)->type == TOK_ID)

@@ -1,0 +1,407 @@
+Unit IO.Kinal.Compiler.Metrics.Report;
+
+Get IO.Text;
+Get IO.File;
+Get IO.Path;
+Get IO.Directory;
+Get IO.Kinal.Compiler.Core.ConsoleIO;
+Get IO.Kinal.Compiler.Driver.CliOutput;
+Get IO.Kinal.Compiler.Metrics.Model;
+Get IO.Kinal.Compiler.Metrics.SyntaxMetrics;
+Get IO.Kinal.Compiler.Metrics.Html;
+Get IO.Kinal.Compiler.Core.CompileSession;
+
+Safe Function string Q(string value)
+{
+    list parts = list.Create(); parts.Add("\"");
+    char[] chars = value.ToChars(); char[] hex = "0123456789abcdef".ToChars();
+    int start = 0; int i = 0;
+    While (i < chars.Length())
+    {
+        char current = chars[i]; int code = [int]([byte](current));
+        If (current == '\\' || current == '\"' || code < 32)
+        {
+            If (i > start) parts.Add(IO.Text.Slice(value, start, i - start));
+            If (current == '\\') parts.Add("\\\\");
+            ElseIf (current == '\"') parts.Add("\\\"");
+            Else parts.Add("\\u00" + [string](hex[code / 16]) + [string](hex[code % 16]));
+            start = i + 1;
+        }
+        i++;
+    }
+    If (i > start) parts.Add(IO.Text.Slice(value, start, i - start));
+    parts.Add("\""); Return IO.Text.Join(parts, "");
+}
+
+Safe Function string B(bool value) { Return value ? "true" : "false"; }
+
+Safe Function string Names(MetricNames names)
+{
+    list parts = list.Create(); int i = 0;
+    While (i < names.Items.Count()) { parts.Add(Q([string](names.Items.Fetch(i)))); i++; }
+    Return "[" + IO.Text.Join(parts, ",") + "]";
+}
+
+Safe Function string Counts(MetricCounts value)
+{
+    Return "{" +
+        "\"statements\":" + [string](value.Statements) + "," +
+        "\"decisions\":" + [string](value.Decisions) + "," +
+        "\"cognitive\":" + [string](value.Cognitive) + "," +
+        "\"nesting\":" + [string](value.Nesting) + "," +
+        "\"parameters\":" + [string](value.Parameters) + "," +
+        "\"locals\":" + [string](value.Locals) + "," +
+        "\"returns\":" + [string](value.Returns) + "," +
+        "\"throws\":" + [string](value.Throws) + "," +
+        "\"catches\":" + [string](value.Catches) + "," +
+        "\"loops\":" + [string](value.Loops) + "," +
+        "\"switches\":" + [string](value.Switches) + "," +
+        "\"cases\":" + [string](value.Cases) + "," +
+        "\"logical_operators\":" + [string](value.LogicalOperators) + "," +
+        "\"jumps\":" + [string](value.Jumps) + "," +
+        "\"records\":" + [string](value.Records) + "," +
+        "\"breaks\":" + [string](value.Breaks) + "," +
+        "\"continues\":" + [string](value.Continues) + "," +
+        "\"unsafe_blocks\":" + [string](value.UnsafeBlocks) + "," +
+        "\"calls\":" + [string](value.Calls) + "," +
+        "\"allocations\":" + [string](value.Allocations) + "," +
+        "\"awaits\":" + [string](value.Awaits) + "}";
+}
+
+Safe Function int RankValue(MetricFunction function, int mode)
+{
+    Return mode == 1 ? function.Cyclomatic : function.Counts.Cognitive;
+}
+
+Safe Function bool RanksBefore(MetricFunction left, MetricFunction right, int mode)
+{
+    int a = RankValue(left, mode); int b = RankValue(right, mode);
+    If (a != b) Return a > b;
+    If (mode == 0 && left.Cyclomatic != right.Cyclomatic) Return left.Cyclomatic > right.Cyclomatic;
+    Return left.CodeLines >= right.CodeLines;
+}
+
+Safe Function list Ranked(list functions, int mode)
+{
+    list source = list.Create(); list destination = list.Create(); int i = 0;
+    While (i < functions.Count())
+    {
+        MetricFunction function = [MetricFunction](functions.Fetch(i)); i++;
+        If (function.HasBody) { source.Add(function); destination.Add(function); }
+    }
+    int size = source.Count(); int width = 1;
+    While (width < size)
+    {
+        int start = 0;
+        While (start < size)
+        {
+            int mid = start + width; If (mid > size) mid = size;
+            int end = mid + width; If (end > size) end = size;
+            int left = start; int right = mid; int output = start;
+            While (output < end)
+            {
+                bool takeLeft = left < mid && (right >= end ||
+                    RanksBefore([MetricFunction](source.Fetch(left)), [MetricFunction](source.Fetch(right)), mode));
+                destination.Set(output, source.Fetch(takeLeft ? left : right));
+                If (takeLeft) left++; Else right++;
+                output++;
+            }
+            start = end;
+        }
+        list temporary = source; source = destination; destination = temporary; width = width * 2;
+    }
+    Return source;
+}
+
+Safe Function string Summary(MetricReport report)
+{
+    int lines = 0; int code = 0; int comments = 0; int commentOnly = 0; int blank = 0; int mixed = 0;
+    int tokens = 0; int globals = 0; int imports = 0; int i = 0;
+    While (i < report.Files.Count())
+    {
+        MetricFile file = [MetricFile](report.Files.Fetch(i)); i++;
+        lines = lines + file.Lines; code = code + file.CodeLines; comments = comments + file.CommentLines;
+        commentOnly = commentOnly + file.CommentOnlyLines; blank = blank + file.BlankLines;
+        mixed = mixed + file.MixedLines; tokens = tokens + file.Tokens; globals = globals + file.Globals; imports = imports + file.Imports;
+    }
+    MetricCounts counts = New MetricCounts();
+    int bodies = 0; int initializers = 0; int bound = 0; int external = 0; int generic = 0;
+    int cc = 0; int maxCc = 0; int maxCog = 0; int maxNest = 0; int recursive = 0;
+    int unboundCalls = 0; int dynamic = 0; int virtual = 0; int minimumMi = 100;
+    i = 0;
+    While (i < report.Functions.Count())
+    {
+        MetricFunction function = [MetricFunction](report.Functions.Fetch(i)); i++;
+        If (function.Kind == "initializer") initializers++;
+        ElseIf (function.HasBody) bodies++;
+        If (function.Bound) bound++;
+        If (function.IsExtern) external++;
+        If (function.Generic) generic++;
+        If (function.Recursive) recursive++;
+        cc = cc + function.Cyclomatic;
+        If (function.Cyclomatic > maxCc) maxCc = function.Cyclomatic;
+        If (function.Counts.Cognitive > maxCog) maxCog = function.Counts.Cognitive;
+        If (function.Counts.Nesting > maxNest) maxNest = function.Counts.Nesting;
+        If (function.HasBody && function.Kind != "initializer" && function.Maintainability < minimumMi) minimumMi = function.Maintainability;
+        unboundCalls = unboundCalls + function.SourceExpressions.Count() - function.BoundCallSites.Items.Count();
+        dynamic = dynamic + function.DynamicSites.Items.Count(); virtual = virtual + function.VirtualSites.Items.Count();
+        counts.Statements = counts.Statements + function.Counts.Statements;
+        counts.Decisions = counts.Decisions + function.Counts.Decisions;
+        counts.Cognitive = counts.Cognitive + function.Counts.Cognitive;
+        If (function.Counts.Nesting > counts.Nesting) counts.Nesting = function.Counts.Nesting;
+        counts.Parameters = counts.Parameters + function.Counts.Parameters;
+        counts.Locals = counts.Locals + function.Counts.Locals;
+        counts.Returns = counts.Returns + function.Counts.Returns;
+        counts.Throws = counts.Throws + function.Counts.Throws;
+        counts.Catches = counts.Catches + function.Counts.Catches;
+        counts.Loops = counts.Loops + function.Counts.Loops;
+        counts.Switches = counts.Switches + function.Counts.Switches;
+        counts.Cases = counts.Cases + function.Counts.Cases;
+        counts.LogicalOperators = counts.LogicalOperators + function.Counts.LogicalOperators;
+        counts.Jumps = counts.Jumps + function.Counts.Jumps;
+        counts.Records = counts.Records + function.Counts.Records;
+        counts.Breaks = counts.Breaks + function.Counts.Breaks;
+        counts.Continues = counts.Continues + function.Counts.Continues;
+        counts.UnsafeBlocks = counts.UnsafeBlocks + function.Counts.UnsafeBlocks;
+        counts.Calls = counts.Calls + function.Counts.Calls;
+        counts.Allocations = counts.Allocations + function.Counts.Allocations;
+        counts.Awaits = counts.Awaits + function.Counts.Awaits;
+    }
+    list sorted = Ranked(report.Functions, 1);
+    int p95 = sorted.Count() == 0 ? 0 : [MetricFunction](sorted.Fetch(sorted.Count() / 20)).Cyclomatic;
+    Return "{\"files\":" + [string](report.Files.Count()) + ",\"types\":" + [string](report.Types.Count()) +
+        ",\"callables\":" + [string](report.Functions.Count() - initializers) + ",\"bodies\":" + [string](bodies) +
+        ",\"initializers\":" + [string](initializers) + ",\"extern_declarations\":" + [string](external) +
+        ",\"generic_definitions\":" + [string](generic) + ",\"bound_bodies\":" + [string](bound) +
+        ",\"lines\":" + [string](lines) + ",\"code_lines\":" + [string](code) + ",\"comment_lines\":" + [string](comments) +
+        ",\"comment_only_lines\":" + [string](commentOnly) + ",\"blank_lines\":" + [string](blank) +
+        ",\"mixed_lines\":" + [string](mixed) + ",\"tokens\":" + [string](tokens) + ",\"globals\":" + [string](globals) +
+        ",\"imports\":" + [string](imports) + ",\"cyclomatic_total\":" + [string](cc) +
+        ",\"cyclomatic_max\":" + [string](maxCc) + ",\"cyclomatic_p95\":" + [string](p95) +
+        ",\"cognitive_max\":" + [string](maxCog) + ",\"nesting_max\":" + [string](maxNest) +
+        ",\"maintainability_min\":" + (bodies == 0 ? "null" : [string](minimumMi)) +
+        ",\"recursive_callables\":" + [string](recursive) + ",\"unbound_source_calls\":" + [string](unboundCalls) +
+        ",\"dynamic_calls\":" + [string](dynamic) + ",\"virtual_calls\":" + [string](virtual) + ",\"counts\":" + Counts(counts) + "}";
+}
+
+Safe Function string HalsteadJson(MetricFunction function)
+{
+    If (function.Kind == "initializer") Return "null";
+    Return "{\"operators\":" + [string](function.Operators) + ",\"operands\":" + [string](function.Operands) +
+        ",\"distinct_operators\":" + [string](function.OperatorKinds.Items.Count()) +
+        ",\"distinct_operands\":" + [string](function.OperandKinds.Items.Count()) +
+        ",\"volume\":" + [string](function.Volume) + ",\"difficulty\":" + [string](function.Difficulty) +
+        ",\"effort\":" + [string](function.Effort) + "}";
+}
+
+Safe Function string FunctionJson(MetricFunction function)
+{
+    list parts = list.Create(); int i = 0;
+    While (i < function.Edges.Count())
+    {
+        MetricEdge edge = [MetricEdge](function.Edges.Fetch(i)); i++;
+        parts.Add("{\"target\":" + Q(edge.Target) + ",\"name\":" + Q(edge.Name) + ",\"dispatch\":" + Q(edge.Dispatch) +
+            ",\"line\":" + [string](edge.Line) + ",\"column\":" + [string](edge.Column) + "}");
+    }
+    Return "{\"id\":" + Q(function.Id) + ",\"name\":" + Q(function.Name) + ",\"file\":" + Q(function.File.Path) +
+        ",\"owner\":" + Q(function.Owner) + ",\"parent\":" + Q(function.Parent) + ",\"kind\":" + Q(function.Kind) +
+        ",\"line\":" + [string](function.Line) + ",\"column\":" + [string](function.Column) +
+        ",\"end_line\":" + (function.Kind == "initializer" ? "null" : [string](function.EndLine)) + ",\"has_body\":" + B(function.HasBody) +
+        ",\"generic\":" + B(function.Generic) + ",\"bound\":" + B(function.Bound) +
+        ",\"async\":" + B(function.IsAsync) + ",\"extern\":" + B(function.IsExtern) + ",\"safety\":" +
+        Q(function.Safety == 3 ? "unsafe" : function.Safety == 2 ? "trusted" : function.Safety == 1 ? "safe" : "unspecified") +
+        ",\"cyclomatic\":" + [string](function.Cyclomatic) + ",\"code_lines\":" + (function.Kind == "initializer" ? "null" : [string](function.CodeLines)) +
+        ",\"counts\":" + Counts(function.Counts) + ",\"maintainability_index\":" +
+        (function.HasBody && function.Kind != "initializer" ? [string](function.Maintainability) : "null") +
+        ",\"halstead\":" + HalsteadJson(function) + ",\"coupled_types\":" + Names(function.CoupledTypes) +
+        ",\"fan_in\":" + [string](function.Callers.Items.Count()) + ",\"fan_out\":" + [string](function.Callees.Items.Count()) +
+        ",\"callers\":" + Names(function.Callers) + ",\"callees\":" + Names(function.Callees) +
+        ",\"captures\":" + Names(function.Captures) + ",\"bound_source_calls\":" + [string](function.BoundCallSites.Items.Count()) +
+        ",\"dynamic_calls\":" + [string](function.DynamicSites.Items.Count()) + ",\"virtual_calls\":" + [string](function.VirtualSites.Items.Count()) +
+        ",\"recursive\":" + B(function.Recursive) + ",\"recursive_component\":" +
+        (function.Recursive ? [string](function.Component) : "null") + ",\"calls\":[" + IO.Text.Join(parts, ",") + "]}";
+}
+
+Safe Function string TypeJson(MetricType type)
+{
+    Return "{\"name\":" + Q(type.Name) + ",\"file\":" + Q(type.File.Path) + ",\"line\":" + [string](type.Line) +
+        ",\"kind\":" + Q(type.Kind) + ",\"fields\":" + [string](type.Fields) + ",\"methods\":" + [string](type.Methods) +
+        ",\"weighted_methods\":" + [string](type.WeightedMethods) + ",\"inheritance_depth\":" + [string](type.InheritanceDepth) +
+        ",\"direct_derived_types\":" + [string](type.DerivedTypes) + ",\"bases\":" + Names(type.Bases) +
+        ",\"interfaces\":" + Names(type.Interfaces) + ",\"coupled_types\":" + Names(type.CoupledTypes) + "}";
+}
+
+Safe Function string FileJson(MetricFile file)
+{
+    int cc = 0; int cog = 0; int statements = 0; int i = 0;
+    While (i < file.Functions.Count())
+    {
+        MetricFunction function = [MetricFunction](file.Functions.Fetch(i)); i++;
+        cc = cc + function.Cyclomatic; cog = cog + function.Counts.Cognitive; statements = statements + function.Counts.Statements;
+    }
+    Return "{\"path\":" + Q(file.Path) + ",\"unit\":" + Q(file.Unit.Syntax.UnitName) + ",\"dependency\":" + B(file.Dependency) +
+        ",\"lines\":" + [string](file.Lines) + ",\"code_lines\":" + [string](file.CodeLines) +
+        ",\"comment_lines\":" + [string](file.CommentLines) + ",\"comment_only_lines\":" + [string](file.CommentOnlyLines) +
+        ",\"blank_lines\":" + [string](file.BlankLines) + ",\"mixed_lines\":" + [string](file.MixedLines) +
+        ",\"tokens\":" + [string](file.Tokens) + ",\"types\":" + [string](file.Types.Count()) +
+        ",\"callable_records\":" + [string](file.Functions.Count()) + ",\"globals\":" + [string](file.Globals) +
+        ",\"imports\":" + [string](file.Imports) + ",\"import_targets\":" + Names(file.Dependencies) +
+        ",\"cyclomatic_total\":" + [string](cc) + ",\"cognitive_total\":" + [string](cog) +
+        ",\"statements\":" + [string](statements) + "}";
+}
+
+Safe Function bool Exceeds(MetricFunction function, int cc, int cognitive, int nesting)
+{
+    Return function.HasBody && ((cc >= 0 && function.Cyclomatic > cc) ||
+        (cognitive >= 0 && function.Counts.Cognitive > cognitive) || (nesting >= 0 && function.Counts.Nesting > nesting));
+}
+
+Safe Function string Json(MetricReport report, int cc, int cognitive, int nesting)
+{
+    list files = list.Create(); list functions = list.Create(); list types = list.Create(); list cycles = list.Create();
+    MetricNames failures = New MetricNames(); int i = 0;
+    While (i < report.Files.Count()) { files.Add(FileJson([MetricFile](report.Files.Fetch(i)))); i++; }
+    i = 0;
+    While (i < report.Functions.Count())
+    {
+        MetricFunction function = [MetricFunction](report.Functions.Fetch(i)); i++;
+        functions.Add(FunctionJson(function)); If (Exceeds(function, cc, cognitive, nesting)) failures.Add(function.Id);
+    }
+    i = 0;
+    While (i < report.Types.Count()) { types.Add(TypeJson([MetricType](report.Types.Fetch(i)))); i++; }
+    i = 0;
+    While (i < report.RecursiveComponents.Count()) { cycles.Add(Names([MetricNames](report.RecursiveComponents.Fetch(i)))); i++; }
+    Return "{\n\"schema\":\"kinal.metrics.v1\",\n\"analysis\":\"source-ast-and-bound-hir\",\n\"project\":" + Q(report.Session.Project.Name) +
+        ",\"root\":" + Q(report.Root) + ",\"profile\":" + Q(report.Profile) + ",\"source_mode\":" + Q(report.Mode) +
+        ",\"include_dependencies\":" + B(report.IncludeDependencies) + ",\"excluded_dependency_files\":" + [string](report.ExcludedFiles) +
+        ",\n\"definitions\":" + Definitions() + ",\n\"summary\":" + Summary(report) +
+        ",\n\"thresholds\":{\"cyclomatic\":" + (cc < 0 ? "null" : [string](cc)) +
+        ",\"cognitive\":" + (cognitive < 0 ? "null" : [string](cognitive)) + ",\"nesting\":" + (nesting < 0 ? "null" : [string](nesting)) +
+        ",\"passed\":" + B(failures.Items.Count() == 0) + ",\"violations\":" + Names(failures) + "}," +
+        "\n\"files\":[" + IO.Text.Join(files, ",\n") + "],\n\"types\":[" + IO.Text.Join(types, ",\n") +
+        "],\n\"functions\":[" + IO.Text.Join(functions, ",\n") + "],\n\"recursive_components\":[" + IO.Text.Join(cycles, ",") + "]}\n";
+}
+
+Safe Function string Text(MetricReport report, int top, int cc, int cognitive, int nesting)
+{
+    list lines = list.Create();
+    lines.Add("Kinal project metrics: " + report.Session.Project.Name);
+    lines.Add("Profile: " + report.Profile + " | Source mode: " + report.Mode + " | Scope: " +
+        (report.IncludeDependencies ? "project + dependencies" : "project") + " | Excluded dependency files: " + [string](report.ExcludedFiles));
+    lines.Add("Files: " + [string](report.Files.Count()) + " | Types: " + [string](report.Types.Count()) +
+        " | Callable/initializer records: " + [string](report.Functions.Count()));
+    int totalLines = 0; int totalCode = 0; int totalComments = 0; int totalBlank = 0;
+    int index = 0;
+    While (index < report.Files.Count())
+    {
+        MetricFile file = [MetricFile](report.Files.Fetch(index)); index++;
+        totalLines = totalLines + file.Lines; totalCode = totalCode + file.CodeLines;
+        totalComments = totalComments + file.CommentLines; totalBlank = totalBlank + file.BlankLines;
+    }
+    lines.Add("Lines: " + [string](totalLines) + " | Code: " + [string](totalCode) + " | Comments (including mixed): " +
+        [string](totalComments) + " | Blank: " + [string](totalBlank));
+    int totalCc = 0; int maxCc = 0; int totalCog = 0; int maxCog = 0; int maxDepth = 0;
+    int totalCalls = 0; int boundCalls = 0; int dynamicCalls = 0; int virtualCalls = 0;
+    index = 0;
+    While (index < report.Functions.Count())
+    {
+        MetricFunction function = [MetricFunction](report.Functions.Fetch(index)); index++;
+        totalCc = totalCc + function.Cyclomatic; totalCog = totalCog + function.Counts.Cognitive;
+        If (function.Cyclomatic > maxCc) maxCc = function.Cyclomatic;
+        If (function.Counts.Cognitive > maxCog) maxCog = function.Counts.Cognitive;
+        If (function.Counts.Nesting > maxDepth) maxDepth = function.Counts.Nesting;
+        totalCalls = totalCalls + function.Counts.Calls; boundCalls = boundCalls + function.BoundCallSites.Items.Count();
+        dynamicCalls = dynamicCalls + function.DynamicSites.Items.Count(); virtualCalls = virtualCalls + function.VirtualSites.Items.Count();
+    }
+    list ccRanked = Ranked(report.Functions, 1);
+    int p95 = ccRanked.Count() == 0 ? 0 : [MetricFunction](ccRanked.Fetch(ccRanked.Count() / 20)).Cyclomatic;
+    lines.Add("CC total/max/p95: " + [string](totalCc) + "/" + [string](maxCc) + "/" + [string](p95) +
+        " | Cognitive total/max: " + [string](totalCog) + "/" + [string](maxCog) + " | Nesting max: " + [string](maxDepth));
+    lines.Add("Source calls: " + [string](totalCalls) + " | Bound: " + [string](boundCalls) +
+        " | Dynamic: " + [string](dynamicCalls) + " | Virtual: " + [string](virtualCalls));
+    lines.Add("Recursive components (direct scoped calls): " + [string](report.RecursiveComponents.Count()));
+    lines.Add(""); lines.Add("Hotspots (cognitive, then cyclomatic, then code lines; --all shows every body)");
+    list ranked = Ranked(report.Functions, 0); index = 0;
+    While (index < ranked.Count() && (top == 0 || index < top))
+    {
+        MetricFunction function = [MetricFunction](ranked.Fetch(index)); index++;
+        lines.Add([string](index) + ". " + function.Name + " [" + function.Kind + "]  " + function.Id);
+        lines.Add("   CC=" + [string](function.Cyclomatic) + "  Cognitive=" + [string](function.Counts.Cognitive) +
+            "  Nesting=" + [string](function.Counts.Nesting) + "  LOC=" + (function.Kind == "initializer" ? "n/a" : [string](function.CodeLines)) + "  Statements=" + [string](function.Counts.Statements) +
+            "  MI=" + (function.Kind == "initializer" ? "n/a" : [string](function.Maintainability)));
+        lines.Add("   Parameters=" + [string](function.Counts.Parameters) + "  Locals=" + [string](function.Counts.Locals) +
+            "  Types=" + [string](function.CoupledTypes.Items.Count()) + "  Fan-in/out=" + [string](function.Callers.Items.Count()) + "/" +
+            [string](function.Callees.Items.Count()) + "  Calls=" + [string](function.Counts.Calls) + "  Dynamic/virtual=" +
+            [string](function.DynamicSites.Items.Count()) + "/" + [string](function.VirtualSites.Items.Count()) + (function.Recursive ? "  RECURSIVE" : ""));
+        lines.Add("   Branch decisions=" + [string](function.Counts.Decisions) + "  Logical=" + [string](function.Counts.LogicalOperators) +
+            "  Loops=" + [string](function.Counts.Loops) + "  Cases=" + [string](function.Counts.Cases) + "  Catches=" + [string](function.Counts.Catches) +
+            "  Jumps=" + [string](function.Counts.Jumps) + "  Unsafe=" + [string](function.Counts.UnsafeBlocks) +
+            "  Halstead volume=" + (function.Kind == "initializer" ? "n/a" : [string](function.Volume)));
+        If (!function.Bound) lines.Add("   Semantic body not instantiated/bound; call graph and coupling are partial.");
+    }
+    lines.Add(""); lines.Add("Files (physical / code / comment / blank lines; import targets)"); index = 0;
+    While (index < report.Files.Count())
+    {
+        MetricFile file = [MetricFile](report.Files.Fetch(index)); index++;
+        lines.Add("  " + file.Path + "  " + [string](file.Lines) + " / " + [string](file.CodeLines) + " / " +
+            [string](file.CommentLines) + " / " + [string](file.BlankLines) + "  imports=" + [string](file.Imports));
+    }
+    lines.Add(""); lines.Add("Types (fields / methods / weighted methods / inheritance depth / coupled types)"); index = 0;
+    While (index < report.Types.Count())
+    {
+        MetricType type = [MetricType](report.Types.Fetch(index)); index++;
+        lines.Add("  " + type.Name + "  " + [string](type.Fields) + " / " + [string](type.Methods) + " / " +
+            [string](type.WeightedMethods) + " / " + [string](type.InheritanceDepth) + " / " + [string](type.CoupledTypes.Items.Count()));
+    }
+    int failures = 0; index = 0;
+    While (index < report.Functions.Count())
+    {
+        MetricFunction function = [MetricFunction](report.Functions.Fetch(index)); index++;
+        If (Exceeds(function, cc, cognitive, nesting)) { failures++; lines.Add("THRESHOLD: " + function.Id + "  " + function.Name); }
+    }
+    If (cc >= 0 || cognitive >= 0 || nesting >= 0) lines.Add("Threshold violations: " + [string](failures));
+    lines.Add(""); lines.Add("CC is structured source complexity, not a CFG/path count for Jump/Record. Cognitive uses kinal-cognitive-v1.");
+    lines.Add("MI is an advisory 0-100 index (higher is easier); it is not a quality or correctness score.");
+    lines.Add("Source definitions are counted once; nested callables are separate. Dynamic/virtual targets and uninstantiated generic bodies are partial.");
+    lines.Add("JSON/HTML include all records, formulas, call edges and recursive components. No program is generated or executed.");
+    Return IO.Text.Join(lines, "\n") + "\n";
+}
+
+Safe Function bool ProtectedOutput(MetricReport report, string path)
+{
+    string extension = IO.Text.ToLower(IO.Path.Extension(path));
+    If (extension == "kn" || extension == "kinal" || extension == "fx" || extension == "knproj" || extension == "klib") Return true;
+    string canonical = IO.Path.IsAbsolute(path) ? IO.Path.Normalize(path) : IO.Path.Normalize(IO.Path.Combine(IO.Path.CurrentDirectory(), path));
+    If (IO.Kinal.Compiler.Metrics.SyntaxMetrics.PathKey(canonical) == IO.Kinal.Compiler.Metrics.SyntaxMetrics.PathKey(report.Session.Project.ManifestPath)) Return true;
+    CompilationUnit unit = report.Session.FirstUnit;
+    While (unit != null) { If (IO.Kinal.Compiler.Metrics.SyntaxMetrics.PathKey(canonical) == IO.Kinal.Compiler.Metrics.SyntaxMetrics.PathKey(unit.Source.Path)) Return true; unit = unit.Next; }
+    Return false;
+}
+
+Safe Function int Emit(MetricReport report, string format, string output, int top, int cc, int cognitive, int nesting)
+{
+    string content = format == "text" ? Text(report, top, cc, cognitive, nesting) : Json(report, cc, cognitive, nesting);
+    If (format == "html") content = IO.Kinal.Compiler.Metrics.Html.Render(content);
+    If (IO.Text.IsEmpty(output) || output == "-") IO.Kinal.Compiler.Core.ConsoleIO.Write(1, content);
+    Else
+    {
+        If (ProtectedOutput(report, output))
+        { IO.Kinal.Compiler.Driver.CliOutput.Line("metrics output would overwrite a source, manifest or package: " + output); Return 1; }
+        string directory = IO.Path.Directory(output);
+        If ((!IO.Text.IsEmpty(directory) && !IO.Directory.Ensure(directory)) || !IO.File.WriteAllText(output, content))
+        { IO.Kinal.Compiler.Driver.CliOutput.Line("failed to write metrics report: " + output); Return 1; }
+        IO.Kinal.Compiler.Driver.CliOutput.Line("Metrics report: " + output);
+    }
+    int index = 0;
+    While (index < report.Functions.Count())
+    {
+        If (Exceeds([MetricFunction](report.Functions.Fetch(index)), cc, cognitive, nesting)) Return 3;
+        index++;
+    }
+    Return 0;
+}
+
+Safe Function string Definitions()
+{
+    Return "{\"scope\":\"Participating files selected by the project profile/source mode, not every file on disk. Package/runtime sources excluded unless requested. Declarations counted once; nested callables and initializers have separate records. Generic instances never multiply source metrics.\",\"lines\":\"Physical LF-delimited lines, no phantom line after terminal newline; BOM excluded. Code and comment lines overlap on mixed lines. lines = code_lines + comment_only_lines + blank_lines. Literals are code even if they contain comment markers.\",\"statements\":\"AST statements excluding blocks, empty statements, Case labels and Record labels. For initializer is counted; loop updates are expressions. Default-parameter expressions belong to the declaration. Globals/fields have separate initializer records.\",\"cyclomatic\":\"Structured source CC = 1 per body + If/ElseIf/conditional expression + each loop + non-default Case + Catch + each &&/||. Declarations without a body = 0. Jump/Record reported separately; CC is not a full control-flow-graph rank or an exact execution-path count.\",\"cognitive\":\"kinal-cognitive-v1: +1 and current control depth for If, loops, conditional expressions, Switch and Catch; ElseIf and Else +1 without extra nesting penalty; logical operator sequences +1 per change in in-order &&/|| chain; Jump +1; membership in a direct-call recursive SCC +1 per callable. Try/braces/Case/Return/Break/Continue do not add cognitive points. Nested callables start at depth 0. Kinal adaptation, not Sonar certification.\",\"nesting\":\"Maximum nested control constructs (If/loop/conditional/Switch/Catch); lexical braces and Try do not add depth. ElseIf stays at the same level. Nested functions start at zero.\",\"halstead\":\"Lexical Kinal v1: identifiers/literals/this/base/default are operands keyed by token kind and spelling; remaining keywords/operators are operators keyed by token kind; parentheses, braces, comma, semicolon omitted. Parser declaration spans; top-level modifiers included, member spans start at Function/Constructor or accessor keyword. Nested callable spans excluded. Interpolated string is one lexical operand. n=n1+n2, N=N1+N2, V=N*log2(n), D=(n1/2)*(N2/n2), E=D*V. Initializer lexical metrics unavailable.\",\"maintainability\":\"Advisory rounded max(0,min(100,(171-5.2*ln(max(V,1))-0.23*CC-16.2*ln(max(code_lines,1)))*100/171)). No comment bonus. Null for bodyless declarations/initializers. Formula follows the normalized MI family; Kinal token/LOC definitions differ from Visual Studio, so values are not directly comparable.\",\"coupling\":\"Unique resolved declared types in signatures, field/base/interface declarations and bound body expression/local/callee-owner types; excludes primitives and own owner. Arrays/pointers/packages unpacked. Generic instantiations contribute a union; unused generic bodies and attribute dependencies are incomplete. No textual-name guessing.\",\"graph\":\"Source Call/New expression sites matched by AST identity to HIR; implicit lowering helpers and copies of other declarations defaults excluded. Generic-instance edges unioned and deduplicated by source site + target + dispatch. fan_in counts unique scoped callers; fan_out includes known external/builtin targets. Virtual edges name the declared target, dynamic edges have no guaranteed target. SCCs use only direct edges within scope; cycle results are a lower bound.\",\"aggregation\":\"Counts sum disjoint callable/initializer AST bodies; nesting is maximum. Type weighted_methods sums direct declared methods only (nested callables/initializers excluded). CC p95 is nearest-rank over all bodies including initializer records. Total CC grows with project size; use max/p95 and hotspots for review.\",\"limitations\":\"No runtime performance, test coverage, defect probability, duplication or exact CFG/essential-complexity claims. No reachability/dead-code filtering within participating source bodies. A report is written only after a successful frontend/semantic analysis. Thresholds are opt-in; exceeding a cap writes the report and returns exit 3.\"}";
+}

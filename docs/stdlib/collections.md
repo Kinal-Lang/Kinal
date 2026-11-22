@@ -1,216 +1,142 @@
-# IO.Collection — Collection Types
+# IO.Collection: list, dict and set
 
-Kinal has three built-in collection types: `list` (ordered list), `dict` (key-value dictionary), and `set` (unique-element set). They are all reference types and must be created before use.
+Native and KinalVM support all the operations below for `list`, `dict` and `set`, including dictionary literals and key/value snapshots. See [Backend Support](../advanced/backend-support.md).
 
-At the language level, `list`, `dict`, and `set` are provided as built-in aliases for their corresponding modules and can be used directly as type names.
+These built-in reference types are available as `list`, `dict` and `set`. Assigning a collection shares it; it does not clone its contents. Create a collection before using it. `Get IO.Collection;` may be written explicitly, but the builtin aliases do not need a separate package import.
 
-## Import
-
-Collection types are injected as built-ins by the compiler and do not need to be manually imported. You can also explicitly bring in the namespace:
+## Call Forms and Creation
 
 ```kinal
-Get IO.Collection;
+list names = list.Create();
+dict settings = dict.Create();
+set tags = set.Create();
 ```
 
----
+Receiver and namespace forms are equivalent: `names.Add("Kinal")` and `IO.Collection.list.Add(names, "Kinal")`. The namespace form has the receiver as its first argument. The tables below show receiver-form parameters.
 
-## list — Ordered List
-
-`list` is a dynamically sized ordered collection, equivalent to ArrayList / Vec in other languages.
-
-### Creating
+Arrays use `{ ... }` literals and are distinct from list. `list numbers = [1, 2, 3];` is not supported list-literal syntax. Use Create/Add. Dict literals use string-key/value pairs:
 
 ```kinal
-list names = IO.Collection.list.Create();
+dict options = { "name": "Kinal", "enabled": true };
 ```
 
-Or using literal syntax (if supported by the language version):
+## list: Ordered any Values
+
+| Method | Result | Behavior |
+|--------|--------|----------|
+| `Add(any value)` | `void` | Append |
+| `Fetch(int index)` | `any` | Read an element. An out-of-range index yields null. |
+| `TryFetch(int index, any fallback)` | `any` | Read or return the explicit fallback |
+| `Set(int index, any value)` | `void` | Replace an existing element |
+| `Insert(int index, any value)` | `void` | Insert at an index |
+| `RemoveAt(int index)` | `any` | Remove and return an element |
+| `Pop()` | `any` | Remove and return the last element |
+| `Peek()` | `any` | Read the last element without removal |
+| `Contains(any value)` | `bool` | Membership using collection value equality |
+| `IndexOf(any value)` | `int` | First matching index, or -1 |
+| `Count()` | `int` | Element count |
+| `IsEmpty()` | `bool` | Whether count is zero |
+| `Clear()` | `void` | Remove all elements |
+
+Indexes are zero-based. `Fetch` and `RemoveAt` return null for an absent index, as do `Pop` and `Peek` on an empty list. `TryFetch(index, fallback)` returns the fallback only for an absent index and preserves a stored null. `Set` updates an existing element. Use `Add` or `Insert` to grow the list.
+
+`Clear`, `Pop` and `RemoveAt` release the list's references to discarded elements.
+An object can then be collected once its other references, including any returned
+value held by the caller, are gone. Native lists keep their capacity for reuse
+after `Clear`.
+
+On KinalVM, appending to a list takes amortized constant time. Inserting or removing
+an element in the middle shifts subsequent elements. Growing a dictionary also
+reserves space for later entries. These improvements apply to existing bytecode
+when it runs on the updated VM. Repack standalone VM executables to include the new runner.
+
+## dict: String Keys, any Values
+
+| Method | Result | Behavior |
+|--------|--------|----------|
+| `Set(string key, any value)` | `void` | Insert or replace |
+| `Fetch(string key)` | `any` | Read the value. A missing key yields null. |
+| `TryFetch(string key, any fallback)` | `any` | Read or return the explicit fallback |
+| `Contains(string key)` | `bool` | Test key presence |
+| `Remove(string key)` | `bool` | Whether a key was removed |
+| `Count()` | `int` | Entry count |
+| `IsEmpty()` | `bool` | Whether count is zero |
+| `Keys()` | `list` | Materialize key values |
+| `Values()` | `list` | Materialize stored values |
+
+Keys are strings, not arbitrary any values. `TryFetch` requires the fallback argument: `settings.TryFetch("missing", "default")`. A stored null is distinct from an absent key; use Contains when that distinction matters. Key/value enumeration order is not a public sorting guarantee.
+
+## set: Unique Strings
+
+| Method | Result | Behavior |
+|--------|--------|----------|
+| `Add(string value)` | `void` | Add; duplicate strings do not increase count |
+| `Contains(string value)` | `bool` | Membership |
+| `Remove(string value)` | `bool` | Whether an element was removed |
+| `Count()` | `int` | Element count |
+| `IsEmpty()` | `bool` | Whether count is zero |
+| `Clear()` | `void` | Remove all elements |
+| `Values()` | `list` | Materialize the strings |
+
+Set elements are strings; this is not a generic mathematical set over every Kinal type. Do not depend on Values ordering. Sorting or deep semantic comparison is an application-level operation.
+
+On Native and KinalVM, removing a dict key or set member keeps the existing table
+and its capacity. Removal examines the neighboring entries that may share its
+probe sequence. For fixed-length keys, the expected cost is constant with
+well-distributed hashes and can reach linear time when many keys collide.
+Updating an existing dict key or adding an existing set member also reuses the
+current table.
+
+## Complete Example
 
 ```kinal
-list nums = [1, 2, 3];
-```
-
-### Function Reference
-
-| Function | Signature | Description |
-|----------|-----------|-------------|
-| `Create()` | `→ list` | Create an empty list |
-| `Add(l, value)` | `list, any → void` | Append an element to the end |
-| `Fetch(l, index)` | `list, int → any` | Get by index (throws exception on out-of-bounds) |
-| `TryFetch(l, index)` | `list, int → any` | Get by index (returns `null` on out-of-bounds) |
-| `Set(l, index, value)` | `list, int, any → void` | Set value by index |
-| `Insert(l, index, value)` | `list, int, any → void` | Insert at the specified position |
-| `RemoveAt(l, index)` | `list, int → void` | Remove element at the specified position |
-| `Pop(l)` | `list → any` | Remove and return the last element |
-| `Peek(l)` | `list → any` | Return the last element (without removing) |
-| `Contains(l, value)` | `list, any → bool` | Whether the list contains the specified value |
-| `IndexOf(l, value)` | `list, any → int` | Index of first occurrence (-1 if not found) |
-| `Count(l)` | `list → int` | Number of elements |
-| `IsEmpty(l)` | `list → bool` | Whether the list is empty |
-| `Clear(l)` | `list → void` | Clear the list |
-
-### Example
-
-```kinal
-list fruits = IO.Collection.list.Create();
-IO.Collection.list.Add(fruits, "apple");
-IO.Collection.list.Add(fruits, "banana");
-IO.Collection.list.Add(fruits, "cherry");
-
-int count = IO.Collection.list.Count(fruits);  // 3
-
-string first = [string](IO.Collection.list.Fetch(fruits, 0));  // "apple"
-
-IO.Collection.list.Set(fruits, 1, "blueberry");
-// fruits = ["apple", "blueberry", "cherry"]
-
-IO.Collection.list.RemoveAt(fruits, 0);
-// fruits = ["blueberry", "cherry"]
-
-bool has = IO.Collection.list.Contains(fruits, "cherry");  // true
-```
-
----
-
-## dict — Key-Value Dictionary
-
-`dict` is a hash map that stores key-value pairs; both keys and values are of type `any`.
-
-### Creating
-
-```kinal
-dict config = IO.Collection.dict.Create();
-```
-
-### Function Reference
-
-| Function | Signature | Description |
-|----------|-----------|-------------|
-| `Create()` | `→ dict` | Create an empty dictionary |
-| `Set(d, key, value)` | `dict, any, any → void` | Set a key-value pair (adds if not present, updates if present) |
-| `Fetch(d, key)` | `dict, any → any` | Get the value for a key (throws exception if key does not exist) |
-| `TryFetch(d, key)` | `dict, any → any` | Get value (returns `null` if key does not exist) |
-| `Contains(d, key)` | `dict, any → bool` | Whether the dictionary contains the specified key |
-| `Remove(d, key)` | `dict, any → void` | Delete the specified key |
-| `Count(d)` | `dict → int` | Number of entries |
-| `IsEmpty(d)` | `dict → bool` | Whether the dictionary is empty |
-| `Keys(d)` | `dict → list` | List of all keys |
-| `Values(d)` | `dict → list` | List of all values |
-
-### Example
-
-```kinal
-dict scores = IO.Collection.dict.Create();
-IO.Collection.dict.Set(scores, "Alice", 95);
-IO.Collection.dict.Set(scores, "Bob",   82);
-IO.Collection.dict.Set(scores, "Carol", 90);
-
-int alice = [int](IO.Collection.dict.Fetch(scores, "Alice"));  // 95
-
-bool hasDave = IO.Collection.dict.Contains(scores, "Dave");  // false
-
-any bob = IO.Collection.dict.TryFetch(scores, "Bob");  // 82 or null
-
-IO.Collection.dict.Remove(scores, "Carol");
-
-list keys = IO.Collection.dict.Keys(scores);
-// ["Alice", "Bob"]
-```
-
----
-
-## set — Unique-Element Set
-
-`set` stores unique elements; adding the same value multiple times produces no duplicates.
-
-### Creating
-
-```kinal
-set tags = IO.Collection.set.Create();
-```
-
-### Function Reference
-
-| Function | Signature | Description |
-|----------|-----------|-------------|
-| `Create()` | `→ set` | Create an empty set |
-| `Add(s, value)` | `set, any → void` | Add an element (ignored if already present) |
-| `Contains(s, value)` | `set, any → bool` | Whether the set contains the specified value |
-| `Remove(s, value)` | `set, any → void` | Remove the specified element |
-| `Count(s)` | `set → int` | Number of elements |
-| `IsEmpty(s)` | `set → bool` | Whether the set is empty |
-| `Clear(s)` | `set → void` | Clear the set |
-| `Values(s)` | `set → list` | Return a list of all elements |
-
-### Example
-
-```kinal
-set seen = IO.Collection.set.Create();
-IO.Collection.set.Add(seen, "apple");
-IO.Collection.set.Add(seen, "banana");
-IO.Collection.set.Add(seen, "apple");   // Duplicate, ignored
-
-int count = IO.Collection.set.Count(seen);  // 2
-
-bool hasApple = IO.Collection.set.Contains(seen, "apple");  // true
-
-list all = IO.Collection.set.Values(seen);  // ["apple", "banana"]
-```
-
----
-
-## Combined Example
-
-```kinal
-Unit App.CollectionDemo;
-
+Unit Docs.Collections;
 Get IO.Console;
-Get IO.Collection;
 
 Static Function int Main()
 {
-    // list: count words
-    list words = IO.Collection.list.Create();
-    IO.Collection.list.Add(words, "hello");
-    IO.Collection.list.Add(words, "world");
-    IO.Collection.list.Add(words, "hello");
+    list names = list.Create();
+    names.Add("Kinal");
+    names.Insert(0, "Hello");
+    IO.Console.PrintLine(names.Fetch(0));
+    IO.Console.PrintLine(names.TryFetch(10, "fallback"));
+    IO.Console.PrintLine(names.Pop());
+    IO.Console.PrintLine(names.Count());
 
-    IO.Console.PrintLine(IO.Collection.list.Count(words));  // 3
+    dict settings = { "name": "Kinal" };
+    settings.Set("mode", "native");
+    IO.Console.PrintLine(settings.TryFetch("mode", "unknown"));
+    IO.Console.PrintLine(settings.TryFetch("missing", "default"));
+    IO.Console.PrintLine(settings.Remove("missing"));
 
-    // dict: word frequency count
-    dict counts = IO.Collection.dict.Create();
-    int i = 0;
-    While (i < IO.Collection.list.Count(words))
-    {
-        string w = [string](IO.Collection.list.Fetch(words, i));
-        If (IO.Collection.dict.Contains(counts, w))
-        {
-            int c = [int](IO.Collection.dict.Fetch(counts, w));
-            IO.Collection.dict.Set(counts, w, c + 1);
-        } else
-        {
-            IO.Collection.dict.Set(counts, w, 1);
-        }
-        i = i + 1;
-    }
-    IO.Console.PrintLine(IO.Collection.dict.Fetch(counts, "hello"));  // 2
-
-    // set: deduplicate
-    set unique = IO.Collection.set.Create();
-    int j = 0;
-    While (j < IO.Collection.list.Count(words))
-    {
-        IO.Collection.set.Add(unique, IO.Collection.list.Fetch(words, j));
-        j = j + 1;
-    }
-    IO.Console.PrintLine(IO.Collection.set.Count(unique));  // 2
-
+    set tags = set.Create();
+    tags.Add("language");
+    tags.Add("language");
+    IO.Console.PrintLine(tags.Count());
+    IO.Console.PrintLine(tags.Contains("language"));
     Return 0;
 }
 ```
 
+```text
+Hello
+fallback
+Kinal
+1
+native
+default
+false
+1
+true
+```
+
+This example runs on Native and KinalVM. Both `list.Fetch` and `dict.Fetch` return `any`. Read a stored integer with `[int](items.Fetch(index))`.
+
+Foreach currently targets arrays/strings rather than a general collection iterator protocol. Iterate a list by Count/Fetch; materialize dict Keys or set Values when needed. Avoid mutating the traversal collection unless the algorithm defines the resulting index behavior.
+
 ## See Also
 
-- [Type System](../language/types.md) — `list`/`dict`/`set` as built-in type aliases
-- [Exception Handling](../language/exceptions.md) — Exceptions thrown when `Fetch` goes out-of-bounds or key does not exist
-- [IO.Text](text.md) — `Split`, `Join`, and other helpers that frequently produce or consume `list`
+- [Types](../language/types.md)
+- [JSON](json.md)
+- [Memory and Lifetimes](../advanced/memory-management.md)
+- [Backend Support](../advanced/backend-support.md)

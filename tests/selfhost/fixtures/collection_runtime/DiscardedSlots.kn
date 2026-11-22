@@ -1,0 +1,24 @@
+Unit Tests.Selfhost.DiscardedSlots;
+
+Get R By IO.Kinal.Runtime.Collections;
+
+Trusted Static Function int Main()
+{
+    byte* items = R.ListNew();
+    For (u64 i = [u64](1); i <= [u64](4); i++)
+        R.ListAdd(items, [u64](2), i);
+    u64* header = R.ListHeader(items);
+    u64* tags = R.ListTags(header);
+    u64* payloads = R.ListPayloads(header);
+    u64 tag = [u64](0);
+    u64 payload = [u64](0);
+    R.ListRemoveAt(items, [u64](1), &tag, &payload);
+    If (tag != [u64](2) || payload != [u64](2) || payloads[1] != [u64](3) ||
+        tags[3] != [u64](0) || payloads[3] != [u64](0)) Return 1;
+    R.ListPop(items, &tag, &payload);
+    If (tag != [u64](2) || payload != [u64](4) || tags[2] != [u64](0) || payloads[2] != [u64](0)) Return 2;
+    R.ListClear(items);
+    For (u64 slot = [u64](0); slot < header[1]; slot++)
+        If (tags[slot] != [u64](0) || payloads[slot] != [u64](0)) Return 3;
+    Return R.ListCount(items) == [u64](0) ? 0 : 4;
+}

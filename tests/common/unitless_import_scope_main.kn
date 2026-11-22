@@ -1,0 +1,10 @@
+Get Boxes By Tests.Boxes;
+Get Out By IO.Console;
+
+Static Function int Main()
+{
+    Boxes.Box box = Boxes.Make(42);
+    Boxes.Print(box);
+    Out.PrintLine(box.Value);
+    Return 0;
+}

@@ -39,7 +39,8 @@
       "name": "time",
       "mode": "runtime",
       "cases": [
-        "stdlib_time_more"
+        "stdlib_time_more",
+        "stdlib_time_calendar"
       ],
       "builtins": [
         "KN_BUILTIN_IO_TIME_NOW",
@@ -166,6 +167,7 @@
       "mode": "runtime",
       "cases": [
         "stdlib_text_roundtrip",
+        "stdlib_text_builder",
         "stdlib_bootstrap_more"
       ],
       "builtins": [
@@ -465,6 +467,7 @@
     ],
     "IO.Core": [
       "stdlib_math_complete",
+      "stdlib_math_edges",
       "stdlib_char_complete"
     ],
     "IO.Kinal.Runtime": [

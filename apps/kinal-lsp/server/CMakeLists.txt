@@ -73,6 +73,15 @@ target_include_directories(kinal-lsp-server PRIVATE
 target_link_libraries(kinal-lsp-server PRIVATE kinal-frontend)
 
 if (WIN32)
+    # Filesystem paths exchanged over JSON-RPC are UTF-8.
+    if (MINGW)
+        enable_language(RC)
+        target_sources(kinal-lsp-server PRIVATE windows.rc)
+    else()
+        set(lsp_manifest "${CMAKE_CURRENT_SOURCE_DIR}/windows.manifest")
+        target_link_options(kinal-lsp-server PRIVATE "LINKER:/MANIFEST:EMBED" "LINKER:/MANIFESTINPUT:${lsp_manifest}")
+        set_property(TARGET kinal-lsp-server APPEND PROPERTY LINK_DEPENDS "${lsp_manifest}")
+    endif()
     target_link_libraries(kinal-lsp-server PRIVATE kernel32 user32)
     target_link_options(kinal-lsp-server PRIVATE "LINKER:/stack:16777216")
 elseif (UNIX)

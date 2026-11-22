@@ -2,7 +2,7 @@
 
 通过语法分析后，在语义检查阶段触发的诊断。
 
-本文中的示例都是最小复现片段，用来说明该错误码最常见的触发方式；少数更偏内部的诊断会使用最接近用户代码的表面写法来说明。
+本页记录预注册模板。正确示例展示支持的写法；触发形态用于说明规则或解析状态，可能依赖外围声明，或在当前 C 编译器中先报告其他诊断。
 
 ---
 
@@ -110,10 +110,10 @@ int value = a.Balance();
 - 默认详情：Protected member not accessible
 - 说明：非派生类上下文访问了 `Protected` 成员。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
-Class Base
+Class ParentClass
 {
     Protected int value;
 }
@@ -125,12 +125,12 @@ int v = b.value;
 正确示例：
 
 ```kinal
-Class Base
+Class ParentClass
 {
     Protected int value;
 }
 
-Class Derived By Base
+Class Derived By ParentClass
 {
     Public Function int Value()
     {
@@ -154,7 +154,7 @@ Class Derived By Base
 错误示例：
 
 ```kinal
-Class Base
+Class ParentClass
 {
     Public Abstract Function int Value();
 }
@@ -163,7 +163,7 @@ Class Base
 正确示例：
 
 ```kinal
-Abstract Class Base
+Abstract Class ParentClass
 {
     Public Abstract Function int Value();
 }
@@ -300,7 +300,7 @@ State value = State.Done;
 - 默认详情：Cannot modify enum constant
 - 说明：枚举成员是常量，不能作为赋值目标。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
 Enum State
@@ -386,7 +386,7 @@ value = 2;
 - 默认详情：Target is not assignable
 - 说明：赋值左侧必须是可写目标。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
 1 = 2;
@@ -411,7 +411,7 @@ value = 2;
 - 默认详情：Attributes are not supported on global variables
 - 说明：全局变量当前不支持属性标注。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
 [My.Tag]
@@ -421,10 +421,21 @@ int value = 1;
 正确示例：
 
 ```kinal
-[My.Tag]
+Meta Tag()
+{
+    On @function;
+    Keep @runtime;
+}
+
+[Tag]
 Function int Value()
 {
     Return 1;
+}
+
+Static Function int Main()
+{
+    Return Value();
 }
 ```
 
@@ -455,12 +466,14 @@ Class Derived By BaseType
 正确示例：
 
 ```kinal
+Class BaseType
+{
+    Public Virtual Function string Kind() { Return "base"; }
+}
+
 Class Derived By BaseType
 {
-    Public Override Function string Kind()
-    {
-        Return Base.Kind();
-    }
+    Public Override Function string Kind() { Return Base.Kind(); }
 }
 ```
 
@@ -476,7 +489,7 @@ Class Derived By BaseType
 - 默认详情：Class has no base type
 - 说明：当前类没有基类，却使用了 `Base`。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
 Class User
@@ -520,7 +533,7 @@ Class User By BaseType
 - 默认详情：Block object must use Run/Jump APIs
 - 说明：Block 对象不能像普通函数一样直接调用。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
 IO.Type.Object.Block flow = Block Demo</
@@ -552,7 +565,7 @@ flow.Run();
 - 默认详情：Call target is not a function object
 - 说明：调用目标不是函数对象。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
 int value = 42;
@@ -582,7 +595,7 @@ int result = Identity(42);
 - 默认详情：Static method requires class name
 - 说明：调用目标不是函数对象。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
 int value = 42;
@@ -712,15 +725,19 @@ Enum Status By u8
 - 默认详情：Builtin function does not accept generic type arguments
 - 说明：内置函数不接受显式泛型参数。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
+Get IO.Console;
+
 IO.Console.PrintLine<int>(1);
 ```
 
 正确示例：
 
 ```kinal
+Get IO.Console;
+
 IO.Console.PrintLine(1);
 ```
 
@@ -739,6 +756,8 @@ IO.Console.PrintLine(1);
 错误示例：
 
 ```kinal
+Get IO.Console;
+
 IO.Type.Object.Function fn = IO.Console.PrintLine;
 fn<int>(1);
 ```
@@ -746,6 +765,8 @@ fn<int>(1);
 正确示例：
 
 ```kinal
+Get IO.Console;
+
 IO.Type.Object.Function fn = IO.Console.PrintLine;
 fn(1);
 ```
@@ -762,7 +783,7 @@ fn(1);
 - 默认详情：Type arguments are only valid for generic function calls
 - 说明：当前调用目标不是泛型函数，却附加了类型参数。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
 Function int Add(int a, int b)
@@ -863,7 +884,7 @@ Static Function int Main()
 - 默认详情：Only variable declarations are allowed at global scope
 - 说明：顶层只允许变量声明，不允许直接写执行语句。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
 If (true)
@@ -938,11 +959,11 @@ Class Child By Final
 正确示例：
 
 ```kinal
-Class Base
+Class ParentClass
 {
 }
 
-Class Child By Base
+Class Child By ParentClass
 {
 }
 ```
@@ -959,7 +980,7 @@ Class Child By Base
 - 默认详情：Class cannot inherit from itself
 - 说明：类不能继承自己。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
 Class Loop By Loop
@@ -970,11 +991,11 @@ Class Loop By Loop
 正确示例：
 
 ```kinal
-Class Base
+Class ParentClass
 {
 }
 
-Class Derived By Base
+Class Derived By ParentClass
 {
 }
 ```
@@ -991,7 +1012,7 @@ Class Derived By Base
 - 默认详情：Interface methods must be abstract
 - 说明：接口方法必须保持抽象声明，不提供方法体。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
 Interface IValue
@@ -1024,7 +1045,7 @@ Interface IValue
 - 默认详情：Interface members not supported yet
 - 说明：接口中暂不支持字段等非方法成员。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
 Interface IValue
@@ -1054,7 +1075,7 @@ Interface IValue
 - 默认详情：Member access requires class instance
 - 说明：成员访问或成员调用的左侧必须是类实例。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
 int value = 1;
@@ -1136,14 +1157,14 @@ Class User
 正确示例：
 
 ```kinal
-Class Base
+Class ParentClass
 {
     Public Virtual Function void Run()
     {
     }
 }
 
-Class User By Base
+Class User By ParentClass
 {
     Public Override Sealed Function void Run()
     {
@@ -1197,25 +1218,25 @@ Class User
 - 默认详情：Cannot instantiate abstract class
 - 说明：抽象类不能直接实例化。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
-Abstract Class Base
+Abstract Class ParentClass
 {
 }
 
-Base value = New Base();
+ParentClass value = New Base();
 ```
 
 正确示例：
 
 ```kinal
-Abstract Class Base
+Abstract Class ParentClass
 {
     Public Abstract Function int Value();
 }
 
-Class Derived By Base
+Class Derived By ParentClass
 {
     Public Override Function int Value()
     {
@@ -1223,7 +1244,7 @@ Class Derived By Base
     }
 }
 
-Base value = New Derived();
+ParentClass value = New Derived();
 ```
 
 原因：抽象类只描述接口和共享实现，不代表一个可构造的完整对象。
@@ -1238,7 +1259,7 @@ Base value = New Derived();
 - 默认详情：Unknown binary operator
 - 说明：当前二元运算符不在 Kinal 的已定义运算符集合中。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
 int value = 1 <=> 2;
@@ -1262,7 +1283,7 @@ bool value = 1 < 2;
 - 默认详情：Unknown unary operator
 - 说明：当前一元运算符不在 Kinal 的已定义运算符集合中。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
 int value = ^^1;
@@ -1289,14 +1310,14 @@ int value = -1;
 错误示例：
 
 ```kinal
-Class Base
+Class ParentClass
 {
     Public Virtual Function void Run()
     {
     }
 }
 
-Class Mid By Base
+Class Mid By ParentClass
 {
     Public Override Sealed Function void Run()
     {
@@ -1314,6 +1335,16 @@ Class Leaf By Mid
 正确示例：
 
 ```kinal
+Class ParentClass
+{
+    Public Virtual Function void Run() {}
+}
+
+Class Mid By ParentClass
+{
+    Public Override Sealed Function void Run() {}
+}
+
 Class Leaf By Mid
 {
 }
@@ -1334,14 +1365,14 @@ Class Leaf By Mid
 错误示例：
 
 ```kinal
-Class Base
+Class ParentClass
 {
     Public Function void Run()
     {
     }
 }
 
-Class Leaf By Base
+Class Leaf By ParentClass
 {
     Public Override Function void Run()
     {
@@ -1352,14 +1383,14 @@ Class Leaf By Base
 正确示例：
 
 ```kinal
-Class Base
+Class ParentClass
 {
     Public Virtual Function void Run()
     {
     }
 }
 
-Class Leaf By Base
+Class Leaf By ParentClass
 {
     Public Override Function void Run()
     {
@@ -1484,7 +1515,7 @@ Static Function int Main()
 错误示例：
 
 ```kinal
-Class Base
+Class ParentClass
 {
     Public Virtual Function int Value()
     {
@@ -1492,7 +1523,7 @@ Class Base
     }
 }
 
-Class Derived By Base
+Class Derived By ParentClass
 {
     Public Function int Value()
     {
@@ -1504,7 +1535,7 @@ Class Derived By Base
 正确示例：
 
 ```kinal
-Class Base
+Class ParentClass
 {
     Public Virtual Function int Value()
     {
@@ -1512,7 +1543,7 @@ Class Base
     }
 }
 
-Class Derived By Base
+Class Derived By ParentClass
 {
     Public Override Function int Value()
     {
@@ -1609,7 +1640,7 @@ Static Trusted Function int Main(string[] args)
 - 默认详情：Generic type arguments are only supported on named function calls
 - 说明：显式泛型参数只能挂在命名函数调用上。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
 (GetAdder())<int>(1, 2);
@@ -1618,7 +1649,12 @@ Static Trusted Function int Main(string[] args)
 正确示例：
 
 ```kinal
-Add<int>(1, 2);
+Function T Add<T>(T a, T b)
+{
+    Return a + b;
+}
+
+int result = Add<int>(1, 2);
 ```
 
 原因：只有命名函数调用路径能稳定承载泛型实例化信息。
@@ -1657,7 +1693,7 @@ Extern Function int Sum(int a, int b) By C;
 - 默认详情：Generic type arguments on member access require a call
 - 说明：成员访问上附加泛型参数时，后面必须紧跟一次调用。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
 user.Map<int>;
@@ -1666,7 +1702,9 @@ user.Map<int>;
 正确示例：
 
 ```kinal
-user.Map<int>(1);
+Function T Map<T>(T value) { Return value; }
+
+int result = Map<int>(1);
 ```
 
 原因：只有“成员调用”这条语法路径会消耗类型参数；单独的成员访问不会。
@@ -1675,13 +1713,16 @@ user.Map<int>(1);
 
 ---
 
+
+当前 C 实现尚不支持泛型实例方法。补上括号只是语法条件，不能使 user.Map<T> 成为受支持方法；修正示例改用顶层泛型函数。
+
 ## E-SEM-00050 — Invalid Generic Type
 
 - 级别：错误
 - 默认详情：Expected a type argument
 - 说明：泛型类型实参列表里缺少了真实类型。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
 Identity<>(1);
@@ -1690,7 +1731,12 @@ Identity<>(1);
 正确示例：
 
 ```kinal
-Identity<int>(1);
+Function T Identity<T>(T value)
+{
+    Return value;
+}
+
+int result = Identity<int>(1);
 ```
 
 原因：尖括号中的每个位置都必须是合法类型名。

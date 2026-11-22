@@ -121,3 +121,25 @@ If (IO.Runtime == IO.Runtime.VM)
 - [KinalVM](../cli/vm.md) — `kinal vm build`、`kinal vm run` 命令
 - [裸机与嵌入式](freestanding.md) — `--runtime` 内存模式
 - [交叉编译](cross-compilation.md) — `IO.Target.*` 与平台信息常量
+
+## 完整验证程序
+
+将下列代码保存为 versions.kn，分别执行 kinal run versions.kn 和 kinal vm run versions.kn。Native 输出 Kinal.Native／false，VM 输出 Kinal.VM／true；版本文本取决于实际构建。编译器与 VM 组件版本可独立变化，不要假定主次版本相同。KNC 格式版本与这两者是不同维度。
+
+```kinal
+Get IO.Console;
+
+Static Function int Main()
+{
+    IO.Console.PrintLine(IO.Runtime.Name);
+    IO.Console.PrintLine(IO.Version);
+    IO.Console.PrintLine(IO.Runtime.IsVM);
+    If (IO.Runtime.IsVM)
+    {
+        IO.Console.PrintLine(IO.Version.VM);
+    }
+    Return 0;
+}
+```
+
+注意：IO.Runtime.IsVM 分支不会补全缺失的 VM 功能。仅非活动的编译期分支可避开其语义／后端路径；若活动分支使用 Await、集合或原生桥接，仍应核对[后端支持](backend-support.md)。

@@ -376,6 +376,7 @@ static void compile_init_link_options(KnLinkOptions *out,
     out->runtime_mode = cfg->runtime_mode;
     out->panic_mode = cfg->panic_mode;
     out->crt_mode = cfg->crt_mode;
+    out->hide_console = cfg->hide_console;
     out->no_crt = cfg->no_crt;
     out->no_default_libs = cfg->no_default_libs;
     out->entry_symbol = entry_symbol;
@@ -1199,6 +1200,7 @@ static int kn_compile(int in_count, const char **in_paths, const KnCompileConfig
     ModuleMap local_modmap = {0};
     ModuleMap dep_modmap = {0};
     ModuleMap official_modmap = {0};
+    unsigned char matched_pins[2 * KN_PKG_PINS_PER_SCOPE] = {0};
     StrList known_standard_modules = {0};
     StrList module_seen = {0};
     const int project_source_mode = cfg->project_source_mode;
@@ -1213,7 +1215,7 @@ static int kn_compile(int in_count, const char **in_paths, const KnCompileConfig
         g_pkg_error = 0;
         if (!scan_package_roots_into_module_map(cfg->official_package_roots,
                                                 cfg->official_package_root_count,
-                                                &official_modmap, 1))
+                                                &official_modmap, 1, cfg->package_pins, matched_pins))
             return -1;
         if (cfg->official_package_root_count == 0)
             scan_default_stdlib_modules(&official_modmap);
@@ -1229,7 +1231,7 @@ static int kn_compile(int in_count, const char **in_paths, const KnCompileConfig
                 if (!register_module_file_path(cfg->project_local_sources[psi], &local_modmap))
                     return -1;
             }
-            if (!scan_package_roots_into_module_map(cfg->package_roots, cfg->package_root_count, &dep_modmap, 0))
+            if (!scan_package_roots_into_module_map(cfg->package_roots, cfg->package_root_count, &dep_modmap, 0, cfg->package_pins, matched_pins))
                 return -1;
 
             if (project_source_mode == KN_PROJ_SOURCE_MODE_ALL_SOURCES)
@@ -1266,7 +1268,7 @@ static int kn_compile(int in_count, const char **in_paths, const KnCompileConfig
             char base_dir[KN_MAX_PATH];
             path_dirname(inputs.items[0], base_dir, sizeof(base_dir));
             scan_dir_modules(base_dir, base_dir, &modmap, true);
-            if (!scan_package_roots_into_module_map(cfg->package_roots, cfg->package_root_count, &modmap, 0))
+            if (!scan_package_roots_into_module_map(cfg->package_roots, cfg->package_root_count, &modmap, 0, cfg->package_pins, matched_pins))
                 return -1;
 
             char *input_unit = read_unit_name_from_file(inputs.items[0]);
@@ -1283,6 +1285,15 @@ static int kn_compile(int in_count, const char **in_paths, const KnCompileConfig
                     }
                 }
                 kn_free(input_unit);
+            }
+        }
+    }
+
+    if (resolve_import_modules && cfg->package_pins) {
+        for (int i = 0; i < cfg->package_pins->count; ++i) {
+            if (!matched_pins[i]) {
+                pkg_fail("pinned package not found", cfg->package_pins->items[i]);
+                return -1;
             }
         }
     }

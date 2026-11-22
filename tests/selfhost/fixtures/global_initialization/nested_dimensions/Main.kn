@@ -1,0 +1,112 @@
+Unit Tests.NestedDimensions;
+Get IO.Console;
+Get IO.GC;
+
+Struct Row { int[3] Cells; }
+Struct Page { Row[2][4] Rows; }
+Struct Tree { Tree[][2] Children; Tree[0][2] Empty; }
+Class BaseSheet { Public int[2][4] Values; }
+Class Sheet By BaseSheet
+{
+    Public Page Data;
+    Public Static Row[2][4] Saved;
+    Public Static int[2][3] Preset = {{7}, {}};
+}
+
+int Initialized = Seed();
+int[2][4] Later;
+Row InitialRow = default;
+
+Function int Seed()
+{
+    If (Later.Length() != 4 || Later[3].Length() != 2) Return 1;
+    If (Sheet.Saved.Length() != 4 || Sheet.Saved[3].Length() != 2 ||
+        Sheet.Saved[3][1].Cells.Length() != 3) Return 2;
+    Later[3][1] = 11;
+    Sheet.Saved[3][1].Cells[2] = 17;
+    IO.GC.Collect();
+    Return 42;
+}
+
+Function int[2][4] ReturnLiteral() { Return {{3}, {5, 7}}; }
+Function Row DefaultRow() { Return default; }
+
+Function int CheckArgument(int[2][4] grid)
+{
+    Return grid.Length() == 1 && grid[0].Length() == 1 ? 0 : 1;
+}
+
+Static Function int Main()
+{
+    If (Initialized != 42 || Later[3][1] != 11 || Later[2][1] != 0 ||
+        Sheet.Saved[3][1].Cells[2] != 17 || Sheet.Saved[0][1].Cells[2] != 0) Return 1;
+
+    Const int Width = 2;
+    Row[Width][Width + 2] rows;
+    If (rows.Length() != 4 || rows[0].Length() != 2 || rows[0][1].Cells.Length() != 3) Return 2;
+    rows[0][1].Cells[2] = 7;
+    If (rows[0][0].Cells[2] != 0 || rows[1][1].Cells[2] != 0) Return 3;
+
+    int[2][3][4] cube = {{{9}, {}}, {{5, 6}}};
+    If (cube.Length() != 4 || cube[0].Length() != 3 || cube[2].Length() != 3 ||
+        cube[0][0].Length() != 2 || cube[0][1].Length() != 2 || cube[3][2].Length() != 2) Return 4;
+    cube[3][2][1] = 13;
+    If (cube[0][0][0] != 9 || cube[0][0][1] != 0 || cube[1][0][1] != 6 ||
+        cube[2][2][1] != 0 || cube[3][1][1] != 0) Return 5;
+
+    int[2] first = {3, 5};
+    int[2][4] withAlias = {first};
+    withAlias[0][1] = 19;
+    If (first[1] != 19 || withAlias[1].Length() != 2 || withAlias[1][1] != 0) Return 6;
+
+    int[][3] dynamicRows;
+    int[0][3] emptyRows;
+    int[2][0] emptyOuter;
+    int[][] ragged = {{1, 2, 3}, {4}};
+    If (dynamicRows[0].Length() != 0 || dynamicRows[2].Length() != 0 ||
+        emptyRows[1].Length() != 0 || emptyOuter.Length() != 0 ||
+        ragged[0].Length() != 3 || ragged[1].Length() != 1) Return 7;
+    dynamicRows[0] = {23};
+    If (dynamicRows[0][0] != 23 || dynamicRows[1].Length() != 0) Return 8;
+
+    Sheet sheet = New Sheet();
+    Page other;
+    If (sheet.Values[0].Length() != 2 || sheet.Data.Rows[3][1].Cells.Length() != 3 ||
+        other.Rows[3][1].Cells.Length() != 3) Return 9;
+    sheet.Data.Rows[3][1].Cells[2] = 29;
+    IO.GC.Collect();
+    If (other.Rows[3][1].Cells[2] != 0 || sheet.Data.Rows[3][1].Cells[2] != 29 ||
+        cube[3][2][1] != 13 || rows[0][1].Cells[2] != 7) Return 10;
+    If (Sheet.Preset.Length() != 3 || Sheet.Preset[0].Length() != 2 || Sheet.Preset[0][1] != 0 ||
+        Sheet.Preset[1].Length() != 2 || Sheet.Preset[2].Length() != 2) Return 11;
+
+    int[2][4] returned = ReturnLiteral();
+    int[2][4] assigned;
+    assigned = {{13}};
+    If (returned.Length() != 2 || returned[0].Length() != 1 || returned[1].Length() != 2 ||
+        assigned.Length() != 1 || assigned[0].Length() != 1 || CheckArgument({{17}}) != 0) Return 12;
+    Tree[2][2] forest;
+    If (forest[1][0].Children.Length() != 2 || forest[0][1].Children[0].Length() != 0 ||
+        forest[1][1].Empty[1].Length() != 0) Return 13;
+
+    int[2][4] fresh = default;
+    Row[3] samples = {default, DefaultRow()};
+    If (fresh.Length() != 4 || fresh[3].Length() != 2 || InitialRow.Cells.Length() != 3 ||
+        samples[0].Cells.Length() != 3 || samples[1].Cells.Length() != 3 ||
+        samples[2].Cells.Length() != 3) Return 14;
+    fresh[3][1] = 37;
+    int[2][4] previous = fresh;
+    fresh = default;
+    samples[0].Cells[2] = 41;
+    Row oldRow = samples[0];
+    samples[0] = default;
+    IO.GC.Collect();
+    If (previous[3][1] != 37 || fresh[3][1] != 0 || fresh[0][1] != 0 ||
+        oldRow.Cells[2] != 41 || samples[0].Cells[2] != 0 || samples[1].Cells[2] != 0) Return 15;
+
+    <int[2], int>[2] pairs = {<first, 43>, <first, 47>};
+    If (pairs.Length() != 2 || pairs[1][0].Length() != 2 || pairs[0][1] != 43 ||
+        pairs[1][1] != 47) Return 16;
+    IO.Console.PrintLine("ok");
+    Return 0;
+}

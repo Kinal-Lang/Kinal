@@ -1,0 +1,193 @@
+Unit IO.Kinal.VM.Context;
+
+Get Binary By IO.Kinal.VM.Binary;
+Get Bytecode By IO.Kinal.VM.Bytecode;
+
+Function T[] NewPageSlots<T>(int length)
+{
+    If (length <= 4) { T[4] slots; Return slots; }
+    If (length <= 16) { T[16] slots; Return slots; }
+    T[64] slots;
+    Return slots;
+}
+
+// Host-managed pages keep strings and VMValue boxes alive across native GC.
+// A missing page represents the guest element type's default value.
+Class HeapArrayPage
+{
+    Public bool Shared;
+    Public int LastMarked;
+    Public string[] Strings;
+    Public VMValue[] Values;
+    // Unwritten strings read as "". A set bit distinguishes an explicit null.
+    Public u64 NullStrings;
+
+    Public Constructor(bool strings, int length=64)
+    {
+        If (strings) Strings = NewPageSlots<string>(length);
+        Else Values = NewPageSlots<VMValue>(length);
+    }
+
+    Public Function int StorageBytes() { Return 48 + (Strings.Length() + Values.Length()) * 8; }
+
+    Public Function HeapArrayPage Copy(bool strings, int length=64)
+    {
+        int previous = strings ? Strings.Length() : Values.Length();
+        HeapArrayPage result = New HeapArrayPage(strings, length < previous ? previous : length);
+        result.NullStrings = NullStrings;
+        If (strings)
+            For (int i = 0; i < Strings.Length(); i++) result.Strings[i] = Strings[i];
+        Else
+            For (int j = 0; j < Values.Length(); j++) result.Values[j] = Values[j];
+        Return result;
+    }
+}
+
+Public Class HeapArray
+{
+    Public int ElementKind;
+    Public int Length;
+    Public byte* RawBuffer;
+    Public bool CaptureEnvironment;
+    Private GuestHeap Owner;
+    Private HeapArrayPage FirstPage;
+    Private list MorePages;
+
+    Public Constructor(GuestHeap heap) { Owner = heap; }
+
+    Public Property int PageCount
+    {
+        Get { Return MorePages != null ? 1 + MorePages.Count() : (FirstPage == null ? 0 : 1); }
+    }
+
+    Public Function HeapArrayPage PageAt(int number)
+    {
+        If (number == 0) Return FirstPage;
+        If (MorePages == null) Return null;
+        Return [HeapArrayPage](MorePages.Fetch(number - 1));
+    }
+
+    Private Function void PutPage(int number, HeapArrayPage page)
+    {
+        If (number == 0) { FirstPage = page; Return; }
+        If (MorePages == null) MorePages = list.Create();
+        int count = MorePages.Count();
+        If (count < number) Owner.RecordAllocation((number - count) * 16);
+        While (MorePages.Count() < number - 1) MorePages.Add(null);
+        If (MorePages.Count() < number) MorePages.Add(page);
+        Else MorePages.Set(number - 1, page);
+    }
+
+    Private Function HeapArrayPage WritablePage(int index)
+    {
+        int number = index >> 6;
+        HeapArrayPage page = PageAt(number);
+        If (page != null && !page.Shared) Return page;
+        bool strings = ElementKind == [int](Bytecode.ValueKind.String);
+        // An append can grow the final page while detaching it from the source.
+        int remaining = Length - (number << 6);
+        page = page == null ? New HeapArrayPage(strings, remaining) : page.Copy(strings, remaining);
+        Owner.RecordAllocation(page.StorageBytes());
+        PutPage(number, page);
+        Return page;
+    }
+
+    Public Function string ReadString(int index)
+    {
+        HeapArrayPage page = PageAt(index >> 6);
+        If (page == null) Return "";
+        int slot = index & 63;
+        string value = page.Strings[slot];
+        If (value != null || (page.NullStrings & ([u64](1) << slot)) != [u64](0)) Return value;
+        Return "";
+    }
+
+    Private Function VMValue StoredValue(int index)
+    {
+        HeapArrayPage page = PageAt(index >> 6);
+        Return page == null ? null : page.Values[index & 63];
+    }
+
+    Public Function VMValue ReadValue(int index)
+    {
+        VMValue value = StoredValue(index);
+        Return value == null ? VMValue.NullValue() : value;
+    }
+
+    Public Function void WriteString(int index, string value)
+    {
+        HeapArrayPage page = WritablePage(index);
+        int slot = index & 63;
+        u64 mask = [u64](1) << slot;
+        If (value == null) page.NullStrings = page.NullStrings | mask;
+        Else page.NullStrings = page.NullStrings & ~mask;
+        page.Strings[slot] = value;
+    }
+    Public Function void WriteValue(int index, VMValue value)
+    {
+        WritablePage(index).Values[index & 63] = value;
+    }
+
+    // Array.Add yields independent indexed storage. Share populated pages
+    // until either the source or result writes to one of them.
+    Public Function void SharePagesWith(HeapArray result)
+    {
+        int count = PageCount;
+        For (int i = 0; i < count; i++)
+        {
+            HeapArrayPage page = PageAt(i);
+            If (page == null) Continue;
+            page.Shared = true;
+            result.PutPage(i, page);
+        }
+    }
+
+    Public Unsafe Function void LoadIntoFrame(int index, FunctionFrame frame, int dst)
+    {
+        If (index < 0 || index >= Length)
+        {
+            Throw "Array index out of range";
+        }
+
+        Switch(ElementKind)
+        {
+            Case([int](Bytecode.ValueKind.Int))    { frame.SetInt(dst, ([int*](RawBuffer))[index]); }
+            Case([int](Bytecode.ValueKind.Char))   { frame.SetChar(dst, [char](([int*](RawBuffer))[index])); }
+            Case([int](Bytecode.ValueKind.Float))  { frame.SetFloat(dst, ([float*](RawBuffer))[index]); }
+            Case([int](Bytecode.ValueKind.Bool))   { frame.SetBool(dst, ([bool*](RawBuffer))[index]); }
+            Case([int](Bytecode.ValueKind.String)) { frame.SetString(dst, ReadString(index)); }
+            Case(default)
+            {
+                VMValue value = StoredValue(index);
+                If (value == null) frame.SetNull(dst);
+                Else frame.ImportValue(dst, value);
+            }
+        }
+    }
+
+    Public Unsafe Function void StoreFromFrame(int index, FunctionFrame frame, int src)
+    {
+        If (index < 0 || index >= Length)
+        {
+            Throw "Array index out of range";
+        }
+
+        Switch(ElementKind)
+        {
+            Case([int](Bytecode.ValueKind.Int))    { ([int*](RawBuffer))[index] = frame.GetInt(src); }
+            Case([int](Bytecode.ValueKind.Char))   { ([int*](RawBuffer))[index] = [int](frame.GetChar(src)); }
+            Case([int](Bytecode.ValueKind.Float))  { ([float*](RawBuffer))[index] = frame.GetFloat(src); }
+            Case([int](Bytecode.ValueKind.Bool))   { ([bool*](RawBuffer))[index] = frame.GetBool(src); }
+            Case([int](Bytecode.ValueKind.String)) { WriteString(index, frame.GetString(src)); }
+            Case(default)                          { WriteValue(index, frame.ExportValue(src)); }
+        }
+    }
+
+    Public Trusted Function void ReleaseBuffer()
+    {
+        If (RawBuffer == null) Return;
+        Binary.free(RawBuffer);
+        RawBuffer = null;
+        Length = 0;
+    }
+}

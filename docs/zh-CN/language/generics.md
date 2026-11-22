@@ -20,6 +20,24 @@ int i = Identity<int>(42);
 string s = Identity<string>("hello");
 ```
 
+显式类型实参使用调用处的导入解析，声明中的参数和返回类型使用定义处的导入解析。
+例如，库可以用自己的 `Model` 别名声明
+`Function Model.Box Select<T>(T[] tags, Model.Box[] boxes)`。
+调用方如果把同一个模块命名为 `Data`，就可以传入 `Data.Box[]`，并以 `Data.Box` 接收结果。
+库中的函数可以分布在同一 Unit 的多个源码文件里。
+
+类方法和属性访问器里可以直接调用泛型函数。下面的 getter 会以 `Counter` 实例化 `ReadCount`。编译器会检查 `Counter.Count` 是否存在，以及它的类型是否符合返回类型。
+
+```kinal
+Function int ReadCount<T>(T item) { Return item.Count; }
+
+Class Counter
+{
+    Public int Count;
+    Public Property int Total { Get { Return ReadCount<Counter>(This); } }
+}
+```
+
 ## 多类型参数
 
 ```kinal
@@ -62,6 +80,12 @@ AreEqual<int>(1, 1);          // true
 AreEqual<string>("a", "b");   // false
 AreEqual<bool>(true, false);  // false
 ```
+
+## 值语义与调用组合
+
+`Swap<T>(T a, T b)` 只交换形参副本，不修改调用方的标量变量。需要修改调用方状态时，返回 Package 或使用明确的可变引用。实例化后的函数体接受正常检查，例如数组不支持直接聚合相等，因此 `AreEqual<int[]>(...)` 无效。
+
+当前 Parser 会拒绝某些嵌套显式泛型调用，例如 `Print<string>(Describe<bool>(true))`。应像完整示例一样，先把内部结果存入带类型的局部变量，再传给外部调用。这是实现边界，不代表泛型会自动推断所有嵌套类型实参。
 
 ## 当前限制
 
@@ -108,7 +132,8 @@ Static Function int Main()
 
     Print<int>(maxInt);
     Print<float>(maxFloat);
-    Print<string>(Describe<bool>(true));
+    string description = Describe<bool>(true);
+    Print<string>(description);
 
     Return 0;
 }
@@ -117,7 +142,7 @@ Static Function int Main()
 输出：
 ```
 7
-2.7
+2.7000000000000002
 值为: true
 ```
 
@@ -125,3 +150,7 @@ Static Function int Main()
 
 - [函数](functions.md)
 - [类与继承](classes.md)
+
+泛型函数体还受后端支持范围约束，参见[后端支持](../advanced/backend-support.md)。
+
+泛型函数对象可通过匿名函数适配：在一个有具体参数／返回类型的匿名函数内调用 Identity<int>(value)。当前解析器不接受单独的 Identity<int> 引用表达式。

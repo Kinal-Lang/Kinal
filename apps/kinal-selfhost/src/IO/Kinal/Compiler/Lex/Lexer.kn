@@ -1,6 +1,7 @@
 Unit IO.Kinal.Compiler.Lex.Lexer;
 
 Get IO.Text;
+Get IO.Kinal.Runtime.Native;
 Get IO.Kinal.Compiler.Core.Diagnostics;
 Get IO.Kinal.Compiler.Source.SourceFile;
 Get IO.Kinal.Compiler.Lex.Token;
@@ -9,18 +10,22 @@ Get IO.Kinal.Compiler.Lex.TokenKind;
 Class LexerState
 {
     Public SourceFile Source;
-    Public char[] Chars;
+    Public string Text;
     Public int Length;
     Public int Position;
+    Public char* SpellingBuffer;
+    // A negative offset keeps header-only probes and short sources out of the block allocator.
+    Public int SpellingOffset;
     Public int Line;
     Public int Column;
 
     Public Safe Constructor(SourceFile source)
     {
         This.Source = source;
-        This.Chars = source.Text.ToChars();
-        This.Length = This.Chars.Length();
+        This.Text = source.Text;
+        This.Length = IO.Text.Length(This.Text);
         This.Position = 0;
+        This.SpellingOffset = -1;
         This.Line = 1;
         This.Column = 1;
     }
@@ -29,14 +34,14 @@ Class LexerState
 Safe Function char Current(LexerState state)
 {
     If (state.Position < 0 || state.Position >= state.Length) Return '\0';
-    Return state.Chars[state.Position];
+    Return state.Text[state.Position];
 }
 
 Safe Function char Peek(LexerState state)
 {
     int at = state.Position + 1;
     If (at < 0 || at >= state.Length) Return '\0';
-    Return state.Chars[at];
+    Return state.Text[at];
 }
 
 Safe Function void Advance(LexerState state)
@@ -91,131 +96,267 @@ Safe Function bool IsCharacterEscape(char value)
 
 Safe Function TokenKind KeywordKind(string text)
 {
-    Return Switch (text)
+    If (text == null) Return TokenKind.Identifier;
+    Switch (text[0])
     {
-        Case("Unit") { TokenKind.KwUnit; }
-        Case("Get") { TokenKind.KwGet; }
-        Case("Set") { TokenKind.KwSet; }
-        Case("Alias") { TokenKind.KwAlias; }
-        Case("By") { TokenKind.KwBy; }
-        Case("Property") { TokenKind.KwProperty; }
-        Case("Function") { TokenKind.KwFunction; }
-        Case("Return") { TokenKind.KwReturn; }
-        Case("If") { TokenKind.KwIf; }
-        Case("Else") { TokenKind.KwElse; }
-        Case("ElseIf") { TokenKind.KwElseIf; }
-        Case("While") { TokenKind.KwWhile; }
-        Case("For") { TokenKind.KwFor; }
-        Case("Foreach") { TokenKind.KwForeach; }
-        Case("Switch") { TokenKind.KwSwitch; }
-        Case("Case") { TokenKind.KwCase; }
-        Case("Break") { TokenKind.KwBreak; }
-        Case("Continue") { TokenKind.KwContinue; }
-        Case("Try") { TokenKind.KwTry; }
-        Case("Catch") { TokenKind.KwCatch; }
-        Case("Throw") { TokenKind.KwThrow; }
-        Case("Const") { TokenKind.KwConst; }
-        Case("Var") { TokenKind.KwVar; }
-        Case("Safe") { TokenKind.KwSafe; }
-        Case("Trusted") { TokenKind.KwTrusted; }
-        Case("Unsafe") { TokenKind.KwUnsafe; }
-        Case("Async") { TokenKind.KwAsync; }
-        Case("Await") { TokenKind.KwAwait; }
-        Case("Extern") { TokenKind.KwExtern; }
-        Case("Class") { TokenKind.KwClass; }
-        Case("Interface") { TokenKind.KwInterface; }
-        Case("Struct") { TokenKind.KwStruct; }
-        Case("Enum") { TokenKind.KwEnum; }
-        Case("Public") { TokenKind.KwPublic; }
-        Case("Private") { TokenKind.KwPrivate; }
-        Case("Protected") { TokenKind.KwProtected; }
-        Case("Internal") { TokenKind.KwInternal; }
-        Case("Static") { TokenKind.KwStatic; }
-        Case("Virtual") { TokenKind.KwVirtual; }
-        Case("Override") { TokenKind.KwOverride; }
-        Case("Abstract") { TokenKind.KwAbstract; }
-        Case("Sealed") { TokenKind.KwSealed; }
-        Case("Constructor") { TokenKind.KwConstructor; }
-        Case("New") { TokenKind.KwNew; }
-        Case("This") { TokenKind.KwThis; }
-        Case("Base") { TokenKind.KwBase; }
-        Case("Block") { TokenKind.KwBlock; }
-        Case("Record") { TokenKind.KwRecord; }
-        Case("Jump") { TokenKind.KwJump; }
-        Case("Delegate") { TokenKind.KwDelegate; }
-        Case("true") { TokenKind.KwTrue; }
-        Case("false") { TokenKind.KwFalse; }
-        Case("Is") { TokenKind.KwIs; }
-        Case("In") { TokenKind.KwIn; }
-        Case("default") { TokenKind.KwDefault; }
-        Case("null") { TokenKind.KwNull; }
-        Case("void") { TokenKind.TypeVoid; }
-        Case("bool") { TokenKind.TypeBool; }
-        Case("byte") { TokenKind.TypeByte; }
-        Case("char") { TokenKind.TypeChar; }
-        Case("int") { TokenKind.TypeInt; }
-        Case("float") { TokenKind.TypeFloat; }
-        Case("f16") { TokenKind.TypeF16; }
-        Case("f32") { TokenKind.TypeF32; }
-        Case("f64") { TokenKind.TypeF64; }
-        Case("f128") { TokenKind.TypeF128; }
-        Case("i8") { TokenKind.TypeI8; }
-        Case("i16") { TokenKind.TypeI16; }
-        Case("i32") { TokenKind.TypeI32; }
-        Case("i64") { TokenKind.TypeI64; }
-        Case("u8") { TokenKind.TypeU8; }
-        Case("u16") { TokenKind.TypeU16; }
-        Case("u32") { TokenKind.TypeU32; }
-        Case("u64") { TokenKind.TypeU64; }
-        Case("isize") { TokenKind.TypeIsize; }
-        Case("usize") { TokenKind.TypeUsize; }
-        Case("string") { TokenKind.TypeString; }
-        Case("any") { TokenKind.TypeAny; }
-        Case(default) { TokenKind.Identifier; }
-    };
+        Case('A')
+        {
+            If (text == "Alias") Return TokenKind.KwAlias;
+            If (text == "Async") Return TokenKind.KwAsync;
+            If (text == "Await") Return TokenKind.KwAwait;
+            If (text == "Abstract") Return TokenKind.KwAbstract;
+        }
+        Case('B')
+        {
+            If (text == "By") Return TokenKind.KwBy;
+            If (text == "Break") Return TokenKind.KwBreak;
+            If (text == "Base") Return TokenKind.KwBase;
+            If (text == "Block") Return TokenKind.KwBlock;
+        }
+        Case('C')
+        {
+            If (text == "Case") Return TokenKind.KwCase;
+            If (text == "Continue") Return TokenKind.KwContinue;
+            If (text == "Catch") Return TokenKind.KwCatch;
+            If (text == "Const") Return TokenKind.KwConst;
+            If (text == "Class") Return TokenKind.KwClass;
+            If (text == "Constructor") Return TokenKind.KwConstructor;
+        }
+        Case('D')
+        {
+            If (text == "Delegate") Return TokenKind.KwDelegate;
+        }
+        Case('E')
+        {
+            If (text == "Else") Return TokenKind.KwElse;
+            If (text == "ElseIf") Return TokenKind.KwElseIf;
+            If (text == "Extern") Return TokenKind.KwExtern;
+            If (text == "Enum") Return TokenKind.KwEnum;
+        }
+        Case('F')
+        {
+            If (text == "Function") Return TokenKind.KwFunction;
+            If (text == "For") Return TokenKind.KwFor;
+            If (text == "Foreach") Return TokenKind.KwForeach;
+        }
+        Case('G')
+        {
+            If (text == "Get") Return TokenKind.KwGet;
+        }
+        Case('I')
+        {
+            If (text == "If") Return TokenKind.KwIf;
+            If (text == "Interface") Return TokenKind.KwInterface;
+            If (text == "Internal") Return TokenKind.KwInternal;
+            If (text == "Is") Return TokenKind.KwIs;
+            If (text == "In") Return TokenKind.KwIn;
+        }
+        Case('J')
+        {
+            If (text == "Jump") Return TokenKind.KwJump;
+        }
+        Case('N')
+        {
+            If (text == "New") Return TokenKind.KwNew;
+        }
+        Case('O')
+        {
+            If (text == "Override") Return TokenKind.KwOverride;
+        }
+        Case('P')
+        {
+            If (text == "Property") Return TokenKind.KwProperty;
+            If (text == "Public") Return TokenKind.KwPublic;
+            If (text == "Private") Return TokenKind.KwPrivate;
+            If (text == "Protected") Return TokenKind.KwProtected;
+        }
+        Case('R')
+        {
+            If (text == "Return") Return TokenKind.KwReturn;
+            If (text == "Record") Return TokenKind.KwRecord;
+        }
+        Case('S')
+        {
+            If (text == "Set") Return TokenKind.KwSet;
+            If (text == "Switch") Return TokenKind.KwSwitch;
+            If (text == "Safe") Return TokenKind.KwSafe;
+            If (text == "Struct") Return TokenKind.KwStruct;
+            If (text == "Static") Return TokenKind.KwStatic;
+            If (text == "Sealed") Return TokenKind.KwSealed;
+        }
+        Case('T')
+        {
+            If (text == "Try") Return TokenKind.KwTry;
+            If (text == "Throw") Return TokenKind.KwThrow;
+            If (text == "Trusted") Return TokenKind.KwTrusted;
+            If (text == "This") Return TokenKind.KwThis;
+        }
+        Case('U')
+        {
+            If (text == "Unit") Return TokenKind.KwUnit;
+            If (text == "Unsafe") Return TokenKind.KwUnsafe;
+        }
+        Case('V')
+        {
+            If (text == "Var") Return TokenKind.KwVar;
+            If (text == "Virtual") Return TokenKind.KwVirtual;
+        }
+        Case('W')
+        {
+            If (text == "While") Return TokenKind.KwWhile;
+        }
+        Case('a')
+        {
+            If (text == "any") Return TokenKind.TypeAny;
+        }
+        Case('b')
+        {
+            If (text == "bool") Return TokenKind.TypeBool;
+            If (text == "byte") Return TokenKind.TypeByte;
+        }
+        Case('c')
+        {
+            If (text == "char") Return TokenKind.TypeChar;
+        }
+        Case('d')
+        {
+            If (text == "default") Return TokenKind.KwDefault;
+        }
+        Case('f')
+        {
+            If (text == "false") Return TokenKind.KwFalse;
+            If (text == "float") Return TokenKind.TypeFloat;
+            If (text == "f16") Return TokenKind.TypeF16;
+            If (text == "f32") Return TokenKind.TypeF32;
+            If (text == "f64") Return TokenKind.TypeF64;
+            If (text == "f128") Return TokenKind.TypeF128;
+        }
+        Case('i')
+        {
+            If (text == "int") Return TokenKind.TypeInt;
+            If (text == "i8") Return TokenKind.TypeI8;
+            If (text == "i16") Return TokenKind.TypeI16;
+            If (text == "i32") Return TokenKind.TypeI32;
+            If (text == "i64") Return TokenKind.TypeI64;
+            If (text == "isize") Return TokenKind.TypeIsize;
+        }
+        Case('n')
+        {
+            If (text == "null") Return TokenKind.KwNull;
+        }
+        Case('s')
+        {
+            If (text == "string") Return TokenKind.TypeString;
+        }
+        Case('t')
+        {
+            If (text == "true") Return TokenKind.KwTrue;
+        }
+        Case('u')
+        {
+            If (text == "u8") Return TokenKind.TypeU8;
+            If (text == "u16") Return TokenKind.TypeU16;
+            If (text == "u32") Return TokenKind.TypeU32;
+            If (text == "u64") Return TokenKind.TypeU64;
+            If (text == "usize") Return TokenKind.TypeUsize;
+        }
+        Case('v')
+        {
+            If (text == "void") Return TokenKind.TypeVoid;
+        }
+        Case(default) { }
+    }
+    Return TokenKind.Identifier;
 }
 
 Safe Function void SkipTrivia(LexerState state)
 {
-    While (true)
+    int at = state.Position;
+    If (at < 0) Return;
+    int start = at;
+    int lines = 0;
+    int lineStart = at;
+    While (at < state.Length)
     {
-        While (IsWhitespace(Current(state))) Advance(state);
-        If (Current(state) == '/' && Peek(state) == '/')
+        char value = state.Text[at];
+        If (value == '\n')
         {
-            AdvanceTwice(state);
-            While (Current(state) != '\0' && Current(state) != '\n') Advance(state);
-            Continue;
+            at = at + 1;
+            lineStart = at;
+            lines = lines + 1;
         }
-        If (Current(state) == '/' && Peek(state) == '*')
+        ElseIf (value == ' ' || value == '\t' || value == '\r') at = at + 1;
+        ElseIf (value == '/' && at + 1 < state.Length && state.Text[at + 1] == '/')
         {
-            AdvanceTwice(state);
-            While (Current(state) != '\0')
+            at = at + 2;
+            While (at < state.Length && state.Text[at] != '\n') at = at + 1;
+        }
+        ElseIf (value == '/' && at + 1 < state.Length && state.Text[at + 1] == '*')
+        {
+            at = at + 2;
+            While (at < state.Length)
             {
-                If (Current(state) == '*' && Peek(state) == '/')
-                {
-                    AdvanceTwice(state);
-                    Break;
-                }
-                Advance(state);
+                char part = state.Text[at];
+                at = at + 1;
+                If (part == '*' && at < state.Length && state.Text[at] == '/')
+                { at = at + 1; Break; }
+                If (part == '\n') { lineStart = at; lines = lines + 1; }
             }
-            Continue;
         }
-        Break;
+        Else Break;
     }
+    If (at == start) Return;
+    state.Position = at;
+    state.Column = lines == 0 ? state.Column + (at - start) : at - lineStart + 1;
+    state.Line = state.Line + lines;
+}
+
+// Token positions are byte offsets into the same immutable source snapshot.
+Trusted Function string SliceToken(LexerState state, int start)
+{
+    int length = state.Position - start;
+    If (length <= 0 || state.Text == null) Return "";
+    If (IO.Runtime.IsNative)
+    {
+        If (state.SpellingOffset >= 0 && length < 1024)
+        {
+            If (state.SpellingOffset + length + 1 > 2048)
+            {
+                // Escaping language-owned storage keeps interior string pointers valid under either native collector.
+                char[2048] buffer;
+                state.SpellingBuffer = &buffer[0];
+                state.SpellingOffset = 0;
+            }
+            char* text = state.SpellingBuffer + state.SpellingOffset;
+            IO.Kinal.Runtime.Native.MemoryCopy([byte*](text), [byte*](state.Text) + start, [u64](length));
+            text[length] = '\0';
+            state.SpellingOffset = state.SpellingOffset + length + 1;
+            Return [string](text);
+        }
+    }
+    Return IO.Kinal.Compiler.Source.SourceFile.CopyTextSpan(state.Text, start, length);
 }
 
 Safe Function Token MakeToken(LexerState state, TokenKind kind, int start, int line, int column)
 {
     Return IO.Kinal.Compiler.Lex.Token.Create(
-        kind, IO.Text.Slice(state.Source.Text, start, state.Position - start),
+        kind, SliceToken(state, start),
         line, column);
 }
 
 Safe Function Token ReadIdentifier(LexerState state, int line, int column)
 {
     int start = state.Position;
-    While (IsIdentifierStart(Current(state)) || IsDigit(Current(state))) Advance(state);
-    string text = IO.Text.Slice(state.Source.Text, start, state.Position - start);
+    int end = start;
+    While (end >= 0 && end < state.Length)
+    {
+        char value = state.Text[end];
+        If (!IsIdentifierStart(value) && !IsDigit(value)) Break;
+        end = end + 1;
+    }
+    state.Column = state.Column + (end - start);
+    state.Position = end;
+    string text = SliceToken(state, start);
     Return IO.Kinal.Compiler.Lex.Token.Create(KeywordKind(text), text, line, column);
 }
 
@@ -243,43 +384,30 @@ Safe Function Token ReadNumber(LexerState state, int line, int column)
 Safe Function Token ReadString(LexerState state, int line, int column)
 {
     int start = state.Position;
-    int scan = state.Position + 1;
-    bool hasClosingQuote = false;
-    bool escaped = false;
-    While (scan < state.Length)
+    int end = start + 1;
+    int recoveryEnd = -1;
+    bool closed = false;
+    While (end < state.Length)
     {
-        char value = state.Chars[scan];
+        char value = state.Text[end];
         If (value == '\n' || value == '\r') Break;
-        If (!escaped && value == '"')
+        end = end + 1;
+        If (value == '"') { closed = true; Break; }
+        If (value == '\\' && end < state.Length)
         {
-            hasClosingQuote = true;
-            Break;
+            char escaped = state.Text[end];
+            If (escaped == '\n' || escaped == '\r') Break;
+            end = end + 1;
         }
-        If (!escaped && value == '\\') escaped = true; Else escaped = false;
-        scan = scan + 1;
+        ElseIf (recoveryEnd < 0 && (value == ')' || value == ';' || value == '}'))
+            recoveryEnd = end - 1;
     }
-    Advance(state);
-    bool terminated = false;
-    While (Current(state) != '\0')
-    {
-        If (hasClosingQuote && Current(state) == '"')
-        {
-            Advance(state);
-            terminated = true;
-            Break;
-        }
-        If (!hasClosingQuote && (Current(state) == '\n' || Current(state) == '\r' ||
-            Current(state) == ')' || Current(state) == ';' || Current(state) == '}')) Break;
-        If (Current(state) == '\n' || Current(state) == '\r') Break;
-        If (Current(state) == '\\')
-        {
-            Advance(state);
-            If (Current(state) != '\0') Advance(state);
-            Continue;
-        }
-        Advance(state);
-    }
-    Return MakeToken(state, terminated ? TokenKind.String : TokenKind.BadString, start, line, column);
+    // A closing quote makes punctuation part of the literal. On an unfinished
+    // line, leave the first unescaped recovery delimiter for the parser.
+    If (!closed && recoveryEnd >= 0) end = recoveryEnd;
+    state.Position = end;
+    state.Column = state.Column + (end - start);
+    Return MakeToken(state, closed ? TokenKind.String : TokenKind.BadString, start, line, column);
 }
 
 Safe Function Token ReadCharacter(LexerState state, int line, int column)
@@ -301,7 +429,9 @@ Safe Function Token ReadCharacter(LexerState state, int line, int column)
         If (Current(state) == '\\')
         {
             Advance(state);
-            If (!IsCharacterEscape(Current(state))) valid = false;
+            char escaped = Current(state);
+            If (escaped == '\0' || escaped == '\n' || escaped == '\r') Break;
+            If (!IsCharacterEscape(escaped)) valid = false;
         }
         Advance(state);
     }
@@ -403,10 +533,37 @@ Safe Function Token ReadSymbol(LexerState state, int line, int column)
     Return IO.Kinal.Compiler.Lex.Token.Create(TokenKind.Eof, unknown, line, column);
 }
 
+// Dependency indexing only needs the Unit name. Accept a plain, complete
+// header using the normal lexer rules; callers fall back to Parser for all
+// other prologues (including Unsafe Alias and malformed headers).
+Safe Function string ProbeUnitName(SourceFile source)
+{
+    LexerState state = New LexerState(source);
+    SkipTrivia(state);
+    If (!IsIdentifierStart(Current(state))) Return null;
+    Token unit = ReadIdentifier(state, state.Line, state.Column);
+    If (unit.Kind != TokenKind.KwUnit) Return null;
+    string name = "";
+    While (true)
+    {
+        SkipTrivia(state);
+        If (!IsIdentifierStart(Current(state))) Return null;
+        Token part = ReadIdentifier(state, state.Line, state.Column);
+        If (part.Kind != TokenKind.Identifier) Return null;
+        name = IO.Text.IsEmpty(name) ? part.Text : name + "." + part.Text;
+        SkipTrivia(state);
+        If (Current(state) == ';') Return name;
+        If (Current(state) != '.') Return null;
+        Advance(state);
+    }
+    Return null;
+}
+
 Safe Function list Tokenize(SourceFile source, list diagnostics)
 {
     list tokens = list.Create();
     LexerState state = New LexerState(source);
+    If (IO.Runtime.IsNative && state.Length >= 2048) state.SpellingOffset = 2048;
     While (true)
     {
         SkipTrivia(state);
@@ -448,8 +605,11 @@ Safe Function list Tokenize(SourceFile source, list diagnostics)
         ElseIf (IO.Kinal.Compiler.Lex.Token.Kind(token) == TokenKind.BadCharacter)
         {
             IO.Kinal.Compiler.Core.Diagnostics.Add(diagnostics, source, "Parser", "Invalid Character Literal",
-                IO.Kinal.Compiler.Lex.Token.Text(token), IO.Kinal.Compiler.Lex.Token.Line(token),
-                IO.Kinal.Compiler.Lex.Token.Column(token), 1);
+                "Character literal must contain exactly one character or a supported escape sequence",
+                IO.Kinal.Compiler.Lex.Token.Line(token), IO.Kinal.Compiler.Lex.Token.Column(token),
+                IO.Text.Length(IO.Kinal.Compiler.Lex.Token.Text(token)));
+            Diagnostic diagnostic = [Diagnostic](diagnostics.Fetch(diagnostics.Count() - 1));
+            diagnostic.Got = "<invalid-char>";
         }
         If (IO.Kinal.Compiler.Lex.Token.Kind(token) == TokenKind.Eof) Break;
     }

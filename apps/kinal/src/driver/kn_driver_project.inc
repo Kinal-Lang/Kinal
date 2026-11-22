@@ -53,6 +53,7 @@ typedef struct
     int no_crt;
     int has_no_default_libs;
     int no_default_libs;
+    int hide_console;
     int has_auto_link;
     int auto_link;
     int has_source_mode;
@@ -67,6 +68,8 @@ typedef struct
     int package_root_count;
     char official_package_roots[32][KN_MAX_PATH];
     int official_package_root_count;
+    char package_pins[KN_PKG_PINS_PER_SCOPE][KN_PKG_PIN_SIZE];
+    int package_pin_count;
 
     char lib_dirs[32][KN_MAX_PATH];
     int lib_dir_count;
@@ -99,6 +102,8 @@ typedef struct
     int package_root_count;
     char official_package_roots[32][KN_MAX_PATH];
     int official_package_root_count;
+    char package_pins[KN_PKG_PINS_PER_SCOPE][KN_PKG_PIN_SIZE];
+    int package_pin_count;
 
     KnProjSourceSet source_sets[32];
     int source_set_count;
@@ -265,8 +270,8 @@ static bool knproj_copy_string_token(Token tok, char *out, size_t cap)
             else if (e == '"') c = '"';
             else c = e;
         }
-        if (off + 1 < cap)
-            out[off++] = c;
+        if (off + 1 >= cap) return false;
+        out[off++] = c;
     }
     out[off] = 0;
     return true;
@@ -280,7 +285,8 @@ static bool knproj_copy_text_token(Token tok, char *out, size_t cap)
     out[0] = 0;
     if (tok.type == TOK_STRING)
         return knproj_copy_string_token(tok, out, cap);
-    len = tok.length < cap - 1 ? tok.length : cap - 1;
+    if (tok.length >= cap) return false;
+    len = tok.length;
     kn_memcpy(out, tok.start, len);
     out[len] = 0;
     return len > 0;
@@ -514,7 +520,8 @@ static bool knproj_parse_source_mode(KnProjParser *p, int *out)
 }
 
 static bool knproj_parse_packages_block(KnProjParser *p, char roots[32][KN_MAX_PATH], int *root_count,
-                                        char official_roots[32][KN_MAX_PATH], int *official_root_count)
+                                        char official_roots[32][KN_MAX_PATH], int *official_root_count,
+                                        char pins[][KN_PKG_PIN_SIZE], int *pin_count)
 {
     if (!knproj_expect(p, TOK_LBRACE, "expected '{'"))
         return false;
@@ -536,6 +543,11 @@ static bool knproj_parse_packages_block(KnProjParser *p, char roots[32][KN_MAX_P
             if (!knproj_parse_string_list(p, (char *)official_roots, KN_MAX_PATH, KN_MAX_PATH, official_root_count,
                                           32, "too many official package roots"))
                 return false;
+        }
+        else if (knproj_text_eq_ci(key, "Pins"))
+        {
+            if (!knproj_parse_string_list(p, (char *)pins, KN_PKG_PIN_SIZE, KN_PKG_PIN_SIZE, pin_count,
+                                          KN_PKG_PINS_PER_SCOPE, "package pin list or entry is too long")) return false;
         }
         else
         {
@@ -751,6 +763,10 @@ static bool knproj_parse_build_block(KnProjParser *p, KnProjProfile *profile)
             if (!knproj_parse_name(p, profile->linker_path, sizeof(profile->linker_path), "expected linker path"))
                 return false;
         }
+        else if (knproj_text_eq_ci(key, "HideConsole"))
+        {
+            if (!knproj_parse_bool(p, &profile->hide_console, "expected true or false")) return false;
+        }
         else if (knproj_text_eq_ci(key, "Superloop"))
         {
             if (!knproj_parse_bool(p, &profile->knc_superloop, "expected true or false"))
@@ -917,7 +933,8 @@ static bool knproj_parse_profile_block(KnProjParser *p, KnProjectConfig *cfg)
         else if (knproj_text_eq_ci(sec, "Packages"))
         {
             if (!knproj_parse_packages_block(p, profile->package_roots, &profile->package_root_count,
-                                             profile->official_package_roots, &profile->official_package_root_count))
+                                             profile->official_package_roots, &profile->official_package_root_count,
+                                             profile->package_pins, &profile->package_pin_count))
                 return false;
         }
         else
@@ -1009,7 +1026,8 @@ static bool parse_knproj_config(const char *path, KnProjectConfig *out)
         if (knproj_text_eq_ci(key, "Packages"))
         {
             if (!knproj_parse_packages_block(&p, out->package_roots, &out->package_root_count,
-                                             out->official_package_roots, &out->official_package_root_count))
+                                             out->official_package_roots, &out->official_package_root_count,
+                                             out->package_pins, &out->package_pin_count))
             {
                 kn_free(text);
                 return false;
@@ -1147,6 +1165,34 @@ static void append_project_package_roots(StrList *roots, const KnProjectConfig *
                 append_root_list(roots, resolved);
         }
     }
+}
+
+static bool append_package_pin_scope(KnPackagePins *pins, const char specs[][KN_PKG_PIN_SIZE], int count)
+{
+    for (int i = 0; i < count; ++i) {
+        const char *spec = specs[i];
+        const char *separator = package_pin_separator(spec);
+        if (!separator) {
+            pkg_fail("invalid package pin (expected name@version)", spec);
+            return false;
+        }
+        size_t length = (size_t)(separator - spec);
+        for (int j = 0; j < i; ++j)
+            if (kn_strncmp(specs[j], spec, length) == 0 && specs[j][length] == '@') {
+                pkg_fail("duplicate package pin", spec);
+                return false;
+            }
+        int index = find_package_pin(pins, spec, length);
+        if (index < 0) index = pins->count++;
+        kn_memcpy(pins->items[index], spec, kn_strlen(spec) + 1);
+    }
+    return true;
+}
+
+static bool append_project_package_pins(KnPackagePins *pins, const KnProjectConfig *project, const KnProjProfile *profile)
+{
+    return append_package_pin_scope(pins, project->package_pins, project->package_pin_count) &&
+           append_package_pin_scope(pins, profile->package_pins, profile->package_pin_count);
 }
 
 static int append_project_link_item_copy(KnLinkItem *items, int *item_count, int item_cap,

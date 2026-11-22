@@ -2,7 +2,7 @@
 
 Diagnostics related to functions, methods, constructors, and named arguments.
 
-The examples in this document are minimal reproductions of the most common way each diagnostic code is triggered. A few diagnostics that are more implementation-oriented use the closest surface-level form that user code can express.
+This page records the registered templates. Corrected examples show the supported form. A trigger sketch illustrates a rule or parser state and may require surrounding declarations or report an earlier/different diagnostic in the current C compiler.
 
 ---
 
@@ -27,23 +27,15 @@ The examples in this document are minimal reproductions of the most common way e
 Incorrect Example:
 
 ```kinal
-Function int Add(int a, int b)
-{
-    Return a + b;
-}
-
-int value = Add(1);
+string text = "a";
+int length = text.Length(1);
 ```
 
 Correct Example:
 
 ```kinal
-Function int Add(int a, int b)
-{
-    Return a + b;
-}
-
-int value = Add(1, 2);
+string text = "a";
+int length = text.Length();
 ```
 
 Reason: The compiler found the target function after overload resolution, but the argument quantities provided by the call site still did not match.
@@ -95,23 +87,17 @@ Fix: Either use all positional parameters, or change all named parameters after 
 Incorrect Example:
 
 ```kinal
-Function int Identity(int value)
-{
-    Return value;
-}
+Get IO.Type.any;
 
-int result = Identity(value = 42);
+bool result = IO.Type.any.IsNull(value = null);
 ```
 
 Correct Example:
 
 ```kinal
-Function int Identity(int value)
-{
-    Return value;
-}
+Get IO.Type.any;
 
-int result = Identity(42);
+bool result = IO.Type.any.IsNull(null);
 ```
 
 Reason: Not all call targets expose parameter information that can be bound by name; some built-in calls, function objects, or specific call paths only accept positional arguments.
@@ -167,23 +153,19 @@ Fix: Pass in the positional parameters in the order of the constructor parameter
 Incorrect Example:
 
 ```kinal
-Function string Format(string text, int indent = 0)
-{
-    Return text;
-}
+Function int Add(int left, int right = 0) { Return left + right; }
 
-Format(text = "hello", text = "world");
+IO.Type.Object.Function fn = Add;
+int result = fn(left = 1, left = 2);
 ```
 
 Correct Example:
 
 ```kinal
-Function string Format(string text, int indent = 0)
-{
-    Return text;
-}
+Function int Add(int left, int right = 0) { Return left + right; }
 
-Format(text = "hello", indent = 2);
+IO.Type.Object.Function fn = Add;
+int result = fn(left = 1, right = 2);
 ```
 
 Reason: Repeated assignment of the same formal parameter will make the call semantics unclear, and the compiler cannot determine which value should be used in the end.

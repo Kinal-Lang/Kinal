@@ -59,7 +59,7 @@ def invoke(command: list[str], root: Path, *, error: str | None = None) -> str:
     output = proc.stdout + proc.stderr
     if error is None:
         if proc.returncode != 0:
-            raise AssertionError(f"command failed: {command}\n{output}")
+            raise AssertionError(f"command failed (exit {proc.returncode}): {command}\n{output}")
     elif proc.returncode != 1 or error not in output:
         raise AssertionError(f"expected exit 1 / {error!r}: {command}\n{output}")
     return output
@@ -94,8 +94,6 @@ def check_ir(path: Path, triple: str, os_id: int, arch: int, *, legacy_stage0: b
         "target_static": ".lib" if os_id == 1 else ".a",
         "host_dynamic": {1: ".dll", 2: ".so", 3: ".dylib"}[host_os],
     }.items():
-        if name == "host_dynamic" and legacy_stage0 and host_os == 3:
-            continue  # Old macOS releases incorrectly report .so; current compilers must not.
         body = function_body(ir, "probe_" + name)
         # String constants may be returned directly or through a GEP. Inspect
         # only globals referenced by this probe, not unrelated runtime strings.
@@ -105,7 +103,10 @@ def check_ir(path: Path, triple: str, os_id: int, arch: int, *, legacy_stage0: b
         escaped = "".join("\\\\" if byte == 92 else
                           (chr(byte) if 32 <= byte < 127 and byte != 34 else f"\\{byte:02X}")
                           for byte in value.encode("utf-8"))
+        # A frozen macOS compiler may still return the old Unix suffix.
+        allow_so = name == "host_dynamic" and legacy_stage0 and host_os == 3
         assert any(f'c"{escaped}\\00"' in line or
+                   (allow_so and 'c".so\\00"' in line) or
                    (not value and "[1 x i8] zeroinitializer" in line)
                    for line in lines), (path, name, body, lines)
     # IO.Path policy must follow the output platform, not the compilation host.
@@ -163,7 +164,9 @@ def check_targets(compiler: Path, stage0: Path, root: Path, out: Path,
             path = out / f"{role}-alias-{alias}.ll"
             invoke([str(exe), "build", "--project", str(manifest), "--profile", "win64",
                     "--target", alias, "--emit", "ir", "-o", str(path)], root)
-            check_ir(path, "i686-pc-windows-msvc", 1, 1, check_path=role == "self")
+            check_ir(path, "i686-pc-windows-msvc", 1, 1,
+                     legacy_stage0=role == "stage0" and not stage0_reference,
+                     check_path=role == "self")
 
     # CLI takes precedence over the profile, and exact triples work too.
     override = out / "override.ll"
@@ -190,7 +193,7 @@ def check_targets(compiler: Path, stage0: Path, root: Path, out: Path,
     assert not rejected.with_suffix(".obj").exists()
     assert not rejected.with_suffix(".o").exists()
     from check_target_abi import check_target_abi
-    check_target_abi(compiler, stage0, root, out / "abi")
+    check_target_abi(compiler, stage0, root, out / "abi", stage0_reference=stage0_reference)
     sys.path.insert(0, str(root / "tests"))
     from check_target_spellings import check_target_spellings
     spelling_self = check_target_spellings(compiler, root, out / "spellings-self")
@@ -209,10 +212,12 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--compiler", type=Path, required=True)
     parser.add_argument("--stage0", type=Path, required=True)
+    parser.add_argument("--stage0-role", choices=("reference", "bootstrap"), default="reference")
     parser.add_argument("--out-dir", type=Path, required=True)
     args = parser.parse_args()
     result = check_targets(args.compiler.resolve(), args.stage0.resolve(),
-                           Path(__file__).resolve().parents[2], args.out_dir.resolve())
+                           Path(__file__).resolve().parents[2], args.out_dir.resolve(),
+                           stage0_reference=args.stage0_role == "reference")
     print(json.dumps(result))
 
 

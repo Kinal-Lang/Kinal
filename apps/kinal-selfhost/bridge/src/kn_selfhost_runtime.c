@@ -2,6 +2,33 @@
 
 #include "kn_selfhost_runtime.h"
 
+#if defined(_WIN32)
+#include <windows.h>
+#include <io.h>
+#endif
+
+int32_t kn_sh_rt_console_mode(int32_t descriptor)
+{
+#if defined(_WIN32)
+    DWORD mode = 0;
+    return GetConsoleMode((HANDLE)_get_osfhandle(descriptor), &mode) ? (int32_t)mode : -1;
+#else
+    (void)descriptor;
+    return -1;
+#endif
+}
+
+int32_t kn_sh_rt_set_console_mode(int32_t descriptor, uint32_t mode)
+{
+#if defined(_WIN32)
+    return SetConsoleMode((HANDLE)_get_osfhandle(descriptor), mode);
+#else
+    (void)descriptor;
+    (void)mode;
+    return 0;
+#endif
+}
+
 static uint64_t text_length(const char *text)
 {
     uint64_t length = 0;

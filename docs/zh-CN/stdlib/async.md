@@ -1,170 +1,72 @@
-# IO.Async — 异步并发
+# IO.Async：任务与子进程
 
-`IO.Async` 提供任务派生、等待、状态查询等异步原语，配合语言级 `Async`/`Await` 关键字使用。
+本文是 Native API 参考。当前 C KNC 不提供通用 Await／Run lowering；superloop 融合是独立的字节码优化。
 
-> **安全要求**：大多数 `IO.Async` 函数（`Spawn`、`Wait`、`IsCompleted` 等）需要在 `Trusted` 或 `Unsafe` 安全块中调用。`Run`、`Sleep`、`Yield` 可在 `Safe` 上下文中使用。
+导入 `Get IO.Async;`。该命名空间包含托管语言 Task 和主机子进程句柄两类 API，进程句柄不是 IO.Async.Task。
 
-## 导入
+## 完整 API
 
-```kinal
-Get IO.Async;
-```
+| 函数 | 结果 | 安全等级／含义 |
+|------|------|---------------|
+| `Run(IO.Async.Task task)` | `any` | Safe，同步获得任务结果 |
+| `Sleep(int ms)` | `IO.Async.Task` | Safe，等待任务 |
+| `Yield()` | `IO.Async.Task` | Safe，协作让出任务 |
+| `Spawn(string command)` | `byte*` | Trusted，启动子进程 |
+| `IsCompleted(byte* handle)` | `bool` | Trusted，查询完成 |
+| `Wait(byte* handle, int ms)` | `bool` | Trusted，带超时等待 |
+| `ExitCode(byte* handle)` | `int` | Trusted，查询进程退出状态 |
+| `Close(byte* handle)` | `bool` | Trusted，释放进程句柄 |
 
----
+语言调用规则允许 Safe 调用 Trusted，原始指针操作另受限制。进程包装通常写为 Trusted 函数，将主机资源处理集中在一处。
 
-## 语言级关键字
+## 任务
 
-在学习 `IO.Async` 之前，先了解语言层面的异步支持：
+Async 函数调用产生 Task；Run 传 `Compute()` 而不是 `Compute`。Await 只在 Async 函数内有效，Sleep／Yield 返回 Task，不是 void。完整程序参见[异步编程](../language/async.md)。
 
-### `Async Function`
+该 API 没有 `Spawn(Function)`、通用线程创建、任务取消、任务组合器家族或自动并行 map。顺序 Await 不代表重叠执行，阻塞库调用也不会自动异步化。
 
-声明一个异步函数，返回类似 future 的任务句柄：
+## 进程生命周期
 
-```kinal
-Async Function string FetchData()
-{
-    Await IO.Async.Sleep(100);
-    Return "result";
-}
-```
-
-### `Await`
-
-等待一个异步操作完成并获取其结果：
+以下 Native 主机示例等待小型子命令，打印退出码并关闭句柄：
 
 ```kinal
-string data = Await FetchData();
-```
-
----
-
-## 函数参考
-
-### 任务管理（需要 Trusted 上下文）
-
-| 函数 | 签名 | 说明 |
-|------|------|------|
-| `Spawn(fn)` | `Function → any` | 派生一个异步任务，返回任务句柄 |
-| `IsCompleted(task)` | `any → bool` | 查询任务是否已完成 |
-| `Wait(task)` | `any → any` | 阻塞等待任务完成并返回结果 |
-| `ExitCode(task)` | `any → int` | 获取任务退出码 |
-| `Close(task)` | `any → void` | 释放任务资源 |
-
-```kinal
-Trusted
-{
-    any task = IO.Async.Spawn(MyAsyncFunc);
-
-    While (!IO.Async.IsCompleted(task))
-    {
-        IO.Async.Yield();
-    }
-
-    any result = IO.Async.Wait(task);
-    IO.Async.Close(task);
-}
-```
-
-### 调度原语（可在 Safe 上下文使用）
-
-| 函数 | 签名 | 说明 |
-|------|------|------|
-| `Run(fn)` | `Function → void` | 在当前调度器上运行一个任务 |
-| `Sleep(ms)` | `int → void` | 异步休眠指定毫秒数 |
-| `Yield()` | `→ void` | 让出 CPU 给其他任务 |
-
-```kinal
-// 异步休眠（不阻塞主线程）
-Await IO.Async.Sleep(500);
-
-// 运行任务
-IO.Async.Run(BackgroundWorker);
-```
-
----
-
-## 使用模式
-
-### 模式一：Async/Await（推荐）
-
-语言层面的 `Async`/`Await` 是编写异步代码最简洁的方式：
-
-```kinal
-Unit App.AsyncDemo;
-
+Unit Docs.Processes;
 Get IO.Console;
 Get IO.Async;
 
-Async Function string LoadConfig(string path)
+Trusted Function int RunChild(string command)
 {
-    Await IO.Async.Sleep(10);  // 模拟 I/O 延迟
-    Return IO.File.ReadAllText(path);
+    byte* handle = IO.Async.Spawn(command);
+    If (handle == null) { Return -1; }
+    bool completed = IO.Async.Wait(handle, -1);
+    If (!completed)
+    {
+        IO.Async.Close(handle);
+        Return -1;
+    }
+    int code = IO.Async.ExitCode(handle);
+    IO.Async.Close(handle);
+    Return code;
 }
 
-Async Function int Main()
+Static Function int Main()
 {
-    IO.Console.PrintLine("开始加载...");
-    string cfg = Await LoadConfig("config.json");
-    IO.Console.PrintLine("加载完成: " + cfg);
+    string command = "sh -c 'exit 7'";
+    If (IO.Target.OS == IO.Target.OS.Windows)
+    {
+        command = "cmd /c exit 7";
+    }
+    IO.Console.PrintLine(RunChild(command)); // 7
     Return 0;
 }
 ```
 
-### 模式二：手动任务派生（Trusted）
+`Wait(handle, 0)` 立即查询，正数为毫秒超时，-1 无限等待。完成后再读取 ExitCode。Close 释放句柄，不是通用子进程终止 API。
 
-适合需要更精细控制的场景：
+命令字符串遵守目标主机的进程／shell 约定，不是 argv 数组接口；不要盲目拼接不可信输入。以上示例使用固定命令，并在查询结果前确认完成。
 
-```kinal
-Trusted Function void ParallelWork()
-{
-    any t1 = IO.Async.Spawn(WorkA);
-    any t2 = IO.Async.Spawn(WorkB);
+## 运行时与平台边界
 
-    IO.Async.Wait(t1);
-    IO.Async.Wait(t2);
+进程操作需要 hosted 操作系统服务，存在声明不代表 freestanding 镜像或所有 VM 都具备这些服务。运行时／VM 支持和任务 superloop 选项参见[后端支持](../advanced/backend-support.md)、[VM CLI](../cli/vm.md)。
 
-    IO.Async.Close(t1);
-    IO.Async.Close(t2);
-
-    IO.Console.PrintLine("两个任务均已完成");
-}
-```
-
-### 模式三：轮询完成状态
-
-```kinal
-Trusted Function void PollTask()
-{
-    any task = IO.Async.Spawn(LongRunningJob);
-
-    While (!IO.Async.IsCompleted(task))
-    {
-        IO.Console.Print(".");
-        IO.Async.Sleep(100);
-        IO.Async.Yield();
-    }
-
-    IO.Console.PrintLine(" 完成!");
-    IO.Async.Close(task);
-}
-```
-
----
-
-## 超级循环（Superloop）
-
-KinalVM 的异步调度器基于"超级循环"（superloop）模型。默认情况下，`IO.Async.Run` 会将任务加入事件循环并自动推进。
-
-编译器选项：
-- `--superloop`：启用超级循环模式（默认）
-- `--no-superloop`：禁用超级循环（用于嵌入式等场景）
-
----
-
-## 相关
-
-- [异步编程](../language/async.md) — Async / Await 语言特性详解
-- [安全级别](../language/safety.md) — Trusted / Safe 上下文
-- [IO.System](system.md) — `Exec` 等进程级操作
-- [IO.Time](time.md) — Sleep 与计时辅助接口
-
+外部进程资源需要显式 Close，Kinal GC 不替代句柄所有权。参见[内存与生命周期](../advanced/memory-management.md)。

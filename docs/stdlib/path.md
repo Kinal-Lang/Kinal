@@ -1,6 +1,6 @@
 # IO.Path — Path Operations
 
-`IO.Path` provides cross-platform tools for joining, decomposing, and checking file paths. All operations are pure string processing and do not access the file system.
+`IO.Path` provides cross-platform tools for joining, decomposing, and checking file paths. Most helpers process path text; CurrentDirectory/Cwd query the host working directory. Normalizing text does not verify that a path exists.
 
 ## Import
 
@@ -35,7 +35,7 @@ string deep = IO.Path.Join3("base", "sub", "file.txt");
 |----------|-----------|-------------|
 | `FileName(path)` | `string → string` | File name (including extension) |
 | `BaseName(path)` | `string → string` | File name (without extension, also called `Stem`) |
-| `Extension(path)` | `string → string` | Extension (including `.`), e.g. `".txt"` |
+| `Extension(path)` | `string → string` | Text after the final dot of the file name, e.g. `"txt"` |
 | `Directory(path)` | `string → string` | Containing directory (also called `Parent`) |
 
 ```kinal
@@ -43,9 +43,11 @@ string path = "/home/user/docs/report.pdf";
 
 IO.Path.FileName(path);    // "report.pdf"
 IO.Path.BaseName(path);    // "report"
-IO.Path.Extension(path);   // ".pdf"
+IO.Path.Extension(path);   // "pdf"
 IO.Path.Directory(path);   // "/home/user/docs"
 ```
+
+The path operations on this page are available in Native and KinalVM. A portable bytecode program uses the VM host’s path conventions.
 
 ### Transformation
 
@@ -121,7 +123,7 @@ Static Function int Main()
 
     // Decompose path info
     IO.Console.PrintLine(IO.Path.FileName(file));   // result.txt
-    IO.Console.PrintLine(IO.Path.Extension(file));  // .txt
+    IO.Console.PrintLine(IO.Path.Extension(file));  // txt
     IO.Console.PrintLine(IO.Path.Directory(file));  // /home/user/project/output
 
     // Change extension
@@ -138,3 +140,5 @@ Static Function int Main()
 
 - [IO.File](filesystem.md) — File reading and writing (using path strings)
 - [IO.System](system.md) — `CommandLine`, `FileExists`, and other system interfaces
+
+The public aliases also include `Parent(path)` for Directory, `Stem(path)` for BaseName, and `CurrentDirectory()` for Cwd. They have the same string parameter/result shapes as their counterpart. Path separator, Windows drive/UNC and absolute-path policy follow the compiled target (`IO.Target.OS`), not the compiler host. Examples using POSIX slash spelling show POSIX output; Windows normalization can use backslashes. CurrentDirectory/Cwd require host services; most source helpers are Trusted and Safe callers may call them. Normalize is lexical, not canonical filesystem/symlink resolution.

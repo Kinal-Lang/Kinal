@@ -63,6 +63,7 @@ typedef struct
     int crt_mode;        // KnCrtMode
     int no_crt;
     int no_default_libs;
+    int hide_console;
     const char *entry_symbol;
     const char *link_script;
     int trace;

@@ -1,5 +1,7 @@
 Unit IO.Kinal.VM.Bytecode;
 
+Get IO.Kinal.VM.BuildInfo;
+
 Enum OpCode By u8
 {
     LoadInt,
@@ -140,7 +142,9 @@ Enum OpCode By u8
     UGeInt = 135,
     LShrInt = 136,
     FloatToF32 = 137,
-    IntToF32 = 138
+    IntToF32 = 138,
+    CallRange = 139,
+    UIntToFloat = 140
 }
 
 Enum ValueKind By u8
@@ -156,6 +160,12 @@ Enum ValueKind By u8
     Pointer
 }
 
+// Capture cells are internal register values, outside the serialized ValueKind range.
+Enum RegisterKind By u8
+{
+    CaptureCell = 9
+}
+
 Enum PointerKind By u8
 {
     FrameReg,
@@ -164,7 +174,8 @@ Enum PointerKind By u8
     ObjectField,
     Func,
     StringChar,
-    Cell
+    Cell,
+    HostHandle
 }
 
 Public Class TypeInfo
@@ -258,7 +269,111 @@ Enum BuiltinId By u16
     ErrorHas = 148,
     ErrorClear = 149,
     ErrorCurrent = 150,
-    GcCollect = 151
+    GcCollect = 151,
+    TextLength = 152,
+    TextIsEmpty = 153,
+    TextCount = 154,
+    TextStartsWith = 155,
+    TextEndsWith = 156,
+    TextIndexOf = 157,
+    TextLastIndexOf = 158,
+    TextTrim = 159,
+    TextReplace = 160,
+    TextToUpper = 161,
+    TextToLower = 162,
+    TextSlice = 163,
+    MathSin = 164,
+    MathCos = 165,
+    DirectoryExists = 166,
+    DirectoryCreate = 167,
+    DirectoryEnsure = 168,
+    DirectoryDelete = 169,
+    DirectoryDeleteIfExists = 170,
+    PathNormalize = 171,
+    PathCurrentDirectory = 172,
+    PathCombine = 211,
+    PathFileName = 212,
+    PathExtension = 213,
+    PathDirectory = 214,
+    PathChangeExtension = 215,
+    PathIsAbsolute = 216,
+    PathBaseName = 217,
+    PathEnsureTrailingSeparator = 218,
+    ListCreate = 219,
+    ListAdd = 220,
+    ListFetch = 221,
+    ListSet = 222,
+    ListInsert = 223,
+    ListTryFetch = 224,
+    ListCount = 225,
+    ListClear = 226,
+    ListRemoveAt = 227,
+    ListContains = 228,
+    ListPop = 229,
+    ListPeek = 230,
+    ListIndexOf = 231,
+    ListIsEmpty = 232,
+    DirectoryFiles = 233,
+    TextSplit = 234,
+    TextLines = 235,
+    TextJoin = 236,
+    FileReadLines = 237,
+    FileWriteLines = 238,
+    DictCreate = 239,
+    DictSet = 240,
+    DictFetch = 241,
+    DictTryFetch = 242,
+    DictContains = 243,
+    DictCount = 244,
+    DictRemove = 245,
+    DictIsEmpty = 246,
+    DictKeys = 247,
+    DictValues = 248,
+    SetCreate = 249,
+    SetAdd = 250,
+    SetContains = 251,
+    SetCount = 252,
+    SetRemove = 253,
+    SetClear = 254,
+    SetIsEmpty = 255,
+    SetValues = 256,
+    JsonParseValue = 257,
+    JsonFormatText = 258,
+    JsonFormatValue = 259,
+    MathTan = 260,
+    MathAsin = 261,
+    MathAcos = 262,
+    MathAtan = 263,
+    MathAtan2 = 264,
+    MathSinh = 265,
+    MathCosh = 266,
+    MathTanh = 267,
+    MathSqrt = 268,
+    MathCbrt = 269,
+    MathPow = 270,
+    MathExp = 271,
+    MathLog = 272,
+    MathLog2 = 273,
+    MathLog10 = 274,
+    MathFloor = 275,
+    MathCeil = 276,
+    MathRound = 277,
+    MathTrunc = 278,
+    MathFAbs = 279,
+    MathFMod = 280,
+    MathFMin = 281,
+    MathFMax = 282,
+    MathCopySign = 283,
+    MathIsInf = 284,
+    MathIsNaN = 285,
+    MathHypot = 286,
+    TextBuilderLength = 287,
+    TextBuilderCapacity = 288,
+    TextBuilderReserve = 289,
+    TextBuilderAppend = 290,
+    TextBuilderAppendChar = 291,
+    TextBuilderClear = 292,
+    TextBuilderBuild = 293
 }
 
 Public Class FunctionInfo
@@ -281,6 +396,17 @@ Public Class FunctionInfo
 
 Public Class Program
 {
+    Public int FormatVersion;
+    Public string CompilerVersion;
+
+    Public Function string VersionNote()
+    {
+        string current = IO.Kinal.VM.BuildInfo.CompilerVersion();
+        If (This.FormatVersion < 4 || This.CompilerVersion == current) Return "";
+        Return "\nKNC compiler version mismatch: current compiler " + current +
+            ", KNC producer " + This.CompilerVersion;
+    }
+
     Public int EntryFunction;
     Public FunctionInfo[] Functions;
     Public int[] IntConstants;
@@ -443,6 +569,8 @@ Public Class Program
             Case([int](OpCode.LShrInt)) { Return 5; }
             Case([int](OpCode.FloatToF32)) { Return 3; }
             Case([int](OpCode.IntToF32)) { Return 4; }
+            Case([int](OpCode.CallRange)) { Return 7; }
+            Case([int](OpCode.UIntToFloat)) { Return 3; }
             Case(default)                    { Throw "Unknown KNC opcode: " + [string](op); }
         }
 

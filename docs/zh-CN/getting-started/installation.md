@@ -1,69 +1,67 @@
 # 安装指南
 
-本文介绍如何在各平台上安装 Kinal 编译器工具链。
+本文安装基于 C 实现的 Kinal 工具链。源码文档对应当前工作区，旧发行版可能缺少新 CLI 选项或字节码指令，应核对实际执行工具的版本。
 
-## 系统要求
+## 平台与依赖
 
-| 平台 | 架构 |
-|------|------|
-| Windows 10/11 | x86-64 / ARM64 |
-| Linux (glibc 2.17+) | x86-64 / ARM64 |
-| macOS 11+ | x86-64 / Apple Silicon |
+官方主机构建流程包含 Windows、Linux、macOS 的 x64 和 ARM64。选择与操作系统及 CPU 架构同时匹配的压缩包。操作系统／libc／SDK 兼容性取决于具体发行构建环境，不能仅根据平台名称推导最低系统版本。
 
-> Kinal 编译器本身不依赖任何运行时，生成的二进制可在上述系统独立运行。
+保留完整解压目录。编译器需要 LLVM 库，原生构建还需要所选链接器、目标运行时和系统库，包也可能增加原生依赖。生成的原生程序不需要编译器本身，但仍可能依赖 CRT、系统库或包内库。参见[后端支持](../advanced/backend-support.md)。
 
-## 安装编译器
+## Linux 与 macOS 安装脚本
 
-### 使用官方安装脚本
-
-对于 macOS 和 Linux，推荐直接使用官方安装脚本。下面这条命令会安装最新发布版本：
+安装最新已发布版本：
 
 ```bash
 curl -fsSL https://kinal.org/install.sh | bash
 ```
 
-安装指定版本示例：
-
-```bash
-curl -fsSL https://kinal.org/install.sh | bash -s -- --version v0.6.0
-```
-
-脚本默认会把工具链安装到 `~/.local/share/kinal`，并把启动脚本写到 `~/.local/bin`。
-
-如果 `~/.local/bin` 还不在 `PATH` 里，可以手动加入：
+工具链默认安装在 `~/.local/share/kinal`，启动脚本默认写入 `~/.local/bin`。必要时将后者加入 shell 的 PATH：
 
 ```bash
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
-### Linux 和 macOS 上的 Zig
+要持久生效，将 export 写入所用 shell 的启动配置。安装器选项作用于安装器进程，不会自动修改已经运行的父 shell。
 
-在 Linux 和 macOS 上，安装脚本还可以把 Zig 一起装到当前 Kinal 版本目录旁边。交互式终端里，脚本会直接询问你是否需要安装。
+选择具体发行版前，可查看可用版本和本机安装状态：
 
-之所以推荐装，是因为 Kinal 在这两个平台上的 hosted 链接会优先使用 Zig。它在 libc、sysroot 和平台链接细节上通常比单独使用 `lld` 更稳一些。
+```bash
+curl -fsSL https://kinal.org/install.sh | bash -s -- --list-versions
+curl -fsSL https://kinal.org/install.sh | bash -s -- --list-installed
+curl -fsSL https://kinal.org/install.sh | bash -s -- --current
+curl -fsSL https://kinal.org/install.sh | bash -s -- --status
+```
 
-如果你先不装 Zig，也还是能继续用。hosted Linux/macOS 构建会回退到 `lld`，同时给出一条警告，提醒你当前环境没有走推荐路径。
+| 选项 | 用途 |
+|------|------|
+| `--version <tag>` | 安装指定的已发布标签 |
+| `--update` | 更新到最新或显式选择的标签 |
+| `--set-default <tag>` | 切换到一个已安装版本 |
+| `--remove-version <tag>` | 移除一个已安装版本 |
+| `--link <dir>` | 注册本地完整工具链目录，默认本地名称 dev |
+| `--root-dir <dir>` | 覆盖工具链安装根目录 |
+| `--install-dir <dir>` | 覆盖启动脚本目录 |
+| `--dry-run` | 显示计划，不修改安装文件 |
+| `--help` | 查看安装器完整选项 |
 
-如果你想在命令里直接定下来，可以这样写：
+使用 `--list-versions` 中实际存在的标签；源码 `VERSION` 值不能证明同名发行版已经发布。安装器默认启用 SHA-256 验证，除非显式关闭。
+
+### 可选 Zig 工具链
+
+Linux／macOS hosted 链接在可用时优先选用 Zig。安装器提供可选 Zig 扩展，交互环境可能询问是否安装。无人值守时可显式选择：
 
 ```bash
 curl -fsSL https://kinal.org/install.sh | bash -s -- --with-zig
+# 另一种选择：跳过可选工具链
 curl -fsSL https://kinal.org/install.sh | bash -s -- --without-zig
 ```
 
-`--with-extension zig` 和 `--without-extension zig` 也可以，效果相同。通过安装脚本装上的 Zig 会由当前版本的启动脚本自动导出对应路径，不需要再额外配置环境变量。
+`--with-extension zig`、`--without-extension zig` 是等价形式。对应版本的启动脚本会导出已安装 Zig 路径。未安装 Zig 时驱动可回退 LLD，但成功与否仍依赖平台库和链接配置。参见[链接](../advanced/linking.md)。
 
-### 使用代理
+### 代理与自定义目录
 
-安装脚本支持标准代理环境变量，比如 `HTTPS_PROXY`、`HTTP_PROXY`、`ALL_PROXY` 和 `NO_PROXY`。
-
-如果只是 GitHub 下载步骤需要代理，可以直接传给安装器：
-
-```bash
-curl -fsSL https://kinal.org/install.sh | bash -s -- --proxy http://127.0.0.1:7890
-```
-
-如果连拉取安装脚本本身也需要代理，那外层 `curl` 也要一起带上代理环境变量：
+脚本支持标准 `HTTPS_PROXY`、`HTTP_PROXY`、`ALL_PROXY`、`NO_PROXY`。`--proxy` 控制安装器下载；若获取脚本本身也需要代理，应同时为 curl 设置环境：
 
 ```bash
 HTTPS_PROXY=http://127.0.0.1:7890 \
@@ -71,104 +69,116 @@ curl -fsSL https://kinal.org/install.sh | \
 bash -s -- --proxy http://127.0.0.1:7890
 ```
 
-### 卸载
+需要私有 GitHub API 访问时，优先使用安装器支持的 `GITHUB_TOKEN` 环境变量，避免把 token 写入 shell 历史、项目文件或文档示例。
 
-如果你想移除安装器创建的工具链目录和启动脚本，可以直接执行：
+使用默认目录卸载：
 
 ```bash
 curl -fsSL https://kinal.org/install.sh | bash -s -- --uninstall
 ```
 
-如果你当时用了自定义安装目录，也记得把同样的目录参数再传一次：
+自定义安装目录时，管理／卸载应传回相同的 `--root-dir`、`--install-dir`。仅移除一个版本使用独立的 `--remove-version` 操作。
 
-```bash
-curl -fsSL https://kinal.org/install.sh | \
-bash -s -- --uninstall --root-dir ~/.local/share/kinal --install-dir ~/.local/bin
-```
+## 手工安装，包括 Windows
 
-### 从预编译包安装
+1. 从 [Kinal Releases](https://github.com/Kinal-Lang/Kinal/releases) 下载匹配资产。
+2. 将整个压缩包解压到固定目录。
+3. 将该目录或提供的启动脚本目录加入 PATH。
+4. 打开新终端，验证实际选择的工具。
 
-如果你更想手动安装，也可以从 Release 页面下载对应平台的压缩包并解压：
+不要只把 `kinal`／`kinal.exe` 移到其他目录。LLVM 库、链接工具、标准包和运行时是安装的一部分。移动工具链时应保留相对结构；Unix 下还应保留可执行权限。
 
-```bash
-# Linux / macOS
-tar -xf kinal-*.tar.gz
-cd kinal
-chmod +x kinal
-sudo mv kinal /usr/local/bin/
+典型发行目录包含：
 
-# Windows
-# 解压 zip 后，将整个 kinal 目录加入 PATH
-```
-
-### 验证安装
-
-```bash
-kinal --help
-```
-
-看到帮助信息即表示安装成功。
-
-## 安装 KinalVM（可选）
-
-KinalVM 是 Kinal 的字节码虚拟机，用于运行 `.knc` 文件，或通过 `kinal vm run` 将 `.kn` 源文件先编译为临时 `.knc` 后执行。
-
-`kinalvm` 可执行文件通常随编译器一同分发。将其放入同一目录或 `PATH` 中：
-
-```bash
-# 验证
-kinalvm --help
-```
-
-## 目录结构（典型安装）
-
-```
+```text
 kinal/
-├── kinal          # 主编译器
-├── kinalvm        # 字节码虚拟机
-└── locales/       # 诊断信息本地化文件
-    └── zh-CN.json
+├── kinal[.exe]
+├── kinalvm[.exe]
+├── kinal-lsp-server[.exe]
+├── VERSION
+├── locales/
+├── llvm/
+├── linker/
+├── runtime/
+├── stdpkg/
+└── docs/
 ```
 
-## 诊断语言设置
+LLVM 共享库等主机相关文件也可能直接位于可执行文件旁。具体名称取决于主机发行包。
 
-Kinal 支持中文诊断信息：
+## 验证安装
 
 ```bash
-kinal --lang zh hello.kn
+kinal --version --verbose
+kinal --help
+kinalvm --version
 ```
 
-或在 `zh-CN.json` 文件存在时，`--lang zh` 会自动加载中文 locale 文件。
+独立 `kinalvm` 支持执行、版本查询和 `--disasm`，当前未实现 `--help`。编译器侧 VM 命令帮助使用 `kinal vm --help`。
 
-## 开发工具支持
+创建 `hello.kn`：
 
-### VS Code
+```kinal
+Unit Hello;
+Get IO.Console;
 
-安装 **Kinal Language Server** 相关扩展（如有）以获得语法高亮、代码补全和实时诊断。
-
-LSP 服务器位于 `apps/kinal-lsp/`，可本地构建后在编辑器中配置。
-
-## 从源码构建
-
-若需从源码构建 Kinal：
-
-**依赖：**
-- CMake 3.20+
-- LLVM 14+（需 `llvm-config` 在 PATH 中）
-- C 编译器（MSVC / GCC / Clang）
-- Python 3（用于 `infra/` 构建脚本）
+Static Function int Main()
+{
+    IO.Console.PrintLine("Hello, Kinal!");
+    Return 0;
+}
+```
 
 ```bash
-# 使用命令行构建
-python x.py [dev|dist]
-
-# 或使用 构建 GUI 来快速完善环境与构建
-python x.py gui
+kinal run hello.kn
+kinal vm build hello.kn -o hello.knc
+kinalvm hello.knc
 ```
 
-具体 preset 名称可查看 `CMakePresets.json`。
+两条路径均应输出 `Hello, Kinal!`。版本／帮助只验证工具启动；这个程序额外验证源码编译、原生链接及字节码执行。
+
+## 诊断语言
+
+```bash
+kinal build --lang en hello.kn
+kinal build --lang zh hello.kn
+```
+
+`--lang` 可放在子命令之前或之后。中文通常从编译器旁的 `locales/zh-CN.json` 加载，`--locale-file` 可选择自定义文件。移动可执行文件时保留语言包目录。
+
+## VS Code
+
+安装官方 [Kinal 扩展](https://marketplace.visualstudio.com/items?itemName=kinal.kinal)。编译／格式化使用 `kinal`，语言服务使用 `kinal-lsp-server`。PATH 无法发现它们时，将 `kinal.path`、`kinal.serverPath` 设置为完整可执行文件路径。
+
+扩展支持 `.kn`、`.kinal`、`.knproj` 和 **Kinal: New Project File**。分析范围由最近的 `kinal.knproj` 驱动，参见[项目文件](../cli/project-files.md)及[扩展 README](https://github.com/Kinal-Lang/Kinal-VSCode)。
+
+## 从源码构建 C 编译器
+
+项目使用 Python 3.10+、CMake 3.20+、Ninja、主机 C／C++ 编译器和 LLVM／Clang。当前主机 workflow 选择 LLVM 21；应使用仓库的 bootstrap／配置，不应假定任意较旧 LLVM 都兼容。
+
+```bash
+python x.py fetch llvm-prebuilt
+python x.py doctor
+python x.py dev --release
+python x.py test --release
+```
+
+暂存工具链位于 `out/stage/host-release/`；`python x.py dist` 生成发行包。系统 LLVM 选择及平台依赖参见[构建指南](../../../dev/zh-CN/build.md)。
+
+## 排错
+
+| 现象 | 处理 |
+|------|------|
+| 找不到命令 | 检查 PATH、打开新终端或使用完整路径 |
+| 运行了意外版本 | Windows 用 `where.exe kinal`，Unix 用 `command -v kinal`；核对安装器当前版本 |
+| 缺少 LLVM DLL／共享库 | 恢复完整且匹配的发行目录 |
+| 编译器启动但原生链接失败 | 核对链接器、运行时、目标库及 `--show-link` |
+| 新 `.knc` 被拒绝 | 随编译器更新 VM；当前写入格式为 3 |
+| 可选 HTTP／UI 包失败 | 查看对应包的平台与原生依赖说明 |
+| 编辑器与 CLI 不一致 | 检查工具路径、LSP 配置和项目源码范围 |
 
 ## 下一步
 
-- [Hello World](hello-world.md) — 编写并运行第一个 Kinal 程序
-- [项目结构](project-structure.md) — 了解如何组织源文件
+- [Hello World](hello-world.md)
+- [项目结构](project-structure.md)
+- [编译器 CLI](../cli/compiler.md)

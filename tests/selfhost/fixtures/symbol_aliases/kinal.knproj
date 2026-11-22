@@ -25,4 +25,9 @@ Project SelfhostSymbolAliases
             Output = "../../../../out/selfhost/tests/symbol-aliases.exe";
         }
     }
+    Profile "vm"
+    {
+        Source { Entry = "src/Main.kn"; Sets = ["main"]; Mode = ReachableUnits; }
+        Build { Backend = VM; Environment = Hosted; }
+    }
 }

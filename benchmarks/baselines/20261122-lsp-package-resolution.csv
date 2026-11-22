@@ -1,0 +1,5 @@
+project,variant,server_sha256,rounds,queued_completion_median_ms,idle_completion_median_ms,full_diagnostics_median_ms
+ConnectionDesk,before,106e5027786a5b9549a9267bc931a5de5925c6146de070c0047c08251cc23bf2,18,85.81,0.33,85.08
+ConnectionDesk,after,f0e4f5f94d626a40da5a5dfc58bde5f033ea8dc670b675066db25f9a90722a1e,18,73.89,0.33,73.09
+MochaGallery,before,106e5027786a5b9549a9267bc931a5de5925c6146de070c0047c08251cc23bf2,18,90.38,0.45,88.69
+MochaGallery,after,f0e4f5f94d626a40da5a5dfc58bde5f033ea8dc670b675066db25f9a90722a1e,18,78.89,0.45,76.57

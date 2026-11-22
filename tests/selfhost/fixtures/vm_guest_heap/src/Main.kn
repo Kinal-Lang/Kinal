@@ -1,0 +1,121 @@
+Unit Tests.GuestHeapLifetime;
+
+Get Ctx By IO.Kinal.VM.Context;
+Get BC By IO.Kinal.VM.Bytecode;
+Get IO.Text;
+
+Function IO.Text.Builder BuilderStorage(Ctx.HeapObject obj)
+{
+    If (obj Is Ctx.HeapTextBuilder builder) Return builder.Text;
+    Throw "Expected a text builder";
+}
+
+Trusted Function bool CheckTextPages(Ctx.ExecutionContext ctx)
+{
+    int texts = ctx.NewArray(130, [int](BC.ValueKind.String));
+    ctx.ArraySetValue(texts, 63, Ctx.VMValue.FromString(null));
+    ctx.ArraySetValue(texts, 64, Ctx.VMValue.FromString("kept"));
+    int copy = ctx.ArrayAddValue(texts, Ctx.VMValue.FromString("last"));
+    ctx.ArraySetValue(texts, 63, Ctx.VMValue.FromString(""));
+    ctx.ArraySetValue(copy, 64, Ctx.VMValue.FromString(null));
+    int root = ctx.Heap.Pin(Ctx.VMValue.FromArray(copy));
+    ctx.Heap.Collect(ctx);
+    bool valid = ctx.ArrayGetValue(copy, 62).StringValue == "" &&
+        ctx.ArrayGetValue(copy, 63).StringValue == null &&
+        ctx.ArrayGetValue(copy, 64).StringValue == null &&
+        ctx.ArrayGetValue(copy, 130).StringValue == "last";
+    ctx.Heap.Unpin(root);
+    Return valid;
+}
+
+Trusted Function bool CheckArrayTail(Ctx.ExecutionContext ctx, int length)
+{
+    int last = length - 1;
+    int original = ctx.NewArray(length, [int](BC.ValueKind.Null));
+    int child = ctx.NewObject(0);
+    ctx.ArraySetValue(original, last, Ctx.VMValue.FromObject(child));
+    int pin = ctx.Heap.Pin(Ctx.VMValue.FromArray(original));
+    ctx.Heap.Collect(ctx);
+    If (ctx.ObjectAt(child) == null || ctx.ArrayGetValue(original, last).IntValue != child) Return false;
+
+    int copy = ctx.ArrayAddValue(original, Ctx.VMValue.FromInt(71));
+    int copyPin = ctx.Heap.Pin(Ctx.VMValue.FromArray(copy));
+    ctx.ArraySetValue(original, last, Ctx.VMValue.NullValue());
+    ctx.Heap.Unpin(pin);
+    ctx.Heap.Collect(ctx);
+    If (ctx.ObjectAt(child) == null || ctx.ArrayGetValue(copy, last).IntValue != child ||
+        ctx.ArrayGetValue(copy, length).IntValue != 71) Return false;
+    ctx.ArraySetValue(copy, last, Ctx.VMValue.FromInt(83));
+    ctx.Heap.Collect(ctx);
+    If (ctx.ObjectAt(child) != null || ctx.ArrayGetValue(copy, last).IntValue != 83) Return false;
+    ctx.Heap.Unpin(copyPin);
+
+    int text = ctx.NewArray(length, [int](BC.ValueKind.String));
+    ctx.ArraySetValue(text, last, Ctx.VMValue.FromString(null));
+    int longer = ctx.ArrayAddValue(text, Ctx.VMValue.FromString("tail"));
+    ctx.ArraySetValue(text, last, Ctx.VMValue.FromString("old"));
+    Return ctx.ArrayGetValue(longer, last).StringValue == null &&
+        ctx.ArrayGetValue(longer, length).StringValue == "tail" && ctx.ArrayGetValue(text, last).StringValue == "old";
+}
+
+Trusted Static Function int Main()
+{
+    BC.Program program = New BC.Program();
+    BC.TypeInfo node = New BC.TypeInfo();
+    node.FieldCount = 2;
+    BC.TypeInfo builderType = New BC.TypeInfo();
+    builderType.Name = "IO.Text.Builder";
+    builderType.FieldCount = 3;
+    BC.TypeInfo derived = New BC.TypeInfo();
+    derived.BaseType = 1;
+    derived.FieldCount = 4;
+    program.Types = {node, builderType, derived};
+    program.GlobalCount = 1;
+    Ctx.ExecutionContext ctx = New Ctx.ExecutionContext(program);
+
+    int root = ctx.NewObject(0);
+    int values = ctx.NewArray(128, [int](BC.ValueKind.Int));
+    ctx.ArraySetValue(values, 127, Ctx.VMValue.FromInt(98));
+    ctx.ObjectSetValue(root, 0, Ctx.VMValue.FromArray(values));
+    ctx.ObjectSetValue(root, 1, Ctx.VMValue.FromObject(root));
+    Ctx.HeapArray storage = ctx.Arrays[values];
+    int cell = ctx.NewCell(Ctx.VMValue.FromObject(root));
+    int pointer = ctx.NewCellPointer(cell);
+    int pin = ctx.Heap.Pin(Ctx.VMValue.FromPointer(pointer));
+    ctx.Heap.Collect(ctx);
+    If (ctx.PointerLoadValue(pointer).IntValue != root || ctx.ArrayGetValue(values, 127).IntValue != 98) Return 1;
+    ctx.Heap.Unpin(pin);
+    ctx.LastException = Ctx.VMValue.FromObject(root);
+    ctx.Heap.Collect(ctx);
+    If (ctx.Cells[cell] != null || ctx.Pointers[pointer] != null || ctx.Arrays[values] == null) Return 2;
+    ctx.LastException = Ctx.VMValue.NullValue();
+    ctx.SetGlobalValue(0, Ctx.VMValue.FromObject(root));
+    ctx.Heap.Collect(ctx);
+    If (ctx.Objects[root] == null || ctx.Arrays[values] == null) Return 3;
+    ctx.SetGlobalValue(0, Ctx.VMValue.NullValue());
+    ctx.Heap.Collect(ctx);
+    ctx.Heap.Collect(ctx);
+    If (ctx.Objects[root] != null || ctx.Arrays[values] != null || storage.RawBuffer != null) Return 4;
+    If (ctx.NewObject(0) != root || ctx.NewArray(16, [int](BC.ValueKind.Char)) != values) Return 5;
+    If (ctx.NewCell(Ctx.VMValue.FromInt(2)) != cell || ctx.NewCellPointer(cell) != pointer) Return 6;
+    ctx.ReleaseArrayBuffers();
+    If (ctx.Arrays[values].RawBuffer != null) Return 7;
+    int builder = ctx.NewObject(2);
+    If (!(ctx.Objects[builder] Is Ctx.HeapTextBuilder) || ctx.Objects[builder].TypeIndex != 2) Return 8;
+    BuilderStorage(ctx.Objects[builder]).Append("kept through collection");
+    ctx.SetGlobalValue(0, Ctx.VMValue.FromObject(builder));
+    ctx.Heap.Collect(ctx);
+    If (BuilderStorage(ctx.Objects[builder]).Build() != "kept through collection") Return 9;
+    ctx.SetGlobalValue(0, Ctx.VMValue.NullValue());
+    ctx.Heap.Collect(ctx);
+    If (ctx.Objects[builder] != null) Return 10;
+    int replacement = ctx.NewObject(1);
+    If (replacement != builder || BuilderStorage(ctx.Objects[replacement]).Length != 0) Return 11;
+    If (!CheckTextPages(ctx)) Return 12;
+    If (!CheckHandleTables()) Return 13;
+    If (!CheckArrayTail(ctx, 1) || !CheckArrayTail(ctx, 2) || !CheckArrayTail(ctx, 4) ||
+        !CheckArrayTail(ctx, 16) || !CheckArrayTail(ctx, 64) ||
+        !CheckArrayTail(ctx, 68) || !CheckArrayTail(ctx, 80)) Return 14;
+    int frames = CheckFrameReturns();
+    Return frames == 0 ? 0 : 11 + frames;
+}

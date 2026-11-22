@@ -7,6 +7,7 @@
 
 #include "llvm-c/Core.h"
 #include "llvm-c/Analysis.h"
+#include "llvm-c/BitWriter.h"
 #include "llvm-c/IRReader.h"
 #include "llvm-c/Linker.h"
 #include "llvm-c/Error.h"
@@ -74,10 +75,17 @@ static void initialize_targets(void)
             &g_target_state, &expected, 1,
             memory_order_acq_rel, memory_order_acquire))
     {
-        LLVMInitializeAllTargetInfos();
-        LLVMInitializeAllTargets();
-        LLVMInitializeAllTargetMCs();
-        LLVMInitializeAllAsmPrinters();
+        /* Kinal supports X86 and AArch64. "All" follows the build host's LLVM
+         * headers and can reference optional targets absent from the frozen
+         * stage0 library (for example SPIR-V/Xtensa in Linux LLVM packages). */
+        LLVMInitializeX86TargetInfo();
+        LLVMInitializeX86Target();
+        LLVMInitializeX86TargetMC();
+        LLVMInitializeX86AsmPrinter();
+        LLVMInitializeAArch64TargetInfo();
+        LLVMInitializeAArch64Target();
+        LLVMInitializeAArch64TargetMC();
+        LLVMInitializeAArch64AsmPrinter();
         atomic_store_explicit(&g_target_state, 2, memory_order_release);
         return;
     }
@@ -130,6 +138,13 @@ void *kn_sh_llvm_module_create(const char *name)
         return 0;
     }
     return state;
+}
+
+void kn_sh_llvm_discard_value_names(void *module_handle)
+{
+    KnShLlvmModule *state = (KnShLlvmModule *)module_handle;
+    if (state)
+        LLVMContextSetDiscardValueNames(state->context, 1);
 }
 
 void kn_sh_llvm_module_dispose(void *module_handle)
@@ -202,6 +217,53 @@ char *kn_sh_llvm_module_ir(void *module_handle)
     copy = copy_runtime_string(message);
     LLVMDisposeMessage(message);
     return copy;
+}
+
+int kn_sh_llvm_has_uses(void *value)
+{
+    return value && LLVMGetFirstUse((LLVMValueRef)value) != NULL;
+}
+
+/* Remove supplied instrumentation only if it accounts for every call in the
+ * function. An indirect call, inline assembly, invoke or callbr also blocks
+ * removal. The caller decides which instrumentation is redundant in a leaf. */
+void kn_sh_llvm_erase_isolated_calls(void *function, void **calls, int count)
+{
+    if (!function || !calls || count <= 0) return;
+    int matched = 0;
+    for (LLVMBasicBlockRef block = LLVMGetFirstBasicBlock((LLVMValueRef)function);
+         block; block = LLVMGetNextBasicBlock(block)) {
+        for (LLVMValueRef inst = LLVMGetFirstInstruction(block);
+             inst; inst = LLVMGetNextInstruction(inst)) {
+            LLVMOpcode op = LLVMGetInstructionOpcode(inst);
+            if (op == LLVMInvoke || op == LLVMCallBr) return;
+            if (op != LLVMCall) continue;
+            int i = 0;
+            while (i < count && calls[i] != inst) ++i;
+            if (i == count || LLVMGetFirstUse(inst)) return;
+            ++matched;
+        }
+    }
+    if (matched != count) return;
+    for (int i = 0; i < count; ++i)
+        LLVMInstructionEraseFromParent((LLVMValueRef)calls[i]);
+}
+
+int kn_sh_llvm_write_ir(void *module_handle, const char *path)
+{
+    KnShLlvmModule *state = (KnShLlvmModule *)module_handle;
+    char *error = NULL;
+    clear_error();
+    if (!state || !state->module || !path || !*path) {
+        set_error("invalid LLVM module or output path");
+        return 0;
+    }
+    if (LLVMPrintModuleToFile(state->module, path, &error)) {
+        set_error(error ? error : "could not write LLVM IR");
+        if (error) LLVMDisposeMessage(error);
+        return 0;
+    }
+    return 1;
 }
 
 int kn_sh_llvm_module_set_target(void *module_handle, const char *target_triple)
@@ -405,14 +467,10 @@ void *kn_sh_llvm_type_of(void *value)
     return value ? LLVMTypeOf((LLVMValueRef)value) : 0;
 }
 
-/* Import backend-authored target-independent IR. This is a generic LLVM
- * bridge primitive; language/runtime selection remains entirely in Kinal. */
-int kn_sh_llvm_prune_unused(void *module_handle)
+static int run_module_passes(KnShLlvmModule *state, const char *pipeline)
 {
-    KnShLlvmModule *state = module_state(module_handle);
-    if (!state) return 0;
     LLVMPassBuilderOptionsRef options = LLVMCreatePassBuilderOptions();
-    LLVMErrorRef error = LLVMRunPasses(state->module, "globaldce",
+    LLVMErrorRef error = LLVMRunPasses(state->module, pipeline,
         state->target_machine, options);
     LLVMDisposePassBuilderOptions(options);
     if (error)
@@ -420,6 +478,29 @@ int kn_sh_llvm_prune_unused(void *module_handle)
         char *message = LLVMGetErrorMessage(error);
         set_error(message);
         LLVMDisposeErrorMessage(message);
+        return 0;
+    }
+    return 1;
+}
+
+int kn_sh_llvm_prune_unused(void *module_handle)
+{
+    KnShLlvmModule *state = module_state(module_handle);
+    return state && run_module_passes(state, "globaldce");
+}
+
+int kn_sh_llvm_write_bitcode(void *module_handle, const char *pipeline,
+                             const char *path)
+{
+    KnShLlvmModule *state = module_state(module_handle);
+    clear_error();
+    if (!state || !path || !*path || !pipeline || !*pipeline) {
+        set_error("invalid LLVM module, pass pipeline or bitcode path");
+        return 0;
+    }
+    if (!run_module_passes(state, pipeline)) return 0;
+    if (LLVMWriteBitcodeToFile(state->module, path) != 0) {
+        set_error("could not write LLVM bitcode");
         return 0;
     }
     return 1;
@@ -624,6 +705,18 @@ int kn_sh_llvm_set_alignment(void *value, int alignment)
 {
     if (!value || alignment <= 0) return 0;
     LLVMSetAlignment((LLVMValueRef)value, (unsigned)alignment);
+    return 1;
+}
+
+int kn_sh_llvm_add_function_enum_attribute(void *function, const char *name, uint64_t value)
+{
+    LLVMValueRef fn = (LLVMValueRef)function;
+    if (!fn || !LLVMIsAFunction(fn) || !name) return 0;
+    unsigned kind = LLVMGetEnumAttributeKindForName(name, strlen(name));
+    if (!kind) return 0;
+    LLVMContextRef context = LLVMGetTypeContext(LLVMTypeOf(fn));
+    LLVMAddAttributeAtIndex(fn, LLVMAttributeFunctionIndex,
+                            LLVMCreateEnumAttribute(context, kind, value));
     return 1;
 }
 

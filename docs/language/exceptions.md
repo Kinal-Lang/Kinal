@@ -1,174 +1,70 @@
 # Exception Handling
 
-Kinal implements exception handling through `Try`/`Catch`/`Throw`; exception objects can be of any type.
+The current C language frontend accepts `Throw` values of type `string` or `IO.Error`. It does not support throwing arbitrary integers, objects, or `any` values. Exception handling is available in hosted code; freestanding core forbids Try/Catch/Throw.
 
-## Basic Syntax
+## Try, Catch, and Throw
 
-```kinal
-Try
-{
-    // code that may throw an exception
-}
-Catch (Type variableName)
-{
-    // handle the exception
-}
-```
-
-## Throw
-
-`Throw` throws an exception; the value can be of any type:
-
-```kinal
-Throw "something went wrong";             // throw a string
-Throw New IO.Error("Title", "Details");   // throw an IO.Error object
-Throw 42;                                  // throw an integer (not recommended but valid)
-```
-
-## Try/Catch
-
-Catching a specific type of exception:
+A Try has one Catch handler:
 
 ```kinal
 Try
 {
-    Throw "boom";
+    Throw "operation failed";
 }
-Catch (string e)
+Catch (string message)
 {
-    IO.Console.PrintLine("Caught string exception: " + e);
-}
-```
-
-Catching an `IO.Error` object:
-
-```kinal
-Try
-{
-    Throw New IO.Error("File Error", "File not found");
-}
-Catch (IO.Error err)
-{
-    IO.Console.PrintLine(err.Title);
-    IO.Console.PrintLine(err.Message);
+    // message contains the thrown text
 }
 ```
 
-## IO.Error — Standard Exception Class
+Other supported handler spellings are `Catch (IO.Error error)` and parameterless `Catch { ... }`. Multiple consecutive Catch clauses and `Finally` are not in the current grammar. Nest Try blocks when separate recovery boundaries are needed.
 
-`IO.Error` is Kinal's built-in standard exception class with the following fields:
+`Throw expression;` requires an expression. There is no bare rethrow keyword form; explicitly throw the caught value when propagating it. The catch variable is scoped to its handler.
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `Title` | `string` | Exception title (brief description) |
-| `Message` | `string` | Detailed information |
-| `Inner` | `IO.Error` | Nested root-cause exception (can be `null`) |
-| `Trace` | `string` | Call stack trace (filled in automatically) |
+## `IO.Error`
+
+Construct an error with **two** arguments:
 
 ```kinal
-IO.Error err = New IO.Error("Network Error", "Connection timed out");
-IO.Console.PrintLine(err.Title);    // Network Error
-IO.Console.PrintLine(err.Message);  // Connection timed out
+IO.Error error = New IO.Error("File Error", "File was not found");
 ```
 
-### Exception Chaining
+| Field | Type | Meaning |
+|-------|------|---------|
+| `Title` | `string` | Short error classification/title |
+| `Message` | `string` | Error details |
+| `Inner` | `IO.Error` | Linked cause; can be null |
+| `Trace` | `string` | Runtime-recorded trace text |
 
-Use the `Inner` field to chain root causes:
+The built-in constructor takes title/message. There is no three-argument `(title, message, inner)` overload. Set `Inner` explicitly when constructing a deterministic cause chain. The runtime can also attach recorded causes/traces during throw processing; avoid relying on implicit chaining when the exact structure matters.
 
-```kinal
-Try
-{
-    // low-level operation
-    IO.Error inner = New IO.Error("Socket Error", "Connection refused");
-    Throw New IO.Error("HTTP Request Failed", "Unable to establish connection", inner);
-}
-Catch (IO.Error err)
-{
-    IO.Console.PrintLine(err.Title);
-    IO.Console.PrintLine(err.Message);
-    If (err.Inner != null)
-    {
-        IO.Console.PrintLine("Root cause: " + err.Inner.Title);
-    }
-}
-```
-
-Complete constructor forms:
+## Complete Recovery and Chaining Example
 
 ```kinal
-// IO.Error(title, message) — two-parameter version
-IO.Error e1 = New IO.Error("Title", "Message");
+Unit Docs.Exceptions;
+Get IO.Console;
+Get IO.Error;
 
-// Setting Inner via a field after construction
-IO.Error e2 = New IO.Error("Outer", "Outer message");
-// Note: the Inner field needs to be set separately after construction (see chained exception test below)
-```
-
-## Catch Without Parameters
-
-If you don't need the exception information, you can omit the `Catch` parameters (catches all types):
-
-```kinal
-Try
+Function int Divide(int left, int right)
 {
-    RiskyOperation();
-} Catch
-{
-    IO.Console.PrintLine("An exception occurred");
-}
-```
-
-## Returning via Throw
-
-When returning from a function via an exception:
-
-```kinal
-Function int SafeDivide(int a, int b)
-{
-    If (b == 0)
+    If (right == 0)
     {
         Throw New IO.Error("Division Error", "Divisor cannot be zero");
     }
-    Return a / b;
+    Return left / right;
 }
 
-Try
+Function void Calculate()
 {
-    int result = SafeDivide(10, 0);
-}
-Catch (IO.Error err)
-{
-    IO.Console.PrintLine(err.Title);  // Division Error
-}
-```
-
-## Complete Example
-
-```kinal
-Unit App.ExceptionDemo;
-
-Get IO.Console;
-
-Function int Divide(int a, int b)
-{
-    If (b == 0)
-    {
-        Throw New IO.Error("ArithmeticError", "Division by zero");
-    }
-    Return a / b;
-}
-
-Function void Risky()
-{
-    // Nested Try
     Try
     {
-        int r = Divide(10, 0);
-        IO.Console.PrintLine(r);
+        IO.Console.PrintLine(Divide(10, 0));
     }
-    Catch (IO.Error inner)
+    Catch (IO.Error cause)
     {
-        Throw New IO.Error("Operation Failed", "Calculation failed", inner);
+        IO.Error outer = New IO.Error("Calculation Error", "Unable to calculate");
+        outer.Inner = cause;
+        Throw outer;
     }
 }
 
@@ -176,33 +72,59 @@ Static Function int Main()
 {
     Try
     {
-        Risky();
+        Calculate();
     }
-    Catch (IO.Error err)
+    Catch (IO.Error error)
     {
-        IO.Console.PrintLine("Error: " + err.Title);
-        IO.Console.PrintLine("Message: " + err.Message);
-        If (err.Inner != null)
+        IO.Console.PrintLine(error.Title);
+        IO.Console.PrintLine(error.Message);
+        If (error.Inner != null)
         {
-            IO.Console.PrintLine("Root cause: " + err.Inner.Title + " - " + err.Inner.Message);
+            IO.Console.PrintLine(error.Inner.Title);
         }
     }
-    Catch (string msg)
-    {
-        IO.Console.PrintLine("String exception: " + msg);
-    }
-
     Return 0;
 }
 ```
 
-## Important Notes
+Expected output on Native and VM:
 
-- `Catch` only catches exceptions whose type **exactly matches**; Kinal currently does not support polymorphic catching (i.e., `Catch (IO.Error e)` does not catch subclasses of `IO.Error`)
-- Uncaught exceptions will terminate the program
-- Exception handling is also available inside `Safe` functions
+```text
+Calculation Error
+Unable to calculate
+Division Error
+```
 
-## Next Steps
+The recovery function returns success after handling the error. For an unrecoverable application failure, choose an appropriate nonzero exit status instead of swallowing it silently.
 
-- [Classes and Inheritance](classes.md)
-- [Safety Levels](safety.md)
+## Catch Representation and Backend Boundaries
+
+`Catch (string message)` can expose an error's message text, including for an `IO.Error` throw. It is not a general arbitrary-type pattern-matching handler. For portable code, catch a thrown string as string and a thrown `IO.Error` as `IO.Error`.
+
+There is a known cross-backend boundary when catching a raw string as `IO.Error`: Native normalizes it to an error object, while the current VM path can leave the exception pending and exit nonzero. Do not depend on that mixed spelling. Use explicit `IO.Error` construction when structured recovery is required. There is no general user-class exception hierarchy dispatch contract.
+
+An uncaught exception terminates execution. Exact diagnostic colors and trace spelling are runtime/presentation details; tests should assert the relevant error information and exit status rather than assuming trace paths are portable.
+
+## Runtime Inspection Helpers
+
+Import `Get IO.Error;` when calling these helpers:
+
+| Helper | Result | Purpose |
+|--------|--------|---------|
+| `IO.Error.LastTrace()` | `string` | Inspect the runtime's recorded trace |
+| `IO.Error.HasException()` | `bool` | Query pending exception status |
+| `IO.Error.Current()` | `IO.Error` | Inspect the recorded exception object |
+| `IO.Error.Clear()` | `void` | Clear pending exception state |
+
+Recorded last-error information and pending status are distinct. Prefer the explicit Catch binding for ordinary recovery. Clearing pending status is not resource cleanup and is not a substitute for executing the appropriate error path.
+
+## Resource Handling
+
+Try/Catch does not introduce deterministic destructors or a Finally block. Use explicit close/release calls on both success and recovery paths when owning an external resource. GC collection does not close arbitrary foreign resources. See [Memory and Lifetimes](../advanced/memory-management.md).
+
+## See Also
+
+- [Functions](functions.md)
+- [Safety](safety.md)
+- [Backend Support](../advanced/backend-support.md)
+- [Freestanding](../advanced/freestanding.md)

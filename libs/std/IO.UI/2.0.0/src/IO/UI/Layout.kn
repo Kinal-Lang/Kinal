@@ -1,0 +1,204 @@
+Unit IO.UI;
+
+Enum LayoutMode By int { Absolute = 0, Row = 1, Column = 2, Wrap = 3, Grid = 4, Overlay = 5 }
+Enum TrackKind By int { Fixed = 0, Auto = 1, Fraction = 2 }
+
+Safe Function int __UI_Limit(int value, int minimum, int maximum)
+{
+    If (value < 0) { value = 0; }
+    If (value < minimum) { value = minimum; }
+    If (maximum > 0 && value > maximum) { value = maximum; }
+    Return value;
+}
+
+Public Class Track
+{
+    Public TrackKind Kind;
+    Public int Value;
+    Public Constructor(TrackKind kind, int value) { Kind = kind; Value = value; }
+    Public Static Function Track Fixed(int size) { Return New Track(TrackKind.Fixed, size); }
+    Public Static Function Track Auto() { Return New Track(TrackKind.Auto, 0); }
+    Public Static Function Track Fraction(int weight = 1) { Return New Track(TrackKind.Fraction, weight); }
+}
+
+Public Class Panel By GroupBox
+{
+    Private LayoutMode _Mode;
+    Public Property LayoutMode Mode
+    {
+        Get { Return _Mode; }
+        Set { _Mode = value; InvalidateLayout(); }
+    }
+    Private int _Padding;
+    Public Property int Padding
+    {
+        Get { Return _Padding; }
+        Set { _Padding = value; InvalidateLayout(); }
+    }
+    Private int _Gap;
+    Public Property int Gap
+    {
+        Get { Return _Gap; }
+        Set { _Gap = value; InvalidateLayout(); }
+    }
+    Private Track[] _Columns;
+    Public Property Track[] Columns
+    {
+        Get { Return _Columns; }
+        Set { _Columns = value; InvalidateLayout(); }
+    }
+    Private Track[] _Rows;
+    Public Property Track[] Rows
+    {
+        Get { Return _Rows; }
+        Set { _Rows = value; InvalidateLayout(); }
+    }
+
+    Public Constructor(LayoutMode mode = LayoutMode.Absolute)
+    {
+        Mode = mode;
+        _Children = {};
+        _Events = {};
+        Columns = {};
+        Rows = {};
+        _Width = 240;
+        _Height = 180;
+    }
+
+
+    Private Function int[] TrackSizes(IO.UI.Track[] tracks, int space, bool horizontal)
+    {
+        int[] sizes = {};
+        If (tracks.Length() == 0) { Return sizes.Add(space); }
+        int left = space - (tracks.Length() - 1) * Gap;
+        int weights = 0;
+        int i = 0;
+        While (i < tracks.Length())
+        {
+            Track track = tracks[i];
+            int size = 0;
+            If (track.Kind == TrackKind.Fixed) { size = __UI_Limit(track.Value, 0, 0); }
+            Else If (track.Kind == TrackKind.Fraction) { weights += __UI_Limit(track.Value, 1, 0); }
+            Else
+            {
+                int j = 0;
+                While (j < _Children.Length())
+                {
+                    Component child = _Children[j];
+                    int pos = horizontal ? child.Column : child.Row;
+                    int span = horizontal ? child.ColumnSpan : child.RowSpan;
+                    If (!child.AbsolutePosition && pos == i && span <= 1)
+                    {
+                        int preferred = horizontal ? child.MeasureWidth(space) : child.MeasureHeight(space);
+                        preferred += child.Margin * 2;
+                        If (preferred > size) { size = preferred; }
+                    }
+                    j++;
+                }
+            }
+            sizes = sizes.Add(size);
+            left -= size;
+            i++;
+        }
+        left = __UI_Limit(left, 0, 0);
+        i = 0;
+        While (i < tracks.Length())
+        {
+            If (tracks[i].Kind == TrackKind.Fraction)
+            {
+                int weight = __UI_Limit(tracks[i].Value, 1, 0);
+                sizes[i] = left * weight / weights;
+                left -= sizes[i]; weights -= weight;
+            }
+            i++;
+        }
+        Return sizes;
+    }
+
+    Private Function int Offset(int[] sizes, int index)
+    {
+        int value = 0; int i = 0;
+        While (i < index && i < sizes.Length()) { value += sizes[i] + Gap; i++; }
+        Return value;
+    }
+
+    Private Function int SpanSize(int[] sizes, int start, int span)
+    {
+        int value = 0; int i = 0;
+        While (i < span && start + i < sizes.Length())
+        {
+            If (i > 0) { value += Gap; }
+            value += sizes[start + i]; i++;
+        }
+        Return value;
+    }
+
+    Public Override Trusted Function void Arrange(int x, int y, int width, int height)
+    {
+        ActualX = x; ActualY = y;
+        ActualWidth = __UI_Limit(width, MinWidth, MaxWidth);
+        ActualHeight = __UI_Limit(height, MinHeight, MaxHeight);
+
+        int w = __UI_Limit(ActualWidth - Padding * 2, 0, 0);
+        int h = __UI_Limit(ActualHeight - Padding * 2, 0, 0);
+        bool horizontal = Mode == LayoutMode.Row || Mode == LayoutMode.Wrap;
+        int remaining = horizontal ? w : h;
+        int weight = 0; int count = 0; int i = 0;
+        int[] cols = {}; int[] rows = {};
+        If (Mode == LayoutMode.Grid)
+        {
+            cols = TrackSizes(Columns, w, true);
+            rows = TrackSizes(Rows, h, false);
+        }
+        While (i < _Children.Length())
+        {
+            Component c = _Children[i];
+            If (!c.AbsolutePosition)
+            {
+                count++;
+                If (c.Grow > 0) { weight += c.Grow; }
+                Else { remaining -= horizontal ? c.MeasureWidth(w) : c.MeasureHeight(w); }
+                remaining -= c.Margin * 2;
+            }
+            i++;
+        }
+        remaining = __UI_Limit(remaining - (count - 1) * Gap, 0, 0);
+        int cursor = 0; int line = 0; int lineHeight = 0; i = 0;
+        While (i < _Children.Length())
+        {
+            Component c = _Children[i];
+            int m = c.Margin;
+            int cx = m; int cy = m;
+            int cw = c.MeasureWidth(w); int ch = c.MeasureHeight(w);
+            If (c.AbsolutePosition || Mode == LayoutMode.Absolute) { cx += c.X; cy += c.Y; }
+            Else If (Mode == LayoutMode.Grid)
+            {
+                int col = __UI_Limit(c.Column, 0, 0); int row = __UI_Limit(c.Row, 0, 0);
+                cx += Offset(cols, col); cy += Offset(rows, row);
+                cw = SpanSize(cols, col, __UI_Limit(c.ColumnSpan, 1, 0)) - m * 2;
+                ch = SpanSize(rows, row, __UI_Limit(c.RowSpan, 1, 0)) - m * 2;
+            }
+            Else If (Mode == LayoutMode.Overlay) { cw = w - m * 2; ch = h - m * 2; }
+            Else If (Mode == LayoutMode.Wrap)
+            {
+                If (cursor > 0 && cursor + cw + m * 2 > w) { cursor = 0; line += lineHeight + Gap; lineHeight = 0; }
+                cx += cursor; cy += line; cursor += cw + m * 2 + Gap;
+                If (ch + m * 2 > lineHeight) { lineHeight = ch + m * 2; }
+            }
+            Else
+            {
+                int extent = horizontal ? cw : ch;
+                If (c.Grow > 0 && weight > 0)
+                {
+                    extent = remaining * c.Grow / weight; remaining -= extent; weight -= c.Grow;
+                }
+                If (horizontal) { cx += cursor; cw = extent; ch = h - m * 2; }
+                Else { cy += cursor; ch = extent; cw = w - m * 2; }
+                cursor += extent + m * 2 + Gap;
+            }
+            c.Arrange(Padding + cx, Padding + cy, cw, ch);
+            i++;
+        }
+    }
+}
+

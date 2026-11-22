@@ -2,7 +2,7 @@
 
 Warnings related to `Safe` / `Trusted` / `Unsafe` propagation.
 
-The examples in this document are minimal reproductions of the most common way each diagnostic code is triggered. A few diagnostics that are more implementation-oriented use the closest surface-level form that user code can express.
+This page records the registered templates. Corrected examples show the supported form. A trigger sketch illustrates a rule or parser state and may require surrounding declarations or report an earlier/different diagnostic in the current C compiler.
 
 ---
 
@@ -18,7 +18,7 @@ The examples in this document are minimal reproductions of the most common way e
 
 - Severity: Warning
 - Default Detail: Entry point is marked as Unsafe. This disables safety guarantees for the entire program. Consider using Safe Main and isolating Unsafe blocks locally.
-- Description: The entry function is marked as `Unsafe`, which means that the entire program entry no longer enjoys the static guarantee of the security layer.
+- Description: A Native executable entry is marked Unsafe. Calls in other functions still follow their own safety declarations.
 
 Incorrect Example:
 
@@ -41,6 +41,6 @@ Static Safe Function int Main()
 }
 ```
 
-Reason: Once `Main` is `Unsafe`, the boundary of dangerous operations will spread from the local to the entire process entry.
+Reason: an Unsafe entry permits protected operations throughout Main. Compile a Native executable to check this warning; a frontend-only check does not select the entry.
 
 Fix: Prioritize keeping `Main` as `Safe` and only use `Trusted` or `Unsafe Block` in local areas where it is really needed.

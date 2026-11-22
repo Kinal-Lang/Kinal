@@ -47,6 +47,7 @@ tmp_*/
 *.out
 *.app
 *.obj
+/libs/std/IO.UI/2.0.0/native/kn_ui_windows.res
 *.o
 *.lo
 *.pdb
@@ -248,3 +249,6 @@ reports/
 # Keep placeholders if you use empty dirs
 # -----------------------------------------
 !.gitkeep
+
+# Generated compiler metrics report
+/apps/kinal-selfhost/metrics.html

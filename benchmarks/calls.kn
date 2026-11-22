@@ -1,0 +1,79 @@
+Unit Bench.Calls;
+Get Console By IO.Console;
+Get IO.Runtime;
+
+Extern Function int fflush(void* stream) By C;
+Extern Function int getchar() By C;
+Trusted Function void FlushOutput()
+{
+    If (!IO.Runtime.IsVM) fflush(null);
+}
+Trusted Function int ReadNumber()
+{
+    If (IO.Runtime.IsVM) Return [int](Console.ReadLine());
+    Else
+    {
+        int ch = getchar();
+        While (ch >= 0 && ch <= 32) ch = getchar();
+        int n = 0;
+        While (ch >= 48 && ch <= 57) { n = n * 10 + ch - 48; ch = getchar(); }
+        Return n;
+    }
+}
+
+Static Function int Step(int x, int i) { Return (33 * x + i) & 65535; }
+Static Function int Pair(int x, int i) { Return Step(Step(x, i), i + 1); }
+Static Function int Chain(int n, int seed)
+{
+    int x = seed;
+    For (int i = 0; i < n; i = i + 1) x = Pair(x, i);
+    Return x;
+}
+
+Static Function int Left(int n, int x)
+{
+    If (n == 0) Return x;
+    Return Right(n - 1, Step(x, n));
+}
+Static Function int Right(int n, int x)
+{
+    If (n == 0) Return x;
+    Return Left(n - 1, Step(x, n + 1));
+}
+
+Static Function int CheckedStep(int x, int i)
+{
+    If (x < 0) Throw "negative";
+    Return (33 * x + i) & 65535;
+}
+Static Function int CheckedChain(int n, int seed)
+{
+    int x = seed;
+    For (int i = 0; i < n; i = i + 1) x = CheckedStep(x, i);
+    Return x;
+}
+
+Static Function int Main(string[] args)
+{
+    int id = [int](args[0]);
+    int n = [int](args[1]);
+    Console.PrintLine("READY");
+    FlushOutput();
+    While (true)
+    {
+        int reps = ReadNumber();
+        If (reps == 0) Break;
+        int seed = ReadNumber();
+        int total = 0;
+        For (int r = 0; r < reps; r = r + 1)
+        {
+            int x = seed + r % 7;
+            If (id == 0) total = total + Chain(n, x);
+            ElseIf (id == 1) total = total + Left(n, x);
+            Else total = total + CheckedChain(n, x);
+        }
+        Console.PrintLine(total);
+        FlushOutput();
+    }
+    Return 0;
+}

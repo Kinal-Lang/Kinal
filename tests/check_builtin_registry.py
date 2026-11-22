@@ -33,6 +33,36 @@ def duplicates(values: list[int]) -> list[int]:
     return sorted(value for value, count in Counter(values).items() if count > 1)
 
 
+def check_desktop_intrinsics(core_ids: set[int]) -> int:
+    ui = ROOT / "libs/std/IO.UI/2.0.0/src"
+    leaves = {}
+    declaration = re.compile(
+        r"\[IO\.Kinal\.Runtime\.KncIntrinsic\((\d+)\)\]\s*"
+        r"(?:Trusted|Extern) Function [\w.*]+ (\w+)\(([^)]*)\)"
+    )
+    for source in ui.rglob("*.kn"):
+        for number, name, params in declaration.findall(source.read_text(encoding="utf-8")):
+            number = int(number)
+            if number in leaves or number in core_ids:
+                raise AssertionError(f"duplicate IO.UI intrinsic ID {number}")
+            arity = len(params.split(",")) if params.strip() else 0
+            leaves[number] = (name, arity if arity > 4 else None)
+
+    handlers = {}
+    desktop = read("apps/kinalvm/windows/Desktop.kn")
+    for kind, number, name, arity in re.findall(
+        r'\[IO\.Kinal\.VM\.Stdlib\.Vm(Range)?Builtin\((\d+),\s*"IO\.UI\.(\w+)"(?:,\s*(\d+))?\)\]',
+        desktop,
+    ):
+        number = int(number)
+        if number in handlers or bool(kind) != bool(arity):
+            raise AssertionError(f"invalid Windows VM handler registration for {number}")
+        handlers[number] = (name, int(arity) if arity else None)
+    if not leaves or leaves != handlers:
+        raise AssertionError(f"IO.UI/Windows VM intrinsic mismatch: {leaves.items() ^ handlers.items()}")
+    return len(handlers)
+
+
 def main() -> int:
     std_header = read("apps/kinal/include/kn/std.h")
     std_source = read("apps/kinal/src/kn_std.c")
@@ -158,9 +188,53 @@ def main() -> int:
     ):
         raise AssertionError("KNC must consume the centralized builtin VM mapping registry")
 
+    json_source = read("libs/std/IO.Json/1.0.0/src/IO/Json.kn")
+    package_leaves = re.findall(
+        r"\[IO\.Kinal\.Runtime\.KncIntrinsic\((\d+)\)\]\s*Trusted Function \w+ (\w+)\(", json_source
+    )
+    package_handlers = re.findall(r'\[VmBuiltin\((\d+), "IO\.Json\.(\w+)"\)\]', vm_source)
+    if not package_leaves or sorted(package_leaves) != sorted(package_handlers):
+        raise AssertionError("IO.Json package and VM handlers must expose matching intrinsic IDs and names")
+
+    math_source = read("libs/std/IO.Core/1.0.0/src/IO/Math.kn")
+    math_externs = re.findall(r"Extern Unsafe Function \w+ __kn_math_(\w+)\(", math_source)
+    math_leaves = re.findall(
+        r"\[IO\.Kinal\.Runtime\.KncIntrinsic\((\d+)\)\]\s*"
+        r"Extern Unsafe Function \w+ __kn_math_(\w+)\(", math_source
+    )
+    math_handlers = [(number, name.lower()) for number, name in
+                     re.findall(r'\[VmBuiltin\((\d+), "IO\.Math\.(\w+)"\)\]', vm_source)]
+    if (not math_externs or sorted(math_externs) != sorted(name for _, name in math_leaves)
+            or sorted(math_leaves) != sorted(math_handlers)):
+        raise AssertionError("IO.Math externs and VM handlers must expose matching intrinsic IDs and names")
+
+    # KNC instance slots follow declaration order on both the guest and host.
+    time_source = read("libs/std/IO.Core/1.0.0/src/IO/Time.kn")
+    date_class = re.search(r"Class DateTime\s*\{([^}]*)\}", time_source)
+    if not date_class or re.findall(r"Public int (\w+);", date_class.group(1)) != [
+        "Ticks", "Year", "Month", "Day", "Hour", "Minute", "Second", "Millisecond"
+    ]:
+        raise AssertionError("IO.Time.DateTime field layout diverged from the KNC host ABI")
+    time_leaves = re.findall(
+        r"\[IO\.Kinal\.Runtime\.KncIntrinsic\((\d+)\)\]\s*Trusted Function \w+ (\w+)\(", time_source
+    )
+    time_handlers = re.findall(r'\[VmBuiltin\((\d+), "IO\.Time\.(\w+)"\)\]', vm_source)
+    if len(time_leaves) != 5 or sorted(time_leaves) != sorted(time_handlers):
+        raise AssertionError("IO.Time package and VM clock handlers must match")
+
+    builder_source = read("libs/std/IO.Core/1.0.0/src/IO/Text/Builder.kn")
+    builder_leaves = re.findall(
+        r"\[IO\.Kinal\.Runtime\.KncIntrinsic\((\d+)\)\]\s*Trusted Function \w+ __Builder(\w+)\(", builder_source
+    )
+    builder_handlers = re.findall(r'\[VmBuiltin\((\d+), "IO\.Text\.Builder\.(\w+)"\)\]', vm_source)
+    builder_names = [(number, "EnsureCapacity" if name == "Reserve" else name) for number, name in builder_leaves]
+    if len(builder_names) != 7 or sorted(builder_names) != sorted(builder_handlers):
+        raise AssertionError("IO.Text.Builder package bridges and VM handlers must match")
+
+    desktop_count = check_desktop_intrinsics(set(declared_ids))
     print(
         f"[OK] builtin_registry native={len(native_owner)} "
-        f"knc={len(mapped_ids)} vm={len(handler_ids)} declared={len(declared_ids)}"
+        f"knc={len(mapped_ids)} vm={len(handler_ids)} declared={len(declared_ids)} desktop={desktop_count}"
     )
     return 0
 

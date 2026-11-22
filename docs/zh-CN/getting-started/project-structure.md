@@ -56,6 +56,17 @@ Function string Greet(string name)
 }
 ```
 
+**models.kn**
+
+```kinal
+Unit App.Models;
+
+Class Message
+{
+    Public string Text;
+}
+```
+
 如果不走 project 模式、直接按入口文件编译，编译器仍然可以自动发现附近的文件：
 
 ```bash
@@ -68,9 +79,9 @@ kinal build main.kn -o myapp
 kinal build main.kn utils.kn models.kn -o myapp --no-module-discovery
 ```
 
-## 同一文件多个 Unit
+## 每个文件一个 Unit
 
-一个文件也可以通过嵌套 Block 给多个 Unit 贡献声明，但通常还是建议一文件一个 Unit。
+当前 C 解析器仅接受文件开头的一个 Unit 声明。Block 是代码块对象，不是嵌套命名空间；多个 Unit 应放在不同文件。
 
 ## Package 结构
 
@@ -400,6 +411,7 @@ Build
 - `EntrySymbol`
 - `Linker`
 - `LinkerPath`
+- `HideConsole`
 - `Superloop`
 
 #### `Backend`
@@ -503,6 +515,10 @@ LinkerPath = "C:/toolchains/lld-link.exe";
 ```
 
 当链接器不在 `PATH` 中时，可以在这里指定其路径。
+
+#### `HideConsole`
+
+设置为 `true` 时，Windows 原生和 VM 打包的 EXE 启动时不会分配控制台窗口。默认值为 `false`。
 
 #### `Superloop`
 
@@ -704,3 +720,5 @@ kinal pkg unpack MyLib.klib -o ./recovered/
 - [语言概览](../language/overview.md)
 - [kinal 编译器 CLI](../cli/compiler.md)
 - [Package 系统](../cli/packages.md)
+
+完整字段、路径例外、CLI 优先级和已验证的双文件 Native／VM 工程见[项目文件参考](../cli/project-files.md)。Superloop 是 VM 循环融合，不是异步调度器。内核配置还需要真实启动代码、链接脚本和目标运行时；配置草图本身不能产生可启动镜像。

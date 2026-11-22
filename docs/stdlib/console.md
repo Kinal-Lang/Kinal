@@ -6,8 +6,8 @@
 
 ```kinal
 Get IO.Console;
-// or
-Get IO.Console;
+// or use a module alias
+Get Console By IO.Console;
 ```
 
 ## Function Reference
@@ -100,10 +100,12 @@ Static Function int Main()
 
 - `PrintLine` and `Print` automatically convert arguments to strings (via `any.ToString()`)
 - Printing `null` outputs `"null"`
-- With multiple arguments, each argument is joined with a space or no separator (depending on implementation)
+- Multiple arguments are separated by one space; include deliberate formatting inside a single interpolated string when exact spacing matters
 
 ## See Also
 
 - [IO.Text](text.md) — String processing
 - [IO.Core](core.md) — `IO.Char` and `IO.Math`
 - [String Features](../language/strings.md)
+
+ReadLine is blocking. Float output uses the runtime formatter and can expose binary64 round-trip digits, such as 2.7000000000000002; the output is not a fixed-decimal formatting API. Console text is byte-oriented, and host encoding boundaries still apply.

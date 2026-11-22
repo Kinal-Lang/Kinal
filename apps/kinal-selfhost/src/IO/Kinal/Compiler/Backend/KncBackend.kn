@@ -237,6 +237,7 @@ Class KncLocation
 
 Class KncTypeBinding
 {
+    Public bool InitializingValue;
     Public TypeSymbol Type;
     Public KncTypeRecord Record;
     Public int Index;
@@ -261,6 +262,9 @@ Class KncBackend
     Public KncTypeBinding FirstType;
     Public bool EnableSuperloop;
     Private bool Lowered;
+    Private HirDefinitionIndex Definitions;
+    Private list FunctionBindings;
+    Private list GlobalBindings;
     Public Safe Constructor(SemanticCompilation semantics)
     {
         This.Semantics = semantics;
@@ -272,6 +276,11 @@ Class KncBackend
         This.FirstType = null;
         This.EnableSuperloop = true;
         This.Lowered = false;
+        This.Definitions = New HirDefinitionIndex(semantics.FirstHirModule,
+            semantics.RegisteredFunctionCount, semantics.GlobalCount);
+        This.FunctionBindings = list.Create();
+        This.GlobalBindings = list.Create();
+        For (int i = 0; i < semantics.RegisteredFunctionCount; i++) This.FunctionBindings.Add(null);
     }
     Public Safe Function bool Failed() { Return This.Error != ""; }
     Public Safe Function void Fail(string message)
@@ -367,33 +376,11 @@ Class KncBackend
     }
     Public Safe Function HirFunction FindHir(FunctionSymbol symbol)
     {
-        HirModule module = This.Semantics.FirstHirModule;
-        While (module != null)
-        {
-            HirFunction function = module.FirstFunction;
-            While (function != null)
-            {
-                If (function.Symbol == symbol) Return function;
-                function = function.Next;
-            }
-            module = module.Next;
-        }
-        Return null;
+        Return This.Definitions.FindFunction(symbol);
     }
     Public Safe Function HirExpression FindInitializer(GlobalSymbol symbol)
     {
-        HirModule module = This.Semantics.FirstHirModule;
-        While (module != null)
-        {
-            HirGlobal global = module.FirstGlobal;
-            While (global != null)
-            {
-                If (global.Symbol == symbol) Return global.Initializer;
-                global = global.Next;
-            }
-            module = module.Next;
-        }
-        Return null;
+        Return This.Definitions.FindInitializer(symbol);
     }
     Public Safe Function SyntaxAttribute RuntimeAttribute(FunctionSymbol function, string name)
     {
@@ -432,6 +419,10 @@ Class KncBackend
         If (attribute == null || attribute.FirstArgument == null || attribute.FirstArgument.Next != null) Return -1;
         i64 value = This.Semantics.IntegerLiteralValue(attribute.FirstArgument.Text);
         If (value < 0 || value > 65535) { This.Fail("invalid KncIntrinsic id"); Return -1; }
+        // Host intrinsics may create guest instances without a guest New instruction.
+        TypeSymbol result = function.ReturnType;
+        If (result != null && result.Kind == [int](TypeKind.NamedType) &&
+            result.Declaration != null && !This.Semantics.IsEnumType(result)) This.RequireType(result);
         Return [int](value);
     }
     Public Safe Function bool HasInstanceReceiver(FunctionSymbol symbol)
@@ -443,13 +434,13 @@ Class KncBackend
     }
     Public Safe Function KncFunctionBinding RequireFunction(FunctionSymbol symbol)
     {
-        KncFunctionBinding current = This.FirstFunction;
-        While (current != null)
-        {
-            If (current.Symbol == symbol) Return current;
-            current = current.Next;
-        }
         If (symbol == null) { This.Fail("missing bound function"); Return null; }
+        int index = symbol.RegistrationIndex;
+        If (index >= 0 && index < This.FunctionBindings.Count())
+        {
+            KncFunctionBinding current = [KncFunctionBinding](This.FunctionBindings.Fetch(index));
+            If (current != null && current.Symbol == symbol) Return current;
+        }
         SyntaxAttribute unsupported = This.RuntimeAttribute(symbol, "KncUnsupported");
         If (unsupported != null)
         {
@@ -474,7 +465,6 @@ Class KncBackend
         HirFunction hir = This.FindHir(symbol);
         If (hir == null || hir.Body == null) { This.Fail("function has no bound body: " + symbol.QualifiedName()); Return null; }
         int count = symbol.ParameterCount() + (This.HasInstanceReceiver(symbol) ? 1 : 0);
-        If (count > 4) { This.Fail("function exceeds the KNC four-argument ABI: " + symbol.QualifiedName()); Return null; }
         KncFunctionRecord record = New KncFunctionRecord();
         record.Name = symbol.QualifiedName();
         record.ParameterCount = symbol.IsBlockLiteral ? 2 : count;
@@ -483,15 +473,15 @@ Class KncBackend
         If (This.FirstFunction == null) This.FirstFunction = binding;
         Else This.LastFunction.Next = binding;
         This.LastFunction = binding;
+        This.FunctionBindings.Set(index, binding);
         Return binding;
     }
     Public Safe Function int GlobalIndex(ValueSymbol symbol)
     {
-        KncGlobalBinding current = This.FirstGlobal;
-        While (current != null)
+        If (symbol != null && symbol.GlobalIndex >= 0 && symbol.GlobalIndex < This.GlobalBindings.Count())
         {
-            If (current.Symbol.Value == symbol) Return current.Index;
-            current = current.Next;
+            KncGlobalBinding binding = [KncGlobalBinding](This.GlobalBindings.Fetch(symbol.GlobalIndex));
+            If (binding.Symbol.Value == symbol) Return binding.Index;
         }
         This.Fail("missing global binding");
         Return 0;
@@ -605,6 +595,14 @@ Class KncBackend
         If (target.Name == "char") Return This.UnaryOp(context, KncOpCode.IntToChar, value, target);
         Return New KncValue(value.Register, target);
     }
+    Public Safe Function string CollectionName(TypeSymbol type)
+    {
+        If (type == null) Return "";
+        If (type.Kind == [int](TypeKind.ListType)) Return "list";
+        If (type.Kind == [int](TypeKind.DictType)) Return "dict";
+        If (type.Kind == [int](TypeKind.SetType)) Return "set";
+        Return "";
+    }
     Public Trusted Function KncValue Cast(KncFunctionContext context, KncValue value, TypeSymbol target)
     {
         If (target == null || value.Type == null) { This.Fail("missing HIR coercion type"); Return value; }
@@ -617,8 +615,9 @@ Class KncBackend
             Return callable;
         }
         If (target.Kind == [int](TypeKind.AnyType)) Return New KncValue(This.CopyValue(context, value).Register, target);
-        If (target.Kind == [int](TypeKind.NamedType) && !This.Semantics.IsEnumType(target) &&
-            (value.Type.Kind == [int](TypeKind.NamedType) || value.Type.Kind == [int](TypeKind.AnyType)))
+        If ((target.Kind == [int](TypeKind.NamedType) || This.CollectionName(target) != "") &&
+            !This.Semantics.IsEnumType(target) && (value.Type.Kind == [int](TypeKind.NamedType) ||
+            This.CollectionName(value.Type) != "" || value.Type.Kind == [int](TypeKind.AnyType)))
         {
             KncValue converted = This.CheckedObjectCast(context, value, target);
             Return value.Type.Kind == [int](TypeKind.AnyType) && This.Semantics.IsStructType(target) ? This.CopyValue(context, converted) : converted;
@@ -646,7 +645,8 @@ Class KncBackend
                     context.Record.Code.WriteU8(This.IsUnsigned(value.Type) ? 1 : 0);
                     Return converted;
                 }
-                value = This.UnaryOp(context, KncOpCode.IntToFloat, value, target);
+                bool wideUnsigned = This.IsUnsigned(value.Type) && This.IntegerBits(value.Type) == 64;
+                value = This.UnaryOp(context, wideUnsigned ? KncOpCode.UIntToFloat : KncOpCode.IntToFloat, value, target);
             }
             ElseIf (sourceKind == [int](TypeKind.BoolType))
                 value = This.UnaryOp(context, KncOpCode.BoolToFloat, value, target);
@@ -733,8 +733,10 @@ Class KncBackend
             int count = type.Kind == [int](TypeKind.PackageType) ? type.PackageCount : (type.ArrayLength < 0 ? 0 : type.ArrayLength);
             KncValue length = This.Integer(context, count);
             This.Op3(context, KncOpCode.NewArray, register, length.Register, type.Kind == [int](TypeKind.PackageType) ? 0 : This.ValueKind(type.ElementType));
-            If (type.Kind == [int](TypeKind.ArrayType))
-                This.InitializeArrayValues(context, New KncValue(register, type), length, false);
+            If (type.Kind == [int](TypeKind.ArrayType) && count > 0 &&
+                (This.Semantics.IsStructType(type.ElementType) ||
+                 type.ElementType.Kind == [int](TypeKind.ArrayType) || type.ElementType.Kind == [int](TypeKind.PackageType)))
+                This.InitializeArrayValues(context, New KncValue(register, type), length, 0, false);
             If (type.Kind == [int](TypeKind.PackageType))
             {
                 int mark = context.NextRegister;
@@ -796,7 +798,10 @@ Class KncBackend
     }
     Public Safe Function KncValue EmitCallRegisters(KncFunctionContext context, bool builtin, int index, int[] args, TypeSymbol returnType)
     {
-        If (args.Length() > 4) { This.Fail("call exceeds the KNC four-argument ABI"); Return New KncValue(255, returnType); }
+        If (args.Length() > 4)
+        {
+            Return This.EmitCallRange(context, builtin ? 3 : 0, index, args, returnType);
+        }
         int register = returnType.Kind == [int](TypeKind.VoidType) ? 255 : context.Allocate();
         This.SlotOp(context, builtin ? KncOpCode.CallBuiltin : KncOpCode.CallFunc, register, index);
         context.Record.Code.WriteU8(args.Length());
@@ -808,12 +813,50 @@ Class KncBackend
         }
         Return New KncValue(register, returnType);
     }
+    Public Safe Function KncValue EmitCallRange(KncFunctionContext context, int kind, int target, int[] args, TypeSymbol returnType)
+    {
+        int first = args[0];
+        bool contiguous = true;
+        For (int i = 1; i < args.Length(); i++)
+            If (args[i] != first + i) contiguous = false;
+        If (!contiguous)
+        {
+            first = context.NextRegister;
+            For (int i = 0; i < args.Length(); i++)
+                This.Op2(context, KncOpCode.Move, context.Allocate(), args[i]);
+        }
+        int result = returnType.Kind == [int](TypeKind.VoidType) ? 255 : context.Allocate();
+        This.Op2(context, KncOpCode.CallRange, result, kind);
+        context.Record.Code.WriteU16(target);
+        context.Record.Code.WriteU8(first);
+        context.Record.Code.WriteU8(args.Length());
+        Return New KncValue(result, returnType);
+    }
+    Public Trusted Function KncValue DictLiteral(KncFunctionContext context, HirExpression expression)
+    {
+        int[] empty = {};
+        KncValue result = This.EmitCallRegisters(context, true, This.BuiltinId("dict.Create"), empty, expression.Type);
+        int mark = context.NextRegister;
+        HirExpression entry = expression.FirstArgument;
+        While (entry != null && !This.Failed())
+        {
+            KncValue key = This.Cast(context, This.Expression(context, entry.Left), This.Semantics.Primitive("string"));
+            int savedKey = context.Allocate();
+            This.Op2(context, KncOpCode.Move, savedKey, key.Register);
+            KncValue value = This.Expression(context, entry.Right);
+            int[] args = {result.Register, savedKey, value.Register};
+            This.EmitCallRegisters(context, true, This.BuiltinId("dict.Set"), args, This.Semantics.Primitive("void"));
+            context.NextRegister = mark;
+            entry = entry.Next;
+        }
+        Return result;
+    }
     Public Trusted Function KncValue ArrayLiteral(KncFunctionContext context, HirExpression expression, TypeSymbol type)
     {
         int count = 0;
         HirExpression item = expression.FirstArgument;
         While (item != null) { count = count + 1; item = item.Next; }
-        If (type.Kind == [int](TypeKind.ArrayType) && type.ArrayLength > count) count = type.ArrayLength;
+        If (expression.HasArrayStorageBound && type.ArrayLength > count) count = type.ArrayLength;
         KncValue length = This.Integer(context, count);
         int register = context.Allocate();
         bool package = type.Kind == [int](TypeKind.PackageType);
@@ -823,17 +866,21 @@ Class KncBackend
         int mark = context.NextRegister;
         int index = 0;
         item = expression.FirstArgument;
-        While (index < count && !This.Failed())
+        While (item != null && !This.Failed())
         {
             TypeSymbol target = package ? type.PackageElement(index) : elementType;
             KncValue position = This.Integer(context, index);
-            KncValue value = item == null ? This.Default(context, target) : This.Cast(context, This.CopyValue(context, This.Expression(context, item)), target);
+            KncValue value = This.Cast(context, This.CopyValue(context, This.Expression(context, item)), target);
             This.Op3(context, KncOpCode.StoreIndex, register, position.Register, value.Register);
-            If (item != null) item = item.Next;
+            item = item.Next;
             context.NextRegister = mark;
             index = index + 1;
         }
-        Return New KncValue(register, type);
+        KncValue array = New KncValue(register, type);
+        If (index < count && (This.Semantics.IsStructType(elementType) ||
+            elementType.Kind == [int](TypeKind.ArrayType) || elementType.Kind == [int](TypeKind.PackageType)))
+            This.InitializeArrayValues(context, array, length, index, false);
+        Return array;
     }
     Public Trusted Function KncLocation Location(KncFunctionContext context, HirExpression expression)
     {
@@ -850,20 +897,18 @@ Class KncBackend
         }
         If (expression.Kind == [int](HirExpressionKind.Global))
             Return New KncLocation(1, 0, This.GlobalIndex(expression.Symbol), expression.Type);
+        If (expression.Kind == [int](HirExpressionKind.PropertyAccess))
+        {
+            KncLocation location = New KncLocation(5, 0, 0, expression.Type);
+            location.Getter = expression.Function;
+            location.Setter = expression.PropertySetter;
+            location.Receiver = expression.Left == null ? null : This.Expression(context, expression.Left);
+            location.VirtualDispatch = expression.Left == null || expression.Left.Name != "Base";
+            Return location;
+        }
         If (expression.Kind == [int](HirExpressionKind.Field))
         {
-            KncValue receiver = expression.Left == null ? null : This.Expression(context, expression.Left);
-            If (expression.Function != null)
-            {
-                KncLocation location = New KncLocation(5, 0, 0, expression.Type);
-                location.Getter = expression.Function;
-                location.Setter = This.Semantics.FindPropertySetter(expression.Function.OwnerType, expression.Target);
-                location.Receiver = receiver;
-                // Base-qualified properties use the declared accessors, just
-                // like Base-qualified method calls; ordinary receivers dispatch.
-                location.VirtualDispatch = expression.Left == null || expression.Left.Name != "Base";
-                Return location;
-            }
+            KncValue receiver = This.Expression(context, expression.Left);
             int index = This.FieldIndex(receiver.Type, expression.Target);
             If (index < 0) This.Fail("unknown field: " + expression.Target);
             Return New KncLocation(4, receiver.Register, index, expression.Type);
@@ -1124,6 +1169,38 @@ Class KncBackend
     }
     Public Safe Function int BuiltinId(string target)
     {
+        If (target == "dict.Create") Return 239;
+        If (target == "dict.Set") Return 240;
+        If (target == "dict.Fetch") Return 241;
+        If (target == "dict.TryFetch") Return 242;
+        If (target == "dict.Contains") Return 243;
+        If (target == "dict.Count") Return 244;
+        If (target == "dict.Remove") Return 245;
+        If (target == "dict.IsEmpty") Return 246;
+        If (target == "dict.Keys") Return 247;
+        If (target == "dict.Values") Return 248;
+        If (target == "set.Create") Return 249;
+        If (target == "set.Add") Return 250;
+        If (target == "set.Contains") Return 251;
+        If (target == "set.Count") Return 252;
+        If (target == "set.Remove") Return 253;
+        If (target == "set.Clear") Return 254;
+        If (target == "set.IsEmpty") Return 255;
+        If (target == "set.Values") Return 256;
+        If (target == "list.Create") Return 219;
+        If (target == "list.Add") Return 220;
+        If (target == "list.Fetch") Return 221;
+        If (target == "list.Set") Return 222;
+        If (target == "list.Insert") Return 223;
+        If (target == "list.TryFetch") Return 224;
+        If (target == "list.Count") Return 225;
+        If (target == "list.Clear") Return 226;
+        If (target == "list.RemoveAt") Return 227;
+        If (target == "list.Contains") Return 228;
+        If (target == "list.Pop") Return 229;
+        If (target == "list.Peek") Return 230;
+        If (target == "list.IndexOf") Return 231;
+        If (target == "list.IsEmpty") Return 232;
         If (target == "IO.Type.string.Length") Return 19;
         If (target == "IO.Type.string.Concat") Return 20;
         If (target == "IO.Type.string.Equals") Return 21;
@@ -1189,8 +1266,11 @@ Class KncBackend
             {
                 KncValue value = This.Cast(context, This.CopyValue(context, This.Expression(context, argument)), receiver.Type.ElementType);
                 KncValue result = This.BinaryOp(context, KncOpCode.ArrayAdd, receiver, value, expression.Type);
-                KncValue length = This.UnaryOp(context, KncOpCode.ArrayLength, receiver, This.Semantics.Primitive("int"));
-                This.InitializeArrayValues(context, result, length, true);
+                If (This.Semantics.IsStructType(result.Type.ElementType))
+                {
+                    KncValue length = This.UnaryOp(context, KncOpCode.ArrayLength, receiver, This.Semantics.Primitive("int"));
+                    This.InitializeArrayValues(context, result, length, 0, true);
+                }
                 Return result;
             }
         }
@@ -1204,6 +1284,9 @@ Class KncBackend
             expression.Target == "IsFloat" || expression.Target == "IsString" || expression.Target == "IsBool" ||
             expression.Target == "IsChar" || expression.Target == "IsObject" || expression.Target == "Equals"))
             target = "IO.Type.any." + expression.Target;
+        If (expression.Left != null && expression.Left.Type != null &&
+            This.CollectionName(expression.Left.Type) != "" && !IO.Text.Contains(target, "."))
+            target = This.CollectionName(expression.Left.Type) + "." + target;
         int id = This.BuiltinId(target);
         If (id < 0) { This.Unsupported(context, "runtime builtin " + expression.Target); Return This.Default(context, expression.Type); }
         int[] args = {};
@@ -1294,10 +1377,11 @@ Class KncBackend
     {
         If (expression == null || This.Failed()) Return New KncValue(255, This.Semantics.Primitive("void"));
         If (expression.Kind == [int](HirExpressionKind.Constant)) Return This.Constant(context, expression);
-        If (expression.Kind == [int](HirExpressionKind.Local) || expression.Kind == [int](HirExpressionKind.Global) || expression.Kind == [int](HirExpressionKind.Field) || expression.Kind == [int](HirExpressionKind.Index))
+        If (expression.Kind == [int](HirExpressionKind.Local) || expression.Kind == [int](HirExpressionKind.Global) || expression.Kind == [int](HirExpressionKind.Field) ||
+            expression.Kind == [int](HirExpressionKind.PropertyAccess) || expression.Kind == [int](HirExpressionKind.Index))
         {
             KncValue value = This.Load(context, This.Location(context, expression));
-            If (expression.Kind != [int](HirExpressionKind.Field) &&
+            If (expression.Kind != [int](HirExpressionKind.PropertyAccess) &&
                 (expression.Function != null || (expression.Symbol != null && expression.Symbol.CallableFunction != null))) value.IsCallable = true;
             Return value;
         }
@@ -1317,6 +1401,7 @@ Class KncBackend
                 Return This.ArrayLiteral(context, expression.Left, expression.Type);
             Return This.Cast(context, This.Expression(context, expression.Left), expression.Type);
         }
+        If (expression.Kind == [int](HirExpressionKind.DictLiteral)) Return This.DictLiteral(context, expression);
         If (expression.Kind == [int](HirExpressionKind.ArrayLiteral) || expression.Kind == [int](HirExpressionKind.PackageLiteral))
             Return This.ArrayLiteral(context, expression, expression.Type);
         If (expression.Kind == [int](HirExpressionKind.NewObject)) Return This.NewObject(context, expression);
@@ -1672,6 +1757,7 @@ Class KncBackend
     Public Trusted Function void BuildFunction(KncFunctionBinding binding)
     {
         binding.Built = true;
+        binding.Record.Code.BeginBuild();
         KncFunctionContext context = New KncFunctionContext(binding, binding.Record);
         If (binding.Symbol.IsBlockLiteral) { context.Allocate(); context.Allocate(); }
         If (This.HasInstanceReceiver(binding.Symbol)) context.AddLocal(binding.Symbol.Receiver);
@@ -1703,6 +1789,7 @@ Class KncBackend
             KncValue value = This.Default(context, binding.Symbol.ReturnType);
             This.Op1(context, KncOpCode.Ret, value.Register);
         }
+        binding.Record.Code.FinishBuild();
         If (context.Error != "") This.Fail(context.Error + ": " + binding.Record.Name);
         If (binding.Record.Code.Error != "") This.Fail(binding.Record.Code.Error + ": " + binding.Record.Name);
     }
@@ -1723,25 +1810,39 @@ Class KncBackend
     }
     Public Trusted Function bool Emit(string outputPath)
     {
+        If (!This.Lower()) Return false;
+        If (!This.Program.Emit(outputPath)) { This.Fail(This.Program.Error); Return false; }
+        Return true;
+    }
+
+    Public Trusted Function byte[] EmitBytes()
+    {
+        If (!This.Lower()) Return {};
+        KncByteBuffer output = This.Program.Serialize();
+        If (!output.IsValid()) { This.Fail(output.Error); Return {}; }
+        Return output.Data;
+    }
+
+    Private Trusted Function bool Lower()
+    {
         If (This.Failed()) Return false;
-        If (This.Lowered)
-        {
-            If (!This.Program.Emit(outputPath)) { This.Fail(This.Program.Error); Return false; }
-            Return true;
-        }
+        If (This.Lowered) Return true;
         If (This.Semantics.Session.HasErrors()) { This.Fail("semantic compilation has errors"); Return false; }
-        FunctionSymbol main = This.Semantics.FirstFunction;
-        While (main != null && !(main.OwnerType == null && main.Name == "Main" && main.UnitName == This.Semantics.Session.EntryUnitName)) main = main.Next;
+        FunctionSymbol main = This.Semantics.ResolveProgramEntry();
         If (main == null) { This.Fail("entry unit does not declare Main"); Return false; }
         If (main.ParameterCount() > 1 || (main.ParameterCount() == 1 &&
             (main.FirstParameter.Type.Kind != [int](TypeKind.ArrayType) ||
              main.FirstParameter.Type.ElementType.Kind != [int](TypeKind.StringType))))
         { This.Fail("KNC entry Main must take zero parameters or string[]"); Return false; }
         KncFunctionRecord entry = New KncFunctionRecord();
+        entry.Code.BeginBuild();
         entry.Name = "__knc_entry";
+        entry.ParameterCount = main.ParameterCount();
         entry.ReturnKind = This.ValueKind(main.ReturnType);
         This.Program.EntryFunction = This.Program.AddFunction(entry);
         KncFunctionContext context = New KncFunctionContext(null, entry);
+        int[] args = {};
+        If (entry.ParameterCount == 1) args = args.Add(context.Allocate());
         context.NullRegister = context.Allocate();
         GlobalSymbol global = This.Semantics.FirstGlobal;
         KncGlobalBinding lastGlobal = null;
@@ -1752,33 +1853,46 @@ Class KncBackend
             If (This.FirstGlobal == null) This.FirstGlobal = binding;
             Else lastGlobal.Next = binding;
             lastGlobal = binding;
+            This.GlobalBindings.Add(binding);
             global = global.Next;
         }
         KncGlobalBinding globalBinding = This.FirstGlobal;
+        bool earlierExpression = false;
+        While (globalBinding != null && !This.Failed())
+        {
+            HirExpression initializer = globalBinding.Initializer;
+            If (initializer != null && initializer.Kind != [int](HirExpressionKind.Constant))
+                earlierExpression = true;
+            // Before any observable expression, the ordered literal store
+            // below can initialize its slot directly.
+            If (initializer == null || earlierExpression)
+            {
+                KncValue initial = This.Default(context, globalBinding.Symbol.Value.Type);
+                This.SlotOp(context, KncOpCode.StoreGlobal, initial.Register, globalBinding.Index);
+                context.NextRegister = context.NullRegister + 1;
+            }
+            globalBinding = globalBinding.Next;
+        }
+        globalBinding = This.FirstGlobal;
         While (globalBinding != null && !This.Failed())
         {
             TypeSymbol type = globalBinding.Symbol.Value.Type;
             HirExpression initializer = globalBinding.Initializer;
-            KncValue value = globalBinding.Symbol.Value.CallableFunction != null ?
-                This.FunctionValue(context, globalBinding.Symbol.Value.CallableFunction, type) : initializer == null ? This.Default(context, type) :
-                initializer.Kind == [int](HirExpressionKind.ArrayLiteral) || initializer.Kind == [int](HirExpressionKind.PackageLiteral) ?
+            If (initializer == null) { globalBinding = globalBinding.Next; Continue; }
+            KncValue value = initializer.Kind == [int](HirExpressionKind.ArrayLiteral) || initializer.Kind == [int](HirExpressionKind.PackageLiteral) ?
                     This.ArrayLiteral(context, initializer, type) : This.Expression(context, initializer);
             value = This.Cast(context, This.CopyValue(context, value), type);
             This.SlotOp(context, KncOpCode.StoreGlobal, value.Register, globalBinding.Index);
-            context.NextRegister = 1;
+            context.NextRegister = context.NullRegister + 1;
             globalBinding = globalBinding.Next;
         }
         KncFunctionBinding mainBinding = This.RequireFunction(main);
         If (mainBinding != null)
         {
-            int[] args = {};
-            // KinalVM currently exposes no process argument injection ABI.
-            // An ordinary no-argument VM invocation still gets a valid empty
-            // string[] rather than an uninitialized register.
-            If (main.ParameterCount() == 1) args = args.Add(This.Default(context, main.FirstParameter.Type).Register);
             KncValue value = This.EmitCallRegisters(context, false, mainBinding.Index, args, main.ReturnType);
             This.Op1(context, KncOpCode.Ret, value.Register);
         }
+        entry.Code.FinishBuild();
         KncFunctionBinding function = This.FirstFunction;
         While (function != null && !This.Failed())
         {
@@ -1788,7 +1902,6 @@ Class KncBackend
         If (context.Error != "") This.Fail(context.Error);
         If (This.Failed()) Return false;
         This.Lowered = true;
-        If (!This.Program.Emit(outputPath)) { This.Fail(This.Program.Error); Return false; }
         Return true;
     }
     Public Safe Function int InstanceFieldCount(TypeSymbol type)
@@ -1831,18 +1944,19 @@ Class KncBackend
         If (type != null && type.Name == "Object.Block") type = This.Semantics.FindExactType("IO.Type.Object.Block");
         KncTypeBinding current = This.FirstType;
         While (current != null) { If (current.Type == type) Return current; current = current.Next; }
-        If (type == null || (type.Declaration == null && type.Name != "IO.Error" && type.Name != "IO.Type.Object.Function" && type.Name != "IO.Type.Object.Block"))
+        If (type == null || (type.Declaration == null && This.CollectionName(type) == "" && type.Name != "IO.Error" && type.Name != "IO.Type.Object.Function" && type.Name != "IO.Type.Object.Block"))
         {
             This.Fail("KNC object requires declared type metadata: " + (type == null ? "null" : type.Name));
             Return null;
         }
         KncTypeRecord record = New KncTypeRecord();
-        record.Name = type.QualifiedName();
+        record.Name = This.CollectionName(type) != "" ? "IO.Collection." + This.CollectionName(type) : type.QualifiedName();
         record.Kind = This.Semantics.IsStructType(type) ? 2 : This.Semantics.IsInterfaceType(type) ? 3 : 1;
         record.FieldCount = type.Name == "IO.Type.Object.Function" || type.Name == "IO.Type.Object.Block" ? 2 : This.InstanceFieldCount(type);
         KncTypeBinding binding = New KncTypeBinding(type, record, This.Program.AddType(record));
         binding.Next = This.FirstType;
         This.FirstType = binding;
+        If (This.CollectionName(type) != "") Return binding;
         If (type.BaseType != null)
         {
             KncTypeBinding base = This.RequireType(type.BaseType);
@@ -1903,6 +2017,7 @@ Class KncBackend
                 // value fields and explicitly fixed arrays get typed storage.
                 bool valueField = This.IsInteger(fieldType) || fieldType.Kind == [int](TypeKind.BoolType) ||
                     fieldType.Kind == [int](TypeKind.FloatType) || This.Semantics.IsStructType(fieldType) ||
+                    fieldType.Kind == [int](TypeKind.PackageType) ||
                     (fieldType.Kind == [int](TypeKind.ArrayType) && fieldType.ArrayLength >= 0);
                 If (valueField)
                 {
@@ -1921,8 +2036,15 @@ Class KncBackend
         int register = context.Allocate();
         KncValue value = New KncValue(register, type);
         If (binding == null) Return value;
+        If (binding.InitializingValue)
+        {
+            This.Fail("recursive struct has no finite default storage");
+            Return value;
+        }
+        binding.InitializingValue = true;
         This.SlotOp(context, KncOpCode.NewObject, register, binding.Index);
         This.InitializeFields(context, value, type);
+        binding.InitializingValue = false;
         Return value;
     }
     Public Trusted Function KncValue CopyValue(KncFunctionContext context, KncValue value)
@@ -2128,9 +2250,9 @@ Class KncBackend
         If (intrinsic < 0 && !dispatch && binding == null) Return This.Default(context, function.ReturnType);
         If (dispatch)
         {
-            If (args.Length() > 4) { This.Fail("method call exceeds the KNC four-argument ABI"); Return This.Default(context, function.ReturnType); }
             int slot = This.DispatchSlot(function.OwnerType, function);
             If (slot < 0) { This.Fail("missing virtual slot: " + function.QualifiedName()); Return This.Default(context, function.ReturnType); }
+            If (args.Length() > 4) Return This.EmitCallRange(context, 1, slot, args, function.ReturnType);
             int register = function.ReturnType.Kind == [int](TypeKind.VoidType) ? 255 : context.Allocate();
             This.Op2(context, KncOpCode.CallVirt, register, receiver.Register);
             context.Record.Code.WriteU16(slot);
@@ -2179,7 +2301,7 @@ Class KncBackend
         ElseIf (This.IsInteger(target)) kind = 3;
         ElseIf (target.Kind == [int](TypeKind.FloatType)) kind = 4;
         ElseIf (target.Kind == [int](TypeKind.StringType)) kind = 5;
-        ElseIf (target.Kind == [int](TypeKind.NamedType))
+        ElseIf (target.Kind == [int](TypeKind.NamedType) || This.CollectionName(target) != "")
         {
             KncTypeBinding binding = This.RequireType(target);
             If (binding == null) Return This.Default(context, This.Semantics.Primitive("bool"));
@@ -2252,13 +2374,12 @@ Class KncBackend
         This.Statements(context, handler.FirstChild);
         This.Patch(context, end);
     }
-    Public Trusted Function void InitializeArrayValues(KncFunctionContext context, KncValue array, KncValue length, bool copyExisting)
+    Public Trusted Function void InitializeArrayValues(KncFunctionContext context, KncValue array, KncValue length,
+                                                       int first, bool copyExisting)
     {
         TypeSymbol elementType = array.Type.ElementType;
-        If (elementType == null || (!This.Semantics.IsStructType(elementType) &&
-            !(elementType.Kind == [int](TypeKind.ArrayType) && elementType.ArrayLength >= 0))) Return;
         int mark = context.NextRegister;
-        KncValue index = This.Integer(context, 0);
+        KncValue index = This.Integer(context, first);
         KncValue one = This.Integer(context, 1);
         int start = context.Record.Code.Count;
         KncValue condition = This.BinaryOp(context, KncOpCode.LtInt, index, length, This.Semantics.Primitive("bool"));
@@ -2380,7 +2501,7 @@ Class KncBackend
             argument = argument.Next;
             If (parameter != null) parameter = parameter.Next;
         }
-        If (args.Length() > 4) { This.Fail("function-object call exceeds the KNC four-argument ABI"); Return This.Default(context, expression.Type); }
+        If (args.Length() > 4) Return This.EmitCallRange(context, 2, callable.Register, args, expression.Type);
         int register = expression.Type.Kind == [int](TypeKind.VoidType) ? 255 : context.Allocate();
         This.Op3(context, KncOpCode.CallClosure, register, callable.Register, args.Length());
         int index = 0;

@@ -1,0 +1,19 @@
+Unit Tests.Boxes;
+Get IO.Console;
+
+Public Class Box
+{
+    Public int Value;
+}
+
+Function Tests.Boxes.Box Make(int value)
+{
+    Tests.Boxes.Box box = New Tests.Boxes.Box();
+    box.Value = value;
+    Return box;
+}
+
+Function void Print(Tests.Boxes.Box box)
+{
+    IO.Console.PrintLine(box.Value);
+}

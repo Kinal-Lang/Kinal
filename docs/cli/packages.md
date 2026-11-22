@@ -5,7 +5,7 @@ Kinal packages are described by `package.knpkg.json` (legacy name:
 
 ## Package commands
 
-The C stage0 and pure-Kinal selfhost CLIs provide:
+This page documents the current C compiler package commands:
 
 ```sh
 kinal pkg build --manifest ./mylib -o ./mylib.klib
@@ -19,20 +19,17 @@ kinal pkg unpack ./mylib.klib -o ./recovered
 use it instead of `-o`. `pkg info` reports the archive file, producer
 compiler, entry count, and total entry bytes, not a list of compiled exports.
 
-Both compilers write the existing version-1 `KNKLIB1` format and can inspect,
-unpack, and consume each other's archives. The original manifest bytes and all
+The C compiler writes version-1 `KNKLIB1` archives. The original manifest bytes and all
 payload files below its directory are preserved, including empty files and
 binary/native assets. Package manifests, existing
 `.klib` files, `.git`, and `.kinal-cache` subtrees are excluded. `source_root` and `source_files` control
 consumer discovery, not which assets are archived. The build limit is 256
-payload files; selfhost currently limits each archive to 2 GiB.
+payload files.
 
 Without `-o`, build writes `<name>-<version>.klib` (or `<name>.klib` when version
 is absent) in the invoking directory. Unpack's default directory is the archive
 base name up to its first dot, matching stage0. Layout uses `0.0.0` when version
 is absent and preserves summary, URL, entry, modules, and dependency metadata.
-Selfhost serializes and extracts archives in Kinal using raw file-I/O leaves;
-it does not invoke the C compiler. Its payload ordering is deterministic.
 
 ## Package manifest
 
@@ -115,13 +112,21 @@ other segments compare lexically. Missing numeric segments compare as zero
 (`1.0` equals `1.0.0`). Equal versions retain the first root's package.
 This is not a full SemVer dependency solver.
 
+Pin a package when the code depends on a particular API version. For example, a Native application that uses IO.UI 1.0 control handles can include this project block.
+
+```text
+Packages { Pins = ["IO.UI@1.0.0"]; }
+```
+
+Each entry uses the exact package name and version from its manifest, including capitalization. A profile can override individual project pins in its own `Packages` block. Duplicate pins in one scope, malformed entries and unavailable versions fail the build.
+
 Imports resolve by **Unit**, not package name: project Units take precedence
 over ordinary packages, which take precedence over official packages.
 Unshadowed Units in the same package remain available. `AutoDiscovery = false`
 limits local source discovery and ordinary dependencies; explicit official
 standard-library imports remain available.
 
-Both CLIs also accept `--pkg-root <dir>` for direct-source builds.
+The C CLI also accepts `--pkg-root <dir>` for direct-source builds.
 
 ## Archive contents and native libraries
 
@@ -144,10 +149,6 @@ outputs are never part of this cleanup; `--keep-temps` also retains the cache.
 Forced termination may leave a stale
 process directory.
 
-Selfhost extracts installed packages into an executable-relative
-`stdlib-cache` generation and project archives into content-fingerprinted
-`package-cache` directories. Changed archive contents do not reuse stale
-source files, including same-size replacements.
 
 ## See also
 

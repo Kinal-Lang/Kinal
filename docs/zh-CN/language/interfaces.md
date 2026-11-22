@@ -1,6 +1,6 @@
 # 接口
 
-接口定义了一组方法签名的契约，实现接口的类必须提供所有方法的具体实现。
+接口可以声明方法和属性访问器。实现接口的类需要提供相应的方法和访问器。
 
 ## 接口声明
 
@@ -12,7 +12,13 @@ Interface IShape
 }
 ```
 
-接口只能声明**方法签名**，不能有字段或方法实现。
+接口方法默认为抽象方法，也可以显式写成 `Public Abstract Function float Area();`。签名以分号结束，由实现接口的类提供方法体。
+
+接口可以只公开属性的 `Set`。持有下面这个接口的代码可以执行 `sink.Value = 42`。若要通过接口读取 `sink.Value`，接口声明中还需包含 `Get`。
+
+```kinal
+Interface ISink { Property int Value { Set; } }
+```
 
 ## 实现接口
 
@@ -80,7 +86,7 @@ IO.Console.PrintLine([string](t.Area()));
 结合 `Is` 运算符检查某对象是否实现了某接口：
 
 ```kinal
-Object obj = ...;
+IO.Type.Object.Class obj = ...;
 If (obj Is IShape shape)
 {
     IO.Console.PrintLine(shape.Area());
@@ -201,3 +207,5 @@ Static Function int Main()
 - [类与继承](classes.md)
 - [泛型](generics.md)
 
+
+以上接口调用示例说明 Native 分派。当前 C KNC 发射器不普遍实现接口接收者调用，VM 程序应使用受支持的具体接收者路径。受检查转换和 Is 可用，不等于方法分派也受支持。参见[后端支持](../advanced/backend-support.md)。

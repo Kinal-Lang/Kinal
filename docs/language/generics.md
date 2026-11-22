@@ -20,6 +20,28 @@ int i = Identity<int>(42);
 string s = Identity<string>("hello");
 ```
 
+The caller resolves explicit type arguments using its own imports. The
+function's declared parameter and return types use the imports where the
+function is defined. For example, a library can declare
+`Function Model.Box Select<T>(T[] tags, Model.Box[] boxes)` with its own
+`Model` alias. A caller that imports the same module as `Data` can pass a
+`Data.Box[]` and receive a `Data.Box`. This also works when the library's
+functions are split across several files in one unit.
+
+A class method or property accessor can call a generic function directly.
+For example, this getter specializes `ReadCount` for `Counter`. The compiler
+checks that `Counter.Count` exists and that its type matches the return type.
+
+```kinal
+Function int ReadCount<T>(T item) { Return item.Count; }
+
+Class Counter
+{
+    Public int Count;
+    Public Property int Total { Get { Return ReadCount<Counter>(This); } }
+}
+```
+
 ## Multiple Type Parameters
 
 ```kinal
@@ -62,6 +84,12 @@ AreEqual<int>(1, 1);          // true
 AreEqual<string>("a", "b");   // false
 AreEqual<bool>(true, false);  // false
 ```
+
+## Value Semantics and Composition
+
+`Swap<T>(T a, T b)` only swaps its parameter copies; it does not update caller scalar variables. Use a returned Package or an intentional mutable reference when caller state must change. Each instantiated body is checked normally: `AreEqual<int[]>(...)`, for example, is invalid because arrays do not support direct aggregate equality.
+
+The current parser rejects some nested explicit generic-call spellings, including `Print<string>(Describe<bool>(true))`. Store the inner result in a typed local before passing it to the outer call, as in the complete example. This is an implementation boundary, not a rule that generics implicitly infer all nested type arguments.
 
 ## Current Limitations
 
@@ -108,7 +136,8 @@ Static Function int Main()
 
     Print<int>(maxInt);
     Print<float>(maxFloat);
-    Print<string>(Describe<bool>(true));
+    string description = Describe<bool>(true);
+    Print<string>(description);
 
     Return 0;
 }
@@ -117,7 +146,7 @@ Static Function int Main()
 Output:
 ```
 7
-2.7
+2.7000000000000002
 value: true
 ```
 
@@ -125,3 +154,7 @@ value: true
 
 - [Functions](functions.md)
 - [Classes and Inheritance](classes.md)
+
+Generic body support depends on the backend; see [Backend Support](../advanced/backend-support.md).
+
+To adapt a generic function to a function object, call Identity<int>(value) inside an anonymous function with concrete parameter/return types. The current parser does not accept a standalone Identity<int> reference expression.

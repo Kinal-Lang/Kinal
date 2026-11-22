@@ -12,7 +12,7 @@ Unit App.Services;
 
 - The `Unit` declaration must be at the top of the file, before all `Get` declarations and other declarations
 - Unit names use dot notation to form a hierarchy (e.g., `IO.Console`, `App.Utils`)
-- Files without a `Unit` declaration belong to an anonymous module; their symbols can still be accessed by files in the same directory
+- Direct single-file programs can omit Unit; use explicit Units for predictable cross-file discovery and project source sets
 
 Functions, classes, interfaces, etc. declared in this Unit have a fully qualified name of `UnitName.DeclarationName`, for example:
 
@@ -31,7 +31,7 @@ Function string GetVersion() { Return "1.0"; }
 Get IO.Console;
 ```
 
-After importing, all public symbols in `IO.Console` can be accessed as `IO.Console.SymbolName`, or with the prefix partially omitted when unambiguous.
+After importing, all public symbols in `IO.Console` can be accessed as `IO.Console.SymbolName`, or through an explicit module/symbol alias. An ordinary Get does not inject top-level functions into bare-name scope.
 
 ### 2. Alias Import
 
@@ -40,6 +40,12 @@ Get Console By IO.Console;
 ```
 
 Binds the module `IO.Console` to a local alias `Console`, allowing `Console.PrintLine(...)` instead of `IO.Console.PrintLine(...)`.
+
+A standalone entry file can omit its `Unit` declaration. Its imports stay in the unnamed
+unit. For example, `Get UI By IO.UI;` lets that file use `UI.Window`; code inside
+`Unit IO.UI` can still use `IO.UI.Window`.
+Classes in standalone files use their declared names, such as `Counter` or
+`Counter.Calls`. Their constructors, properties and methods work in Native and KinalVM.
 
 ```kinal
 Get FS By IO.File;
@@ -78,7 +84,7 @@ Unit App.Main;          // ← Unit first
 Get IO.Console;         // ← then all Get declarations
 Get FS By IO.File;
 
-Static Function int Main() { ... }  // ← then other declarations
+Static Function int Main() { Return 0; }  // ← then other declarations
 ```
 
 ## Alias — Local Symbol Alias
@@ -103,6 +109,18 @@ Rules:
 - The target symbol is validated when the file is compiled; it must already be visible through the current file's `Get` declarations or current compilation scope
 - `Alias` only aliases symbols; it does not rewrite keywords, literals, operators, or punctuation
 - `Alias` must appear in the same front section as `Get`, before normal declarations
+
+A type alias can be used in declarations, constructors, array element types, and explicit generic arguments. For example, given a class `Invoice` in `Sales.Models`:
+
+```kinal
+Get Models By Sales.Models;
+Alias Bill By Models.Invoice;
+Alias Document By Bill;
+
+Function Document NewInvoice() { Return New Bill(); }
+```
+
+Both names denote the same class. Its fields and methods are available through either name. The selfhost compiler reports an unresolved or cyclic alias at its declaration, including when it has no uses.
 
 `Alias` can point at ordinary visible symbols such as types, functions, enum members, and static members:
 
@@ -216,10 +234,11 @@ kinal build main.kn --no-module-discovery
 
 ## Qualified Name Calls
 
-Regardless of whether a module is imported, you can still write a fully qualified name directly:
+Use a fully qualified name for an accessible declaration. Qualification does not replace standard-module imports or source membership:
 
 ```kinal
-// Even without `Get IO.Console;`, you can write:
+Get IO.Console;
+
 IO.Console.PrintLine("Hello");
 ```
 
@@ -308,3 +327,5 @@ Static Function int Main()
 - [Generics](generics.md)
 - [Standard Library Overview](../stdlib/overview.md)
 - [Package System](../cli/packages.md)
+
+For the complete two-file example, create both math.kn and main.kn in the same directory and run `kinal run main.kn`, or build both files explicitly with discovery disabled. A package is resolved by declared Unit identity, not by its package name or filename. See [Project Files](../cli/project-files.md) for active source-set boundaries and the full four-mode selection rules.

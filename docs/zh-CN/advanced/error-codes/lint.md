@@ -2,7 +2,9 @@
 
 不会阻止编译，但建议尽快清理的诊断。
 
-本文中的示例都是最小复现片段，用来说明该错误码最常见的触发方式；少数更偏内部的诊断会使用最接近用户代码的表面写法来说明。
+本页记录预注册模板。正确示例展示支持的写法；触发形态用于说明规则或解析状态，可能依赖外围声明，或在当前 C 编译器中先报告其他诊断。
+
+使用 `kinal build main.kn --emit check --warn-level 2` 启用以下警告。以 `_` 开头的变量及形参不报告此处的未使用变量警告。
 
 ---
 
@@ -56,6 +58,8 @@ Static Function int Main()
 错误示例：
 
 ```kinal
+Get IO.Console;
+
 Static Function int Main()
 {
     Return 0;
@@ -66,6 +70,8 @@ Static Function int Main()
 正确示例：
 
 ```kinal
+Get IO.Console;
+
 Static Function int Main()
 {
     IO.Console.PrintLine("once");

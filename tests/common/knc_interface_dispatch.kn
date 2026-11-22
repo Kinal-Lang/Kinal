@@ -1,0 +1,61 @@
+Unit Tests.KncDispatch;
+Get Console By IO.Console;
+
+Interface INumber
+{
+    Function int Read(int n);
+    Function int Sum(int a, int b, int c, int d);
+    Function float Rounded(f32 value);
+    Property int Level { Get; Set; }
+}
+
+Interface IText
+{
+    Function int Read(string s);
+}
+
+Class Child By Parent
+{
+    Public Function int Unrelated() { Return 99; }
+    Public Override Function int Tag() { Return Base.Tag() + 1; }
+}
+
+Class Parent By INumber, IText
+{
+    Public int Offset;
+    Public Property int Level
+    {
+        Get { Return This.Offset; }
+        Set { This.Offset = value; }
+    }
+    Public Constructor(int a, int b, int c, int d) { This.Offset = a + b + c + d; }
+    [Overload] [SymbolName("NumberRead")]
+    Public Function int Read(int n) { Return This.Offset + n; }
+    [Overload] [SymbolName("StringRead")]
+    Public Function int Read(string s) { Return 40 + s.Length(); }
+    Public Function int Sum(int a, int b, int c, int d)
+    {
+        Return a + 10 * b + 100 * c + 1000 * d;
+    }
+    Public Virtual Function int Tag() { Return 10; }
+    Public Function float Rounded(f32 value) { Return [float](value); }
+}
+
+Static Function int Main()
+{
+    Parent parent = New Parent(1, 2, 3, 4);
+    Parent derived = New Child();
+    INumber number = parent;
+    IText text = derived;
+    Console.PrintLine(number.Read(7));
+    Console.PrintLine(text.Read("xy"));
+    Console.PrintLine(derived.Tag());
+    Console.PrintLine(number.Sum(1, 2, 3, 4));
+    Console.PrintLine(parent.Sum(4, 3, 2, 1));
+    int value = 1;
+    Console.PrintLine(number.Sum(value, ++value, value, ++value));
+    Console.PrintLine(number.Rounded(16777217.0) == 16777216.0);
+    number.Level += 5;
+    Console.PrintLine(number.Level);
+    Return 0;
+}

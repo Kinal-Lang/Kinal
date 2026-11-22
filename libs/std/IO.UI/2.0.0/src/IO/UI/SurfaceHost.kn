@@ -1,0 +1,72 @@
+Unit IO.__UI;
+
+[IO.Kinal.Runtime.KncIntrinsic(210)]
+Trusted Function int ShowMessage(string text, string caption, int style)
+{
+    Return [int](MessageBoxW(null,__kn_win_utf16(text),__kn_win_utf16(caption),[u32](style)));
+}
+
+[IO.Kinal.Runtime.KncIntrinsic(180)]
+Trusted Function byte* OpenSurface(string title, int x, int y, int width, int height, byte* callback)
+{
+    kn_ui_init();
+    byte* handle = kn_ui_window(__kn_win_utf16(title), [i32](x), [i32](y), [i32](width), [i32](height), callback);
+    If (handle == null) Throw New IO.Error("IO.UI", "Create DX11 window failed: " + [string](GetLastError()));
+    Return handle;
+}
+
+[IO.Kinal.Runtime.KncIntrinsic(181)]
+Trusted Function int RunMessages()
+{
+    MSG message;
+    i32 status = GetMessageW(&message, null, 0, 0);
+    While (status > 0)
+    {
+        TranslateMessage(&message);
+        DispatchMessageW(&message);
+        status = GetMessageW(&message, null, 0, 0);
+    }
+    If (status < 0) Throw New IO.Error("IO.UI", "GetMessageW failed: " + [string](GetLastError()));
+    Return [int](message.WParam);
+}
+
+[IO.Kinal.Runtime.KncIntrinsic(182)]
+Trusted Function void ShowSurface(byte* handle)
+{
+    ShowWindow(handle, 5); UpdateWindow(handle); kn_ui_shown(handle);
+}
+
+[IO.Kinal.Runtime.KncIntrinsic(183)]
+Trusted Function void CloseSurface(byte* handle) { SendMessageW(handle, 0x10, 0, 0); }
+
+[IO.Kinal.Runtime.KncIntrinsic(184)]
+Trusted Function int ClientExtent(byte* handle, bool vertical)
+{
+    RECT rect;
+    GetClientRect(handle, &rect);
+    int dpi = [int](kn_ui_dpi(handle));
+    If (dpi < 1) dpi = 96;
+    Return ((vertical ? [int](rect.Bottom) : [int](rect.Right)) * 96 + dpi / 2) / dpi;
+}
+
+[IO.Kinal.Runtime.KncIntrinsic(185)]
+Trusted Function bool RequestLayout(byte* handle) { Return PostMessageW(handle, 0x8051, 0, 0); }
+[IO.Kinal.Runtime.KncIntrinsic(186)]
+Trusted Function void Repaint(byte* handle) { InvalidateRect(handle, null, false); }
+[IO.Kinal.Runtime.KncIntrinsic(187)]
+Trusted Function void SetTitle(byte* handle, string title) { SetWindowTextW(handle, __kn_win_utf16(title)); }
+[IO.Kinal.Runtime.KncIntrinsic(188)]
+Trusted Function void QuitLoop() { PostQuitMessage(0); }
+[IO.Kinal.Runtime.KncIntrinsic(189)]
+Trusted Function void CopyText(byte* handle, string text) { kn_ui_copy(handle, __kn_win_utf16(text)); }
+
+[IO.Kinal.Runtime.KncIntrinsic(190)]
+Trusted Function void DrawText(byte* handle,string text,i32 x,i32 y,i32 width,i32 height,i32 size,i32 weight,i32 mono,u32 color,i32 alignment)
+{
+    kn_ui_text(handle,__kn_win_utf16(text),x,y,width,height,size,weight,mono,color,alignment);
+}
+[IO.Kinal.Runtime.KncIntrinsic(191)]
+Trusted Function void DrawCode(byte* handle,string text,string runs,i32 x,i32 y,i32 size,u32 color)
+{
+    kn_ui_code(handle,__kn_win_utf16(text),runs,x,y,size,color);
+}

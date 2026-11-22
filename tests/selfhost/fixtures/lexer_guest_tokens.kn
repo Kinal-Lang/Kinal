@@ -1,0 +1,59 @@
+Unit Tests.Selfhost.LexerConsumer;
+
+Get IO.Console;
+Get IO.GC;
+Get GC By IO.Kinal.Runtime.GarbageCollector;
+Get IO.Kinal.Compiler.Lex.Lexer;
+Get IO.Kinal.Compiler.Lex.Token;
+Get IO.Kinal.Compiler.Source.SourceFile;
+
+Function void CollectSpellings()
+{
+    IO.GC.Collect();
+    If (IO.Runtime.IsNative) GC.Collect();
+}
+
+Function list MiddleSpellings(string path)
+{
+    SourceFile source = IO.Kinal.Compiler.Source.SourceFile.Load(path);
+    list tokens = IO.Kinal.Compiler.Lex.Lexer.Tokenize(source, list.Create());
+    list chosen = list.Create();
+    For (int i = 1; i < tokens.Count() - 1; i += 3)
+        chosen.Add([Token](tokens.Fetch(i)).Text);
+    Return chosen;
+}
+
+Static Function int Main(string[] args)
+{
+    If (args.Length() == 2)
+    {
+        // Keep only strings. The source, lexer, and token objects can all be collected.
+        list chosen = MiddleSpellings(args[0]);
+        CollectSpellings();
+        For (int round = 0; round < 3; round++)
+        {
+            list fresh = MiddleSpellings(args[1]);
+            If (fresh.Count() != chosen.Count()) Return 1;
+            CollectSpellings();
+        }
+        For (int pos = 0; pos < chosen.Count(); pos++) IO.Console.PrintLine([string](chosen.Fetch(pos)));
+        Return 0;
+    }
+    SourceFile source = IO.Kinal.Compiler.Source.SourceFile.Load(args[0]);
+    CollectSpellings();
+    list tokens = IO.Kinal.Compiler.Lex.Lexer.Tokenize(source, list.Create());
+    list spellings = list.Create();
+    For (int i = 0; i < tokens.Count(); i++)
+    {
+        Token token = [Token](tokens.Fetch(i));
+        spellings.Add(IO.Kinal.Compiler.Lex.Token.HexText(token.Text));
+    }
+    CollectSpellings();
+    For (int index = 0; index < tokens.Count(); index++)
+    {
+        Token token = [Token](tokens.Fetch(index));
+        If ([string](spellings.Fetch(index)) != IO.Kinal.Compiler.Lex.Token.HexText(token.Text)) Return 2;
+        IO.Console.PrintLine(IO.Kinal.Compiler.Lex.Token.MachineDump(token));
+    }
+    Return 0;
+}

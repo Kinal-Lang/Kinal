@@ -6,3 +6,8 @@ Trusted Function u64* State()
 {
     Return [u64*](IO.Kinal.Runtime.Native.ThreadStorage());
 }
+
+Trusted Function u64 ReadWord(int index)
+{
+    Return State()[index];
+}

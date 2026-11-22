@@ -1,6 +1,7 @@
 Unit IO.Text;
 
 Get IO.Kinal.Runtime;
+Get IO.Target;
 
 // Text algorithms and their managed storage are implemented by Kinal.  No
 // legacy C GC allocation may enter this package boundary.
@@ -14,7 +15,10 @@ Trusted Function int __TextLengthChars(char* characters)
     int length = 0;
     While (characters[length] != '\0')
     {
-        length = length + 1;
+        If (characters[length + 1] == '\0') Return length + 1;
+        If (characters[length + 2] == '\0') Return length + 2;
+        If (characters[length + 3] == '\0') Return length + 3;
+        length += 4;
     }
     Return length;
 }
@@ -92,65 +96,129 @@ Trusted Function string __TextSliceChars(char* source, int sourceLength,
     Return [string](result);
 }
 
+[IO.Kinal.Runtime.KncIntrinsic(152)]
 Trusted Function int Length(string text)
 {
     Return __TextLengthChars([char*](text));
 }
 
+[IO.Kinal.Runtime.KncIntrinsic(153)]
 Trusted Function bool IsEmpty(string text)
 {
     char* characters = [char*](text);
     Return characters == null || characters[0] == '\0';
 }
 
+// Stop measuring the needle if the haystack ends first.
+Trusted Function int __TextPatternLength(char* source, char* pattern)
+{
+    If (pattern == null || pattern[0] == '\0') Return 0;
+    If (source == null) Return -1;
+    int n = 0;
+    While (pattern[n] != '\0')
+    {
+        If (source[n] == '\0') Return -1;
+        n++;
+    }
+    Return n;
+}
+
+// For long needles, reuse the longest proper prefix that is also a suffix
+// when a candidate fails. Short delimiters need no table or allocation.
+Trusted Function int* __TextPrefixTable(char* pattern, int length)
+{
+    If (length < 16) Return null;
+    int maxEntries = IO.Target.PointerBits == 32 ? 268435455 : 1152921504606846975;
+    If (length > maxEntries) Return null;
+    int* prefix = [int*](IO.Kinal.Runtime.AllocateRaw([usize](length * 8)));
+    If (prefix == null) Return null;
+    prefix[0] = 0;
+    int matched = 0;
+    For (int i = 1; i < length; i++)
+    {
+        char c = pattern[i];
+        While (matched > 0 && pattern[matched] != c) matched = prefix[matched - 1];
+        If (c == pattern[matched]) matched++;
+        prefix[i] = matched;
+    }
+    Return prefix;
+}
+
+Enum __TextSearchMode By int { First, Last, CountMatches }
+
+// For Last, resume at a proper suffix to include overlapping matches.
+// Count and the consuming operations advance past the whole match.
+Trusted Function int __TextSearch(char* source, char* pattern, int length, int* prefix, __TextSearchMode mode)
+{
+    int result = mode == __TextSearchMode.CountMatches ? 0 : -1;
+    If (prefix != null)
+    {
+        int matched = 0;
+        For (int i = 0; source[i] != '\0'; i++)
+        {
+            char c = source[i];
+            While (matched > 0 && pattern[matched] != c) matched = prefix[matched - 1];
+            If (c == pattern[matched]) matched++;
+            If (matched != length) Continue;
+            If (mode == __TextSearchMode.First) Return i - (length - 1);
+            If (mode == __TextSearchMode.Last)
+            {
+                result = i - (length - 1);
+                matched = prefix[matched - 1];
+            }
+            Else { result++; matched = 0; }
+        }
+        Return result;
+    }
+    char first = pattern[0];
+    For (int i = 0; source[i] != '\0'; i++)
+    {
+        If (source[i] != first) Continue;
+        int j = 1;
+        While (j < length && source[i + j] == pattern[j]) j++;
+        If (j != length) Continue;
+        If (mode == __TextSearchMode.First) Return i;
+        If (mode == __TextSearchMode.Last) result = i;
+        Else { result++; i += length - 1; }
+    }
+    Return result;
+}
+
+[IO.Kinal.Runtime.KncIntrinsic(157)]
 Trusted Function int IndexOf(string text, string value)
 {
     char* source = [char*](text);
     char* pattern = [char*](value);
-    int sourceLength = __TextLengthChars(source);
-    int patternLength = __TextLengthChars(pattern);
-    If (patternLength == 0)
-    {
-        Return 0;
-    }
-    If (sourceLength < patternLength)
-    {
-        Return -1;
-    }
-    int index = 0;
-    While (index + patternLength <= sourceLength)
-    {
-        If (__TextMatchesAt(source, sourceLength, pattern, patternLength, index))
-        {
-            Return index;
-        }
-        index = index + 1;
-    }
-    Return -1;
+    int length = __TextPatternLength(source, pattern);
+    If (length <= 0) Return length;
+    If (length >= 16 && __TextMatchesAt(source, length, pattern, length, 0)) Return 0;
+    Return __TextSearch(source, pattern, length, __TextPrefixTable(pattern, length), __TextSearchMode.First);
 }
 
+[IO.Kinal.Runtime.KncIntrinsic(158)]
 Trusted Function int LastIndexOf(string text, string value)
 {
     char* source = [char*](text);
     char* pattern = [char*](value);
-    int sourceLength = __TextLengthChars(source);
-    int patternLength = __TextLengthChars(pattern);
-    If (patternLength == 0)
+    int length = __TextPatternLength(source, pattern);
+    If (length < 0) Return -1;
+    int size = __TextLengthChars(source);
+    If (length == 0) Return size;
+    int end = size - length;
+    If (length >= 16)
     {
-        Return sourceLength;
+        If (__TextMatchesAt(source, size, pattern, length, end)) Return end;
+        int* prefix = __TextPrefixTable(pattern, length);
+        If (prefix != null) Return __TextSearch(source, pattern, length, prefix, __TextSearchMode.Last);
     }
-    If (sourceLength < patternLength)
+    char first = pattern[0];
+    char last = pattern[length - 1];
+    For (int i = end; i >= 0; i--)
     {
-        Return -1;
-    }
-    int index = sourceLength - patternLength;
-    While (index >= 0)
-    {
-        If (__TextMatchesAt(source, sourceLength, pattern, patternLength, index))
-        {
-            Return index;
-        }
-        index = index - 1;
+        If (source[i] != first || source[i + length - 1] != last) Continue;
+        int j = 1;
+        While (j < length && source[i + j] == pattern[j]) j++;
+        If (j == length) Return i;
     }
     Return -1;
 }
@@ -161,14 +229,23 @@ Trusted Function bool Contains(string text, string value)
     Return IndexOf(text, value) >= 0;
 }
 
+[IO.Kinal.Runtime.KncIntrinsic(155)]
 Trusted Function bool StartsWith(string text, string prefix)
 {
     char* source = [char*](text);
     char* pattern = [char*](prefix);
-    Return __TextMatchesAt(source, __TextLengthChars(source), pattern,
-        __TextLengthChars(pattern), 0);
+    If (pattern == null) Return true;
+    If (source == null) Return pattern[0] == '\0';
+    int index = 0;
+    While (pattern[index] != '\0')
+    {
+        If (source[index] != pattern[index]) Return false;
+        index++;
+    }
+    Return true;
 }
 
+[IO.Kinal.Runtime.KncIntrinsic(156)]
 Trusted Function bool EndsWith(string text, string suffix)
 {
     char* source = [char*](text);
@@ -179,12 +256,26 @@ Trusted Function bool EndsWith(string text, string suffix)
         sourceLength - patternLength);
 }
 
+[IO.Kinal.Runtime.KncIntrinsic(163)]
 Trusted Function string Slice(string text, int start, int length)
 {
     char* source = [char*](text);
-    Return __TextSliceChars(source, __TextLengthChars(source), start, length);
+    If (source == null || length <= 0) Return "";
+    int offset = 0;
+    // Short-circuit each byte so a terminator at a page boundary is safe.
+    While (start - offset >= 4 && source[offset] != '\0' && source[offset + 1] != '\0' &&
+           source[offset + 2] != '\0' && source[offset + 3] != '\0')
+    {
+        offset += 4;
+    }
+    While (offset < start && source[offset] != '\0') offset++;
+    char* first = source + offset;
+    int available = 0;
+    While (available < length && first[available] != '\0') available++;
+    Return __TextSliceChars(first, available, 0, available);
 }
 
+[IO.Kinal.Runtime.KncIntrinsic(159)]
 Trusted Function string Trim(string text)
 {
     char* source = [char*](text);
@@ -206,83 +297,58 @@ Trusted Function string Trim(string text)
     Return __TextSliceChars(source, length, start, end - start);
 }
 
+[IO.Kinal.Runtime.KncIntrinsic(154)]
 Trusted Function int Count(string text, string value)
 {
     char* source = [char*](text);
     char* pattern = [char*](value);
-    int sourceLength = __TextLengthChars(source);
-    int patternLength = __TextLengthChars(pattern);
-    If (patternLength == 0 || sourceLength < patternLength)
-    {
-        Return 0;
-    }
-    int count = 0;
-    int index = 0;
-    While (index + patternLength <= sourceLength)
-    {
-        If (__TextMatchesAt(source, sourceLength, pattern, patternLength, index))
-        {
-            count = count + 1;
-            index = index + patternLength;
-        }
-        Else
-        {
-            index = index + 1;
-        }
-    }
-    Return count;
+    int length = __TextPatternLength(source, pattern);
+    If (length <= 0) Return 0;
+    Return __TextSearch(source, pattern, length, __TextPrefixTable(pattern, length), __TextSearchMode.CountMatches);
 }
 
+[IO.Kinal.Runtime.KncIntrinsic(160)]
 Trusted Function string Replace(string text, string from, string to)
 {
     char* source = [char*](text);
     char* pattern = [char*](from);
     char* replacement = [char*](to);
     int sourceLength = __TextLengthChars(source);
-    int patternLength = __TextLengthChars(pattern);
+    int length = __TextLengthChars(pattern);
+    If (length == 0 || length > sourceLength) Return __TextSliceChars(source, sourceLength, 0, sourceLength);
+    int* prefix = __TextPrefixTable(pattern, length);
     int replacementLength = __TextLengthChars(replacement);
-    If (patternLength == 0)
+    int outputLength = sourceLength;
+    If (replacementLength != length)
     {
-        Return __TextSliceChars(source, sourceLength, 0, sourceLength);
+        int matches = __TextSearch(source, pattern, length, prefix, __TextSearchMode.CountMatches);
+        If (matches == 0) Return __TextSliceChars(source, sourceLength, 0, sourceLength);
+        int growth = replacementLength - length;
+        int limit = IO.Target.PointerBits == 32 ? 2147483646 : 9223372036854775806;
+        If (growth > 0 && growth > (limit - sourceLength) / matches) Return "";
+        outputLength += matches * growth;
     }
-
-    int matches = Count(text, from);
-    If (matches == 0)
-    {
-        Return __TextSliceChars(source, sourceLength, 0, sourceLength);
-    }
-    int outputLength = sourceLength + matches * (replacementLength - patternLength);
     char* result = __TextAllocate(outputLength);
-    If (result == null)
+    If (result == null) Return "";
+    int read = 0;
+    int written = 0;
+    While (read < sourceLength)
     {
-        Return "";
-    }
-
-    int readIndex = 0;
-    int writeIndex = 0;
-    While (readIndex < sourceLength)
-    {
-        If (__TextMatchesAt(source, sourceLength, pattern, patternLength, readIndex))
-        {
-            int replacementIndex = 0;
-            While (replacementIndex < replacementLength)
-            {
-                result[writeIndex] = replacement[replacementIndex];
-                writeIndex = writeIndex + 1;
-                replacementIndex = replacementIndex + 1;
-            }
-            readIndex = readIndex + patternLength;
-        }
-        Else
-        {
-            result[writeIndex] = source[readIndex];
-            writeIndex = writeIndex + 1;
-            readIndex = readIndex + 1;
-        }
+        int next = __TextSearch(source + read, pattern, length, prefix, __TextSearchMode.First);
+        int plain = next < 0 ? sourceLength - read : next;
+        If (plain >= 16) IO.Kinal.Runtime.MemoryCopy([byte*](result + written), [byte*](source + read), [usize](plain));
+        Else For (int i = 0; i < plain; i++) result[written + i] = source[read + i];
+        If (next < 0) Break;
+        written += plain;
+        If (replacementLength >= 16) IO.Kinal.Runtime.MemoryCopy([byte*](result + written), [byte*](replacement), [usize](replacementLength));
+        Else For (int j = 0; j < replacementLength; j++) result[written + j] = replacement[j];
+        written += replacementLength;
+        read += next + length;
     }
     Return [string](result);
 }
 
+[IO.Kinal.Runtime.KncIntrinsic(161)]
 Trusted Function string ToUpper(string text)
 {
     char* source = [char*](text);
@@ -306,6 +372,7 @@ Trusted Function string ToUpper(string text)
     Return [string](result);
 }
 
+[IO.Kinal.Runtime.KncIntrinsic(162)]
 Trusted Function string ToLower(string text)
 {
     char* source = [char*](text);
@@ -329,38 +396,34 @@ Trusted Function string ToLower(string text)
     Return [string](result);
 }
 
+[IO.Kinal.Runtime.KncIntrinsic(234)]
 Trusted Function list Split(string text, string separator)
 {
     char* source = [char*](text);
     char* pattern = [char*](separator);
-    int sourceLength = __TextLengthChars(source);
-    int patternLength = __TextLengthChars(pattern);
+    int length = __TextPatternLength(source, pattern);
     list result = list.Create();
-    If (patternLength == 0)
+    If (length <= 0)
     {
-        result.Add(__TextSliceChars(source, sourceLength, 0, sourceLength));
+        int size = __TextLengthChars(source);
+        result.Add(__TextSliceChars(source, size, 0, size));
         Return result;
     }
-
+    int* prefix = __TextPrefixTable(pattern, length);
     int start = 0;
-    int index = 0;
-    While (index + patternLength <= sourceLength)
+    While (source[start] != '\0')
     {
-        If (__TextMatchesAt(source, sourceLength, pattern, patternLength, index))
-        {
-            result.Add(__TextSliceChars(source, sourceLength, start, index - start));
-            index = index + patternLength;
-            start = index;
-        }
-        Else
-        {
-            index = index + 1;
-        }
+        int next = __TextSearch(source + start, pattern, length, prefix, __TextSearchMode.First);
+        If (next < 0) Break;
+        result.Add(__TextSliceChars(source + start, next, 0, next));
+        start += next + length;
     }
-    result.Add(__TextSliceChars(source, sourceLength, start, sourceLength - start));
+    int remaining = __TextLengthChars(source + start);
+    result.Add(__TextSliceChars(source + start, remaining, 0, remaining));
     Return result;
 }
 
+[IO.Kinal.Runtime.KncIntrinsic(235)]
 Trusted Function list Lines(string text)
 {
     char* source = [char*](text);
@@ -391,6 +454,7 @@ Trusted Function list Lines(string text)
     Return result;
 }
 
+[IO.Kinal.Runtime.KncIntrinsic(236)]
 Trusted Function string Join(list values, string separator)
 {
     If (values == null || values.Count() == 0)

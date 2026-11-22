@@ -1,187 +1,100 @@
 # 安全等级
 
-Kinal 内置三级安全模型，对内存操作和危险函数调用进行显式分层。这是 Kinal 区别于很多语言的重要设计——你始终知道一段代码是否涉及潜在危险操作。
+安全标注控制编译器允许哪些操作和调用，是语言边界，不是对外部代码、原始地址、资源所有权或全部运行行为的正确性证明。
 
-## 三个级别
+## 调用规则与默认值
 
-| 级别 | 关键字 | 说明 |
-|------|--------|------|
-| 安全 | `Safe` | 只能调用带 `Safe` 修饰的函数；严格禁止指针操作 |
-| 受信 | `Trusted` | 可以调用 `Safe` 和 `Unsafe` 函数；不直接操作裸指针 |
-| 不安全 | `Unsafe` | 可以进行所有操作，包括裸指针和直接内存操作 |
+| 调用方 | Safe 被调函数 | Trusted 被调函数 | Unsafe 被调函数 | 受检查的原始指针操作 |
+|--------|---------------|------------------|-----------------|----------------------|
+| `Safe` | 允许 | 允许 | 拒绝 | 拒绝 |
+| `Trusted` | 允许 | 允许 | 允许 | 允许 |
+| `Unsafe` | 允许 | 允许 | 允许 | 允许 |
 
-未指定安全级别时，默认为不加限制（等同于非受控环境）。
+普通未标注函数默认是 **Safe**，不是无限制执行。Extern 未通过支持的显式声明规则提供其他边界时默认 Unsafe。通过委托、可调用包装层调用时也需要合适的安全上下文。
 
-## Safe
+`Trusted` 有意将允许不安全工作的实现暴露为 Safe 可调用接口，作者负责验证输入并维护接口契约。当前 C 编译器不会仅因为函数体标为 Trusted 就禁止其操作指针。
 
-`Safe` 函数保证不会产生未定义行为：
-
-```kinal
-Public Safe Function int Add(int a, int b)
-{
-    Return a + b;
-}
-
-Safe Function string BuildGreeting(string name)
-{
-    Return "Hello, " + name + "!";
-}
-```
-
-Safe 函数内部：
-- 不能调用 `Trusted` 或 `Unsafe` 函数
-- 不能使用裸指针（`byte*`、`int*` 等）
-- 不能使用 `Extern` FFI 函数（除非该函数也标注为 `Safe`）
-
-## Trusted
-
-`Trusted` 是 Safe 与 Unsafe 之间的桥梁：
+## Safe 代码
 
 ```kinal
-Trusted Function int ReadTick()
+Unit Docs.SafeArithmetic;
+Get IO.Console;
+
+Safe Function int Add(int left, int right)
 {
-    Return __kn_time_tick();  // 调用外部 C 函数
+    Return left + right;
+}
+
+Static Safe Function int Main()
+{
+    IO.Console.PrintLine(Add(3, 4));
+    Return 0;
 }
 ```
 
-Trusted 函数：
-- 可以调用 `Unsafe` 函数和 `Extern` 函数
-- 本身不直接操作裸指针
-- 可以被 `Safe` 函数调用（对调用方隐藏了危险细节）
+Safe 函数可使用普通语言值、托管分配、控制流及允许的库调用，不能直接调用 Unsafe 函数，也不能执行受保护的原始指针解引用／算术、指针与整数转换等操作。`ReadAllText` 等名称本身不决定安全性，应查看真实 API 声明。
 
-典型用途：封装底层 C API，暴露给安全层使用。
+## Trusted FFI 桥接
 
-## Unsafe
-
-`Unsafe` 函数可以执行所有操作：
+以下是 Native 示例；任意 C 调用不是可移植 KNC 能力：
 
 ```kinal
-Unsafe Function void Copy(byte* dst, byte* src, usize len)
+Unit Docs.TrustedBridge;
+Get IO.Console;
+
+Extern Unsafe Function int abs(int value) By C;
+
+Trusted Function int Absolute(int value)
 {
-    For (usize i = 0; i < len; i++)
-    {
-        dst[i] = src[i];
-    }
+    Return abs(value);
 }
 
-Unsafe Function byte* Allocate(usize size)
+Static Safe Function int Main()
 {
-    Return [byte*](IO.System.Malloc(size));
+    IO.Console.PrintLine(Absolute(-7)); // 7
+    Return 0;
 }
 ```
 
-Unsafe 可以：
-- 操作裸指针（读写、算术）
-- 调用 `Extern` C 函数
-- 进行类型指针强制转换
+Safe 调用方信任 Absolute 的契约。传入无效外部指针、使用错误 ABI 位宽或过早卸载动态库，都不会因为包装器标为 Trusted 而自动修复。参见[FFI](ffi.md)。
 
-## Block 中的安全级别
+## 原始指针实现
 
-`Block` 字面量也支持安全标注：
+Trusted 和 Unsafe 实现均可执行原始内存操作。选择用于表达：调用方应信任受审计的安全接口，还是必须接受 Unsafe 调用边界。
 
 ```kinal
-Unsafe Block UnsafeRegion </
-    byte* ptr = null;  // 允许指针操作
-/>
+Unsafe Function byte ReadByte(byte* address)
+{
+    Return address[0];
+}
 ```
 
-## 安全级别传播规则
+调用方必须提供有效、可访问地址；指针语法不携带分配长度、生命周期或所有权证明。`IO.Memory` 提供 Trusted 字节复制／填充／比较函数，同样需要明确的缓冲区约束。参见[内存与生命周期](../advanced/memory-management.md)。
 
-函数的安全级别决定了其可以调用什么：
+## Block 与入口
 
-```
-Safe  → 只能调用 Safe
-Trusted → 可以调用 Safe + Unsafe + Extern
-Unsafe → 可以调用任何东西
-```
-
-这个规则在**编译期**强制执行，违反会产生编译错误。
-
-## 为何需要安全分层？
-
-### 不使用分层的问题
-
-如果所有代码都默认 Unsafe，开发者很难分辨哪些代码涉及内存危险。
-
-### Kinal 的方案
-
-- **日常代码**写在 `Safe` 函数中，编译器保证安全性
-- **底层适配层**写在 `Trusted` 函数中，封装 C 调用
-- **极端底层代码**写在 `Unsafe` 函数中，明确标注风险
+Block 字面量可带安全标注：
 
 ```kinal
-// 安全层：业务逻辑
-Safe Function void ProcessFile(string path)
-{
-    string content = IO.File.ReadAllText(path);  // IO.File 函数是 Safe 的
-    // 处理内容...
-}
-
-// 受信层：FFI 封装
-Extern Function void* fopen(string path, string mode) By C;
-
-Trusted Function byte* OpenFileRaw(string path)
-{
-    Return [byte*](fopen(path, "rb"));  // 包装 C 函数
-}
-
-// 不安全层：裸操作
-Unsafe Function int ReadByte(byte* fp)
-{
-    // 直接调用底层读取函数
-}
+Unsafe Block RawRegion </
+    byte* address = null;
+/>;
 ```
 
-## 实际应用场景
+显式 Unsafe Block 是有意设置的边界，不代表整个外层文件已经受审计。`Unsafe Alias` 是另一项文件局部 token 预处理功能，不是普通不安全内存块的别名。参见[Block](blocks.md)、[模块](modules.md)。
 
-### 互操作封装（常见模式）
+Hosted Main 可标为 Safe、Trusted、Unsafe，但 Unsafe Main 会产生警告。该警告本身不是链接失败；使用 `--Werror` 时警告可以导致构建失败。只有少量操作需要时，优先缩小桥接函数或不安全区域范围。
 
-```kinal
-// 1. 声明 C 函数（Extern 不设安全级别）
-Extern Function int __kn_sys_file_read(byte* fp, byte* buf, int len) By C;
+## 标注不保证的事项
 
-// 2. Trusted 桥接层
-Trusted Function int FileRead(byte* fp, byte* buf, int len)
-{
-    Return __kn_sys_file_read(fp, buf, len);
-}
+- Safe 代码仍可能抛异常、分配失败、耗尽资源，或调用实现错误的 Trusted 包装器。
+- Trusted 不会自动清理路径、验证长度、确保传输安全或释放句柄。
+- Unsafe 允许出现操作，不会使无效操作自动有效。
+- Native 与 VM 共享前端安全检查，但后端／运行时支持是另一项要求。
 
-// 3. Safe 业务层（调用者无需关心底层细节）
-Safe Function string ReadChunk(byte* fp, int len)
-{
-    // 在 Safe 函数中通过 Trusted 间接调用 C
-    Return BuildStringFromResult(FileRead(fp, null, len));
-}
-```
+## 相关文档
 
-### FFI 危险函数调用约束
-
-```kinal
-Extern Function void* LoadLibrary(string path) By C;
-
-// 直接调用 LoadLibrary 要求函数为 Trusted 或 Unsafe
-Trusted Function byte* LoadLib(string path)
-{
-    Return [byte*](LoadLibrary(path));
-}
-```
-
-## 程序入口的安全性
-
-`Main` 函数可以是任意级别，但若 `Main` 标注为 `Unsafe` 会产生编译警告：
-
-```kinal
-// 推荐：
-Static Safe Function int Main() { ... }
-Static Function int Main() { ... }
-
-// 会有警告：
-Static Unsafe Function int Main() { ... }
-```
-
-## 下一步
-
-- [FFI 外部函数接口](ffi.md)
-- [异步编程](async.md)
-- [裸机与嵌入式](../advanced/freestanding.md)
-
+- [函数](functions.md)
+- [FFI](ffi.md)
+- [内存与生命周期](../advanced/memory-management.md)
+- [后端支持](../advanced/backend-support.md)

@@ -1,0 +1,17 @@
+Unit Tests.ErrorGenericMethodBody;
+
+Function T SelectValue<T>(bool take, T item)
+{
+    If (take) Return item;
+}
+
+Class Choice
+{
+    Public Property int Number { Get { Return SelectValue<int>(true, 5); } }
+}
+
+Static Function int Main()
+{
+    Choice choice = New Choice();
+    Return choice.Number;
+}

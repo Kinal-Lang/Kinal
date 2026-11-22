@@ -1,0 +1,132 @@
+Unit Tests.GuestHeap;
+
+Get IO.Console;
+Get IO.GC;
+
+Class Node
+{
+    Public Node Next;
+    Public int[] Values;
+    Public int Number;
+}
+
+Node ring;
+Function void MakeRing()
+{
+    Node a = New Node();
+    Node b = New Node();
+    a.Next = b;
+    b.Next = a;
+    b.Values = {8, 9};
+    ring = a;
+}
+
+Function Object.Function MakeCounter()
+{
+    Node item = New Node();
+    item.Number = 40;
+    Return Function int() { IO.GC.Collect(); item.Number = item.Number + 1; Return item.Number; };
+}
+
+Trusted Function int* FieldPointer()
+{
+    Node item = New Node();
+    item.Number = 17;
+    Return &item.Number;
+}
+
+Trusted Function int* ElementPointer()
+{
+    int[] items = {20, 21};
+    Return &items[1];
+}
+
+Function int Temporary(int value)
+{
+    int[4096] scratch;
+    scratch[191] = value;
+    Node node = New Node();
+    node.Next = node;
+    Return scratch[191];
+}
+
+Function bool CheckWideGraph()
+{
+    Node[601] children;
+    For (int i = 0; i < children.Length(); i++)
+    {
+        Node child = New Node();
+        child.Number = i;
+        children[i] = child;
+    }
+    IO.GC.Collect();
+    For (int index = 0; index < children.Length(); index++)
+        If (children[index].Number != index) Return false;
+    Return true;
+}
+
+Function bool CheckArrayCopies()
+{
+    string[130] text;
+    text[63] = "before";
+    text[64] = "middle";
+    text[129] = "end";
+    string[] alias = text;
+    string[] left = text.Add("left");
+    string[] right = text.Add("right");
+    alias[63] = "updated";
+    left[64] = "detached";
+    right[129] = "last";
+    If (left.Length() != 131 || text.Length() != 130 ||
+        left[63] != "before" || right[63] != "before" || text[63] != "updated" ||
+        text[64] != "middle" || right[64] != "middle" || left[64] != "detached" ||
+        left[129] != "end" || text[129] != "end" || right[129] != "last" ||
+        left[130] != "left" || right[130] != "right" || right[128] != "") Return false;
+
+    bool[65] flags;
+    flags[63] = true;
+    bool[] moreFlags = flags.Add(true);
+    flags[63] = false;
+    moreFlags[64] = true;
+    If (!moreFlags[63] || !moreFlags[65] || flags[64]) Return false;
+    float[3] numbers;
+    numbers[1] = -3.25;
+    float[] moreNumbers = numbers.Add(0.125);
+    numbers[1] = 4.5;
+    Return moreNumbers[1] == -3.25 && moreNumbers[3] == 0.125 && moreNumbers[2] == 0.0;
+}
+
+Function Node[] MakeSparseCopy()
+{
+    Node[4096] items;
+    Node value = New Node();
+    value.Number = 719;
+    items[3201] = value;
+    Node[] copy = items.Add(value);
+    items[3201] = New Node();
+    Return copy;
+}
+
+Trusted Static Function int Main()
+{
+    MakeRing();
+    Object.Function counter = MakeCounter();
+    int* field = FieldPointer();
+    int* element = ElementPointer();
+    int checksum = 0;
+    For (int i = 0; i < 512; i++) checksum += Temporary(i);
+    IO.GC.Collect();
+    If (checksum != 130816 || ring.Next.Next != ring || ring.Next.Values[1] != 9) Return 1;
+    If ([string](counter()) != "41" || *field != 17 || *element != 21) Return 2;
+    *element = 22;
+    IO.GC.Collect();
+    If (*element != 22 || [string](counter()) != "42") Return 3;
+    If (!CheckWideGraph()) Return 4;
+    If (!CheckArrayCopies()) Return 5;
+    Node[] sparse = MakeSparseCopy();
+    IO.GC.Collect();
+    If (sparse[3201].Number != 719 || sparse[4096] != sparse[3201] ||
+        sparse[0] != null || sparse[3199] != null || sparse[3200] != null) Return 6;
+    IO.Console.PrintLine("ok");
+    Return 0;
+}

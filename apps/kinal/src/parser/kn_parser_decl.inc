@@ -1149,11 +1149,18 @@ static InterfaceDecl parse_interface(Parser *p)
             break;
         }
         AttrList attrs = parse_attributes(p);
-        Access m_access = parse_access(p, ACC_PUBLIC);
+        Access m_access = ACC_PUBLIC;
         Safety safety = SAFETY_SAFE;
-        if (match(p, TOK_SAFE)) safety = SAFETY_SAFE;
-        else if (match(p, TOK_TRUSTED)) safety = SAFETY_TRUSTED;
-        else if (match(p, TOK_UNSAFE)) safety = SAFETY_UNSAFE;
+        int before;
+        do {
+            before = p->pos;
+            m_access = parse_access(p, m_access);
+            if (match(p, TOK_SAFE)) safety = SAFETY_SAFE;
+            else if (match(p, TOK_TRUSTED)) safety = SAFETY_TRUSTED;
+            else if (match(p, TOK_UNSAFE)) safety = SAFETY_UNSAFE;
+            // Interface signatures are abstract, including when spelled explicitly.
+            match(p, TOK_ABSTRACT);
+        } while (p->pos != before);
 
         if (cur(p)->type == TOK_PROPERTY)
         {

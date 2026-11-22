@@ -1,0 +1,66 @@
+Unit Tests.GuestHeapLifetime;
+
+Get BC By IO.Kinal.VM.Bytecode;
+Get Ctx By IO.Kinal.VM.Context;
+Get IO.GC;
+
+Function Ctx.ExecutionContext NewHandleContext()
+{
+    BC.Program program = New BC.Program();
+    BC.TypeInfo node = New BC.TypeInfo();
+    node.FieldCount = 1;
+    program.Types = {node};
+    Return New Ctx.ExecutionContext(program);
+}
+
+Function void FillHandles(Ctx.ExecutionContext ctx)
+{
+    For (int i = 0; i < 16386; i++)
+    {
+        int handle = ctx.NewObject(0);
+        ctx.ObjectSetValue(handle, 0, Ctx.VMValue.FromInt(i));
+    }
+}
+
+Trusted Function bool CheckHandleTables()
+{
+    Ctx.ExecutionContext ctx = NewHandleContext();
+    FillHandles(ctx);
+    IO.GC.Collect();
+    int[] edges = {0, 16384, 255, 16385, 256, 16383};
+    For (int i = 0; i < edges.Length(); i++)
+        If (ctx.ObjectGetValue(edges[i], 0).IntValue != edges[i]) Return false;
+    int root = ctx.Heap.Pin(Ctx.VMValue.FromObject(16384));
+    ctx.Heap.Collect(ctx);
+    If (ctx.ObjectAt(255) != null || ctx.ObjectAt(16385) != null ||
+        ctx.ObjectGetValue(16384, 0).IntValue != 16384 || ctx.NewObject(0) != 16385) Return false;
+    ctx.Heap.Unpin(root);
+
+    Ctx.ExecutionContext small = NewHandleContext();
+    For (int j = 0; j < 258; j++) small.NewObject(0);
+    Ctx.HeapObject[] old = small.Objects;
+    old[256] = old[0];
+    If (small.ObjectAt(256) != old[0] || old.Length() != 258) Return false;
+    int added = small.NewObject(0);
+    old[256] = null;
+    If (added != 258 || small.ObjectAt(256) != old[0] || small.Objects.Length() != 259) Return false;
+    Ctx.HeapObject[] replacement = small.Objects;
+    replacement[257] = old[1];
+    small.Objects = replacement;
+    IO.GC.Collect();
+    If (small.ObjectAt(257) != old[1] || small.ObjectAt(-1) != null || small.ObjectAt(259) != null) Return false;
+
+    int array = small.NewArray(1, [int](BC.ValueKind.Int));
+    int cell = small.NewCell(Ctx.VMValue.FromArray(array));
+    int pointer = small.NewCellPointer(cell);
+    int pin = small.Heap.Pin(Ctx.VMValue.FromPointer(pointer));
+    Ctx.HeapArray[] arrays = small.Arrays;
+    Ctx.VMValue[] cells = small.Cells;
+    Ctx.PointerInfo[] pointers = small.Pointers;
+    small.Heap.Collect(small);
+    If (arrays[array] != small.ArrayAt(array) || cells[cell] != small.CellAt(cell) ||
+        pointers[pointer] != small.PointerAt(pointer)) Return false;
+    small.Heap.Unpin(pin);
+    small.Heap.Collect(small);
+    Return arrays[array] == null && cells[cell] == null && pointers[pointer] == null;
+}

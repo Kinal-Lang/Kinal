@@ -1,11 +1,48 @@
 Unit Tests.Selfhost.KncModelWriter;
 
 Get IO.Console;
+Get GC By IO.Kinal.Runtime.GarbageCollector;
 Get IO.Kinal.Compiler.Backend.KncModel;
+
+Function bool CheckBufferedWriter()
+{
+    KncByteBuffer bytes = New KncByteBuffer();
+    bytes.BeginBuild();
+    bytes.WriteU16(0);
+    For (int i = 0; i < 767; i++) bytes.WriteU8(i & 255);
+    byte[] block = {0, 127, 255};
+    bytes.WriteBytes(block);
+    bytes.WriteString("é雪");
+    GC.Collect();
+    bytes.PatchU16(63, 0x4321);
+    bytes.PatchI32(766, 0x04030201);
+    bytes.FinishBuild();
+    GC.Collect();
+    byte[] snapshot = bytes.Data;
+    If (!bytes.IsValid() || bytes.Count != 781 || snapshot.Length() != bytes.Count ||
+        snapshot[63] != 33 || snapshot[64] != 67 || snapshot[765] != 251 ||
+        snapshot[766] != 1 || snapshot[769] != 4 || snapshot[770] != 127 ||
+        snapshot[771] != 255 || snapshot[772] != 5 || snapshot[776] != 195 || snapshot[780] != 170)
+        Return false;
+    bytes.PatchU16(1, 9);
+    If (snapshot[1] != 9) Return false;
+    bytes.WriteU8(7);
+    bytes.PatchU16(1, 125);
+    If (snapshot[1] != 9 || bytes.Data[1] != 125 || snapshot.Length() != 781 || bytes.Data[781] != 7)
+        Return false;
+    KncByteBuffer inconsistent = New KncByteBuffer();
+    inconsistent.BeginBuild();
+    inconsistent.WriteU8(3);
+    inconsistent.Count = 120;
+    inconsistent.PatchU16(70, 7);
+    inconsistent.FinishBuild();
+    Return !inconsistent.IsValid() && inconsistent.Count == 1 && inconsistent.Data.Length() == 1;
+}
 
 Trusted Static Function int Main(string[] args)
 {
     If (args.Length() != 1) Return 1;
+    If (!CheckBufferedWriter()) Return 35;
     KncByteBuffer bytes = New KncByteBuffer();
     bytes.WriteU8(171);
     bytes.WriteU16(4660);
@@ -111,7 +148,7 @@ Trusted Static Function int Main(string[] args)
     all.RegisterCount = 4;
     all.SetRegisterName(1, "operand");
     int instruction = 0;
-    While (instruction <= 138)
+    While (instruction <= 140)
     {
         all.Code.WriteU8(instruction);
         int width = KncProgram.InstructionSize(instruction);
@@ -143,12 +180,12 @@ Trusted Static Function int Main(string[] args)
 
     KncByteBuffer sizes = New KncByteBuffer();
     int opcode = 0;
-    While (opcode <= 138)
+    While (opcode <= 140)
     {
         sizes.WriteU8(KncProgram.InstructionSize(opcode));
         opcode = opcode + 1;
     }
-    If (KncProgram.InstructionSize(-1) != 0 || KncProgram.InstructionSize(139) != 0) Return 16;
+    If (KncProgram.InstructionSize(-1) != 0 || KncProgram.InstructionSize(141) != 0) Return 16;
     If (!sizes.Emit(args[0] + ".sizes")) Return 17;
 
     KncProgram malformed = New KncProgram();

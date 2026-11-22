@@ -1,0 +1,70 @@
+Unit Tests.AggregateStorage;
+Get IO.Console;
+Get IO.GC;
+
+Struct Row { int[3] Cells; }
+Struct Table { Row[2] Rows; }
+Class Sheet
+{
+    Public Table Body;
+    Public Row[2] Rows;
+    Public Static Table Shared;
+    Public Static Table[2] Saved;
+}
+
+int Initialized = Seed();
+Table Later;
+Table[2] Tables;
+int DeclaredAfter = 5;
+
+Function int Seed()
+{
+    If (Later.Rows.Length() != 2 || Tables.Length() != 2 || Sheet.Saved.Length() != 2) Return 1;
+    If (Later.Rows[0].Cells.Length() != 3 || Tables[1].Rows[1].Cells.Length() != 3 ||
+        Sheet.Shared.Rows[0].Cells.Length() != 3 || Sheet.Saved[1].Rows[0].Cells.Length() != 3) Return 2;
+    DeclaredAfter = 41;
+    Later.Rows[0].Cells[2] = 7;
+    Tables[1].Rows[1].Cells[0] = 11;
+    Sheet.Shared.Rows[0].Cells[1] = 13;
+    Sheet.Saved[1].Rows[0].Cells[1] = 17;
+    IO.GC.Collect();
+    Return 42;
+}
+
+Function Row MakeRow()
+{
+    Row row;
+    If (row.Cells.Length() == 3) row.Cells[2] = 19;
+    Return row;
+}
+
+Static Function int Main()
+{
+    If (Initialized != 42 || DeclaredAfter != 5 || Later.Rows[0].Cells[2] != 7 ||
+        Tables[1].Rows[1].Cells[0] != 11 || Sheet.Shared.Rows[0].Cells[1] != 13 ||
+        Sheet.Saved[1].Rows[0].Cells[1] != 17) Return 1;
+    If (Tables[0].Rows[1].Cells[0] != 0 || Tables[1].Rows[0].Cells[0] != 0) Return 2;
+
+    Row local = MakeRow();
+    Row other = MakeRow();
+    Row copy = local;
+    If (local.Cells.Length() != 3 || other.Cells.Length() != 3) Return 3;
+    copy.Cells[2] = 23;
+
+    Table[4] items;
+    Sheet sheet = New Sheet();
+    If (items[2].Rows.Length() != 2 || items[2].Rows[1].Cells.Length() != 3 ||
+        sheet.Rows[1].Cells.Length() != 3 || sheet.Body.Rows[0].Cells.Length() != 3) Return 4;
+    Row[513] padded = {local};
+    If (padded.Length() != 513 || padded[512].Cells.Length() != 3) Return 5;
+    padded[0].Cells[1] = 29;
+    padded[512].Cells[2] = 31;
+    items[2].Rows[1].Cells[0] = 37;
+    IO.GC.Collect();
+    If (local.Cells[1] != 29 || local.Cells[2] != 23 || other.Cells[2] != 19 ||
+        padded[1].Cells[2] != 0 || padded[512].Cells[2] != 31 ||
+        items[2].Rows[0].Cells[0] != 0 || items[3].Rows[1].Cells[0] != 0 ||
+        items[2].Rows[1].Cells[0] != 37) Return 6;
+    IO.Console.PrintLine("ok");
+    Return 0;
+}

@@ -6,6 +6,134 @@ Get IO.Kinal.Runtime;
 Get IO.Kinal.Runtime.GarbageCollector;
 Get IO.Kinal.Runtime.Native;
 
+Safe Static Function bool CheckPlainArrayAccess()
+{
+    int[2051] values;
+    int i = 1;
+    While (i < 2051)
+    {
+        values[i] = values[i - 1] + 2;
+        i = i + 1;
+    }
+    Return values[0] == 0 && values[1024] == 2048 && values[2050] == 4100;
+}
+
+Trusted Static Function bool CheckBatchLimits()
+{
+    i64 low = [i64](9223372036854775804);
+    i64 high = [i64](9223372036854775807);
+    int visits = 0;
+    While (low < high) { visits = visits + 1; low = low + 1; }
+    int i = 0;
+    int bound = 2100;
+    int* keepAddress = &bound;
+    While (i < bound) { i = i + 1; }
+    int j = 0;
+    While (j < bound) { bound = bound - 1; j = j + 1; }
+    Return visits == 3 && low == high && i == 2100 && j == 1050 && *keepAddress == 1050;
+}
+
+Safe Static Function int FindValue(int[] sorted, int needle)
+{
+    int lo = 0;
+    int hi = sorted.Length() - 1;
+    int found = -1;
+    While (lo <= hi)
+    {
+        int mid = (lo + hi) / 2;
+        If (sorted[mid] == needle) { found = mid; Break; }
+        If (sorted[mid] < needle) lo = mid + 1;
+        Else hi = mid - 1;
+    }
+    Return found;
+}
+
+Safe Static Function int CountWithBranch(int n)
+{
+    int i = 0;
+    int total = 0;
+    While (i < n)
+    {
+        If (i < 2) total = total + 3;
+        Else { If (i < 1025) total = total + 1; Else total = total + 2; }
+        i = i + 1;
+    }
+    Return total;
+}
+
+Safe Static Function int CountWithChangedBound(int n)
+{
+    int i = 0;
+    While (i < n)
+    {
+        If (i < 2) { If (i == 1) n = 5; }
+        i = i + 1;
+    }
+    Return i;
+}
+
+Safe Static Function int CountWithChangedIndex(int n)
+{
+    int i = 0;
+    int visits = 0;
+    While (i < n)
+    {
+        If (i > 1) visits = visits + 1;
+        Else { i = i + 3; }
+        i = i + 1;
+    }
+    Return visits;
+}
+
+Safe Static Function int Failable(int value)
+{
+    If (value < 0) Throw "negative";
+    Return value;
+}
+
+Safe Static Function int ScalarStep(int n) { Return n + 2; }
+
+Safe Static Function int ScalarEven(int n)
+{
+    If (n == 0) Return ScalarStep(n);
+    Return ScalarOdd(n - 1) + 1;
+}
+
+Safe Static Function int ScalarOdd(int n)
+{
+    If (n == 0) Return n;
+    Return ScalarEven(n - 1) + 1;
+}
+
+Safe Static Function int FallibleEven(int n)
+{
+    If (n == 0) Return Failable(-1);
+    Return FallibleOdd(n - 1);
+}
+
+Safe Static Function int FallibleOdd(int n) { Return FallibleEven(n - 1); }
+
+Delegate Function int ScalarCallback(int n) By Kinal;
+Safe Static Function int ViaCallback(int n) { Return ScalarCallback(n); }
+Trusted Static Function int ViaNative(int n)
+{
+    Return n + [int](IO.Kinal.Runtime.Native.AsyncLiveTaskCount());
+}
+
+Safe Static Function bool CheckPropagationBlocks()
+{
+    int total = Failable(1) + Failable(2);
+    Try
+    {
+        total = total + Failable(4);
+        Try { total = total + Failable(8); total = total + Failable(-1); }
+        Catch (string inner) { If (inner != "negative") Return false; }
+        total = total + Failable(-2);
+    }
+    Catch (string outer) { If (outer != "negative") Return false; }
+    Return total + Failable(16) == 31;
+}
+
 Trusted Static Function bool CheckNativeMemoryLeaves()
 {
     byte* left = IO.Kinal.Runtime.Native.HeapAllocate([u64](8));
@@ -67,15 +195,69 @@ Trusted Static Function bool CheckLoopRoots()
 
 // Native-owned root slots deliberately do not belong to the managed heap.
 // Only the frame registrations keep their strings alive during collection.
+Trusted Static Function bool CheckBorrowedFrame()
+{
+    u64 storage[6];
+    u64 roots[2];
+    byte* previous = IO.Kinal.Runtime.GarbageCollector.CurrentFrame();
+    byte* frame = IO.Kinal.Runtime.GarbageCollector.PushFrameStorage(
+        [byte*](&storage[0]), [byte*](&roots[0]), [usize](1));
+    If (frame != [byte*](&storage[0]) || storage[5] != [u64](0)) Return false;
+    char** slots = [char**](IO.Kinal.Runtime.Native.HeapAllocate([u64](32)));
+    IO.Kinal.Runtime.Native.MemoryFill([byte*](slots), [byte](0), [u64](32));
+    int index = 0;
+    While (index < 4)
+    {
+        IO.Kinal.Runtime.GarbageCollector.AddRoot(frame, [byte*](&slots[index]),
+            [usize](IO.Target.PointerBits / 8));
+        slots[index] = [char*](IO.Kinal.Runtime.StringConcat("borrowed-",
+            IO.Kinal.Runtime.Int64ToString([i64](index))));
+        index++;
+    }
+    // Growing beyond the borrowed table must neither free that storage nor
+    // lose the original root; PopFrame releases only the replacement table.
+    If (storage[1] != [u64](4) || storage[3] == storage[4]) Return false;
+    usize stackBase = IO.Kinal.Runtime.GarbageCollector.StackBase();
+    IO.Kinal.Runtime.GarbageCollector.SetStackBase([usize](0));
+    IO.Kinal.Runtime.GarbageCollector.Collect();
+    IO.Kinal.Runtime.GarbageCollector.SetStackBase(stackBase);
+    bool valid = [string](slots[0]) == "borrowed-0" &&
+        [string](slots[3]) == "borrowed-3";
+    IO.Kinal.Runtime.GarbageCollector.PopFrame(frame);
+    valid = valid && IO.Kinal.Runtime.GarbageCollector.CurrentFrame() == previous;
+    IO.Kinal.Runtime.Native.HeapFree([byte*](slots));
+    Return valid;
+}
+
+Trusted Static Function bool CheckLiteralRoots(string suffix)
+{
+    string fixedText = "abé";
+    string reboundText = "initial";
+    If (suffix.Length() > 0) reboundText = "live-" + suffix;
+    string escapedText = "other";
+    string* slot = &escapedText;
+    *slot = "slot-" + suffix;
+    string appendedText = "a";
+    appendedText += suffix;
+    { string fixedText = "inner"; If (fixedText.Length() != 5) Return false; }
+    CollectCallArgument();
+    Return fixedText.Length() == 4 && reboundText == "live-x" &&
+        escapedText == "slot-x" && appendedText == "ax";
+}
+
 Trusted Static Function int Main()
 {
+    If (!CheckBorrowedFrame()) Return 14;
+    If (!CheckLiteralRoots("x")) Return 15;
+    If (!CheckLocalAppends()) Return 16;
+    If (!CheckFixedArrayLifetimes()) Return 17;
     If (!CheckNativeMemoryLeaves()) Return 10;
     If (!CheckLoopRoots()) Return 9;
     If (!CheckConvertedArguments()) Return 11;
     If (!CheckBuiltinConvertedArguments()) Return 12;
     If (!CheckAssignmentAddressRoots()) Return 13;
     usize pointerBytes = [usize](IO.Target.PointerBits / 8);
-    int count = 257;
+    int count = 4097;
     char** slots = [char**](IO.Kinal.Runtime.Native.HeapAllocate(
         [u64]([usize](count) * pointerBytes)));
     If (slots == null) Return 1;
@@ -92,8 +274,9 @@ Trusted Static Function int Main()
             [byte*](&slots[index]), pointerBytes);
         // Call the Kinal allocation policy explicitly: a C-built reference
         // program otherwise creates its strings in the legacy stage0 heap.
+        // Retain an interior pointer in each registered root across the large collection.
         slots[index] = [char*](IO.Kinal.Runtime.StringConcat("frame-root-",
-            IO.Kinal.Runtime.Int64ToString([i64](index))));
+            IO.Kinal.Runtime.Int64ToString([i64](index)))) + 6;
         index = index + 1;
     }
     u64* words = [u64*](outer);
@@ -113,12 +296,29 @@ Trusted Static Function int Main()
     index = 0;
     While (index < count)
     {
-        If ([string](slots[index]) != "frame-root-" + [string](index)) Return 7;
+        If ([string](slots[index]) != "root-" + [string](index)) Return 7;
         index = index + 1;
     }
     IO.Kinal.Runtime.GarbageCollector.PopFrame(outer);
     If (IO.Kinal.Runtime.GarbageCollector.CurrentFrame() != previous) Return 8;
     IO.Kinal.Runtime.Native.HeapFree([byte*](slots));
+    If (!CheckPlainArrayAccess()) Return 20;
+    If (!CheckPropagationBlocks()) Return 21;
+    If (ScalarEven(8) != 10 || ScalarOdd(8) != 8) Return 26;
+    Try { FallibleOdd(3); Return 27; }
+    Catch (string error) { If (error != "negative") Return 28; }
+    ScalarCallback = ScalarEven;
+    If (ViaCallback(8) != 10 || ViaNative(9) != 9) Return 29;
+    ScalarCallback = Failable;
+    Try { ViaCallback(-1); Return 30; }
+    Catch (string error) { If (error != "negative") Return 31; }
+    If (!CheckBatchLimits()) Return 22;
+    If (!CheckModularLoops()) Return 32;
+    int[] sorted = {2, 5, 8, 11, 14};
+    If (FindValue(sorted, 8) != 2 || FindValue(sorted, 4) != -1) Return 23;
+    If (CountWithBranch(0) != 0 || CountWithBranch(1024) != 1028 ||
+        CountWithBranch(1025) != 1029 || CountWithBranch(2050) != 3079) Return 24;
+    If (CountWithChangedBound(2050) != 5 || CountWithChangedIndex(2050) != 2046) Return 25;
     IO.Console.PrintLine("gc-frames-ok");
     Return 0;
 }

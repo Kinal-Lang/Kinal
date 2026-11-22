@@ -53,6 +53,24 @@ Class Config
 }
 ```
 
+## Properties
+
+A property can declare a getter, a setter, or both. Inside a setter, `value` holds the assigned value.
+
+```kinal
+Class Meter
+{
+    Private int count;
+    Public Property int Reading { Get { Return count; } }
+    Public Property int ResetTo { Set { count = value; } }
+    Public Property int Level { Get { Return count; } Set { count = value; } }
+}
+```
+
+`meter.ResetTo = 42` calls the setter once. Reading `meter.Reading` then returns 42. A compound assignment such as `meter.Level += step` needs both accessors. The receiver is evaluated once, then Kinal calls the getter, evaluates `step`, and calls the setter.
+
+For a numeric property with both accessors, `meter.Level++` returns the value before the increment and `++meter.Level` returns the updated value. Decrement works the same way. In `GetMeter().Level++`, Kinal calls `GetMeter()` once, then calls the getter and setter once each on that meter.
+
 ## Access Control
 
 | Modifier | Description |
@@ -79,9 +97,9 @@ Class Account
 
 ## Constructors
 
-### Named Constructors
+### Legacy Named Constructor Syntax
 
-A method whose name matches the class name automatically becomes a constructor:
+The legacy Function ClassName(...) spelling is accepted with W-SYN-00002. Prefer the Constructor keyword shown next:
 
 ```kinal
 Class Counter
@@ -257,7 +275,12 @@ Class Dog By Animal
 ### Calling Base Class Members: `Base`
 
 ```kinal
-Class Derived By Base
+Class ParentClass
+{
+    Public Virtual Function string Describe() { Return "parent"; }
+}
+
+Class Derived By ParentClass
 {
     Public Override Function string Describe()
     {
@@ -328,7 +351,7 @@ Class Container
     Enum State { Empty, Loading, Ready }
 
     // Using nested types
-    Public Iterator GetIterator()
+    Public Function Iterator GetIterator()
     {
         Return New Iterator();
     }
@@ -394,3 +417,5 @@ Static Safe Function int Main(string[] args)
 - [Structs and Enums](structs-enums.md)
 - [Safety Levels](safety.md)
 
+
+Classes are shared references. Static fields belong to the class, and checked downcasts/custom `[Cast]` methods follow [Operators](operators.md). Interface-dispatch examples on this page target Native; consult [Backend Support](../advanced/backend-support.md) for VM limits. A class declaration is not a C ABI layout promise.

@@ -55,3 +55,21 @@ Static Function int Main()
 
 - [标准库概览](overview.md)
 - [IO.Console](console.md)
+
+## 包身份
+
+当前源码包版本是 2020.8.31，Unit 为 IO.Cat。包版本与编译器版本无关。Rommy 是教学类；构造参数、属性与打印方法的完整签名见下表，不能据此推导其他包具有相同生命周期或错误契约。
+
+## 公开源码签名
+
+下表逐项列出当前包源码的公开字段、构造函数、属性和方法；继承成员在基类下列出。Get/Set 表示属性访问器，函数行的参数包含声明默认值。原生句柄、Host／Win32 等低层接口需要相应 ABI 与生命周期知识，普通应用优先使用包的高级对象。
+
+### IO.Cat.Rommy
+
+| 成员 | 声明 | 访问器 |
+|------|------|--------|
+| `Constructor` | `Public Constructor(bool i_know_this_is_just_a_clone_of_Rommy,bool i_will_be_good_to_Rommy)` | — |
+| `Speak` | `Public Function string Speak(string something)` | — |
+| `Touch` | `Public Function string Touch()` | — |
+| `Feed` | `Public Function string Feed()` | — |
+| `Play` | `Public Function string Play()` | — |

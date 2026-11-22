@@ -57,16 +57,18 @@ kinal vm run hello.kn           # 通过 KinalVM 字节码运行
 
 ---
 
+本文面向 C 编译器版本。两条后端共享语言分析，但运行能力存在差异，参见[后端支持](docs/zh-CN/advanced/backend-support.md)。大型程序参见[项目文件](docs/zh-CN/cli/project-files.md)，GC 与所有权参见[内存和生命周期](docs/zh-CN/advanced/memory-management.md)。
+
 ## 核心特色
 
 - **静态类型** — 编译期类型检查，`Var` 类型推断让代码简洁而安全
 - **三级安全模型** — `Safe` / `Trusted` / `Unsafe` 精确划定危险操作边界
 - **原生面向对象** — 类、接口、虚方法、泛型，语法直观自然
-- **双后端** — LLVM 原生编译与 KinalVM 字节码解释，同一份代码两种运行方式
-- **Block 对象** — 独创的可暂停代码块机制，支持 Record 标签和 Jump 跳转
-- **完整异步** — `Async`/`Await` 一等公民，内建事件循环
-- **C 互操作** — `Extern`/`Delegate` 零开销调用 C 函数库
-- **Meta 元数据** — 编译期与运行时均可查询的自定义注解系统
+- **双后端** — LLVM 原生编译与 KinalVM 字节码解释，功能边界见后端支持表
+- **Block 对象** — 代码块对象，支持 Record 标签、区间执行和 Jump 跳转
+- **Native 异步** — `Async`/`Await` 与 Task 运行时支持
+- **C 互操作** — `Extern`/`Delegate` 遵循明确 C ABI 与所有权规则
+- **Meta 元数据** — 自定义属性与 IO.Meta 运行时保留记录
 - **完整工具链** — 编译器、虚拟机、格式化器、包管理、LSP 语言服务器
 
 ---
@@ -79,12 +81,12 @@ kinal vm run hello.kn           # 通过 KinalVM 字节码运行
 选项1：使用安装脚本（推荐，自动处理依赖和环境变量）
 
 ```bash
-curl -sSL https://kinal.org/install.sh | bash
+curl -fsSL https://kinal.org/install.sh | bash
 ```
 
 选项2：手动安装
 
-从 [Releases](https://github.com/Kinal-Lang/Kinal/releases) 下载对应平台的预编译包，将 `kinal`（和可选的 `kinalvm`）放入 `PATH`。
+从 [Releases](https://github.com/Kinal-Lang/Kinal/releases) 下载对应平台的预编译包，完整解压后将工具目录加入 `PATH`。LLVM 库、运行时、链接工具和标准包应随可执行文件保留，不能仅移动单个程序。
 
 
 最后验证安装：
@@ -199,8 +201,11 @@ Kinal/
 │   └── zh-CN/          # 中文文档
 ├── dev/                # 开发者文档
 ├── tests/              # 测试用例
+├── benchmarks/         # Kinal 性能基准
 └── infra/              # 构建基础设施
 ```
+
+在 Windows 上对比 stage0 和 stage3 的构建、启动和运行耗时，见 [Kinal 性能基准](benchmarks/README.md)。
 
 ---
 
@@ -219,7 +224,7 @@ python x.py dev
 python x.py test
 
 # 发布构建
-python x.py release
+python x.py dist
 ```
 
 详见 [构建指南](dev/zh-CN/build.md)。

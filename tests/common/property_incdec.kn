@@ -1,0 +1,67 @@
+Unit Tests.PropertyIncDec;
+Get IO.Console;
+
+int trace;
+int shared;
+Interface ICounter { Property int Level { Get; Set; } }
+Class Counter By ICounter
+{
+    Public int Stored;
+    Public Virtual Property int Level
+    {
+        Get { trace = trace * 10 + 2; Return Stored; }
+        Set { trace = trace * 10 + 3; Stored = value; }
+    }
+    Public Static Property int Total { Get { Return shared; } Set { shared = value; } }
+    Public Static Function int BumpTotal() { Return ++Total; }
+}
+Class Child By Counter
+{
+    Public int Changes;
+    Public Override Property int Level
+    {
+        Get { trace = trace * 10 + 4; Return Stored; }
+        Set { trace = trace * 10 + 5; Changes += 1; Stored = value; }
+    }
+    Public Function int LowerBase() { Return Base.Level--; }
+    Public Function int Lower() { Return --Level; }
+}
+Class Scalars
+{
+    Public byte B;
+    Public f32 F;
+    Public char C;
+    Public bool Flag;
+    Public int[3] Slots;
+    Public Counter Owner;
+    Public Property byte Octet { Get { Return B; } Set { B = value; } }
+    Public Property f32 Real { Get { Return F; } Set { F = value; } }
+    Public Property char Letter { Get { Return C; } Set { C = value; } }
+}
+Function ICounter Receiver(ICounter target) { trace = trace * 10 + 1; Return target; }
+Function int Bump<T>(T target) { Return target.Level++; }
+
+Static Function int Main()
+{
+    Child child = New Child();
+    ICounter counter = child;
+    int old = Receiver(counter).Level++;
+    If (old != 0 || child.Stored != 1 || child.Changes != 1 || trace != 145) Return 1;
+    trace = 0;
+    If (child.LowerBase() != 1 || child.Stored != 0 || trace != 23) Return 2;
+    trace = 0;
+    If (child.Lower() != -1 || child.Stored != -1 || trace != 45) Return 3;
+    trace = 0;
+    If (Bump<Child>(child) != -1 || child.Stored != 0 || child.Changes != 3 || trace != 45) Return 4;
+    If (Counter.Total++ != 0 || Counter.BumpTotal() != 2 || shared != 2) Return 5;
+    Scalars scalar = New Scalars();
+    If (scalar.Flag || scalar.Owner != null || scalar.Slots.Length() != 3 || scalar.Slots[0] + 1 != 1) Return 9;
+    scalar.B = 255;
+    If (++scalar.Octet != 0 || scalar.B != 0) Return 6;
+    scalar.F = 16777216.0;
+    If (++scalar.Real != 16777216.0 || scalar.F != 16777216.0) Return 7;
+    scalar.C = 'a';
+    If (scalar.Letter++ != 'a' || scalar.C != 'b') Return 8;
+    IO.Console.PrintLine("ok");
+    Return 0;
+}

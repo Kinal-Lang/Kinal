@@ -1,13 +1,13 @@
 # FFI — Foreign Function Interface
 
-Kinal provides complete C interoperability through `Extern` (declaring C functions) and `Delegate` (declaring function pointer types), enabling zero-overhead integration with C libraries.
+Kinal provides native C ABI integration through `Extern` declarations and runtime-bindable `Delegate` slots. The supported boundary includes explicit scalar/pointer marshalling; it does not cover arbitrary C types, varargs or every aggregate ABI. See [Backend Support](../advanced/backend-support.md) for VM limits.
 
 ## Extern Functions
 
 `Extern` declares an external C function; the calling convention is specified with `By`:
 
 ```kinal
-Extern Function int printf(string fmt) By C;
+Extern Function int puts(string text) By C;
 Extern Function void* malloc(usize size) By C;
 Extern Function void  free(void* ptr)   By C;
 ```
@@ -53,7 +53,7 @@ If the C function name differs from the Kinal declaration name, use `[LinkName]`
 
 ```kinal
 [LinkName("__kn_time_tick")]
-Extern Function int GetTimeTick() By C;
+Extern Function u64 GetTimeTick() By C;
 ```
 
 ### The LinkLib Attribute
@@ -99,7 +99,7 @@ Unsafe Function void DirectCall()
 `Delegate` is used to declare a **function pointer variable that can be bound at runtime**:
 
 ```kinal
-[SymbolName("MyLib.Add")]
+[SymbolName("Add")]
 Delegate Function int dyn_add(int a, int b) By C;
 ```
 
@@ -122,7 +122,7 @@ Unit App.DynLoader;
 Get IO.Console;
 Get IO.System;
 
-[SymbolName("MyLib.Add")]
+[SymbolName("Add")]
 Delegate Function int dyn_add(int a, int b) By C;
 
 Unsafe Static Function int Main(string[] args)
@@ -203,7 +203,7 @@ Unsafe Function void Demo(byte* raw)
 }
 ```
 
-Function object to pointer:
+Kinal callable representation to pointer (not a substitute for a C callback adapter):
 
 ```kinal
 Unsafe Function void GetFuncPtr()
@@ -228,10 +228,10 @@ Trusted Function usize GetLen(string s)
 
 ## Structs and C Structs
 
-Use `Struct By Packed` to ensure layout matches C:
+Match the C field widths, offsets, alignment and packing explicitly. `By Packed` is appropriate only if the C declaration is also packed; it is not a universal C-layout switch:
 
 ```kinal
-Struct CPoint By Packed
+Struct CPoint
 {
     i32 x;
     i32 y;
@@ -244,13 +244,13 @@ Unsafe Function void Demo()
     CPoint pt;
     pt.x = 10;
     pt.y = 20;
-    draw_point([CPoint*]([byte*](pt)));
+    draw_point(&pt);
 }
 ```
 
 ## Extern System Calling Convention (Windows)
 
-Windows APIs (such as `CreateFile`, `VirtualAlloc`, etc.) use the `stdcall` convention:
+`By System` selects the platform system convention. On 32-bit Windows this includes stdcall; 64-bit Windows uses its unified ABI. Match the target declaration:
 
 ```kinal
 [LinkName("VirtualAlloc")]
@@ -285,7 +285,7 @@ Get IO.Console;
 // Declare C standard library functions
 Extern Function int    puts(string s)    By C;
 Extern Function int    abs(int n)        By C;
-Extern Function double sqrt(double x)   By C;
+Extern Function f64 sqrt(f64 x)   By C;
 
 Trusted Function void Demo()
 {
@@ -307,3 +307,29 @@ Static Function int Main()
 - [Meta Metadata](meta.md)
 - [Bare-Metal and Embedded](../advanced/freestanding.md)
 
+
+## Array Parameters, Ownership and Deployment
+
+C ABI array parameters decay to their data pointer. A C pointer returned with a Kinal `T[]` result has unknown length zero; indexing still requires caller-provided bounds knowledge. A Kinal fixed array field is a descriptor/backing representation, not an inline C array field. Do not mirror C array-containing structs by merely writing `T[N]` fields.
+
+Borrowed strings/arrays and callbacks need a valid lifetime for every foreign use. Release foreign allocations with their matching allocator and close libraries only after all calls/callbacks have stopped. Raw function-object representation casts do not create a C ABI callback; use `Delegate ... By C` and its supported adapter path.
+
+The complete `sqrt` example uses `f64`, not the nonexistent language type `double`. On Linux link the system math library, for example `kinal build ffi.kn -l m -o ffi`; platform CRT/linker selection must provide `puts`/`abs`/`sqrt`. Dynamic-loader examples additionally need a target-compatible library exporting `Add`; pass its path after `--` when using `kinal run`.
+
+Source strings use byte-oriented UTF-8 text, but Windows argv/filesystem/ANSI API boundaries are not a general UTF-8 guarantee. Choose the foreign API's encoding explicitly. See [Memory and Lifetimes](../advanced/memory-management.md).
+
+## Build the Dynamic-Loader C Fixture
+
+Save this as add.c. On Windows use clang -shared add.c -o add.dll; on Linux use clang -shared -fPIC add.c -o libadd.so; on macOS use clang -dynamiclib add.c -o libadd.dylib. Run kinal run loader.kn -- /absolute/path/to/library. The consumer above should print 42 and close the library after its final call.
+
+```c
+#if defined(_WIN32)
+__declspec(dllexport)
+#endif
+int Add(int a, int b)
+{
+    return a + b;
+}
+```
+
+C int matches the Delegate int boundary conversion here. By System differs from By C in 32-bit Windows stack cleanup; x64/ARM64 follow their target ABI rather than the 32-bit stdcall stack rules.

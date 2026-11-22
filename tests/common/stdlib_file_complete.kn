@@ -21,6 +21,10 @@ Static Function int Main()
     Console.PrintLine(IO.File.ReadIfExists(missing) == null);
     Console.PrintLine(IO.File.Delete(file));
     Console.PrintLine(!IO.File.Exists(file));
+    If (!IO.File.AppendAllText(file, null) || IO.File.Size(file) != 0) Return 1;
+    If (!IO.File.AppendLine(file, null) || !IO.File.AppendAllText(file, "")) Return 2;
+    If (IO.File.ReadAllText(file) != "\n" || !IO.File.Delete(file)) Return 3;
+    If (IO.File.AppendAllText(root, "directory") || IO.File.AppendLine("", "empty path")) Return 4;
     Console.PrintLine(IO.Directory.Delete(root));
     Return 0;
 }

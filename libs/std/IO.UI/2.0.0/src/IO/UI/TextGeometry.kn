@@ -1,0 +1,41 @@
+Unit IO.UI;
+Get IO.Text;
+Get Native By IO.__UI;
+Get IO.Kinal.Runtime;
+
+[IO.Kinal.Runtime.KncIntrinsic(202)]
+Trusted Function bool __UI_Key(int key){Return Native.GetKeyState([i32](key))<0;}
+[IO.Kinal.Runtime.KncIntrinsic(203)]
+Trusted Function int NextChar(string value,int offset){
+    int n=IO.Text.Length(value);If(offset>=n)Return n;
+    byte* p=[byte*](value);offset++;While(offset<n&&(p[offset]&192)==128)offset++;Return offset;
+}
+[IO.Kinal.Runtime.KncIntrinsic(204)]
+Trusted Function int PreviousChar(string value,int offset){
+    If(offset<=0)Return 0;byte* p=[byte*](value);offset--;While(offset>0&&(p[offset]&192)==128)offset--;Return offset;
+}
+[IO.Kinal.Runtime.KncIntrinsic(205)]
+Trusted Function int Utf16Column(string value,int bytes){
+    int n=IO.Text.Length(value);int i=0;int units=0;byte* p=[byte*](value);
+    While(i<bytes&&i<n){If((p[i]&192)!=128){units++;If(p[i]>=240)units++;}i++;}Return units;
+}
+[IO.Kinal.Runtime.KncIntrinsic(206)]
+Trusted Function int Utf8Column(string value,int units){
+    int n=IO.Text.Length(value);int i=0;int col=0;byte* p=[byte*](value);
+    While(i<n&&col<units){int step=p[i]>=240?2:1;If(col+step>units)Return i;col+=step;i++;While(i<n&&(p[i]&192)==128)i++;}Return i;
+}
+[IO.Kinal.Runtime.KncIntrinsic(207)]
+Trusted Function string CharacterText(int code){
+    If(code<1||code>1114111||(code>=55296&&code<=57343))Return "";
+    byte* p=IO.Kinal.Runtime.AllocateRaw(5);int n=0;
+    If(code<128){p[0]=[byte](code);n=1;}
+    Else If(code<2048){p[0]=[byte](192|(code>>6));n=2;}
+    Else If(code<65536){p[0]=[byte](224|(code>>12));p[1]=[byte](128|((code>>6)&63));n=3;}
+    Else {p[0]=[byte](240|(code>>18));p[1]=[byte](128|((code>>12)&63));p[2]=[byte](128|((code>>6)&63));n=4;}
+    If(n>1)p[n-1]=[byte](128|(code&63));p[n]=0;Return [string]([char*](p));
+}
+[IO.Kinal.Runtime.KncIntrinsic(208)]
+Trusted Function int TextPosition(byte* handle,string value,int size,bool mono,int offset,bool hit=false){
+    Return [int](Native.kn_ui_text_position(handle,Native.__kn_win_utf16(value),[i32](size),[i32](mono?1:0),[i32](offset),[i32](hit?1:0)));
+}
+

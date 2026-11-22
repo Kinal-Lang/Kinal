@@ -1,0 +1,35 @@
+Unit Tests.GenericMethodCalls;
+Get IO.Console;
+
+Function int ReadCount<T>(T item)
+{
+    Return item.Count;
+}
+
+Function int ForwardCount<T>(T item)
+{
+    Return ReadCount<T>(item);
+}
+
+Class Counter
+{
+    Public int Count;
+    Public Property int Total { Get { Return ForwardCount<Counter>(This); } }
+}
+
+Class Batch
+{
+    Public int Offset;
+    Public int Count;
+    Public Function int Total() { Return ReadCount<Batch>(This); }
+}
+
+Static Function int Main()
+{
+    Counter counter = New Counter();
+    Batch batch = New Batch();
+    counter.Count = 17;
+    batch.Count = 25;
+    IO.Console.PrintLine(counter.Total + batch.Total());
+    Return 0;
+}

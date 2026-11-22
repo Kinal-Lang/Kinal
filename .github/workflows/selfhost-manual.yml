@@ -230,6 +230,8 @@ jobs:
           echo "deb http://apt.llvm.org/jammy/ llvm-toolchain-jammy-21 main" | sudo tee /etc/apt/sources.list.d/llvm-21.list
           sudo apt-get update
           sudo apt-get install -y llvm-21-dev clang-21 lld-21 libclang-21-dev
+          echo "LLVM_DIR=$(llvm-config-21 --cmakedir)" >> "$GITHUB_ENV"
+          echo "$(llvm-config-21 --bindir)" >> "$GITHUB_PATH"
 
       - name: Install LLVM 21
         if: matrix.family == 'macos'

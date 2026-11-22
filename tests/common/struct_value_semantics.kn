@@ -1,6 +1,7 @@
 Unit Tests.StructValueSemantics;
 
 Get Console By IO.Console;
+Get IO.GC;
 
 Struct Pair
 {
@@ -38,6 +39,33 @@ Struct SharedFields
     Nested Value;
     Box Ref;
     int[] Items;
+}
+
+Struct Slots
+{
+    int[3] Values;
+}
+
+Struct TwoSlots
+{
+    Slots Left;
+    Slots Right;
+}
+
+Class StorageBase
+{
+    Public TwoSlots Storage;
+}
+
+Class StorageBox By StorageBase
+{
+    Public Slots Extra;
+    Public int InitialLength;
+
+    Public Constructor()
+    {
+        InitialLength = Storage.Left.Values.Length();
+    }
 }
 
 Pair Saved;
@@ -129,6 +157,19 @@ Function bool CheckDefaultStorage()
            copy.Y == 9 && box.Item.X == 0 && field.X == 13;
 }
 
+Function bool CheckEmbeddedArrays()
+{
+    StorageBox first = New StorageBox();
+    StorageBox second = New StorageBox();
+    If (first.InitialLength != 3 || first.Storage.Right.Values.Length() != 3 ||
+        first.Extra.Values.Length() != 3 || second.InitialLength != 3) Return false;
+    first.Storage.Left.Values[2] = 17;
+    first.Extra.Values[0] = 23;
+    IO.GC.Collect();
+    Return first.Storage.Right.Values[2] == 0 && second.Storage.Left.Values[2] == 0 &&
+           second.Extra.Values[0] == 0 && first.Storage.Left.Values[2] == 17;
+}
+
 Function bool CheckNested()
 {
     Pair a = Make(4, 7);
@@ -182,7 +223,8 @@ Function bool CheckReferenceFields()
 
 Static Function int Main()
 {
-    If (CheckAssignment() && CheckCalls() && CheckClosures() && CheckDefaults() && CheckDefaultStorage() && CheckNested() && CheckArrays() && CheckReferenceFields())
+    If (CheckAssignment() && CheckCalls() && CheckClosures() && CheckDefaults() && CheckDefaultStorage() &&
+        CheckEmbeddedArrays() && CheckNested() && CheckArrays() && CheckReferenceFields())
     {
         Console.PrintLine("ok");
         Return 0;

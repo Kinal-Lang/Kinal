@@ -32,7 +32,7 @@ Imports the standard library module `IO.Console`, making `IO.Console.PrintLine(.
 ```kinal
 Static Function int Main()
 {
-    ...
+    Return 0;
 }
 ```
 The program entry point. `Static` means this is a static function (no class instance needed); the return type is `int`; returning `0` signals success.
@@ -54,7 +54,7 @@ Returns exit code 0.
 ```bash
 kinal build hello.kn -o hello
 ./hello         # Linux/macOS
-hello.exe       # Windows
+.\hello.exe    # Windows PowerShell
 ```
 
 Output:
@@ -62,7 +62,7 @@ Output:
 Hello, Kinal!
 ```
 
-### Option 2: Run directly via KinalVM (no LLVM required)
+### Option 2: Compile and Run via KinalVM
 
 ```bash
 kinal vm run hello.kn
@@ -76,6 +76,15 @@ The compiler compiles `.kn` to `.knc` bytecode, which KinalVM immediately execut
 kinal vm build hello.kn -o hello.knc
 kinalvm hello.knc
 ```
+
+## Native Quick Run and Semantic Check
+
+```bash
+kinal run hello.kn
+kinal build hello.kn --emit check -o out/hello.kcheck
+```
+
+`run` builds a temporary native executable and removes it after execution. `check` stops after semantic analysis; it does not link or execute. Keep the compiler distribution intact even for KNC source builds; only executing existing bytecode with the standalone VM skips the compiler. See [Backend Support](../advanced/backend-support.md).
 
 ## Entry Point with Command-Line Arguments
 
@@ -93,6 +102,11 @@ Static Function int Main(string[] args)
     }
     Return 0;
 }
+```
+
+```bash
+kinal run hello.kn -- first second
+kinal vm run hello.kn -- first second
 ```
 
 ## Async Entry Point

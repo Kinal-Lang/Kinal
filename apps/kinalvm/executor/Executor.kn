@@ -1,0 +1,91 @@
+Unit IO.Kinal.VM.Executor;
+
+Get Binary By IO.Kinal.VM.Binary;
+Get Bytecode By IO.Kinal.VM.Bytecode;
+Get Loader By IO.Kinal.VM.Loader;
+Get VM By IO.Kinal.VM.VM;
+Get Stdlib By IO.Kinal.VM.Stdlib;
+Get IO.Path;
+Get IO.Text;
+Get IO.Kinal.Runtime;
+Get IO.Kinal.Compiler.Core.Diagnostics;
+Get IO.Kinal.Compiler.Core.CompileSession;
+Get IO.Kinal.Compiler.Source.SourceFile;
+Get IO.Kinal.Compiler.Source.SourcePath;
+Get IO.Kinal.Compiler.Project.ProjectConfig;
+Get Dependencies By IO.Kinal.Compiler.Project.CompilationDependencies;
+Get IO.Kinal.Compiler.Sema.SemanticCompilation;
+Get IO.Kinal.Compiler.Backend.KncBackend;
+
+// A new image replaces the old one only after decoding succeeds.
+Public Class Executor
+{
+    Public byte[] Knc;
+    Public string StandardLibraryRoot;
+    Public string CacheDirectory;
+    Private Stdlib.StdlibRegistry Registry;
+
+    Public Constructor()
+    {
+        This.Knc = {};
+        This.StandardLibraryRoot = Dependencies.FindStandardLibraryPackageRoot(IO.Kinal.Runtime.ExecutablePath());
+        This.CacheDirectory = IO.Path.Combine(IO.Path.Directory(IO.Kinal.Runtime.ExecutablePath()), "package-cache");
+    }
+
+    Private Safe Function void CheckDiagnostics(CompileSession session)
+    {
+        If (!session.HasErrors()) Return;
+        list messages = list.Create();
+        For (int i = 0; i < session.Diagnostics.Count(); i++)
+            messages.Add(IO.Kinal.Compiler.Core.Diagnostics.FormatDiagnostic([Diagnostic](session.Diagnostics.Fetch(i)), false));
+        Throw New IO.Error("Kinal compiler", IO.Text.Join(messages, "\n"));
+    }
+
+    Public Trusted Function void Compile(string source)
+    {
+        string entry = IO.Kinal.Compiler.Source.SourcePath.Canonical("memory.kn");
+        CompileSession session = New CompileSession();
+        session.RequestedBackend = "VM";
+        session.FrontendMode = "build-knc";
+        session.Project = New ProjectConfig(entry);
+        session.Profile = New ProjectProfileConfig("memory");
+        session.Profile.Entry = entry;
+        session.Profile.AutoDiscovery = false;
+        session.Profile.Backend = "VM";
+        session.Project.AddProfile(session.Profile);
+        session.SourcePaths.Add(entry);
+        CompilationUnit unit = session.ParseSource(session.Sources.Remember(
+            IO.Kinal.Compiler.Source.SourceFile.FromText(entry, source)));
+        This.CheckDiagnostics(session);
+        session.EntryUnitName = unit.Syntax.UnitName;
+        Dependencies.PrepareProjectDependencies(session, This.StandardLibraryRoot, This.CacheDirectory);
+        This.CheckDiagnostics(session);
+        SemanticCompilation semantics = New SemanticCompilation(session);
+        semantics.Analyze();
+        This.CheckDiagnostics(session);
+        KncBackend backend = New KncBackend(semantics);
+        byte[] image = backend.EmitBytes();
+        This.CheckDiagnostics(session);
+        If (backend.Failed()) Throw New IO.Error("KNC backend", backend.Error);
+        This.Knc = image;
+    }
+
+    Public Trusted Function void LoadBytes(byte[] data)
+    {
+        Loader.KNCLoader.LoadFromBytes(data);
+        This.Knc = data;
+    }
+
+    Public Trusted Function void LoadFile(string path)
+    {
+        This.LoadBytes(Binary.BinaryFile.ReadAllBytes(path));
+    }
+
+    Public Trusted Function int Run(string[] arguments = {})
+    {
+        Bytecode.Program program = Loader.KNCLoader.LoadFromBytes(This.Knc);
+        If (This.Registry == null) This.Registry = Stdlib.StdlibRegistry.BuildDefault();
+        VM.VirtualMachine machine = New VM.VirtualMachine(This.Registry);
+        Return machine.ExecuteChecked(program, arguments);
+    }
+}

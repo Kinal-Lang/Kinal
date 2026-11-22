@@ -3,6 +3,7 @@ Unit IO.Kinal.Compiler.Backend.LlvmModel;
 Get IO.Kinal.Compiler.Types.TypeSymbol;
 Get IO.Kinal.Compiler.Sema.Symbols;
 Get IO.Kinal.Compiler.Hir.HirModel;
+Get IO.Kinal.Compiler.Backend.LlvmBridge;
 
 Class LlvmValue
 {
@@ -18,12 +19,30 @@ Class LlvmValue
     }
 }
 
+Class LlvmModularRecurrence
+{
+    Public HirExpression State;
+    Public HirExpression Addend;
+    Public int Multiplier;
+    Public int Modulus;
+    Public int GroupSize;
+}
+
+Enum EmbeddedArrayLayout
+{
+    Unknown,
+    Checking,
+    None,
+    Present
+}
+
 Class LlvmTypeBinding
 {
     Public TypeSymbol Symbol;
     Public byte* Handle;
     Public byte* StructHandle;
     Public int RuntimeTypeId;
+    Public EmbeddedArrayLayout ArrayFields;
     Public LlvmTypeBinding Next;
 
     Public Safe Constructor(TypeSymbol symbol, byte* handle, byte* structHandle,
@@ -50,6 +69,10 @@ Class LlvmFunctionBinding
     Public byte* CallableWrapperType;
     Public byte* CallableWrapper;
     Public bool UsesCAbi;
+    Public list ScalarCallers;
+    Public bool ScalarEligible;
+    Public bool HasScalarCalls;
+    Public byte* ScalarBody;
     Public LlvmFunctionBinding Next;
 
     Public Safe Constructor(FunctionSymbol symbol, byte* functionType, byte* function, bool usesCAbi)
@@ -130,6 +153,7 @@ Class LlvmVariable
     Public ValueSymbol Symbol;
     Public TypeSymbol Type;
     Public byte* Address;
+    Public byte* StringAppendState;
     Public LlvmVariable Next;
 
     Public Safe Constructor(string name, ValueSymbol symbol, TypeSymbol type, byte* address)
@@ -163,46 +187,28 @@ Class LlvmCaptureRoot
 Class LlvmLocalRoot
 {
     Public ValueSymbol Symbol;
+    Public byte* StringAppendState;
+    Public bool ReuseArray;
+    Public LlvmLocalRoot NextReusableArray;
     Public byte* Address;
-    Public LlvmLocalRoot Next;
 
     Public Safe Constructor(ValueSymbol symbol, byte* address)
     {
         This.Symbol = symbol;
         This.Address = address;
-        This.Next = null;
-    }
-}
-
-// An assignment keeps the storage address live while evaluating its RHS.
-// The pointee may be a scalar, so a value root cannot replace this pointer root.
-Class LlvmAddressRoot
-{
-    Public HirExpression Expression;
-    Public byte* Address;
-    Public LlvmAddressRoot Next;
-
-    Public Safe Constructor(HirExpression expression, byte* address)
-    {
-        This.Expression = expression;
-        This.Address = address;
-        This.Next = null;
     }
 }
 
 Class LlvmExpressionRoot
 {
     Public HirExpression Expression;
-    Public TypeSymbol Type;
-    Public byte* Address;
-    Public LlvmExpressionRoot Next;
+    Public byte* ValueSlot;
+    // An assignment also keeps the address of its destination alive across its RHS.
+    Public byte* AddressSlot;
 
-    Public Safe Constructor(HirExpression expression, TypeSymbol type, byte* address)
+    Public Safe Constructor(HirExpression expression)
     {
         This.Expression = expression;
-        This.Type = type;
-        This.Address = address;
-        This.Next = null;
     }
 }
 
@@ -271,21 +277,38 @@ Class LlvmBlockBinding
     }
 }
 
+// Root registration order is retained while entry storage is planned.
+Class LlvmPendingRoot
+{
+    Public TypeSymbol Type;
+    Public byte* Address;
+    Public LlvmPendingRoot Next;
+    Public Trusted Constructor(TypeSymbol type, byte* address)
+    { This.Type = type; This.Address = address; This.Next = null; }
+}
+
 Class LlvmFunctionContext
 {
     Public LlvmFunctionBinding Binding;
+    Public bool InScalarBody;
     Public LlvmVariable FirstVariable;
-    Public LlvmExpressionRoot FirstExpressionRoot;
-    Public LlvmAddressRoot FirstAddressRoot;
+    Private list ExpressionRoots;
     Public LlvmCaptureRoot FirstCaptureRoot;
-    Public LlvmLocalRoot FirstLocalRoot;
+    Private list LocalRoots;
+    Public LlvmLocalRoot FirstReusableArray;
     Public LlvmBlockBinding FirstBlock;
     Public LlvmBlockBinding ActiveBlock;
     Public byte* BreakTarget;
     Public byte* ContinueTarget;
     Public byte* CatchTarget;
+    Public byte* PropagationBlock;
     Public byte* ExceptionSlot;
     Public byte* GcFrame;
+    Public bool PlanningGcRoots;
+    Public int GcRootCount;
+    Public LlvmHandles RuntimeFrameCalls;
+    Public LlvmPendingRoot FirstPendingRoot;
+    Public LlvmPendingRoot LastPendingRoot;
     Public byte* RuntimeUntilEnabled;
     Public byte* RuntimeUntilOrdinal;
     Public string TraceName;
@@ -294,17 +317,19 @@ Class LlvmFunctionContext
     {
         This.Binding = binding;
         This.FirstVariable = null;
-        This.FirstExpressionRoot = null;
-        This.FirstAddressRoot = null;
         This.FirstCaptureRoot = null;
-        This.FirstLocalRoot = null;
         This.FirstBlock = null;
         This.ActiveBlock = null;
         This.BreakTarget = null;
         This.ContinueTarget = null;
         This.CatchTarget = null;
+        This.PropagationBlock = null;
         This.ExceptionSlot = null;
         This.GcFrame = null;
+        This.PlanningGcRoots = false;
+        This.GcRootCount = -1; // No entry-root plan for runtime GC internals.
+        This.FirstPendingRoot = null;
+        This.LastPendingRoot = null;
         This.RuntimeUntilEnabled = null;
         This.RuntimeUntilOrdinal = null;
         This.TraceName = binding.Symbol.QualifiedName();
@@ -323,29 +348,6 @@ Class LlvmFunctionContext
         {
             If ((symbol != null && current.Symbol == symbol) ||
                 (symbol == null && current.Name == name)) Return current;
-            current = current.Next;
-        }
-        Return null;
-    }
-
-    Public Safe Function void AddExpressionRoot(LlvmExpressionRoot root)
-    {
-        root.Next = This.FirstExpressionRoot;
-        This.FirstExpressionRoot = root;
-    }
-
-    Public Safe Function void AddAddressRoot(LlvmAddressRoot root)
-    {
-        root.Next = This.FirstAddressRoot;
-        This.FirstAddressRoot = root;
-    }
-
-    Public Safe Function LlvmAddressRoot FindAddressRoot(HirExpression expression)
-    {
-        LlvmAddressRoot current = This.FirstAddressRoot;
-        While (current != null)
-        {
-            If (current.Expression == expression) Return current;
             current = current.Next;
         }
         Return null;
@@ -370,30 +372,66 @@ Class LlvmFunctionContext
 
     Public Safe Function void AddLocalRoot(LlvmLocalRoot root)
     {
-        root.Next = This.FirstLocalRoot;
-        This.FirstLocalRoot = root;
+        If (This.LocalRoots == null) This.LocalRoots = list.Create();
+        This.LocalRoots.Add(root);
+        int slot = This.LocalRoots.Count();
+        root.Symbol.NativeLocalRootHint = [i32](slot <= 2147483647 ? slot : -1);
     }
 
     Public Safe Function LlvmLocalRoot FindLocalRoot(ValueSymbol symbol)
     {
-        LlvmLocalRoot current = This.FirstLocalRoot;
-        While (current != null)
+        If (symbol == null || symbol.NativeLocalRootHint == 0 || This.LocalRoots == null) Return null;
+        int hint = symbol.NativeLocalRootHint;
+        int count = This.LocalRoots.Count();
+        If (hint > 0 && hint <= count)
         {
-            If (current.Symbol == symbol) Return current;
-            current = current.Next;
+            LlvmLocalRoot root = [LlvmLocalRoot](This.LocalRoots.Fetch(hint - 1));
+            If (root.Symbol == symbol) Return root;
+        }
+        // A symbol reused by another lowering context may carry its slot index.
+        For (int i = count - 1; i >= 0; i--)
+        {
+            LlvmLocalRoot root = [LlvmLocalRoot](This.LocalRoots.Fetch(i));
+            If (root.Symbol == symbol)
+            {
+                symbol.NativeLocalRootHint = [i32](i < 2147483647 ? i + 1 : -1);
+                Return root;
+            }
         }
         Return null;
     }
 
-    Public Safe Function LlvmExpressionRoot FindExpressionRoot(HirExpression expression)
+    Public Safe Function LlvmExpressionRoot ExpressionRoot(HirExpression expression, bool create=false)
     {
-        LlvmExpressionRoot current = This.FirstExpressionRoot;
-        While (current != null)
+        If (expression == null) Return null;
+        int hint = expression.NativeRootHint;
+        If (hint != 0 && This.ExpressionRoots != null)
         {
-            If (current.Expression == expression) Return current;
-            current = current.Next;
+            int count = This.ExpressionRoots.Count();
+            If (hint > 0 && hint <= count)
+            {
+                LlvmExpressionRoot root = [LlvmExpressionRoot](This.ExpressionRoots.Fetch(hint - 1));
+                If (root.Expression == expression) Return root;
+            }
+            // An HIR node can be reused in another lowering context. A stale
+            // hint must never select that context's storage.
+            For (int i = 0; i < count; i++)
+            {
+                LlvmExpressionRoot root = [LlvmExpressionRoot](This.ExpressionRoots.Fetch(i));
+                If (root.Expression == expression)
+                {
+                    expression.NativeRootHint = [i32](i < 2147483647 ? i + 1 : -1);
+                    Return root;
+                }
+            }
         }
-        Return null;
+        If (!create) Return null;
+        If (This.ExpressionRoots == null) This.ExpressionRoots = list.Create();
+        LlvmExpressionRoot root = New LlvmExpressionRoot(expression);
+        This.ExpressionRoots.Add(root);
+        int size = This.ExpressionRoots.Count();
+        expression.NativeRootHint = [i32](size <= 2147483647 ? size : -1);
+        Return root;
     }
 
     Public Safe Function void AddBlock(LlvmBlockBinding binding)

@@ -1,0 +1,112 @@
+Unit IO.Kinal.VM.JsonHost;
+
+Get IO.Json;
+Get IO.Text;
+Get Native By IO.__Json;
+Get Bytecode By IO.Kinal.VM.Bytecode;
+Get Context By IO.Kinal.VM.Context;
+
+// Keep the native document inside this call. Guest references always use VM heap handles.
+Static Trusted Function Context.VMValue ReadNode(Context.ExecutionContext ctx, byte* document, int node)
+{
+    int kind = Native.NodeKind(document, node);
+    If (kind == 0) Return Context.VMValue.NullValue();
+    If (kind == 1) Return Context.VMValue.FromBool(Native.NodeBool(document, node) != 0);
+    If (kind == 2) Return Context.VMValue.FromInt(Native.NodeInt(document, node));
+    If (kind == 3) Return Context.VMValue.FromFloat(Native.NodeFloat(document, node));
+    If (kind == 4) Return Context.VMValue.FromString(Native.NodeString(document, node));
+    If (kind == 5)
+    {
+        int handle = ctx.NewDict();
+        Context.HeapDict result = [Context.HeapDict](ctx.ObjectAt(handle));
+        int count = Native.ObjectCount(document, node);
+        For (int i = 0; i < count; i++)
+            result.Put(Native.ObjectKeyAt(document, node, i), ReadNode(ctx, document, Native.ObjectValueAt(document, node, i)));
+        ctx.Heap.RecordAllocation(count * 48);
+        Return Context.VMValue.FromObject(handle);
+    }
+    If (kind == 6)
+    {
+        int handle = ctx.NewList();
+        Context.HeapList result = [Context.HeapList](ctx.ObjectAt(handle));
+        int count = Native.ArrayCount(document, node);
+        For (int i = 0; i < count; i++)
+            result.Append(ReadNode(ctx, document, Native.ArrayItemAt(document, node, i)));
+        ctx.Heap.RecordAllocation(count * 48);
+        Return Context.VMValue.FromObject(handle);
+    }
+    Throw New IO.Error("IO.Json", "Unsupported JSON node kind: " + kind.ToString());
+}
+
+Trusted Function Context.VMValue Parse(Context.ExecutionContext ctx, string text)
+{
+    byte* document = IO.Json.__JsonParseDocument(text);
+    Try
+    {
+        Context.VMValue result = ReadNode(ctx, document, Native.DocumentRoot(document));
+        Native.DocumentFree(document);
+        Return result;
+    }
+    Catch (IO.Error error) { Native.DocumentFree(document); Throw error; }
+}
+
+Static Trusted Function void WriteValue(Context.ExecutionContext ctx, IO.Text.Builder output, Context.VMValue value, int depth, bool pretty)
+{
+    If (depth > 128) Throw New IO.Error("IO.Json", "JSON structure is too deeply nested");
+    int kind = value.Kind;
+    If (kind == [int](Bytecode.ValueKind.Object))
+    {
+        Context.HeapObject obj = ctx.ObjectAt(value.IntValue);
+        If (obj Is Context.HeapList)
+        {
+            Context.HeapList items = [Context.HeapList](obj);
+            output.AppendChar('[');
+            For (int i = 0; i < items.Count; i++)
+            {
+                If (i > 0) { output.AppendChar(','); If (pretty) output.AppendChar(' '); }
+                WriteValue(ctx, output, items.ValueAt(i), depth + 1, pretty);
+            }
+            output.AppendChar(']');
+            Return;
+        }
+        If (obj Is Context.HeapDict)
+        {
+            Context.HeapDict entries = [Context.HeapDict](obj);
+            list keys = entries.Slots.Keys();
+            output.AppendChar('{');
+            If (pretty) output.AppendChar('\n');
+            For (int i = 0; i < keys.Count(); i++)
+            {
+                string key = [string](keys.Fetch(i));
+                IO.Json.__JsonWriteKey(output, key, i, depth + 1, pretty);
+                WriteValue(ctx, output, entries.ValueAt(entries.Lookup(key)), depth + 1, pretty);
+            }
+            IO.Json.__JsonEndObject(output, keys.Count(), depth + 1, pretty);
+            Return;
+        }
+        string name = "IO.Collection.set";
+        If (obj.TypeIndex >= 0) name = ctx.Program.Types[obj.TypeIndex].Name;
+        Throw New IO.Error("IO.Json", "Unsupported JSON value type: " + name);
+    }
+    any scalar = null;
+    If (kind == [int](Bytecode.ValueKind.Int)) scalar = value.IntValue;
+    ElseIf (kind == [int](Bytecode.ValueKind.Float)) scalar = value.FloatValue;
+    ElseIf (kind == [int](Bytecode.ValueKind.Bool)) scalar = value.BoolValue;
+    ElseIf (kind == [int](Bytecode.ValueKind.Char)) scalar = [char](value.IntValue);
+    ElseIf (kind == [int](Bytecode.ValueKind.String)) scalar = value.StringValue;
+    ElseIf (kind != [int](Bytecode.ValueKind.Null))
+        Throw New IO.Error("IO.Json", "Unsupported JSON value type: " + (kind == [int](Bytecode.ValueKind.Array) ? "array" : "pointer"));
+    IO.Json.__JsonWriteValue(output, scalar, depth);
+}
+
+Trusted Function string Format(Context.ExecutionContext ctx, Context.VMValue value, bool pretty)
+{
+    IO.Text.Builder output = New IO.Text.Builder();
+    WriteValue(ctx, output, value, 0, pretty);
+    Return output.Build();
+}
+
+Function void Raise(Context.ExecutionContext ctx, IO.Error error)
+{
+    ctx.RaiseHostError(error);
+}

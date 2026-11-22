@@ -272,7 +272,7 @@ static int kn_link_windows_lld(const KnLinkOptions *opts)
         kn_append(cmd, sizeof(cmd), &off, "/LTCG ");
 
     if (opts->artifact_kind == KN_ARTIFACT_EXE)
-        kn_append(cmd, sizeof(cmd), &off, "/subsystem:console /entry:mainCRTStartup ");
+        kn_append(cmd, sizeof(cmd), &off, opts->hide_console ? "/subsystem:windows /entry:mainCRTStartup " : "/subsystem:console /entry:mainCRTStartup ");
     else
     {
         kn_append(cmd, sizeof(cmd), &off, "/dll /noentry ");
@@ -379,7 +379,7 @@ static int kn_link_windows_msvc(const KnLinkOptions *opts)
         kn_append(cmd, sizeof(cmd), &off, "/LTCG ");
 
     if (opts->artifact_kind == KN_ARTIFACT_EXE)
-        kn_append(cmd, sizeof(cmd), &off, "/subsystem:console /entry:mainCRTStartup ");
+        kn_append(cmd, sizeof(cmd), &off, opts->hide_console ? "/subsystem:windows /entry:mainCRTStartup " : "/subsystem:console /entry:mainCRTStartup ");
     else
     {
         kn_append(cmd, sizeof(cmd), &off, "/dll /noentry ");
@@ -502,7 +502,7 @@ static int kn_link_windows_with_zig(const KnLinkOptions *opts)
         }
     }
     else
-        kn_append(cmd, sizeof(cmd), &off, " -Wl,-e,mainCRTStartup -Wl,--subsystem,console ");
+        kn_append(cmd, sizeof(cmd), &off, opts->hide_console ? " -Wl,-e,mainCRTStartup -Wl,--subsystem,windows " : " -Wl,-e,mainCRTStartup -Wl,--subsystem,console ");
     kn_append(cmd, sizeof(cmd), &off, " -o ");
     kn_append_quoted(cmd, sizeof(cmd), &off, opts->out_path);
     kn_append(cmd, sizeof(cmd), &off, " ");

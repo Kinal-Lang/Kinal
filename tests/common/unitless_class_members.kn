@@ -1,0 +1,35 @@
+Get IO.Console;
+
+Class Counter
+{
+    Public int Count;
+    Public Static int Calls = 4;
+    Public Constructor(int start) { This.Count = start; }
+    Public Property int Value
+    {
+        Get { Return This.Count; }
+        Set { This.Count = value; }
+    }
+    Public Function int Add(int amount)
+    {
+        This.Value += amount;
+        Counter.Calls = Counter.Calls + 1;
+        Return This.Value;
+    }
+}
+
+Class Doubler
+{
+    Public Function int Add(int amount) { Return amount * 2; }
+}
+
+Static Function int Main()
+{
+    Counter first = New Counter(10);
+    Counter second = New Counter(20);
+    Doubler other = New Doubler();
+    If (first.Add(2) != 12 || second.Add(3) != 23 || other.Add(7) != 14) Return 1;
+    If (first.Value != 12 || second.Value != 23 || Counter.Calls != 6) Return 2;
+    IO.Console.PrintLine("ok");
+    Return 0;
+}

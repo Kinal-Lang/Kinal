@@ -3,12 +3,24 @@ Unit IO.Kinal.VM.Stdlib;
 Get Bytecode By IO.Kinal.VM.Bytecode;
 Get Console By IO.Console;
 Get File By IO.File;
+Get Text By IO.Text;
 Get Meta By IO.Meta;
+Get IO.Math;
+Get IO.Json;
+Get JsonHost By IO.Kinal.VM.JsonHost;
+Get IO.Directory;
+Get IO.Path;
 Get Time By IO.Time;
 Get IO.Type.string;
 Get Context By IO.Kinal.VM.Context;
 
 Meta VmBuiltin(int id, string name)
+{
+    On @function;
+    Keep @runtime;
+}
+
+Meta VmRangeBuiltin(int id, string name, int arity)
 {
     On @function;
     Keep @runtime;
@@ -56,40 +68,15 @@ Static Function string AnyTypeName(Context.ExecutionContext ctx, int reg)
     };
 }
 
-Static Function bool TextContains(string text, string needle)
+Static Function string TextArgument(Context.ExecutionContext ctx, int reg)
 {
-    char[] haystack = text.ToChars();
-    char[] pattern = needle.ToChars();
-    int hayLength = haystack.Length();
-    int patternLength = pattern.Length();
+    Return ctx.CurrentFrame().GetNullableString(reg);
+}
 
-    If (patternLength <= 0)
-    {
-        Return true;
-    }
-    If (hayLength < patternLength)
-    {
-        Return false;
-    }
-
-    For (int i = 0; i <= hayLength - patternLength; i = i + 1)
-    {
-        bool matched = true;
-        For (int j = 0; j < patternLength; j = j + 1)
-        {
-            If (haystack.Index(i + j) != pattern.Index(j))
-            {
-                matched = false;
-                Break;
-            }
-        }
-        If (matched)
-        {
-            Return true;
-        }
-    }
-
-    Return false;
+Static Function void SetNullableText(Context.ExecutionContext ctx, int reg, string value)
+{
+    If (value == null) ctx.CurrentFrame().SetNull(reg);
+    Else ctx.SetString(reg, value);
 }
 
 Public Class StdlibRegistry
@@ -97,19 +84,28 @@ Public Class StdlibRegistry
     Public IO.Type.Object.Function[] Handlers;
     Public bool[] Present;
     Public string[] Names;
+    Public int[] RangeArity;
 
     Public Constructor()
     {
         This.Handlers = {};
         This.Present = {};
         This.Names = {};
+        This.RangeArity = {};
 
+        EnsureSlot(255);
+    }
+
+    Private Function void EnsureSlot(int id)
+    {
+        If (id < 0 || id > 65535) Throw "VmBuiltin id out of range: " + [string](id);
         IO.Type.Object.Function empty = null;
-        For (int i = 0; i < 256; i = i + 1)
+        While (Handlers.Length() <= id)
         {
             This.Handlers = This.Handlers.Add(empty);
             This.Present = This.Present.Add(false);
             This.Names = This.Names.Add("");
+            This.RangeArity = This.RangeArity.Add(0);
         }
     }
 
@@ -120,23 +116,30 @@ Public Class StdlibRegistry
         For (int i = 0; i < owners.Count(); i = i + 1)
         {
             dict item = Meta.Find([string](owners.Fetch(i)), "VmBuiltin");
-            registry.RegisterMeta(item);
+            registry.RegisterMeta(item, 0);
+        }
+        owners = Meta.Query("VmRangeBuiltin");
+        For (int rangeIndex = 0; rangeIndex < owners.Count(); rangeIndex++)
+        {
+            dict item = Meta.Find([string](owners.Fetch(rangeIndex)), "VmRangeBuiltin");
+            int arity = [int](item.Fetch("arg.arity"));
+            If (arity <= 4 || arity > 255) Throw "Invalid VM range intrinsic arity";
+            registry.RegisterMeta(item, arity);
         }
         Return registry;
     }
 
-    Private Unsafe Function void RegisterMeta(dict item)
+    Private Unsafe Function void RegisterMeta(dict item, int arity)
     {
         int id = [int](item.Fetch("arg.id"));
         byte* owner = [byte*](item.Fetch("owner_ptr"));
         IO.Type.Object.Function fn = [Object.Function](owner);
 
-        If (id < 0 || id >= This.Handlers.Length())
-        {
-            Throw "VmBuiltin id out of range: " + [string](id);
-        }
+        EnsureSlot(id);
 
+        If (This.Present[id]) Throw "Duplicate VM intrinsic id: " + [string](id);
         This.Handlers[id] = fn;
+        This.RangeArity[id] = arity;
         This.Present[id] = true;
         This.Names[id] = [string](item.Fetch("arg.name"));
     }
@@ -149,7 +152,17 @@ Public Class StdlibRegistry
         }
 
         IO.Type.Object.Function fn = This.Handlers[builtinId];
+        If (This.RangeArity[builtinId] != 0) Throw "VM intrinsic requires a register range";
         fn(ctx, dst, a0, a1, a2, a3);
+    }
+    Public Function void InvokeRange(Context.ExecutionContext ctx, int id, int dst, int first, int count)
+    {
+        int registers = ctx.CurrentFrame().FnInfo.RegisterCount;
+        If (id < 0 || id >= This.Present.Length() || !This.Present[id]) Throw "Unregistered range intrinsic: " + [string](id);
+        If (count <= 4 || count != This.RangeArity[id] || first + count > registers ||
+            (dst != 255 && dst >= registers)) Throw "Invalid VM intrinsic register range";
+        IO.Type.Object.Function fn = This.Handlers[id];
+        fn(ctx, dst, first);
     }
 }
 
@@ -237,6 +250,23 @@ Static Function void BuiltinConsoleWriteChar(Context.ExecutionContext ctx, int d
     Console.Print(ctx.GetChar(a0));
 }
 
+// KNC stores instance fields in declaration order (IO.Time.DateTime in IO.Core).
+[VmBuiltin(14, "IO.Time.Now")]
+Static Function void BuiltinTimeNow(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    Time.DateTime value = Time.Now();
+    int handle = ctx.NewObject(ctx.FindTypeByName("IO.Time.DateTime"));
+    ctx.ObjectSetValue(handle, 0, Context.VMValue.FromInt(value.Ticks));
+    ctx.ObjectSetValue(handle, 1, Context.VMValue.FromInt(value.Year));
+    ctx.ObjectSetValue(handle, 2, Context.VMValue.FromInt(value.Month));
+    ctx.ObjectSetValue(handle, 3, Context.VMValue.FromInt(value.Day));
+    ctx.ObjectSetValue(handle, 4, Context.VMValue.FromInt(value.Hour));
+    ctx.ObjectSetValue(handle, 5, Context.VMValue.FromInt(value.Minute));
+    ctx.ObjectSetValue(handle, 6, Context.VMValue.FromInt(value.Second));
+    ctx.ObjectSetValue(handle, 7, Context.VMValue.FromInt(value.Millisecond));
+    ctx.CurrentFrame().ImportValue(dst, Context.VMValue.FromObject(handle));
+}
+
 [VmBuiltin(15, "IO.Time.GetTick")]
 Static Function void BuiltinTimeGetTick(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
 {
@@ -253,6 +283,90 @@ Static Function void BuiltinTimeSleep(Context.ExecutionContext ctx, int dst, int
 Static Function void BuiltinTimeGetNanoTick(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
 {
     ctx.SetInt(dst, Time.GetNanoTick());
+}
+
+Static Function int CalendarField(Context.ExecutionContext ctx, int handle, int slot)
+{
+    Context.VMValue field = ctx.ObjectGetValue(handle, slot);
+    If (field.Kind == [int](Bytecode.ValueKind.Null)) Return 0;
+    If (field.Kind != [int](Bytecode.ValueKind.Int)) Throw "Expected integer DateTime field";
+    Return field.IntValue;
+}
+
+[VmBuiltin(18, "IO.Time.Format")]
+Static Function void BuiltinTimeFormat(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    Time.DateTime value = null;
+    If (ctx.KindAt(a0) != [int](Bytecode.ValueKind.Null))
+    {
+        int handle = ctx.CurrentFrame().IntRegisters[a0];
+        If (ctx.KindAt(a0) != [int](Bytecode.ValueKind.Object) || !ctx.ObjectIsType(handle, ctx.FindTypeByName("IO.Time.DateTime")))
+            Throw "Expected IO.Time.DateTime";
+        value = New Time.DateTime();
+        value.Year = CalendarField(ctx, handle, 1);
+        value.Month = CalendarField(ctx, handle, 2);
+        value.Day = CalendarField(ctx, handle, 3);
+        value.Hour = CalendarField(ctx, handle, 4);
+        value.Minute = CalendarField(ctx, handle, 5);
+        value.Second = CalendarField(ctx, handle, 6);
+        value.Millisecond = CalendarField(ctx, handle, 7);
+    }
+    ctx.SetString(dst, Time.Format(value, ctx.CurrentFrame().GetNullableString(a1)));
+}
+
+[VmBuiltin(287, "IO.Text.Builder.Length")]
+Static Trusted Function void BuiltinTextBuilderLength(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    ctx.SetInt(dst, ctx.TextBuilderAt(a0).Length);
+}
+
+[VmBuiltin(288, "IO.Text.Builder.Capacity")]
+Static Trusted Function void BuiltinTextBuilderCapacity(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    ctx.SetInt(dst, ctx.TextBuilderAt(a0).Capacity);
+}
+
+[VmBuiltin(289, "IO.Text.Builder.EnsureCapacity")]
+Static Trusted Function void BuiltinTextBuilderReserve(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    Text.Builder builder = ctx.TextBuilderAt(a0);
+    int capacity = builder.Capacity;
+    Try { builder.EnsureCapacity(ctx.GetInt(a1)); }
+    Catch (IO.Error error) { ctx.RaiseHostError(error); Return; }
+    If (builder.Capacity != capacity) ctx.Heap.RecordAllocation(builder.Capacity);
+}
+
+[VmBuiltin(290, "IO.Text.Builder.Append")]
+Static Trusted Function void BuiltinTextBuilderAppend(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    Text.Builder builder = ctx.TextBuilderAt(a0);
+    int capacity = builder.Capacity;
+    Try { builder.Append(TextArgument(ctx, a1), ctx.GetInt(a2)); }
+    Catch (IO.Error error) { ctx.RaiseHostError(error); Return; }
+    If (builder.Capacity != capacity) ctx.Heap.RecordAllocation(builder.Capacity);
+}
+
+[VmBuiltin(291, "IO.Text.Builder.AppendChar")]
+Static Trusted Function void BuiltinTextBuilderAppendChar(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    Text.Builder builder = ctx.TextBuilderAt(a0);
+    int capacity = builder.Capacity;
+    Try { builder.AppendChar(ctx.GetChar(a1)); }
+    Catch (IO.Error error) { ctx.RaiseHostError(error); Return; }
+    If (builder.Capacity != capacity) ctx.Heap.RecordAllocation(builder.Capacity);
+}
+
+[VmBuiltin(292, "IO.Text.Builder.Clear")]
+Static Trusted Function void BuiltinTextBuilderClear(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    ctx.TextBuilderAt(a0).Clear();
+}
+
+[VmBuiltin(293, "IO.Text.Builder.Build")]
+Static Trusted Function void BuiltinTextBuilderBuild(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    Try { ctx.SetString(dst, ctx.TextBuilderAt(a0).Build()); }
+    Catch (IO.Error error) { ctx.RaiseHostError(error); }
 }
 
 [VmBuiltin(19, "IO.Type.string.Length")]
@@ -285,106 +399,453 @@ Static Unsafe Function void BuiltinStringToChars(Context.ExecutionContext ctx, i
     ctx.CurrentFrame().ImportValue(dst, Context.VMValue.FromArray(handle));
 }
 
+Static Function void ReadListItem(Context.ExecutionContext ctx, int dst, Context.HeapList values, int index, int fallback)
+{
+    Context.FunctionFrame frame = ctx.CurrentFrame();
+    If (values != null && index >= 0 && index < values.Count) frame.ImportValue(dst, values.ValueAt(index));
+    ElseIf (fallback >= 0) frame.CopyValue(dst, fallback);
+    Else frame.SetNull(dst);
+}
+
+[VmBuiltin(219, "IO.Collection.list.Create")]
+Static Function void BuiltinListCreate(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    int handle = ctx.NewList();
+    ctx.CurrentFrame().ImportValue(dst, Context.VMValue.FromObject(handle));
+}
+
+[VmBuiltin(220, "IO.Collection.list.Add")]
+Static Function void BuiltinListAdd(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    Context.HeapList values = ctx.ListAt(a0);
+    If (values != null)
+    {
+        values.Append(ctx.CurrentFrame().ExportValue(a1));
+        ctx.Heap.RecordAllocation(48);
+    }
+}
+
+[VmBuiltin(221, "IO.Collection.list.Fetch")]
+Static Function void BuiltinListFetch(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    ReadListItem(ctx, dst, ctx.ListAt(a0), ctx.GetInt(a1), -1);
+}
+
+[VmBuiltin(222, "IO.Collection.list.Set")]
+Static Function void BuiltinListSet(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    Context.HeapList values = ctx.ListAt(a0);
+    int index = ctx.GetInt(a1);
+    If (values != null && index >= 0 && index < values.Count) values.SetValue(index, ctx.CurrentFrame().ExportValue(a2));
+}
+
+[VmBuiltin(223, "IO.Collection.list.Insert")]
+Static Function void BuiltinListInsert(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    Context.HeapList values = ctx.ListAt(a0);
+    If (values != null)
+    {
+        values.Insert(ctx.GetInt(a1), ctx.CurrentFrame().ExportValue(a2));
+        ctx.Heap.RecordAllocation(48);
+    }
+}
+
+[VmBuiltin(224, "IO.Collection.list.TryFetch")]
+Static Function void BuiltinListTryFetch(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    ReadListItem(ctx, dst, ctx.ListAt(a0), ctx.GetInt(a1), a2);
+}
+
+[VmBuiltin(225, "IO.Collection.list.Count")]
+Static Function void BuiltinListCount(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    Context.HeapList values = ctx.ListAt(a0);
+    ctx.SetInt(dst, values == null ? 0 : values.Count);
+}
+
+[VmBuiltin(226, "IO.Collection.list.Clear")]
+Static Function void BuiltinListClear(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    Context.HeapList values = ctx.ListAt(a0);
+    If (values != null) values.Clear();
+}
+
+[VmBuiltin(227, "IO.Collection.list.RemoveAt")]
+Static Function void BuiltinListRemoveAt(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    Context.HeapList values = ctx.ListAt(a0);
+    ctx.CurrentFrame().ImportValue(dst, values == null ? Context.VMValue.NullValue() : values.RemoveAt(ctx.GetInt(a1)));
+}
+
+[VmBuiltin(228, "IO.Collection.list.Contains")]
+Static Function void BuiltinListContains(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    Context.HeapList values = ctx.ListAt(a0);
+    ctx.SetBool(dst, values != null && values.IndexOf(ctx.CurrentFrame().ExportValue(a1)) >= 0);
+}
+
+[VmBuiltin(229, "IO.Collection.list.Pop")]
+Static Function void BuiltinListPop(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    Context.HeapList values = ctx.ListAt(a0);
+    ctx.CurrentFrame().ImportValue(dst, values == null ? Context.VMValue.NullValue() : values.RemoveAt(values.Count - 1));
+}
+
+[VmBuiltin(230, "IO.Collection.list.Peek")]
+Static Function void BuiltinListPeek(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    Context.HeapList values = ctx.ListAt(a0);
+    ReadListItem(ctx, dst, values, values == null ? -1 : values.Count - 1, -1);
+}
+
+[VmBuiltin(231, "IO.Collection.list.IndexOf")]
+Static Function void BuiltinListIndexOf(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    Context.HeapList values = ctx.ListAt(a0);
+    ctx.SetInt(dst, values == null ? -1 : values.IndexOf(ctx.CurrentFrame().ExportValue(a1)));
+}
+
+[VmBuiltin(232, "IO.Collection.list.IsEmpty")]
+Static Function void BuiltinListIsEmpty(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    Context.HeapList values = ctx.ListAt(a0);
+    ctx.SetBool(dst, values == null || values.Count == 0);
+}
+
+Static Function void SetStringList(Context.ExecutionContext ctx, int dst, list strings)
+{
+    int handle = ctx.NewList();
+    Context.HeapList values = [Context.HeapList](ctx.ObjectAt(handle));
+    int count = strings.Count();
+    For (int i = 0; i < count; i++)
+        values.Append(Context.VMValue.FromString([string](strings.Fetch(i))));
+    ctx.Heap.RecordAllocation(count * 48);
+    ctx.CurrentFrame().ImportValue(dst, Context.VMValue.FromObject(handle));
+}
+
+Static Function void ReadDictItem(Context.ExecutionContext ctx, int dst, int dictionary, int key, int fallback)
+{
+    Context.HeapDict values = ctx.DictAt(dictionary);
+    int index = values == null ? -1 : values.Lookup(TextArgument(ctx, key));
+    Context.FunctionFrame frame = ctx.CurrentFrame();
+    If (index >= 0) frame.ImportValue(dst, values.ValueAt(index));
+    ElseIf (fallback >= 0) frame.CopyValue(dst, fallback);
+    Else frame.SetNull(dst);
+}
+
+[VmBuiltin(239, "IO.Collection.dict.Create")]
+Static Function void BuiltinDictCreate(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    int handle = ctx.NewDict();
+    ctx.CurrentFrame().ImportValue(dst, Context.VMValue.FromObject(handle));
+}
+
+[VmBuiltin(240, "IO.Collection.dict.Set")]
+Static Function void BuiltinDictSet(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    Context.HeapDict values = ctx.DictAt(a0);
+    If (values != null)
+    {
+        values.Put(TextArgument(ctx, a1), ctx.CurrentFrame().ExportValue(a2));
+        ctx.Heap.RecordAllocation(48);
+    }
+}
+
+[VmBuiltin(241, "IO.Collection.dict.Fetch")]
+Static Function void BuiltinDictFetch(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    ReadDictItem(ctx, dst, a0, a1, -1);
+}
+
+[VmBuiltin(242, "IO.Collection.dict.TryFetch")]
+Static Function void BuiltinDictTryFetch(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    ReadDictItem(ctx, dst, a0, a1, a2);
+}
+
+[VmBuiltin(243, "IO.Collection.dict.Contains")]
+Static Function void BuiltinDictContains(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    Context.HeapDict values = ctx.DictAt(a0);
+    ctx.SetBool(dst, values != null && values.Slots.Contains(TextArgument(ctx, a1)));
+}
+
+[VmBuiltin(244, "IO.Collection.dict.Count")]
+Static Function void BuiltinDictCount(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    Context.HeapDict values = ctx.DictAt(a0);
+    ctx.SetInt(dst, values == null ? 0 : values.Slots.Count());
+}
+
+[VmBuiltin(245, "IO.Collection.dict.Remove")]
+Static Function void BuiltinDictRemove(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    Context.HeapDict values = ctx.DictAt(a0);
+    ctx.SetBool(dst, values != null && values.RemoveKey(TextArgument(ctx, a1)));
+}
+
+[VmBuiltin(246, "IO.Collection.dict.IsEmpty")]
+Static Function void BuiltinDictIsEmpty(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    Context.HeapDict values = ctx.DictAt(a0);
+    ctx.SetBool(dst, values == null || values.Slots.IsEmpty());
+}
+
+[VmBuiltin(247, "IO.Collection.dict.Keys")]
+Static Function void BuiltinDictKeys(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    Context.HeapDict values = ctx.DictAt(a0);
+    SetStringList(ctx, dst, values == null ? null : values.Slots.Keys());
+}
+
+[VmBuiltin(248, "IO.Collection.dict.Values")]
+Static Function void BuiltinDictValues(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    Context.HeapDict values = ctx.DictAt(a0);
+    int handle = ctx.NewList();
+    Context.HeapList items = [Context.HeapList](ctx.ObjectAt(handle));
+    If (values != null)
+    {
+        list indexes = values.Slots.Values();
+        For (int i = 0; i < indexes.Count(); i++)
+            items.Append(values.ValueAt([int](indexes.Fetch(i))));
+        ctx.Heap.RecordAllocation(items.Count * 8);
+    }
+    ctx.CurrentFrame().ImportValue(dst, Context.VMValue.FromObject(handle));
+}
+
+[VmBuiltin(249, "IO.Collection.set.Create")]
+Static Function void BuiltinSetCreate(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    int handle = ctx.NewSet();
+    ctx.CurrentFrame().ImportValue(dst, Context.VMValue.FromObject(handle));
+}
+
+[VmBuiltin(250, "IO.Collection.set.Add")]
+Static Function void BuiltinSetAdd(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    Context.HeapSet values = ctx.SetAt(a0);
+    If (values != null)
+    {
+        int before = values.Members.Count();
+        values.Members.Add(TextArgument(ctx, a1));
+        If (values.Members.Count() != before) ctx.Heap.RecordAllocation(32);
+    }
+}
+
+[VmBuiltin(251, "IO.Collection.set.Contains")]
+Static Function void BuiltinSetContains(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    Context.HeapSet values = ctx.SetAt(a0);
+    ctx.SetBool(dst, values != null && values.Members.Contains(TextArgument(ctx, a1)));
+}
+
+[VmBuiltin(252, "IO.Collection.set.Count")]
+Static Function void BuiltinSetCount(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    Context.HeapSet values = ctx.SetAt(a0);
+    ctx.SetInt(dst, values == null ? 0 : values.Members.Count());
+}
+
+[VmBuiltin(253, "IO.Collection.set.Remove")]
+Static Function void BuiltinSetRemove(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    Context.HeapSet values = ctx.SetAt(a0);
+    ctx.SetBool(dst, values != null && values.Members.Remove(TextArgument(ctx, a1)));
+}
+
+[VmBuiltin(254, "IO.Collection.set.Clear")]
+Static Function void BuiltinSetClear(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    Context.HeapSet values = ctx.SetAt(a0);
+    If (values != null) values.Members.Clear();
+}
+
+[VmBuiltin(255, "IO.Collection.set.IsEmpty")]
+Static Function void BuiltinSetIsEmpty(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    Context.HeapSet values = ctx.SetAt(a0);
+    ctx.SetBool(dst, values == null || values.Members.IsEmpty());
+}
+
+[VmBuiltin(256, "IO.Collection.set.Values")]
+Static Function void BuiltinSetValues(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    Context.HeapSet values = ctx.SetAt(a0);
+    SetStringList(ctx, dst, values == null ? null : values.Members.Values());
+}
+
+[VmBuiltin(257, "IO.Json.ParseValue")]
+Static Trusted Function void BuiltinJsonParseValue(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    Try { ctx.CurrentFrame().ImportValue(dst, JsonHost.Parse(ctx, TextArgument(ctx, a0))); }
+    Catch (IO.Error error) { ctx.RaiseHostError(error); }
+}
+
+[VmBuiltin(258, "IO.Json.FormatText")]
+Static Trusted Function void BuiltinJsonFormatText(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    Try { ctx.SetString(dst, IO.Json.FormatText(TextArgument(ctx, a0), ctx.GetBool(a1))); }
+    Catch (IO.Error error) { ctx.RaiseHostError(error); }
+}
+
+[VmBuiltin(259, "IO.Json.FormatValue")]
+Static Trusted Function void BuiltinJsonFormatValue(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    Try { ctx.SetString(dst, JsonHost.Format(ctx, ctx.CurrentFrame().ExportValue(a0), ctx.GetBool(a1))); }
+    Catch (IO.Error error) { ctx.RaiseHostError(error); }
+}
+
+Static Function list TextParts(Context.ExecutionContext ctx, int reg)
+{
+    Context.HeapList values = ctx.ListAt(reg);
+    If (values == null) Return null;
+    list parts = list.Create();
+    For (int i = 0; i < values.Count; i++)
+    {
+        Context.VMValue item = values.ValueAt(i);
+        If (item.Kind == [int](Bytecode.ValueKind.String)) parts.Add(item.StringValue);
+        Else parts.Add(null);
+    }
+    Return parts;
+}
+
+[VmBuiltin(233, "IO.Directory.Files")]
+Static Function void BuiltinDirectoryFiles(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    SetStringList(ctx, dst, IO.Directory.Files(TextArgument(ctx, a0), ctx.GetBool(a1)));
+}
+
+[VmBuiltin(234, "IO.Text.Split")]
+Static Function void BuiltinTextSplit(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    SetStringList(ctx, dst, Text.Split(TextArgument(ctx, a0), TextArgument(ctx, a1)));
+}
+
+[VmBuiltin(235, "IO.Text.Lines")]
+Static Function void BuiltinTextLines(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    SetStringList(ctx, dst, Text.Lines(TextArgument(ctx, a0)));
+}
+
+[VmBuiltin(236, "IO.Text.Join")]
+Static Function void BuiltinTextJoin(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    ctx.SetString(dst, Text.Join(TextParts(ctx, a0), TextArgument(ctx, a1)));
+}
+
+[VmBuiltin(237, "IO.File.ReadLines")]
+Static Function void BuiltinFileReadLines(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    SetStringList(ctx, dst, File.ReadLines(TextArgument(ctx, a0)));
+}
+
+[VmBuiltin(238, "IO.File.WriteLines")]
+Static Function void BuiltinFileWriteLines(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    ctx.SetBool(dst, File.WriteLines(TextArgument(ctx, a0), TextParts(ctx, a1)));
+}
+
 [VmBuiltin(85, "IO.File.Create")]
 Static Function void BuiltinFileCreate(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
 {
-    ctx.SetBool(dst, File.Create(ctx.GetString(a0)));
+    ctx.SetBool(dst, File.Create(TextArgument(ctx, a0)));
 }
 
 [VmBuiltin(86, "IO.File.Touch")]
 Static Function void BuiltinFileTouch(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
 {
-    ctx.SetBool(dst, File.Touch(ctx.GetString(a0)));
+    ctx.SetBool(dst, File.Touch(TextArgument(ctx, a0)));
 }
 
 [VmBuiltin(87, "IO.File.ReadAllText")]
 Static Function void BuiltinFileReadAllText(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
 {
-    ctx.SetString(dst, File.ReadAllText(ctx.GetString(a0)));
+    ctx.SetString(dst, File.ReadAllText(TextArgument(ctx, a0)));
 }
 
 [VmBuiltin(88, "IO.File.ReadFirstLine")]
 Static Function void BuiltinFileReadFirstLine(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
 {
-    ctx.SetString(dst, File.ReadFirstLine(ctx.GetString(a0)));
+    ctx.SetString(dst, File.ReadFirstLine(TextArgument(ctx, a0)));
 }
 
 [VmBuiltin(89, "IO.File.WriteAllText")]
 Static Function void BuiltinFileWriteAllText(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
 {
-    ctx.SetBool(dst, File.WriteAllText(ctx.GetString(a0), ctx.GetString(a1)));
+    ctx.SetBool(dst, File.WriteAllText(TextArgument(ctx, a0), TextArgument(ctx, a1)));
 }
 
 [VmBuiltin(90, "IO.File.AppendAllText")]
 Static Function void BuiltinFileAppendAllText(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
 {
-    ctx.SetBool(dst, File.AppendAllText(ctx.GetString(a0), ctx.GetString(a1)));
+    ctx.SetBool(dst, File.AppendAllText(TextArgument(ctx, a0), TextArgument(ctx, a1)));
 }
 
 [VmBuiltin(91, "IO.File.AppendLine")]
 Static Function void BuiltinFileAppendLine(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
 {
-    ctx.SetBool(dst, File.AppendLine(ctx.GetString(a0), ctx.GetString(a1)));
+    ctx.SetBool(dst, File.AppendLine(TextArgument(ctx, a0), TextArgument(ctx, a1)));
 }
 
 [VmBuiltin(92, "IO.File.Delete")]
 Static Function void BuiltinFileDelete(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
 {
-    ctx.SetBool(dst, File.Delete(ctx.GetString(a0)));
+    ctx.SetBool(dst, File.Delete(TextArgument(ctx, a0)));
 }
 
 [VmBuiltin(93, "IO.File.DeleteIfExists")]
 Static Function void BuiltinFileDeleteIfExists(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
 {
-    ctx.SetBool(dst, File.DeleteIfExists(ctx.GetString(a0)));
+    ctx.SetBool(dst, File.DeleteIfExists(TextArgument(ctx, a0)));
 }
 
 [VmBuiltin(94, "IO.File.Size")]
 Static Function void BuiltinFileSize(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
 {
-    ctx.SetInt(dst, File.Size(ctx.GetString(a0)));
+    ctx.SetInt(dst, File.Size(TextArgument(ctx, a0)));
 }
 
 [VmBuiltin(95, "IO.File.IsEmpty")]
 Static Function void BuiltinFileIsEmpty(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
 {
-    ctx.SetBool(dst, File.IsEmpty(ctx.GetString(a0)));
+    ctx.SetBool(dst, File.IsEmpty(TextArgument(ctx, a0)));
 }
 
 [VmBuiltin(96, "IO.File.Copy")]
 Static Function void BuiltinFileCopy(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
 {
-    ctx.SetBool(dst, File.Copy(ctx.GetString(a0), ctx.GetString(a1)));
+    ctx.SetBool(dst, File.Copy(TextArgument(ctx, a0), TextArgument(ctx, a1)));
 }
 
 [VmBuiltin(97, "IO.File.Move")]
 Static Function void BuiltinFileMove(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
 {
-    ctx.SetBool(dst, File.Move(ctx.GetString(a0), ctx.GetString(a1)));
+    ctx.SetBool(dst, File.Move(TextArgument(ctx, a0), TextArgument(ctx, a1)));
 }
 
 [VmBuiltin(98, "IO.File.ReadOrDefault")]
 Static Function void BuiltinFileReadOrDefault(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
 {
-    ctx.SetString(dst, File.ReadOrDefault(ctx.GetString(a0), ctx.GetString(a1)));
+    SetNullableText(ctx, dst, File.ReadOrDefault(TextArgument(ctx, a0), TextArgument(ctx, a1)));
 }
 
 [VmBuiltin(99, "IO.File.ReadIfExists")]
 Static Function void BuiltinFileReadIfExists(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
 {
-    ctx.SetString(dst, File.ReadIfExists(ctx.GetString(a0)));
+    SetNullableText(ctx, dst, File.ReadIfExists(TextArgument(ctx, a0)));
 }
 
 [VmBuiltin(100, "IO.File.ReadOr")]
 Static Function void BuiltinFileReadOr(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
 {
-    ctx.SetString(dst, File.ReadOr(ctx.GetString(a0), ctx.GetString(a1)));
+    SetNullableText(ctx, dst, File.ReadOr(TextArgument(ctx, a0), TextArgument(ctx, a1)));
 }
 
 [VmBuiltin(103, "IO.File.ReplaceText")]
 Static Function void BuiltinFileReplaceText(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
 {
-    ctx.SetBool(dst, File.ReplaceText(ctx.GetString(a0), ctx.GetString(a1), ctx.GetString(a2)));
+    ctx.SetBool(dst, File.ReplaceText(TextArgument(ctx, a0), TextArgument(ctx, a1), TextArgument(ctx, a2)));
 }
 
 [VmBuiltin(130, "IO.Type.any.IsNull")]
@@ -463,13 +924,175 @@ Static Function void BuiltinAnyIsObject(Context.ExecutionContext ctx, int dst, i
 [VmBuiltin(145, "IO.File.Exists")]
 Static Function void BuiltinFileExists(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
 {
-    ctx.SetBool(dst, File.Exists(ctx.GetString(a0)));
+    ctx.SetBool(dst, File.Exists(TextArgument(ctx, a0)));
 }
 
 [VmBuiltin(146, "IO.Text.Contains")]
 Static Function void BuiltinTextContains(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
 {
-    ctx.SetBool(dst, TextContains(ctx.GetString(a0), ctx.GetString(a1)));
+    ctx.SetBool(dst, Text.Contains(TextArgument(ctx, a0), TextArgument(ctx, a1)));
+}
+
+[VmBuiltin(152, "IO.Text.Length")]
+Static Function void BuiltinTextLength(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    ctx.SetInt(dst, Text.Length(TextArgument(ctx, a0)));
+}
+
+[VmBuiltin(153, "IO.Text.IsEmpty")]
+Static Function void BuiltinTextIsEmpty(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    ctx.SetBool(dst, Text.IsEmpty(TextArgument(ctx, a0)));
+}
+
+[VmBuiltin(154, "IO.Text.Count")]
+Static Function void BuiltinTextCount(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    ctx.SetInt(dst, Text.Count(TextArgument(ctx, a0), TextArgument(ctx, a1)));
+}
+
+[VmBuiltin(155, "IO.Text.StartsWith")]
+Static Function void BuiltinTextStartsWith(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    ctx.SetBool(dst, Text.StartsWith(TextArgument(ctx, a0), TextArgument(ctx, a1)));
+}
+
+[VmBuiltin(156, "IO.Text.EndsWith")]
+Static Function void BuiltinTextEndsWith(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    ctx.SetBool(dst, Text.EndsWith(TextArgument(ctx, a0), TextArgument(ctx, a1)));
+}
+
+[VmBuiltin(157, "IO.Text.IndexOf")]
+Static Function void BuiltinTextIndexOf(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    ctx.SetInt(dst, Text.IndexOf(TextArgument(ctx, a0), TextArgument(ctx, a1)));
+}
+
+[VmBuiltin(158, "IO.Text.LastIndexOf")]
+Static Function void BuiltinTextLastIndexOf(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    ctx.SetInt(dst, Text.LastIndexOf(TextArgument(ctx, a0), TextArgument(ctx, a1)));
+}
+
+[VmBuiltin(159, "IO.Text.Trim")]
+Static Function void BuiltinTextTrim(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    ctx.SetString(dst, Text.Trim(TextArgument(ctx, a0)));
+}
+
+[VmBuiltin(160, "IO.Text.Replace")]
+Static Function void BuiltinTextReplace(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    ctx.SetString(dst, Text.Replace(TextArgument(ctx, a0), TextArgument(ctx, a1), TextArgument(ctx, a2)));
+}
+
+[VmBuiltin(161, "IO.Text.ToUpper")]
+Static Function void BuiltinTextToUpper(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    ctx.SetString(dst, Text.ToUpper(TextArgument(ctx, a0)));
+}
+
+[VmBuiltin(162, "IO.Text.ToLower")]
+Static Function void BuiltinTextToLower(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    ctx.SetString(dst, Text.ToLower(TextArgument(ctx, a0)));
+}
+
+[VmBuiltin(163, "IO.Text.Slice")]
+Static Function void BuiltinTextSlice(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    ctx.SetString(dst, Text.Slice(TextArgument(ctx, a0), ctx.GetInt(a1), ctx.GetInt(a2)));
+}
+
+[VmBuiltin(166, "IO.Directory.Exists")]
+Static Function void BuiltinDirectoryExists(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    ctx.SetBool(dst, IO.Directory.Exists(TextArgument(ctx, a0)));
+}
+
+[VmBuiltin(167, "IO.Directory.Create")]
+Static Function void BuiltinDirectoryCreate(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    ctx.SetBool(dst, IO.Directory.Create(TextArgument(ctx, a0)));
+}
+
+[VmBuiltin(168, "IO.Directory.Ensure")]
+Static Function void BuiltinDirectoryEnsure(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    ctx.SetBool(dst, IO.Directory.Ensure(TextArgument(ctx, a0)));
+}
+
+[VmBuiltin(169, "IO.Directory.Delete")]
+Static Function void BuiltinDirectoryDelete(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    ctx.SetBool(dst, IO.Directory.Delete(TextArgument(ctx, a0)));
+}
+
+[VmBuiltin(170, "IO.Directory.DeleteIfExists")]
+Static Function void BuiltinDirectoryDeleteIfExists(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    ctx.SetBool(dst, IO.Directory.DeleteIfExists(TextArgument(ctx, a0)));
+}
+
+[VmBuiltin(171, "IO.Path.Normalize")]
+Static Function void BuiltinPathNormalize(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    ctx.SetString(dst, IO.Path.Normalize(TextArgument(ctx, a0)));
+}
+
+[VmBuiltin(172, "IO.Path.CurrentDirectory")]
+Static Function void BuiltinPathCurrentDirectory(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    ctx.SetString(dst, IO.Path.CurrentDirectory());
+}
+
+[VmBuiltin(211, "IO.Path.Combine")]
+Static Function void BuiltinPathCombine(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    ctx.SetString(dst, IO.Path.Combine(TextArgument(ctx, a0), TextArgument(ctx, a1)));
+}
+
+[VmBuiltin(212, "IO.Path.FileName")]
+Static Function void BuiltinPathFileName(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    ctx.SetString(dst, IO.Path.FileName(TextArgument(ctx, a0)));
+}
+
+[VmBuiltin(213, "IO.Path.Extension")]
+Static Function void BuiltinPathExtension(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    ctx.SetString(dst, IO.Path.Extension(TextArgument(ctx, a0)));
+}
+
+[VmBuiltin(214, "IO.Path.Directory")]
+Static Function void BuiltinPathDirectory(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    ctx.SetString(dst, IO.Path.Directory(TextArgument(ctx, a0)));
+}
+
+[VmBuiltin(215, "IO.Path.ChangeExtension")]
+Static Function void BuiltinPathChangeExtension(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    ctx.SetString(dst, IO.Path.ChangeExtension(TextArgument(ctx, a0), TextArgument(ctx, a1)));
+}
+
+[VmBuiltin(216, "IO.Path.IsAbsolute")]
+Static Function void BuiltinPathIsAbsolute(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    ctx.SetBool(dst, IO.Path.IsAbsolute(TextArgument(ctx, a0)));
+}
+
+[VmBuiltin(217, "IO.Path.BaseName")]
+Static Function void BuiltinPathBaseName(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    ctx.SetString(dst, IO.Path.BaseName(TextArgument(ctx, a0)));
+}
+
+[VmBuiltin(218, "IO.Path.EnsureTrailingSeparator")]
+Static Function void BuiltinPathEnsureTrailingSeparator(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    ctx.SetString(dst, IO.Path.EnsureTrailingSeparator(TextArgument(ctx, a0)));
 }
 
 [VmBuiltin(147, "IO.Error.LastTrace")]
@@ -501,5 +1124,179 @@ Static Function void BuiltinErrorCurrent(Context.ExecutionContext ctx, int dst, 
 [VmBuiltin(151, "IO.GC.Collect")]
 Static Function void BuiltinGcCollect(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
 {
-    // The bootstrap VM currently keeps heap objects alive for the whole run.
+    ctx.Heap.Collect(ctx);
+}
+
+[VmBuiltin(164, "IO.Math.Sin")]
+Static Function void BuiltinMathSin(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    ctx.SetFloat(dst, IO.Math.Sin(ctx.GetFloat(a0)));
+}
+
+[VmBuiltin(165, "IO.Math.Cos")]
+Static Function void BuiltinMathCos(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    ctx.SetFloat(dst, IO.Math.Cos(ctx.GetFloat(a0)));
+}
+
+[VmBuiltin(260, "IO.Math.Tan")]
+Static Function void BuiltinMathTan(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    ctx.SetFloat(dst, IO.Math.Tan(ctx.GetFloat(a0)));
+}
+
+[VmBuiltin(261, "IO.Math.Asin")]
+Static Function void BuiltinMathAsin(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    ctx.SetFloat(dst, IO.Math.Asin(ctx.GetFloat(a0)));
+}
+
+[VmBuiltin(262, "IO.Math.Acos")]
+Static Function void BuiltinMathAcos(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    ctx.SetFloat(dst, IO.Math.Acos(ctx.GetFloat(a0)));
+}
+
+[VmBuiltin(263, "IO.Math.Atan")]
+Static Function void BuiltinMathAtan(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    ctx.SetFloat(dst, IO.Math.Atan(ctx.GetFloat(a0)));
+}
+
+[VmBuiltin(264, "IO.Math.Atan2")]
+Static Function void BuiltinMathAtan2(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    ctx.SetFloat(dst, IO.Math.Atan2(ctx.GetFloat(a0), ctx.GetFloat(a1)));
+}
+
+[VmBuiltin(265, "IO.Math.Sinh")]
+Static Function void BuiltinMathSinh(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    ctx.SetFloat(dst, IO.Math.Sinh(ctx.GetFloat(a0)));
+}
+
+[VmBuiltin(266, "IO.Math.Cosh")]
+Static Function void BuiltinMathCosh(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    ctx.SetFloat(dst, IO.Math.Cosh(ctx.GetFloat(a0)));
+}
+
+[VmBuiltin(267, "IO.Math.Tanh")]
+Static Function void BuiltinMathTanh(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    ctx.SetFloat(dst, IO.Math.Tanh(ctx.GetFloat(a0)));
+}
+
+[VmBuiltin(268, "IO.Math.Sqrt")]
+Static Function void BuiltinMathSqrt(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    ctx.SetFloat(dst, IO.Math.Sqrt(ctx.GetFloat(a0)));
+}
+
+[VmBuiltin(269, "IO.Math.Cbrt")]
+Static Function void BuiltinMathCbrt(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    ctx.SetFloat(dst, IO.Math.Cbrt(ctx.GetFloat(a0)));
+}
+
+[VmBuiltin(270, "IO.Math.Pow")]
+Static Function void BuiltinMathPow(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    ctx.SetFloat(dst, IO.Math.Pow(ctx.GetFloat(a0), ctx.GetFloat(a1)));
+}
+
+[VmBuiltin(271, "IO.Math.Exp")]
+Static Function void BuiltinMathExp(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    ctx.SetFloat(dst, IO.Math.Exp(ctx.GetFloat(a0)));
+}
+
+[VmBuiltin(272, "IO.Math.Log")]
+Static Function void BuiltinMathLog(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    ctx.SetFloat(dst, IO.Math.Log(ctx.GetFloat(a0)));
+}
+
+[VmBuiltin(273, "IO.Math.Log2")]
+Static Function void BuiltinMathLog2(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    ctx.SetFloat(dst, IO.Math.Log2(ctx.GetFloat(a0)));
+}
+
+[VmBuiltin(274, "IO.Math.Log10")]
+Static Function void BuiltinMathLog10(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    ctx.SetFloat(dst, IO.Math.Log10(ctx.GetFloat(a0)));
+}
+
+[VmBuiltin(275, "IO.Math.Floor")]
+Static Function void BuiltinMathFloor(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    ctx.SetFloat(dst, IO.Math.Floor(ctx.GetFloat(a0)));
+}
+
+[VmBuiltin(276, "IO.Math.Ceil")]
+Static Function void BuiltinMathCeil(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    ctx.SetFloat(dst, IO.Math.Ceil(ctx.GetFloat(a0)));
+}
+
+[VmBuiltin(277, "IO.Math.Round")]
+Static Function void BuiltinMathRound(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    ctx.SetFloat(dst, IO.Math.Round(ctx.GetFloat(a0)));
+}
+
+[VmBuiltin(278, "IO.Math.Trunc")]
+Static Function void BuiltinMathTrunc(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    ctx.SetFloat(dst, IO.Math.Trunc(ctx.GetFloat(a0)));
+}
+
+[VmBuiltin(279, "IO.Math.FAbs")]
+Static Function void BuiltinMathFAbs(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    ctx.SetFloat(dst, IO.Math.FAbs(ctx.GetFloat(a0)));
+}
+
+[VmBuiltin(280, "IO.Math.FMod")]
+Static Function void BuiltinMathFMod(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    ctx.SetFloat(dst, IO.Math.FMod(ctx.GetFloat(a0), ctx.GetFloat(a1)));
+}
+
+[VmBuiltin(281, "IO.Math.FMin")]
+Static Function void BuiltinMathFMin(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    ctx.SetFloat(dst, IO.Math.FMin(ctx.GetFloat(a0), ctx.GetFloat(a1)));
+}
+
+[VmBuiltin(282, "IO.Math.FMax")]
+Static Function void BuiltinMathFMax(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    ctx.SetFloat(dst, IO.Math.FMax(ctx.GetFloat(a0), ctx.GetFloat(a1)));
+}
+
+[VmBuiltin(283, "IO.Math.CopySign")]
+Static Function void BuiltinMathCopySign(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    ctx.SetFloat(dst, IO.Math.CopySign(ctx.GetFloat(a0), ctx.GetFloat(a1)));
+}
+
+[VmBuiltin(284, "IO.Math.IsInf")]
+Static Function void BuiltinMathIsInf(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    ctx.SetInt(dst, IO.Math.IsInf(ctx.GetFloat(a0)) ? 1 : 0);
+}
+
+[VmBuiltin(285, "IO.Math.IsNaN")]
+Static Function void BuiltinMathIsNaN(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    ctx.SetInt(dst, IO.Math.IsNaN(ctx.GetFloat(a0)) ? 1 : 0);
+}
+
+[VmBuiltin(286, "IO.Math.Hypot")]
+Static Function void BuiltinMathHypot(Context.ExecutionContext ctx, int dst, int a0, int a1, int a2, int a3)
+{
+    ctx.SetFloat(dst, IO.Math.Hypot(ctx.GetFloat(a0), ctx.GetFloat(a1)));
 }

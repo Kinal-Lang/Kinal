@@ -1,0 +1,54 @@
+Unit Tests.PackageStorage;
+Get IO.Console;
+Get IO.GC;
+
+Struct Row { int[3] Cells; int Number; }
+Struct Entry { <Row, int[2]> Pair; }
+Struct Tree { <int, Tree[]> Children; }
+Class Parent { Public <Row, int[2]> Pair; }
+Class Sheet By Parent { Public Static <int[3], bool> Saved; }
+
+int Started = Seed();
+<Row, int[2]> GlobalPair;
+
+Function int Seed()
+{
+    If (GlobalPair[0].Cells.Length() != 3 || GlobalPair[1].Length() != 2 ||
+        Sheet.Saved[0].Length() != 3) Return 0;
+    GlobalPair[1][1] = 19;
+    Sheet.Saved[0][2] = 23;
+    IO.GC.Collect();
+    Return 1;
+}
+
+Function <Row, int[2]> DefaultPair() { Return default; }
+
+Static Function int Main()
+{
+    If (Started != 1 || GlobalPair[1][1] != 19 || Sheet.Saved[0][2] != 23) Return 1;
+    <int[2], int> item;
+    If (item[0].Length() != 2 || item[1] != 0) Return 2;
+    <Row, int[2]>[3] rows = {DefaultPair()};
+    If (rows.Length() != 3 || rows[0][0].Cells.Length() != 3 || rows[2][0].Cells.Length() != 3 ||
+        rows[1][1].Length() != 2) Return 3;
+    rows[1][1][1] = 29;
+    rows[1][0].Number = 37;
+    If (rows[0][1][1] != 0 || rows[2][1][1] != 0 ||
+        rows[1][0].Number != 37 || rows[0][0].Number != 0) Return 4;
+    <Row, int[2]> local = default;
+    local[1][0] = 31;
+    int[] alias = local[1];
+    local = default;
+    Entry embedded;
+    Sheet sheet = New Sheet();
+    IO.GC.Collect();
+    If (local[1][0] != 0 || alias[0] != 31 || rows[1][1][1] != 29 ||
+        embedded.Pair[0].Cells.Length() != 3 || sheet.Pair[1].Length() != 2) Return 5;
+    <int, bool>[2][3] scalars;
+    If (scalars[2][1][0] != 0 || scalars[2][1][1]) Return 6;
+    <int, <int[2], bool> > nested;
+    Tree tree;
+    If (nested[1][0].Length() != 2 || nested[1][1] || tree.Children[1].Length() != 0) Return 7;
+    IO.Console.PrintLine("ok");
+    Return 0;
+}

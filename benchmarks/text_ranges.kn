@@ -1,0 +1,40 @@
+Unit Benchmarks.TextRanges;
+
+Get IO.Console;
+Get IO.Text;
+Get IO.Time;
+
+Static Function int Main(string[] args)
+{
+    If (args.Length() != 2 && args.Length() != 3) Return 2;
+    int size = [int](args[0]);
+    string mode = args[1];
+    int rounds = args.Length() == 3 ? [int](args[2]) : 401;
+    If (rounds < 1 || rounds > 10000000) Return 2;
+    If (size < 1 || size > 16777216) Return 2;
+    If (mode != "prefix" && mode != "early" && mode != "late") Return 2;
+
+    string padding = "x";
+    While (IO.Text.Length(padding) < size) padding += padding;
+    padding = IO.Text.Slice(padding, 0, size);
+    string[] values = { "head" + padding + "Z", "hEad" + padding + "z" };
+    int matches = 0;
+    int start = IO.Time.GetNanoTick();
+    For (int i = 0; i < rounds; i++)
+    {
+        string value = values[i % 2];
+        If (mode == "prefix")
+        {
+            If (IO.Text.StartsWith(value, "head")) matches++;
+        }
+        Else If (mode == "early")
+        {
+            If (IO.Text.Slice(value, 0, 4) == "head") matches++;
+        }
+        Else If (IO.Text.Slice(value, size + 4, 4) == "Z") matches++;
+    }
+    int elapsed = IO.Time.GetNanoTick() - start;
+    If (matches != (rounds + 1) / 2) Return 1;
+    IO.Console.PrintLine(elapsed);
+    Return 0;
+}

@@ -1,198 +1,101 @@
-# 编译流程详解
+# 编译流水线
 
-本文介绍 Kinal 源文件从代码到可执行文件的完整编译管线。
+本文描述 C 编译器。Native 与 KNC 共享前端分析；KNC 从有类型程序直接生成，不由 LLVM IR 翻译而来。
 
----
+## 流水线与停止点
 
-## 总览
-
-```
-.kn 源文件
-    │
-    ▼
-┌─────────────┐
-│   词法分析   │  kn_lexer.c
-│  (Lexer)    │  Token 流
-└──────┬──────┘
-       │
-       ▼
-┌─────────────┐
-│   语法分析   │  kn_parser.c + parser/*.inc
-│  (Parser)   │  抽象语法树 (AST)
-└──────┬──────┘
-       │
-       ▼
-┌─────────────┐
-│   语义分析   │  kn_sema.c
-│  (Sema)     │  类型检查、名称解析、安全检查
-└──────┬──────┘
-       │
-       ▼
-┌─────────────┐
-│   代码生成   │  基于 LLVM
-│  (Codegen)  │  LLVM IR
-└──────┬──────┘
-       │
-       ├──────────────────────────────────┐
-       │                                  │
-       ▼                                  ▼
-┌─────────────┐                   ┌──────────────┐
-│  LLVM 后端  │                   │  KNC 字节码   │
-│  优化+目标  │                   │  生成器       │
-│  代码生成   │                   └──────┬───────┘
-└──────┬──────┘                          │
-       │                                 ▼
-       ▼                          ┌──────────────┐
- 目标文件 (.o)                    │  .knc 字节码  │
-       │                          └──────┬───────┘
-       ▼                                 │
-┌─────────────┐                          ▼
-│   链接器    │                   ┌──────────────┐
-│ lld/zig/   │                   │  KinalVM     │
-│ msvc       │                   │  执行        │
-└──────┬──────┘                  └──────────────┘
-       │
-       ▼
- 可执行文件/库
+```text
+CLI／项目／包源码选择
+           |
+      Lexer + Parser
+           |
+     Sema / typed AST
+           |
+   Call + Binary HIR 切片
+         /       \
+  Native LLVM    KNC writer
+       |             |
+  IR／汇编／对象     .knc
+       |             |
+   原生链接器     KinalVM 解释器
+       |             |
+ 可执行文件／库   可选打包 VM 程序
 ```
 
----
+| 命令／emit 模式 | 最后相关阶段 |
+|----------------|--------------|
+| `--emit tokens` | 词法 token 摘要 |
+| `--emit ast` | Parser AST 摘要 |
+| `--emit check` | 成功的 Sema／已解析计划摘要 |
+| `--emit ir` | Native LLVM IR |
+| `--emit asm`／`obj` | 原生目标发射 |
+| build 默认 bin | 原生链接 |
+| vm build | KNC 字节码写出 |
+| run／vm run | 必要编译后执行 |
 
-## 阶段详解
+前端摘要用于确定性测试／检查，不是可执行代码或稳定包接口。检查成功不能验证后端支持、链接输入、运行依赖或程序行为。
 
-### 1. 词法分析（Lexer）
+## 源码选择与导入
 
-**源文件**：`apps/kinal/src/kn_lexer.c`
+驱动加载所选工程／Profile、收集候选源码，并在准备编译时解析 Unit／包导入。显式 SourceSet 约束本地成员；导入决定可见性，不赋予无限制文件系统参与权限。包通过清单／归档提供源码及原生资产。
 
-词法分析器将源文件字节流转换为 Token 序列。
+入口文件发现会索引入口目录，再加入参与的同 Unit／已导入 Unit 文件。Unsafe-alias 文件仅限本地，不能作为工程 Unit 导入。参见[项目文件](../cli/project-files.md)、[包](../cli/packages.md)。
 
-主要工作：
-- 识别关键字（`If`, `While`, `Function`, `Class` 等，均首字母大写）
-- 识别标识符、数字字面量、字符串字面量
-- 处理字符串前缀：`[r]"`、`[f]"`、`[c]"`
-- 跳过注释（`//` 和 `/* */`）
-- 追踪源码位置（行号、列号）用于错误报告
+## Lexer 与 Parser
 
-生成的 Token 类型定义于 `apps/kinal/include/kn/lexer.h`。
+词法器识别源码字节、标识符、关键字、字面量、标点和注释，保留位置。支持 Unicode 标识符；源码字节列在 LSP UTF-16 协议边界转换。
 
-### 2. 语法分析（Parser）
+Parser 构建声明／语句／表达式，并应用文件局部 unsafe-alias token 预处理。C Parser 的 include 实现片段为：
 
-**源文件**：`apps/kinal/src/kn_parser.c` + `apps/kinal/src/parser/*.inc`
+| apps/kinal/src/parser 下文件 | 责任 |
+|-----------------------------|------|
+| `kn_parser_decl.inc` | 声明、修饰符、属性与 Meta |
+| `kn_parser_type_expr.inc` | 类型、表达式、调用、转换和字符串前缀 |
+| `kn_parser_stmt.inc` | 语句及字面量转义辅助 |
+| `kn_parser_float.inc` | 浮点字面量解析辅助 |
 
-解析器将 Token 序列转换为抽象语法树（AST）。
+词法有效仍可能语法错误；编译期非活动分支也必须语法有效。声明级 AST 摘要不能证明名称／类型已解析。
 
-解析器按功能划分为多个片段（`.inc` 文件）：
+## Sema 与已解析计划
 
-| 文件 | 负责内容 |
-|------|---------|
-| `parse_decl.inc` | 顶级声明（Unit、Function、Class、Struct、Enum、Meta） |
-| `parse_expr.inc` | 表达式（运算、函数调用、成员访问、类型转换） |
-| `parse_stmt.inc` | 语句（If、While、For、Return、Try、Throw、Block） |
-| `parse_type.inc` | 类型表达式（基本类型、数组、指针、泛型） |
+Sema 检查类型、作用域、导入、默认值、泛型、重载、安全、入口等规则。参与程序由驱动提供，Sema 不会从注册表下载缺失包。
 
-关键语法特点：
-- 类型转换语法 `[type](expr)` 由解析器特殊处理
-- 字符串前缀 `[raw]"..."` / `[f]"..."` / `[c]"..."` 在词法阶段与解析阶段协同处理
-- 泛型函数 `Function T Name<T>` 的类型参数在声明阶段解析
+成功分析后，每个绑定的直接／成员调用具有 KnResolvedCall，每个二元表达式具有 KnResolvedBinary，保存操作分类、转换、指针侧、符号和目标整数宽度。Native 与 KNC 消费这些决定，不独立重新选择调用含义或数值转换。
 
-AST 节点类型定义于 `apps/kinal/include/kn/ast.h`。
+这是**增量 HIR 切片**，不是覆盖全部表达式／语句的后端独立 IR。其他族仍依赖 typed AST。编译期条件只绑定活动语义分支；非活动平台语法可有意不绑定，不能计入未解析计划。
 
-### 3. 语义分析（Sema）
+emit check 写出 format=kinal-sema-v1、hir_format=kinal-call-hir-v1、binary_hir_format=kinal-binary-hir-v1 和结构计数。更详细边界见[开发架构](../../../dev/zh-CN/architecture.md)。
 
-**源文件**：`apps/kinal/src/kn_sema.c`
+## Native LLVM 与链接
 
-语义分析器对 AST 进行类型检查和语义验证。
+原生 lowering 生成目标 LLVM 类型、函数、全局、运行时调用和 GC 根，再按请求输出 IR、汇编或对象。链接器组合对象、启动／CRT、运行时辅助和兼容包库。
 
-主要工作：
-- **名称解析**：将每个标识符绑定到其声明
-- **类型推导**：推断 `Var` 声明的类型
-- **类型检查**：验证表达式、赋值、函数调用的类型兼容性
-- **安全检查**：确保 `Unsafe` API 只在 `Trusted`/`Unsafe` 上下文中调用
-- **模块解析**：处理 `Get` 导入，定位标准库和用户模块
-- **内置类型注入**：`kn_builtins.c` 将 `IO.Type.Object.Class`、`IO.Error` 等注入符号表
-- **标准库绑定**：`kn_std.c` 将所有标准库函数绑定为可调用的内置函数
+当前 CLI 提供 LTO 控制；内部优化流程不代表公开支持 -O0／-O1／-O2／-O3。应使用已记录选项并查看实际链接命令，不假定优化或库策略。
 
-### 4. 代码生成（Codegen）
+外来目标对象／IR 不是主机可执行程序。Extern ABI 和运行时 hook 必须匹配目标，参见[链接](linking.md)、[跨编译](cross-compilation.md)、[FFI](../language/ffi.md)。
 
-语义验证通过后，代码生成器遍历带类型注解的 AST，生成后端代码。
+## KNC 与运行边界
 
-Kinal 支持两种后端路径：
+KNC 写入器直接消费语义绑定程序。共享 Sema 成功后，仍可能因不支持的特性发射失败。Superloop 是已识别循环融合，不是任务调度器。
 
-#### LLVM 路径
+当前写入格式为 3，魔数仍 KNC2，加载器也读取 v2。VM 使用独立值／寄存器和解释器。打包将兼容 VM 模板与字节码组合，不会变成 LLVM 原生代码。参见[VM CLI](../cli/vm.md)、[后端支持](backend-support.md)。
 
-1. **LLVM IR 生成**：将 AST 转换为 LLVM 中间表示
-2. **LLVM 优化**：应用 LLVM 优化 pass（`-O0`/`-O1`/`-O2`/`-O3`）
-3. **目标代码生成**：LLVM 后端生成目标平台汇编/目标文件
-4. **链接**：lld/zig/msvc 链接器生成最终可执行文件或库
+## 内建与标准包
 
-#### KNC 路径
+kn_builtins.c 注入编译器所属对象／错误／集合／任务支持类型；kn_std.c 管理内建身份、lowering 归属、配置可用性和稀疏 KNC ID，不等于实现所有公开标准库函数。
 
-1. **字节码生成**：将 AST 转换为 `.knc` 字节码
-2. **可选打包**：`kinal vm pack` 将字节码与 KinalVM 打包
+版本化 IO.Core／IO.Json／IO.Request／IO.UI／IO.Web 等包提供普通 Kinal 声明与窄原生桥接。C 编译器可以使用 Kinal 编写的标准包，这与编译器自举无关；应保持包 ABI／生命周期边界。
 
----
+## 诊断与检查
 
-## 内置类型注入
-
-在语义分析开始前，`kn_builtins.c` 向符号表注入以下内置类型：
-
-| 类型 | 说明 |
-|------|------|
-| `IO.Type.Object.Class` | 所有 `Class` 类型的根基类，提供 `ToString()` 等方法 |
-| `IO.Type.Object.Function` | 函数对象类型（含 `Invoke` 和 `Env` 字段） |
-| `IO.Type.Object.Block` | Block 对象类型（继承自 Function） |
-| `IO.Error` | 标准异常类（`Title`, `Message`, `Inner`, `Trace` 字段） |
-| `IO.Time.DateTime` | 时间结构体（由 `IO.Time.Now()` 返回） |
-| `IO.Collection.list` | 内置 `list` 类型 |
-| `IO.Collection.dict` | 内置 `dict` 类型 |
-| `IO.Collection.set` | 内置 `set` 类型 |
-
----
-
-## 标准库函数绑定
-
-`kn_std.c` 包含所有标准库函数的注册表（`g_*_funcs[]` 数组）。每条记录包含：
-
-- 函数全限定名（如 `IO.Console.PrintLine`）
-- 参数类型签名
-- 返回类型
-- 安全级别要求（`SAFE`/`TRUSTED`/`UNSAFE`）
-- 内置函数实现引用
-
-编译器在语义分析阶段通过此注册表解析标准库调用。
-
----
-
-## 错误报告
-
-Kinal 编译器的诊断系统支持：
-
-- 精确的行/列定位
-- 彩色终端输出（`--color auto/always/never`）
-- 中英文双语诊断（`--lang zh/en`）
-- 自定义本地化文件（`--locale-file`）
-
----
-
-## 编译缓存与中间文件
-
-使用 `--keep-temps` 可保留编译过程中生成的中间文件：
+诊断包含阶段／代码／位置并支持本地化。先解决最早相关阶段：未知 Unit 不能靠添加任意链接库解决，缺少原生符号通常也不是 Parser 错误。
 
 ```bash
-kinal build main.kn --emit ir --keep-temps
+kinal build main.kn --emit tokens -o out/main.tokens
+kinal build main.kn --emit ast -o out/main.ast
+kinal build main.kn --emit check -o out/main.kcheck
+kinal build main.kn --emit ir -o out/main.ll --trace --time
+kinal build main.kn -o out/main --show-link --show-link-search
 ```
 
-保留的文件：
-- `main.ll` — LLVM IR
-- `main.s` — 汇编代码
-- `main.o` — 目标文件
-
----
-
-## 相关
-
-- [编译器 CLI](../cli/compiler.md) — 完整编译选项
-- [KinalVM](../cli/vm.md) — 字节码执行路径
-- [交叉编译](cross-compilation.md) — 多平台编译
-- [链接](linking.md) — 链接器配置
-- [IO.Runtime 常量](runtime-environment-constants.md) — 在源码中区分原生与 VM 后端
+keep-temps 保留适用中间文件。临时源码／包解压目录不是通用增量构建缓存，也不是公开序列化编译器状态。

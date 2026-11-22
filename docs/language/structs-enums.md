@@ -2,7 +2,7 @@
 
 ## Struct
 
-A struct is a **value type**, allocated on the stack. Assignment copies the value (unlike the reference semantics of classes).
+A Struct is a **value type**: assignment copies its fields, while contained references remain shared. Storage is not restricted to the stack. See [Memory and Lifetimes](../advanced/memory-management.md).
 
 ### Declaration
 
@@ -69,7 +69,7 @@ Struct AlignedData By Align(8)
 Multiple attributes can be combined:
 
 ```kinal
-Struct Pair By Align(8)
+Struct Pair By Packed, Align(8)
 {
     int a;
     int b;
@@ -81,12 +81,11 @@ Struct Pair By Align(8)
 Structs are commonly used for interoperability with C `struct`:
 
 ```kinal
-Struct sockaddr_in By Packed
+Struct CScalarHeader
 {
-    u16 sin_family;
-    u16 sin_port;
-    u32 sin_addr;
-    byte[8] sin_zero;
+    u16 Kind;
+    u16 Flags;
+    u32 Size;
 }
 ```
 
@@ -144,7 +143,7 @@ Enum BigFlag By u64
 }
 ```
 
-Supported underlying types: `i8`, `u8`, `i16`, `u16`, `i32`, `u32`, `i64`, `u64`, `int`, `byte`.
+Supported underlying types: `i8`, `u8`, `i16`, `u16`, `i32`, `u32`, `i64`, `u64`, `int`, `byte`, `char`, `isize`, `usize`.
 
 ### Using Enums
 
@@ -184,10 +183,9 @@ HttpStatus status = [HttpStatus](404);
 
 ### Enum Members as Static Constants
 
-Enum members can be accessed via the type name; static member call syntax is also supported:
+Enum members are accessed as constants through their type name:
 
 ```kinal
-// The following two forms are equivalent
 Direction d1 = Direction.North;
 ```
 
@@ -268,3 +266,5 @@ Static Function int Main()
 - [Module System](modules.md)
 - [FFI External Function Interface](ffi.md)
 - [Safety Levels](safety.md)
+
+Enum/integer conversion is explicit: integer assignment to an enum is rejected, and different enum types cannot be directly compared. Underlying width/signedness governs explicit narrowing. Packed/Align affect Kinal Native layout, not support for passing aggregates by value to C. In particular, fixed-array fields are descriptors rather than inline C arrays; a structure containing `byte[N]` is not automatically a C inline-array declaration. Use measured scalar layouts and pointer wrappers; see [FFI](ffi.md).

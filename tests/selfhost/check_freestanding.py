@@ -282,7 +282,12 @@ Trusted Static Function int Main() {
     # Validate both compilers' artifacts without attempting to execute firmware.
     for role, tool in (("selfhost", compiler), ("stage0", stage0)):
         linked = out / f"freestanding-{role}.elf"
-        invoke([str(tool), "build", "--project", str(project), "-o", str(linked)], root)
+        link_project = project
+        if role == "stage0" and not stage0_reference:
+            # Reuse the released compiler's platform fixture for the link check.
+            link_project = out / "reference.knproj"
+            manifest(link_project, target="bare64", source="Reference.kn")
+        invoke([str(tool), "build", "--project", str(link_project), "-o", str(linked)], root)
         check_object(linked, 2, 2)
         image = linked.read_bytes()
         assert int.from_bytes(image[16:18], "little") == 2, "expected executable ELF"

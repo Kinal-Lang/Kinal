@@ -16,10 +16,13 @@ Kinal 的核心设计目标：
 
 普通标识符可以直接使用 UTF-8 名字，包括中文、日文等写法；只要不和保留关键字、ASCII 操作符或标点 token 冲突即可。
 
+下面的完整概览示例使用 Native 接口分派。VM 程序应在受支持位置使用具体接收者，并参照[后端支持](../advanced/backend-support.md)；当前 VM 不能普遍支持接口方法分派。
+
 ```kinal
 Unit App.Demo;
 
 Get IO.Console;
+Get IO.Async;
 
 // 接口定义
 Interface IShape
@@ -46,7 +49,8 @@ Class Circle By IShape
 // 泛型函数
 Function T Max<T>(T a, T b)
 {
-    Return a > b ? a : b;  // 注：Kinal 没有三元运算符，此仅为示意
+    If (a > b) { Return a; }
+    Return b;
 }
 
 // 异步函数
@@ -87,14 +91,14 @@ Static Function int Main()
 ```kinal
 Unit MyApp;                      // 声明当前文件的单元名
 Get IO.Console;                  // 打开整个模块
-Get IO.Console;       // 以别名导入模块
+Get Console By IO.Console;       // 以别名导入模块
 Get PrintLine By IO.Console.PrintLine; // 导入单个符号
 ```
 
 ### 安全级别
 
 ```kinal
-Safe Function void SafeOp() { ... }       // 只能调用 Safe 函数
+Safe Function void SafeOp() { ... }       // 可调用 Safe 或 Trusted 函数
 Trusted Function void BridgeOp() { ... }  // 可调用 Unsafe 函数
 Unsafe Function void DangerOp() { ... }   // 可进行指针操作
 ```
@@ -123,6 +127,14 @@ Class Dog By Animal
 ### 异步/并发
 
 ```kinal
+Get IO.Async;
+
+Async Function int Compute()
+{
+    Await IO.Async.Yield();
+    Return 42;
+}
+
 Static Async Function int Main()
 {
     int result = Await Compute();

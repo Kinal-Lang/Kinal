@@ -1,0 +1,52 @@
+Unit Benchmarks.CollectionRemove;
+
+Get IO.Console;
+Get IO.Time;
+
+Static Function int Main(string[] args)
+{
+    If (args.Length() != 2) Return 2;
+    int size = [int](args[1]);
+    If (size < 8 || size > 1048576 || (size & (size - 1)) != 0) Return 2;
+    bool dictionary = args[0] == "dict";
+    If (!dictionary && args[0] != "set") Return 2;
+
+    string[] keys = {};
+    dict values = dict.Create();
+    set members = set.Create();
+    For (int i = 0; i < size; i++)
+    {
+        string key = "key-" + [string](i);
+        keys = keys.Add(key);
+        If (dictionary) values.Set(key, i);
+        Else members.Add(key);
+    }
+
+    int removed = 0;
+    int limit = size * 3 / 4;
+    int start = IO.Time.GetNanoTick();
+    If (dictionary)
+    {
+        For (int d = 0; d < limit; d++)
+            If (values.Remove(keys[(d * 73) & (size - 1)])) removed++;
+    }
+    Else
+    {
+        For (int s = 0; s < limit; s++)
+            If (members.Remove(keys[(s * 73) & (size - 1)])) removed++;
+    }
+    int elapsed = IO.Time.GetNanoTick() - start;
+
+    If (removed != limit || (dictionary ? values.Count() : members.Count()) != size - limit) Return 1;
+    For (int check = 0; check < size; check++)
+    {
+        int index = (check * 73) & (size - 1);
+        If (dictionary)
+        {
+            If ([int](values.TryFetch(keys[index], -1)) != (check < limit ? -1 : index)) Return 1;
+        }
+        Else If (members.Contains(keys[index]) != (check >= limit)) Return 1;
+    }
+    IO.Console.PrintLine(elapsed);
+    Return 0;
+}

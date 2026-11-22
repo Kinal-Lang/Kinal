@@ -8,6 +8,26 @@ Get IO.Kinal.Compiler.Types.TypeSymbol;
 
 Static Function int CheckLookup(SemanticCompilation semantics, TypeSymbol owner)
 {
+    TypeSymbol first = New TypeSymbol([int](TypeKind.NamedType), "Collision");
+    first.UnitName = "Tests.First";
+    semantics.AddType(first);
+    TypeSymbol second = New TypeSymbol([int](TypeKind.NamedType), "Collision");
+    second.UnitName = "Tests.Second";
+    semantics.AddType(second);
+    TypeSymbol qualifiedCollision = New TypeSymbol([int](TypeKind.NamedType), "Tests.First.Collision");
+    semantics.AddType(qualifiedCollision);
+    If (semantics.FindExactType("Collision") != first ||
+        semantics.FindExactType("Tests.First.Collision") != first ||
+        semantics.FindExactType("Tests.Second.Collision") != second ||
+        semantics.FindExactType("Missing.Type") != null) Return 16;
+    TypeSymbol late = New TypeSymbol([int](TypeKind.NamedType), "Missing.Type");
+    semantics.AddType(late);
+    If (semantics.FindExactType("Missing.Type") != late) Return 17;
+    // A short spelling registered first also wins over a later qualified one.
+    TypeSymbol reverse = New TypeSymbol([int](TypeKind.NamedType), "Type");
+    reverse.UnitName = "Missing";
+    semantics.AddType(reverse);
+    If (semantics.FindExactType("Missing.Type") != late) Return 18;
     SyntaxTree syntax = New SyntaxTree(null, "Tests.Consumer");
     int index = 0;
     While (index < 32)
@@ -27,13 +47,42 @@ Static Function int CheckLookup(SemanticCompilation semantics, TypeSymbol owner)
     syntax.UnitName = "Tests.Consumer";
     FunctionSymbol local = New FunctionSymbol(syntax.UnitName, null,
         New FunctionDecl("Imported", "int", 1, 1));
-    local.Next = semantics.FirstFunction;
-    semantics.FirstFunction = local;
+    semantics.AddFunctionSymbol(local);
     If (semantics.FindVisibleCallable(syntax, null, "Imported") != local) Return 13;
-    semantics.FirstFunction = local.Next;
 
     syntax.AddImport(New ImportDecl("Generic", "Tests.Summary.Function0$int", 1, 1));
     If (semantics.FindVisibleCallable(syntax, null, "Generic") != semantics.FirstFunction) Return 14;
+    If (semantics.FindQualifiedFunction("Tests.Summary.Function2", 2).Name != "Function2") Return 19;
+    If (semantics.FindQualifiedFunction("Tests.Summary.Function2", 0) != null) Return 20;
+    If (semantics.FindQualifiedCallable("Tests.Summary.Function0$int") != semantics.FirstFunction) Return 21;
+    If (semantics.FindQualifiedCallable("Tests.Summary.Owner.Function4").OwnerType != owner) Return 22;
+    If (semantics.FindQualifiedCallable("Tests.Summary.Owner.Function1") != null) Return 23;
+    If (semantics.FindQualifiedCallable("Tests.Summary.NotFunction2") != null) Return 24;
+    // A prior miss must not hide late registration. Same-name overloads retain
+    // declaration order, including defaults and variadic argument counts.
+    If (semantics.FindQualifiedFunction("Tests.Consumer.Late", 0) != null) Return 25;
+    FunctionDecl lateDeclaration = New FunctionDecl("Late", "int", 1, 1);
+    FunctionSymbol lateFunction = New FunctionSymbol(syntax.UnitName, null, lateDeclaration);
+    semantics.AddFunctionSymbol(lateFunction);
+    FunctionSymbol overload = New FunctionSymbol(syntax.UnitName, null, lateDeclaration);
+    overload.AddParameter(New ParameterSymbol("value", semantics.Primitive("int")));
+    semantics.AddFunctionSymbol(overload);
+    If (semantics.FindQualifiedFunction("Tests.Consumer.Late", 0) != lateFunction ||
+        semantics.FindQualifiedFunction("Tests.Consumer.Late", 1) != overload ||
+        semantics.FindVisibleFunction(syntax, null, "Late", 1) != overload ||
+        semantics.VisibleFunctionCount(syntax, null, "Late", 0) != 1) Return 26;
+    overload.IsVariadic = true;
+    If (semantics.FindQualifiedFunction("Tests.Consumer.Late", 0) != lateFunction ||
+        semantics.FindQualifiedFunction("Tests.Consumer.Late", 3) != overload ||
+        semantics.CandidateFunctionCount(lateFunction, 0) != 2) Return 27;
+    // The callable lookup historically chooses the first registered local or
+    // direct-owner match, even when the other category is registered later.
+    FunctionSymbol ownerLate = New FunctionSymbol(syntax.UnitName, owner, lateDeclaration);
+    semantics.AddFunctionSymbol(ownerLate);
+    If (semantics.FindVisibleCallable(syntax, owner, "Late") != lateFunction ||
+        semantics.FindVisibleFunction(syntax, owner, "Late", 0) != ownerLate) Return 28;
+    If (lateFunction.RegistrationIndex + 1 != overload.RegistrationIndex ||
+        overload.RegistrationIndex + 1 != ownerLate.RegistrationIndex) Return 29;
     index = 0;
     While (index < 64)
     {
@@ -50,7 +99,6 @@ Static Function int Main(string[] arguments)
     If (semantics.FunctionSummary() != "format=kinal-selfhost-functions-v1") Return 1;
     TypeSymbol owner = New TypeSymbol([int](TypeKind.NamedType), "Owner");
     owner.UnitName = "Tests.Summary";
-    FunctionSymbol previous = null;
     int index = 0;
     While (index < 5000)
     {
@@ -68,9 +116,7 @@ Static Function int Main(string[] arguments)
             symbol.AddParameter(New ParameterSymbol("p" + [string](parameter), semantics.Primitive("int")));
             parameter = parameter + 1;
         }
-        If (previous == null) semantics.FirstFunction = symbol;
-        Else previous.Next = symbol;
-        previous = symbol;
+        semantics.AddFunctionSymbol(symbol);
         index = index + 1;
     }
     If (arguments.Length() == 1 && arguments[0] == "lookup") Return CheckLookup(semantics, owner);

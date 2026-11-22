@@ -1,11 +1,16 @@
 Unit Tests.Selfhost.SymbolAliases;
 
 Get IO.Console;
+Get Models By Tests.Selfhost.Models;
 
 Alias Print By IO.Console.PrintLine;
 Alias Output By Print;
 Alias Say By Tests.Selfhost.SymbolAliases.Box.Say;
 Alias Ready By Tests.Selfhost.SymbolAliases.Mode.Ready;
+Alias ModelRow By Models.ModelRow;
+Alias Row By ModelRow;
+Alias Nested By Tests.Selfhost.SymbolAliases.Box.Nested;
+Alias Local By Box;
 
 Enum Mode
 {
@@ -14,14 +19,26 @@ Enum Mode
 
 Class Box
 {
+    Public Class Nested { Public int Code; }
     Public Static Function string Say()
     {
         Return "method";
     }
 }
 
+// The file-local alias must take precedence over this same-named type.
+Class ModelRow { Public string Name; }
+Class Derived By Row {}
+Function T Identity<T>(T item) { Return item; }
+
 Safe Static Function int Main()
 {
+    Derived derived = New Derived();
+    Row[] records = {Identity<Row>(derived)};
+    records[0].Count = 23;
+    Nested nested = New Nested();
+    nested.Code = 19;
+    If (derived.Count + nested.Code != 42 || Local.Say() != "method") Return 2;
     Output(Say());
     Output(Ready);
     Return Ready == Mode.Ready ? 0 : 1;

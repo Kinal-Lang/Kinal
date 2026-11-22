@@ -1,0 +1,37 @@
+Unit Benchmarks.HeapObjects;
+
+Get IO.Console;
+Get IO.GC;
+Get IO.Time;
+
+Class Node
+{
+    Public Node Next;
+    Public int Value;
+}
+
+Static Function int Main()
+{
+    int count = [int](IO.Console.ReadLine());
+    If (count < 0 || count > 1000000) Return 2;
+    Node head = null;
+    u64 start = IO.Time.GetNanoTick();
+    For (int i = 0; i < count; i++)
+    {
+        Node node = New Node();
+        node.Value = i;
+        node.Next = head;
+        head = node;
+    }
+    IO.GC.Collect();
+    int expected = count;
+    While (head != null)
+    {
+        expected--;
+        If (head.Value != expected) Return 1;
+        head = head.Next;
+    }
+    If (expected != 0) Return 1;
+    IO.Console.PrintLine([string](count) + " " + [string](IO.Time.GetNanoTick() - start));
+    Return 0;
+}

@@ -2,6 +2,7 @@ Unit Tests.Selfhost.GenericFunctions;
 
 Get IO.Console;
 Get Tests.Selfhost.GenericLibrary;
+Get Data By Tests.Selfhost.GenericModel;
 
 Trusted Static Function int Main()
 {
@@ -11,5 +12,15 @@ Trusted Static Function int Main()
     IO.Console.PrintLine(number);
     IO.Console.PrintLine(text);
     IO.Console.PrintLine(first);
-    Return number == 42 && text == "nest" && first == 3 ? 0 : 1;
+    Data.Box left = New Data.Box();
+    Data.Box right = New Data.Box();
+    left.Value = 8;
+    right.Value = 17;
+    Data.Box[] boxes = {left, right};
+    int[] tags = {1, 2};
+    Data.Box selected = Tests.Selfhost.GenericLibrary.SelectBox<int>(tags, boxes);
+    <Data.Box, Data.Box> pair = <left, selected>;
+    int value = Tests.Selfhost.GenericLibrary.ReadBox<Data.Box>(pair);
+    IO.Console.PrintLine(value);
+    Return number == 42 && text == "nest" && first == 3 && value == 17 ? 0 : 1;
 }

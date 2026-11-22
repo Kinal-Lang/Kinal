@@ -7,12 +7,11 @@ Kinal/
 ├── x.py                     # Build entry script
 ├── apps/
 │   ├── kinal/               # Kinal compiler (C)
-│   │   ├── include/kn/      # Public headers (including version.h)
+│   │   ├── include/kn/      # Compiler headers (version.h is generated in the build tree)
 │   │   └── src/             # Compiler source code
 │   ├── kinal-lsp/           # LSP language server (C++)
 │   │   └── server/src/
 │   └── kinalvm/             # KinalVM virtual machine (written in Kinal)
-│       ├── VERSION           # VM version number
 │       └── src/
 ├── libs/
 │   ├── runtime/             # Runtime library (C)
@@ -46,6 +45,19 @@ direct and member call into `KnResolvedCall`, including the selected
 builtin/function/delegate or static/direct/virtual/interface method target.
 Native and KNC dispatch from that record; they must not infer the call kind
 again from parser-facing names and flags.
+
+The C frontend indexes top-level functions by source name and by compiled
+symbol. Candidates for a source name retain declaration order so overload and
+visibility checks see the same functions in both the compiler and the language
+server. A generic specialization enters both indexes as soon as it is created.
+After checking the bodies, Sema appends specializations to the AST in index
+order. Call HIR can then use the same symbol index to find the final target.
+
+For class, interface, struct and enum lookups, the C frontend expands local
+renames once per query. Qualification preserves the final identifier, so only
+declarations with a matching identifier need visibility and import checks.
+For example, both `Left.Box` and `Right.Box` remain candidates for `Box`.
+This avoids building qualified strings for every unrelated declaration.
 
 Typed Binary HIR v1 applies the same rule to every `EXPR_BINARY`. Sema stores a
 backend-independent `KnResolvedBinary` plan with:
@@ -97,13 +109,12 @@ optimization from changing unsigned ordering semantics.
 
 ## KNC Numeric Storage and Rounding
 
-KNC format version 3 retains the `KNC2` magic and all existing table layouts,
-except that integer constant entries are now eight-byte little-endian signed
-integers instead of four-byte entries. Table counts, indices, metadata, and
-existing opcode IDs are unchanged. Both VM loaders accept version 2 (signed
-32-bit entries) and version 3 (signed 64-bit entries), and reject other versions.
-The compiler emits only version 3. Upgrade compiler and VM together; old VMs
-reject the new version rather than reading a misaligned constant table.
+C and selfhost emit KNC2 revision 4. After the magic and two little-endian u16
+fields (revision and flags), a length-prefixed UTF-8 string records the producing
+compiler version. The rest uses the revision 3 layout. File, memory and packed
+loaders accept revisions 2 (signed i32 constants), 3 and 4 (signed i64).
+On a producer version mismatch, an otherwise compatible program runs normally.
+Loading or execution errors include both versions once the producer can be read.
 
 Float registers remain binary64 containers. `FloatToF32` (137) is three bytes:
 `[opcode, dst, src]`; it rounds a Float value to IEEE binary32 and widens the
@@ -115,7 +126,7 @@ arithmetic is rounded after each operation. Function-object calls normalize
 f32 parameters at entry because argument type information is erased there.
 
 `tests/test_knc_numeric_format.py` checks the reader independently with hand-built
-v2/v3 files and packed payloads, IEEE boundary cases, and exact-rational f32
+v2/v3/v4 files and packed payloads, IEEE boundary cases, and exact-rational f32
 arithmetic oracles. Set `KINAL_V2_VM_PATH` to an old VM executable to include
 its explicit version-3 rejection check.
 
@@ -159,3 +170,11 @@ the compiler's differential-test surface.
 The O0+ASan build uses `-Wframe-larger-than=16384` as a structural guard.
 The Sema dispatcher, builtin dispatcher, and hosted runtime coordinator are
 required to stay below that threshold.
+
+## Driver, Packages and Runtime Ownership
+
+The C driver selects a project/profile, collects local source candidates, resolves declared Unit imports and packages, performs frontend analysis, then emits Native LLVM or KNC. Backend selection is explicit; --emit check/tokens/ast stop before code generation/linking. Package archives contain source/native assets rather than serialized typed HIR.
+
+The C compiler is not the same component as the language runtime. `libs/runtime` supplies legacy C runtime helpers and narrow native ABI leaves. Versioned `IO.Core`/`IO.Kinal.Runtime` sources also implement public standard-library algorithms, managed data and host-boundary wrappers in Kinal. C-built applications can consume these packages without using the selfhost compiler. Preserve the ownership/ABI boundary; do not return legacy-C managed allocations through a package path requiring another runtime's ownership.
+
+Hosted Native storage uses frame/global roots and managed closure cells. KNC has its own register/object/capture representations; an ABI or frontend type existing in Native does not establish KNC lowering. See [Backend Support](../docs/advanced/backend-support.md), [Memory](../docs/advanced/memory-management.md) and [Testing](testing.md).

@@ -2602,8 +2602,7 @@ static void emit_freestanding_entry_wrapper(Codegen *g)
         {
             FuncSymbol *fs = &g->funcs.items[i];
             if (!fs || !fs->func || !fs->fn) continue;
-            if ((fs->func->name && kn_strcmp(fs->func->name, g->entry_name) == 0) ||
-                (fs->qname && kn_strcmp(fs->qname, g->entry_name) == 0))
+            if (func_matches_entry(fs->func, g->entry_name))
             {
                 target_fn = fs->fn;
                 target_ty = fs->fn_ty;
@@ -3180,6 +3179,19 @@ static void register_global_storage_roots(Codegen *g, LLVMValueRef global, Type 
     }
 }
 
+static void init_global_aggregate_storage(Codegen *g, Type type, LLVMValueRef global)
+{
+    if (g->env_kind != KN_ENV_HOSTED) return;
+    if ((type.kind == TY_STRUCT || type.kind == TY_PACKAGE) && field_needs_array_storage(g, type))
+        init_aggregate_storage(g, type, global, false);
+    else if (type.kind == TY_ARRAY && type.array_len > 0)
+    {
+        Type elem = type_immediate_elem(type);
+        if (field_needs_array_storage(g, elem))
+            init_array_elements(g, elem, LLVMGetOperand(LLVMGetInitializer(global), 0), 0, type.array_len);
+    }
+}
+
 static void codegen_global_init(Codegen *g, StmtList *globals)
 {
     if (!global_init_needed(g, globals))
@@ -3252,6 +3264,32 @@ static void codegen_global_init(Codegen *g, StmtList *globals)
             if (!field->is_static) continue;
             LLVMValueRef global = ensure_static_field_global(g, cg_class_qname(cs->decl), field);
             register_global_storage_roots(g, global, field->type);
+        }
+    }
+
+    // Materialize nested descriptors after registering roots and before any
+    // initializer can observe or write a later declaration.
+    for (int i = 0; i < globals->count; i++)
+    {
+        Stmt *st = globals->items[i];
+        if (!st || st->kind != ST_VAR) continue;
+        if (st->v.var.type.kind != TY_STRUCT && st->v.var.type.kind != TY_ARRAY &&
+            st->v.var.type.kind != TY_PACKAGE) continue;
+        VarSymbol *gv = scope_find(g->global_scope, st->v.var.name);
+        if (gv) init_global_aggregate_storage(g, gv->type, gv->value);
+    }
+    for (int ci = 0; ci < g->classes.count; ci++)
+    {
+        ClassSymbol *cs = &g->classes.items[ci];
+        for (int fi = 0; fi < cs->decl->fields.count; fi++)
+        {
+            Field *field = &cs->decl->fields.items[fi];
+            if (field->is_static && (field->type.kind == TY_STRUCT || field->type.kind == TY_ARRAY ||
+                field->type.kind == TY_PACKAGE))
+            {
+                LLVMValueRef global = ensure_static_field_global(g, cg_class_qname(cs->decl), field);
+                init_global_aggregate_storage(g, field->type, global);
+            }
         }
     }
 

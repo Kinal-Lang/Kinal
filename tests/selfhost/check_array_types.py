@@ -20,6 +20,7 @@ NEGATIVE = {
     "dynamic-global": "int[] a = {1,2}; int[2] b = a; Static Function int Main() { Return 0; }",
     "dynamic-static": "Static Class Holder { Public int[2] Values; } Static Function int Main() { int[] a = {1,2}; Holder.Values = a; Return 0; }",
     "nested-dynamic": "Static Function int Main() { int[][2] a; int[2][2] b = a; Return 0; }",
+    "nested-literal-too-large": "Static Function int Main() { int[2][4] a = {{1,2,3}}; Return 0; }",
     "nested-large": "Static Function int Main() { int[3][2] a; int[2][2] b = a; Return 0; }",
     "generic-bound": "Static Function T Identity<T>(T value) { Return value; } Static Function int Main() { int[3] a; Var b = Identity<int[2]>(a); Return 0; }",
     "package-bound": "Static Function int Main() { <int[3]> a = <{1,2,3}>; <int[2]> b = a; Return 0; }",
@@ -45,11 +46,25 @@ def check_array_types(compiler: Path, stage0: Path, root: Path, out: Path,
 ''', encoding="utf-8")
     compilers = [("stage0", stage0)] if stage0_reference else []
     compilers.append(("selfhost", compiler))
+    field_lengths = out / "FieldLengths.kn"
+    field_lengths.write_text('''Unit Tests.FieldLengths;
+Class Pair { Public Static int[2] Values = {11}; }
+Class Wide { Public Static int[5] Values = {13}; }
+Static Function int Main() {
+    Return Pair.Values.Length() == 2 && Wide.Values.Length() == 5 &&
+        Pair.Values[0] == 11 && Wide.Values[0] == 13 && Wide.Values[4] == 0 ? 0 : 1;
+}
+''', encoding="utf-8")
     for label, tool in compilers:
         output = out / (label + (".exe" if os.name == "nt" else ""))
         proc = invoke([str(tool), "build", "--project", str(project), "-o", str(output)], root)
         assert proc.returncode == 0, (label, proc.stdout, proc.stderr)
         proc = invoke([str(output)], root)
+        assert proc.returncode == 0, (label, proc.returncode, proc.stdout, proc.stderr)
+        fields = out / (label + "-fields" + (".exe" if os.name == "nt" else ""))
+        proc = invoke([str(tool), "build", str(field_lengths), "--no-module-discovery", "-o", str(fields)], root)
+        assert proc.returncode == 0, (label, proc.stdout, proc.stderr)
+        proc = invoke([str(fields)], root)
         assert proc.returncode == 0, (label, proc.returncode, proc.stdout, proc.stderr)
     symbols = invoke([str(compiler), "symbols", str(project), "native"], root)
     assert symbols.returncode == 0, (symbols.stdout, symbols.stderr)

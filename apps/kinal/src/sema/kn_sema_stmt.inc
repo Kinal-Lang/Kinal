@@ -257,6 +257,8 @@ static void sema_stmt_impl(Sema *s, Stmt *st)
                 Type lit = sema_array_literal(s, st->v.var.init, elem, true);
                 if (t.array_len >= 0 && lit.array_len > t.array_len)
                     sema_error(s, st->line, st->col, 1, "Array Length", "Initializer has too many elements");
+                else
+                    bind_array_storage(st->v.var.init, t);
             }
             else
             {
@@ -530,11 +532,8 @@ static void validate_entry(Sema *s, const KnSemaOptions *opts)
     int entry_count = 0;
     for (int i = 0; i < s->funcs.count; i++)
     {
-        Func *f = s->funcs.items[i].func;
-        if (!f) continue;
-        if (func_is_generic_template(f) || func_is_generic_instance(f))
-            continue;
-        if (f && kn_strcmp(f->name, entry_name) == 0)
+        Func *f = s->funcs.items[i];
+        if (func_matches_entry(f, entry_name))
         {
             entry_func = f;
             entry_count++;
@@ -548,7 +547,11 @@ static void validate_entry(Sema *s, const KnSemaOptions *opts)
             sema_error(s, 1, 1, 1, "Missing Entry", "Main function not found");
     }
     if (entry_count > 1)
-        sema_error(s, 1, 1, 1, "Entry Ambiguous", "Multiple entry functions found");
+    {
+        if (entry_func->src) s->src = entry_func->src;
+        sema_error(s, entry_func->line, entry_func->col, 1, "Entry Ambiguous", "Multiple entry functions found");
+        return;
+    }
 
     Func *f = entry_func;
     if (f && f->src) s->src = f->src;
@@ -650,6 +653,44 @@ static void inject_builtin_meta_decls(MetaList *metas)
     inject_builtin_meta_decl(metas, "Experimental", "message");
 }
 
+// Analyzing a body may append more specializations to the same function list.
+static int sema_function_bodies(Sema *s, const KnSource *src, Scope *global_scope, int first)
+{
+    int i = first;
+    for (; i < s->funcs.count; i++)
+    {
+        Func *f = s->funcs.items[i];
+        if (func_is_generic_template(f))
+            continue;
+        s->src = f->src ? f->src : src;
+        s->current = f;
+        s->current_method = 0;
+        s->current_class = 0;
+        s->current_is_static = 0;
+        s->current_unit = f->unit;
+        Scope sc = {0, global_scope};
+        s->scope = &sc;
+
+        Stmt *body = f->body;
+        int line = body ? body->line : 1;
+        int col = body ? body->col : 1;
+        for (int p = 0; p < f->params.count; p++)
+        {
+            Param *pr = &f->params.items[p];
+            scope_add_param(s, &sc, pr->name, pr->type, line, col);
+        }
+        if (body)
+        {
+            bool needs_return = f->ret_type.kind != TY_VOID;
+            sema_stmt(s, body);
+            if (!s->saw_stmt_depth_limit && needs_return && !stmt_guarantees_return(body))
+                sema_error(s, line, col, 1, "Missing Return", "Non-void function must return a value on all paths");
+        }
+        s->scope = global_scope;
+    }
+    return i;
+}
+
 int kn_sema_check(const KnSource *src, MetaList *metas, FuncList *funcs, ImportList *imports, ClassList *classes,
                   InterfaceList *interfaces, StructList *structs, EnumList *enums, StmtList *globals,
                   const KnSemaOptions *opts)
@@ -667,8 +708,8 @@ int kn_sema_check(const KnSource *src, MetaList *metas, FuncList *funcs, ImportL
     s.interfaces = interfaces;
     s.structs = structs;
     s.enums = enums;
-    s.func_list = funcs;
     s.globals = globals;
+    index_type_declarations(&s);
     if (opts)
     {
         s.target_os = opts->target_os;
@@ -696,7 +737,8 @@ int kn_sema_check(const KnSource *src, MetaList *metas, FuncList *funcs, ImportL
         s.known_standard_module_count = opts->known_standard_module_count;
     }
 
-    // register functions
+    // Register declared functions before checking signatures and bodies.
+    functable_reserve(&s.funcs, funcs->count);
     for (int i = 0; i < funcs->count; i++)
     {
         Func *f = &funcs->items[i];
@@ -706,38 +748,25 @@ int kn_sema_check(const KnSource *src, MetaList *metas, FuncList *funcs, ImportL
             f->symbol_name = attr_list_string_value(&f->attrs, "SymbolName");
         if (f->is_overload && f->symbol_name && f->symbol_name[0])
             f->qname = qualify_text_name(f->unit, f->symbol_name);
-        for (int j = 0; j < i; j++)
+        bool duplicate = false;
+        const char *symbol_name = f->qname ? f->qname : f->name;
+        bool symbol_collision = functable_find(&s.funcs, symbol_name) != 0;
+        for (int j = funcindex_first(&s.funcs.names, f->name); j >= 0; j = s.funcs.names.next[j])
         {
-            Func *prev = &funcs->items[j];
-            prev->is_overload = attr_list_has_named(&prev->attrs, "Overload") ? 1 : 0;
-            prev->is_variadic = attr_list_has_named(&prev->attrs, "Variadic") ? 1 : 0;
-            if (!prev->symbol_name)
-                prev->symbol_name = attr_list_string_value(&prev->attrs, "SymbolName");
-            if (!funcs_share_visible_name(prev, f))
-                continue;
-            if (!funcs_can_overload(prev, f))
+            Func *prev = s.funcs.items[j];
+            if (!(prev->is_overload && f->is_overload) && funcs_share_visible_name(prev, f))
             {
-                sema_error(&s, f->line > 0 ? f->line : 1, f->col > 0 ? f->col : 1, 1,
-                           "Duplicate Function", "Function already defined");
-                continue;
-            }
-            if (params_equal(&prev->params, &f->params))
-                sema_error(&s, f->line > 0 ? f->line : 1, f->col > 0 ? f->col : 1, 1,
-                           "Duplicate Function", "Overload with the same parameter types already defined");
-            {
-                const char *prev_symbol = func_symbol_identity(prev);
-                const char *cur_symbol = func_symbol_identity(f);
-                if (prev_symbol && cur_symbol && kn_strcmp(prev_symbol, cur_symbol) == 0)
-                    sema_error(&s, f->line > 0 ? f->line : 1, f->col > 0 ? f->col : 1, 1,
-                               "Duplicate Function", "Overloaded functions must use unique SymbolName values");
+                duplicate = true;
+                break;
             }
         }
-        if (f->qname && functable_find(&s.funcs, f->qname))
-            sema_error(&s, f->body ? f->body->line : 1, f->body ? f->body->col : 1, 1, "Duplicate Function", "Function already defined");
-        FuncSym sym;
-        sym.qname = f->qname ? f->qname : f->name;
-        sym.func = f;
-        functable_add(&s.funcs, sym);
+        if (duplicate || symbol_collision)
+        {
+            s.src = f->src ? f->src : src;
+            sema_error(&s, f->line, f->col, 1, "Duplicate Function",
+                       duplicate ? "Function already defined" : "Overloaded functions must use unique SymbolName values");
+        }
+        functable_add(&s.funcs, f);
     }
 
     for (int i = 0; i < metas->count; i++)
@@ -816,14 +845,12 @@ int kn_sema_check(const KnSource *src, MetaList *metas, FuncList *funcs, ImportL
     for (int i = 0; i < classes->count; i++)
         validate_class_decl(&s, &classes->items[i]);
 
-    if (opts && opts->require_entry)
+    if (opts && opts->require_entry && kn_diag_error_count() == 0)
         validate_entry(&s, opts);
 
-    for (int i = 0; i < funcs->count; i++)
+    for (int i = 0; i < s.funcs.count; i++)
     {
-        Func *f = &funcs->items[i];
-        if (func_is_generic_template(f))
-            continue;
+        Func *f = s.funcs.items[i];
         s.src = f->src ? f->src : src;
         s.current = f;
         s.current_method = 0;
@@ -831,6 +858,18 @@ int kn_sema_check(const KnSource *src, MetaList *metas, FuncList *funcs, ImportL
         s.current_is_static = 1;
         s.current_unit = f->unit;
         s.scope = 0;
+        if (func_is_generic_template(f))
+        {
+            validate_template_type(&s, &f->ret_type, f->line, f->col, 1);
+            if (f->is_async)
+                validate_template_type(&s, &f->async_result_type, f->line, f->col, 1);
+            for (int p = 0; p < f->params.count; p++)
+            {
+                Param *param = &f->params.items[p];
+                validate_template_type(&s, &param->type, param->line, param->col, 0);
+            }
+            continue;
+        }
         validate_func_attrs(&s, f);
         if (f->is_async && f->is_extern)
             sema_error(&s, f->line > 0 ? f->line : 1, f->col > 0 ? f->col : 1, 1, "Invalid Async Function", "Extern function cannot be Async");
@@ -839,6 +878,19 @@ int kn_sema_check(const KnSource *src, MetaList *metas, FuncList *funcs, ImportL
         validate_type_ref(&s, &f->ret_type, f->line > 0 ? f->line : 1, f->col > 0 ? f->col : 1, 1);
         validate_param_defaults(&s, &f->params, f->line > 0 ? f->line : 1, f->col > 0 ? f->col : 1);
         validate_ffi_signature(&s, f);
+        if (f->is_overload)
+        {
+            for (int j = funcindex_first(&s.funcs.names, f->name); j >= 0 && j < i; j = s.funcs.names.next[j])
+            {
+                Func *prev = s.funcs.items[j];
+                if (funcs_can_overload(prev, f) && params_equal(&prev->params, &f->params))
+                {
+                    sema_error(&s, f->line, f->col, 1, "Duplicate Function",
+                               "Overload with the same parameter types already defined");
+                    break;
+                }
+            }
+        }
     }
 
     Scope global_scope;
@@ -871,37 +923,7 @@ int kn_sema_check(const KnSource *src, MetaList *metas, FuncList *funcs, ImportL
     s.src = src;
     s.current_unit = 0;
 
-    // sema functions
-    for (int i = 0; i < funcs->count; i++)
-    {
-        Func *f = &funcs->items[i];
-        if (func_is_generic_template(f))
-            continue;
-        s.src = f->src ? f->src : src;
-        s.current = f;
-        s.current_method = 0;
-        s.current_class = 0;
-        s.current_is_static = 0;
-        s.current_unit = f->unit;
-        Scope sc;
-        sc.vars = 0;
-        sc.parent = &global_scope;
-        s.scope = &sc;
-
-        for (int p = 0; p < f->params.count; p++)
-        {
-            Param *pr = &f->params.items[p];
-            scope_add_param(&s, &sc, pr->name, pr->type, f->body ? f->body->line : 1, f->body ? f->body->col : 1);
-        }
-
-        if (f->body)
-        {
-            sema_stmt(&s, f->body);
-            if (!s.saw_stmt_depth_limit && f->ret_type.kind != TY_VOID && !stmt_guarantees_return(f->body))
-                sema_error(&s, f->body ? f->body->line : f->line, f->body ? f->body->col : f->col, 1,
-                           "Missing Return", "Non-void function must return a value on all paths");
-        }
-    }
+    int checked_functions = sema_function_bodies(&s, src, &global_scope, 0);
 
     // sema methods
     for (int i = 0; i < classes->count; i++)
@@ -944,12 +966,28 @@ int kn_sema_check(const KnSource *src, MetaList *metas, FuncList *funcs, ImportL
         }
     }
 
+    // Methods (including property accessors) can be the first callers of a generic.
+    sema_function_bodies(&s, src, &global_scope, checked_functions);
     warn_unused_scope(&s, &global_scope);
+
+    for (int i = funcs->count; i < s.funcs.count; i++)
+    {
+        funclist_push(funcs, *s.funcs.items[i]);
+        kn_free(s.funcs.items[i]);
+    }
+    funcindex_free(&s.funcs.names);
+    funcindex_free(&s.class_names);
+    funcindex_free(&s.interface_names);
+    funcindex_free(&s.struct_names);
+    funcindex_free(&s.enum_names);
+    kn_free(s.funcs.items);
+    kn_free(s.generic_insts.items);
 
     // Freeze call resolution into the backend-independent Typed HIR slice.
     // Native and KNC must consume this record rather than infer targets again.
     if (kn_diag_error_count() == 0)
-        kn_hir_lower_calls(funcs, classes, interfaces, globals);
+        kn_hir_lower_calls_indexed(funcs, classes, interfaces, globals, &s.funcs.symbols);
+    funcindex_free(&s.funcs.symbols);
 
     return 0;
 }

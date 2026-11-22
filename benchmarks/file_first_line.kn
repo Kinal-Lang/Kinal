@@ -1,0 +1,21 @@
+Unit Benchmarks.FileFirstLine;
+
+Get IO.Console;
+Get IO.File;
+Get IO.Time;
+
+Static Function int Main(string[] args)
+{
+    If (args.Length() != 2) Return 2;
+    string path = args[0];
+    int rounds = [int](args[1]);
+    If (rounds < 1 || rounds > 100000) Return 2;
+
+    int start = IO.Time.GetNanoTick();
+    For (int i = 0; i < rounds; i++)
+    {
+        If (IO.File.ReadFirstLine(path) != "kinal-header") Return 1;
+    }
+    IO.Console.PrintLine(IO.Time.GetNanoTick() - start);
+    Return 0;
+}

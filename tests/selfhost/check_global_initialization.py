@@ -17,6 +17,9 @@ EXPECTED = {
     "multi_unit": (0, "0\n7\n7\n"),
     "lexical": (0, "13\n17\n20\n30\nfirst\nsecond\n"),
     "fixed_storage": (0, "3\n23\n23\n"),
+    "aggregate_storage": (0, "ok\n"),
+    "nested_dimensions": (0, "ok\n"),
+    "package_storage": (0, "ok\n"),
     "static_gc": (0, "true\ntrue\ntrue\n"),
     "failure": (
         1,
@@ -24,6 +27,12 @@ EXPECTED = {
         "Tests.GlobalInitializationError.Fail -> <global init> -> "
         "IO.Console.__PrintValues -> IO.Console.PrintLine -> "
         "Tests.GlobalInitializationError.Main\n",
+    ),
+    "pending_scalar": (
+        1,
+        "pending before scalar call\n"
+        "Tests.PendingScalar.Fail -> <global init> -> Tests.PendingScalar.Odd -> "
+        "Tests.PendingScalar.Even -> Tests.PendingScalar.Main\n",
     ),
 }
 
@@ -50,6 +59,36 @@ def verify_compiler(compiler: Path, label: str, root: Path, out: Path) -> None:
                 f"actual exit={result.returncode}, stdout={actual!r}, stderr={result.stderr!r}")
         print(f"[OK] {label} global initialization: {name}", flush=True)
 
+    # Each initializer releases its temporaries before the next one starts.
+    many = out / f"{label}-many-globals.kn"
+    declarations = "\n".join(f"int G{i} = {i};" for i in range(320))
+    many.write_text(f"Unit GlobalCount;\n{declarations}\n"
+                    "Static Function int Main() { Return G319 == 319 ? 0 : 1; }\n", encoding="utf-8")
+    for source, expected in [(fixtures / "aggregate_storage/Main.kn", "ok\n"),
+                             (fixtures / "nested_dimensions/Main.kn", "ok\n"),
+                             (fixtures / "package_storage/Main.kn", "ok\n"), (many, "")]:
+        result = subprocess.run([str(compiler), "vm", "run", "--no-module-discovery", str(source)],
+                                cwd=out, env=env, text=True, capture_output=True)
+        assert (result.returncode, result.stdout, result.stderr) == (0, expected, ""), (
+            label, source, result.returncode, result.stdout, result.stderr)
+
+    # Enlarging a partially initialized struct array changes the loop bound.
+    # It should not emit a fresh sequence of instructions for every element.
+    source = out / f"{label}-padding.kn"
+    bytecode = source.with_suffix(".knc")
+    sizes = []
+    for length in (16, 8192):
+        source.write_text(
+            "Unit Padding;\nStruct Row { int[3] Cells; }\n"
+            f"Static Function int Main() {{ Row first; Row[{length}] rows = {{first}};\n"
+            f"    Return rows[{length - 1}].Cells.Length() == 3 ? 0 : 1; }}\n",
+            encoding="utf-8")
+        subprocess.run([str(compiler), "vm", "build", "--no-module-discovery", str(source),
+                        "-o", str(bytecode)], cwd=out, env=env, check=True)
+        subprocess.run([str(compiler), "vm", "run", str(bytecode)], cwd=out, env=env, check=True)
+        sizes.append(bytecode.stat().st_size)
+    assert sizes[1] < 2 * sizes[0], (label, "array padding bytecode grew with its bound", sizes)
+
 
 def verify_root_ir(compiler: Path, label: str, root: Path, out: Path) -> None:
     project = root / "tests/selfhost/fixtures/global_initialization/static_gc/kinal.knproj"
@@ -64,6 +103,11 @@ def verify_root_ir(compiler: Path, label: str, root: Path, out: Path) -> None:
             raise AssertionError(f"{label} {target}: IR build failed\n{result.stdout}{result.stderr}")
         ir = output.read_text(encoding="utf-8")
         initializer = "__kn_global_init" if label == "stage0" else "__kn_sh_global_init"
+        if label == "selfhost":
+            dispatch = function_body(ir, "__kn_sh_ensure_global_init")
+            assert "load i1, ptr @__kn_sh_global_init_done" in dispatch
+            assert "br i1 %initialized, label %done, label %initialize" in dispatch
+            assert dispatch.count("call void @__kn_sh_global_init()") == 1
         body = function_body(ir, initializer)
         populate = re.search(r"call i64 @[^\n(]*Populate[^\n(]*\(", body)
         assert populate, f"{label} {target}: initializer no longer calls Populate"

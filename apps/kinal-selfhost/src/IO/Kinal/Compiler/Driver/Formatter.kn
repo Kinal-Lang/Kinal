@@ -1,6 +1,7 @@
 Unit IO.Kinal.Compiler.Driver.Formatter;
 
 Get IO.Console;
+Get IO.Kinal.Compiler.Driver.CliOutput;
 Get IO.Directory;
 Get IO.File;
 Get IO.Text;
@@ -306,8 +307,8 @@ Safe Function string FormatSource(FormatState state)
     SourceFile source = New SourceFile("<format>", state.Source);
     LexerState lexer = New LexerState(source);
     int cursor = 0;
-    If (lexer.Length >= 3 && [int](lexer.Chars[0]) == 239 &&
-        [int](lexer.Chars[1]) == 187 && [int](lexer.Chars[2]) == 191)
+    If (lexer.Length >= 3 && [int](lexer.Text[0]) == 239 &&
+        [int](lexer.Text[1]) == 187 && [int](lexer.Text[2]) == 191)
     {
         state.Line = IO.Text.Slice(state.Source, 0, 3);
         lexer.Position = 3;
@@ -355,12 +356,7 @@ Safe Function string FormatSource(FormatState state)
 
 Safe Function void Help()
 {
-    IO.Console.PrintLine("Usage: kinal-selfhost fmt [options] <files|dirs...>");
-    IO.Console.PrintLine("  --check                 Return 1 if formatting would change a file");
-    IO.Console.PrintLine("  --stdin                 Read source from stdin");
-    IO.Console.PrintLine("  --stdout                Write formatted output to stdout");
-    IO.Console.PrintLine("  --stdin-filepath <path>  Virtual path used for stdin errors");
-    IO.Console.PrintLine("Directories are scanned recursively for .kn files.");
+    IO.Kinal.Compiler.Driver.CliOutput.Help("fmt");
 }
 
 Safe Function int Failure(string message)

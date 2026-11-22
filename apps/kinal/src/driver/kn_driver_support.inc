@@ -1016,56 +1016,82 @@ static void append_quoted(char *buf, size_t cap, size_t *off, const char *s)
     kn_append(buf, cap, off, "\"");
 }
 
-/*
- * Spawn a compiled native program and forward all stdio to/from the parent.
- * prog_argv[0..prog_argc-1] are appended after exe on the command line.
- * Returns the process exit code, or -1 on launch failure.
- */
-static int run_native_program(const char *exe, int prog_argc, const char **prog_argv)
+#if defined(_WIN32)
+/* Always quote a Microsoft CRT argv element. A run of backslashes must be
+   doubled before a closing quote, or doubled plus one before a literal quote. */
+static char *write_program_arg(char *out, const char *arg)
 {
-    if (!exe || !exe[0]) return -1;
+    *out++ = '"';
+    for (;;)
+    {
+        size_t slashes = 0;
+        while (*arg == '\\') { slashes++; arg++; }
+        if (*arg == '"' || !*arg) slashes *= 2;
+        while (slashes > 0) { *out++ = '\\'; slashes--; }
+        if (!*arg) break;
+        if (*arg == '"') *out++ = '\\';
+        *out++ = *arg++;
+    }
+    *out++ = '"';
+    return out;
+}
+#endif
 
-    /* Build command line: "exe" ["arg1"] ["arg2"] ... */
-    char cmd[32768];
-    size_t off = 0;
-    cmd[0] = 0;
-    append_quoted(cmd, sizeof(cmd), &off, exe);
+/* Inherit the standard streams and deliver every argument as one argv element. */
+static int run_native_program(const char *exe, int prog_argc, const char *const *prog_argv)
+{
+    if (!exe || !exe[0] || prog_argc < 0) return -1;
+#if defined(_WIN32)
+    size_t capacity = 1;
+    for (int i = -1; i < prog_argc; i++)
+    {
+        size_t length = kn_strlen(i < 0 ? exe : prog_argv[i]);
+        if (capacity > SIZE_MAX - 3 || length > (SIZE_MAX - capacity - 3) / 2) return -1;
+        capacity += 2 * length + 3;
+    }
+    char *command = (char *)kn_malloc(capacity);
+    if (!command) return -1;
+    char *end = write_program_arg(command, exe);
     for (int i = 0; i < prog_argc; i++)
     {
-        kn_append(cmd, sizeof(cmd), &off, " ");
-        append_quoted(cmd, sizeof(cmd), &off, prog_argv[i] ? prog_argv[i] : "");
+        *end++ = ' ';
+        end = write_program_arg(end, prog_argv[i]);
     }
+    *end = 0;
 
-    KN_STARTUPINFOA si;
-    KN_PROCESS_INFORMATION pi;
-    kn_memset(&si, 0, sizeof(si));
-    kn_memset(&pi, 0, sizeof(pi));
-    si.cb = (uint32_t)sizeof(si);
-    /* Forward stdin/stdout/stderr so piped I/O works correctly. */
+    KN_STARTUPINFOA si = {0};
+    KN_PROCESS_INFORMATION pi = {0};
+    si.cb = sizeof(si);
     si.dwFlags = KN_STARTF_USESTDHANDLES;
-    si.hStdInput  = GetStdHandle(KN_STDIN_HANDLE);
+    si.hStdInput = GetStdHandle(KN_STDIN_HANDLE);
     si.hStdOutput = GetStdHandle(KN_STDOUT_HANDLE);
-    si.hStdError  = GetStdHandle(KN_STDERR_HANDLE);
-
-    size_t len = kn_strlen(cmd);
-    char *mutable_cmd = (char *)kn_malloc(len + 1);
-    if (!mutable_cmd) return -1;
-    kn_memcpy(mutable_cmd, cmd, len);
-    mutable_cmd[len] = 0;
-
-    if (!CreateProcessA(exe, mutable_cmd, 0, 0, 1 /*bInheritHandles*/, 0, 0, 0, &si, &pi))
-    {
-        kn_free(mutable_cmd);
-        return -1;
-    }
-    kn_free(mutable_cmd);
-
+    si.hStdError = GetStdHandle(KN_STDERR_HANDLE);
+    KN_BOOL started = CreateProcessA(exe, command, 0, 0, 1, 0, 0, 0, &si, &pi);
+    kn_free(command);
+    if (!started) return -1;
     WaitForSingleObject(pi.hProcess, KN_INFINITE);
     KN_DWORD code = 1;
     GetExitCodeProcess(pi.hProcess, &code);
     CloseHandle(pi.hProcess);
     CloseHandle(pi.hThread);
     return (int)code;
+#else
+    extern char **environ;
+    char **args = (char **)kn_malloc(((size_t)prog_argc + 2) * sizeof(char *));
+    if (!args) return -1;
+    args[0] = (char *)exe;
+    for (int i = 0; i < prog_argc; i++) args[i + 1] = (char *)prog_argv[i];
+    args[prog_argc + 1] = NULL;
+    pid_t child;
+    int error = posix_spawnp(&child, exe, NULL, NULL, args, environ);
+    kn_free(args);
+    if (error != 0) return -1;
+    int status;
+    while (waitpid(child, &status, 0) < 0)
+        if (errno != EINTR) return -1;
+    if (WIFEXITED(status)) return WEXITSTATUS(status);
+    return WIFSIGNALED(status) ? 128 + WTERMSIG(status) : -1;
+#endif
 }
 
 static int run_process(const char *exe, const char *cmdline)
@@ -1384,18 +1410,16 @@ static int resolve_vm_executable(char *out, size_t cap, const char *explicit_pat
     return 0;
 }
 
-static int run_knc_vm_ex(const char *vm_exe, const char *knc_path, int prog_argc, const char **prog_argv)
+static int run_knc_vm_ex(const char *vm_exe, const char *knc_path, int prog_argc, const char *const *prog_argv)
 {
-    if (!vm_exe || !vm_exe[0] || !knc_path || !knc_path[0])
-        return -1;
-
-    const char *argv_local[257];
-    if (prog_argc < 0) prog_argc = 0;
-    if (prog_argc > 255) prog_argc = 255;
-    argv_local[0] = knc_path;
-    for (int i = 0; i < prog_argc; i++)
-        argv_local[i + 1] = prog_argv[i];
-    return run_native_program(vm_exe, prog_argc + 1, argv_local);
+    if (!knc_path || !knc_path[0] || prog_argc < 0) return -1;
+    const char **args = (const char **)kn_malloc(((size_t)prog_argc + 1) * sizeof(char *));
+    if (!args) return -1;
+    args[0] = knc_path;
+    for (int i = 0; i < prog_argc; i++) args[i + 1] = prog_argv[i];
+    int result = run_native_program(vm_exe, prog_argc + 1, args);
+    kn_free(args);
+    return result;
 }
 
 static int run_knc_vm(const char *vm_exe, const char *knc_path)
@@ -1459,7 +1483,22 @@ static int resolve_vm_main_source(char *out, size_t cap)
     return 0;
 }
 
-static int embed_knc_into_exe(const char *exe_path, const char *knc_path, const char *out_path)
+static int set_gui_subsystem(unsigned char *data, size_t size)
+{
+    if (size < 64 || data[0] != 'M' || data[1] != 'Z') return 0;
+    uint32_t offset = (uint32_t)data[60] | ((uint32_t)data[61] << 8) |
+                      ((uint32_t)data[62] << 16) | ((uint32_t)data[63] << 24);
+    if (offset < 64 || offset > size || size - offset < 94) return 0;
+    unsigned char *pe = data + offset;
+    size_t optional_size = pe[20] | ((unsigned)pe[21] << 8);
+    if (pe[0] != 'P' || pe[1] != 'E' || pe[2] || pe[3] ||
+        optional_size < 70 || optional_size > size - offset - 24 ||
+        pe[24] != 11 || (pe[25] != 1 && pe[25] != 2)) return 0;
+    pe[92] = 2; pe[93] = 0; /* IMAGE_SUBSYSTEM_WINDOWS_GUI */
+    return 1;
+}
+
+static int embed_knc_into_exe(const char *exe_path, const char *knc_path, const char *out_path, int hide_console)
 {
     if (!exe_path || !knc_path || !out_path)
         return 1;
@@ -1471,6 +1510,13 @@ static int embed_knc_into_exe(const char *exe_path, const char *knc_path, const 
         kn_write_str("failed to read VM exe: ");
         kn_write_str(exe_path);
         kn_write_str("\n");
+        return 1;
+    }
+
+    if (hide_console && !set_gui_subsystem((unsigned char *)exe_data, exe_size))
+    {
+        kn_free(exe_data);
+        kn_write_str("invalid Windows PE runner for Build.HideConsole\n");
         return 1;
     }
 
@@ -1921,6 +1967,7 @@ static int link_intermediate_windows_lld(const KnCompileConfig *cfg, const char 
     opts.runtime_mode = cfg->runtime_mode;
     opts.panic_mode = cfg->panic_mode;
     opts.crt_mode = cfg->crt_mode;
+    opts.hide_console = cfg->hide_console;
     opts.no_crt = cfg->no_crt;
     opts.no_default_libs = cfg->no_default_libs;
     opts.entry_symbol = cfg->entry_symbol;

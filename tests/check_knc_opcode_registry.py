@@ -8,7 +8,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-EXPECTED_LAST_OPCODE = 138
+EXPECTED_LAST_OPCODE = 140
 UNSIGNED_TAIL = [
     ("KNC_OP_UDIV_INT", 130, "UDivInt", 5, "OpUDivInt"),
     ("KNC_OP_UREM_INT", 131, "URemInt", 5, "OpURemInt"),
@@ -44,6 +44,7 @@ def c_name_to_bytecode(name: str) -> str:
         "BITNOT": "BitNot",
         "BITOR": "BitOr",
         "BITXOR": "BitXor",
+        "UINT": "UInt",
         "UDIV": "UDiv",
         "UREM": "URem",
         "ULT": "ULt",
@@ -180,6 +181,15 @@ def main() -> int:
     if int_f32_opcode != (("KNC_OP_INT_TO_F32", 138), ("IntToF32", 138),
                           ("IntToF32", 4), "OpIntToF32"):
         raise AssertionError(f"integer-to-float32 opcode ABI changed: {int_f32_opcode!r}")
+    if (c_opcodes[139], bytecode_opcodes[139], sizes[139], dispatch_targets[139]) != (
+        ("KNC_OP_CALL_RANGE", 139), ("CallRange", 139), ("CallRange", 7), "OpCallRange"
+    ):
+        raise AssertionError("register-range call opcode ABI changed")
+
+    if (c_opcodes[140], bytecode_opcodes[140], sizes[140], dispatch_targets[140]) != (
+        ("KNC_OP_UINT_TO_FLOAT", 140), ("UIntToFloat", 140), ("UIntToFloat", 3), "OpUIntToFloat"
+    ):
+        raise AssertionError("unsigned-to-binary64 opcode ABI changed")
 
     print(f"[OK] knc_opcode_registry opcodes={len(c_opcodes)} unsigned_tail=130..136 f32_tail=137..138")
     return 0

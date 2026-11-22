@@ -1,22 +1,55 @@
 Unit IO.Kinal.VM.Binary;
 
 Get Memory By IO.Memory;
-Get Volatile By IO.Volatile;
+Get IO.Kinal.Runtime;
+Get IO.Target;
 
 Unsafe Extern Function byte* fopen(string path, string mode) By C;
+Unsafe Extern Function byte* _wfopen(u16* path, u16* mode) By C;
+Unsafe Extern Function i32 MultiByteToWideChar(u32 page, u32 flags, string input, i32 length,
+                                               u16* output, i32 capacity) By System;
 Unsafe Extern Function int fclose(byte* file) By C;
 Unsafe Extern Function int fseek(byte* file, int offset, int origin) By C;
 Unsafe Extern Function int ftell(byte* file) By C;
 Unsafe Extern Function usize fread(byte* buffer, usize size, usize count, byte* file) By C;
 Unsafe Extern Function byte* malloc(usize size) By C;
+Unsafe Extern Function byte* calloc(usize count, usize size) By C;
 Unsafe Extern Function void free(byte* buffer) By C;
 Unsafe Extern Function string __kn_sys_executable_path() By C;
 
+Struct ByteSpan { byte* Data; i64 Length; }
+Struct ByteArray { byte[] Data; }
+
+// Copy into an ordinary array owned by the active language heap in one allocation.
+Unsafe Function byte[] CopyBytes(byte* source, int count)
+{
+    If (count == 0) Return {};
+    ByteArray prefix;
+    ByteSpan* span = [ByteSpan*](&prefix);
+    span[0].Data = source;
+    span[0].Length = [i64](count - 1);
+    Return prefix.Data.Add(source[count - 1]);
+}
+
 Public Class BinaryFile
 {
+    Private Unsafe Static Function byte* OpenRead(string path)
+    {
+        If (IO.Target.OS == IO.Target.OS.Windows)
+        {
+            i32 count = MultiByteToWideChar(65001, 8, path, -1, null, 0);
+            If (count <= 0) Return null;
+            u16* wide = [u16*](IO.Kinal.Runtime.AllocateRaw([usize](count) * 2));
+            If (wide == null || MultiByteToWideChar(65001, 8, path, -1, wide, count) != count) Return null;
+            u16[] mode = {[u16](114), [u16](98), [u16](0)};
+            Return _wfopen(wide, &mode[0]);
+        }
+        Return fopen(path, "rb");
+    }
+
     Public Unsafe Static Function byte[] ReadAllBytes(string path)
     {
-        byte* file = fopen(path, "rb");
+        byte* file = OpenRead(path);
         If (file == null)
         {
             Throw "Cannot open file: " + path;
@@ -41,41 +74,33 @@ Public Class BinaryFile
             Throw "Cannot rewind file: " + path;
         }
 
-        If (size == 0)
-        {
-            fclose(file);
-            Return {};
-        }
+        Return ReadAndClose(file, size, path);
+    }
 
-        byte* buffer = malloc([usize](size));
+    Private Unsafe Static Function byte[] ReadAndClose(byte* file, int count, string path)
+    {
+        If (count == 0) { fclose(file); Return {}; }
+        byte* buffer = malloc([usize](count));
         If (buffer == null)
         {
             fclose(file);
             Throw "Out of memory while reading file: " + path;
         }
-
-        usize readCount = fread(buffer, 1, [usize](size), file);
+        usize readCount = fread(buffer, 1, [usize](count), file);
         fclose(file);
-
-        If ([int](readCount) != size)
+        If ([int](readCount) != count)
         {
             free(buffer);
             Throw "Short read while reading file: " + path;
         }
-
-        byte[] data = {};
-        For (int i = 0; i < size; i = i + 1)
-        {
-            data = data.Add([byte](Volatile.Read8([u8*](buffer + i))));
-        }
-
+        byte[] data = CopyBytes(buffer, count);
         free(buffer);
         Return data;
     }
 
     Public Unsafe Static Function int FileSize(string path)
     {
-        byte* file = fopen(path, "rb");
+        byte* file = OpenRead(path);
         If (file == null)
         {
             Return -1;
@@ -92,7 +117,8 @@ Public Class BinaryFile
 
     Public Unsafe Static Function byte[] ReadBytesRange(string path, int offset, int count)
     {
-        byte* file = fopen(path, "rb");
+        If (offset < 0 || count < 0) Throw "Invalid file range: " + path;
+        byte* file = OpenRead(path);
         If (file == null)
         {
             Throw "Cannot open file: " + path;
@@ -102,26 +128,7 @@ Public Class BinaryFile
             fclose(file);
             Throw "Cannot seek file: " + path;
         }
-        byte* buffer = malloc([usize](count));
-        If (buffer == null)
-        {
-            fclose(file);
-            Throw "Out of memory while reading file: " + path;
-        }
-        usize read = fread(buffer, 1, [usize](count), file);
-        fclose(file);
-        If ([int](read) != count)
-        {
-            free(buffer);
-            Throw "Short read while reading file: " + path;
-        }
-        byte[] data = {};
-        For (int i = 0; i < count; i = i + 1)
-        {
-            data = data.Add([byte](Volatile.Read8([u8*](buffer + i))));
-        }
-        free(buffer);
-        Return data;
+        Return ReadAndClose(file, count, path);
     }
 
     Public Unsafe Static Function string GetExePath()
@@ -213,34 +220,31 @@ Public Class BlobReader
         Return value;
     }
 
-    Public Function byte[] ReadBytes(int count)
+    Public Trusted Function byte[] ReadBytes(int count)
     {
-        byte[] data = {};
         This.Require(count);
-        For (int i = 0; i < count; i = i + 1)
-        {
-            data = data.Add(This.Data[This.Offset + i]);
-        }
+        If (count == 0) Return {};
+        byte[] data = CopyBytes(&This.Data[This.Offset], count);
         This.Offset = This.Offset + count;
         Return data;
     }
 
-    Public Function string ReadString()
+    Public Trusted Function string ReadString()
     {
         int count = This.ReadU32();
-        string value = "";
-
-        If (count <= 0)
-        {
-            Return value;
-        }
-
         This.Require(count);
-        For (int i = 0; i < count; i = i + 1)
+        If (count == 0) Return "";
+        char* value = IO.Kinal.Runtime.AllocateText(count);
+        If (value == null) Throw "Out of memory while reading KNC text";
+        // Kinal strings are NUL-terminated. Preserve the previous reader's omission of NUL bytes.
+        int written = 0;
+        For (int i = 0; i < count; i++)
         {
-            value = value + [string]([char]([int](This.Data[This.Offset + i])));
+            byte part = This.Data[This.Offset + i];
+            If (part != 0) { value[written] = [char](part); written++; }
         }
+        value[written] = '\0';
         This.Offset = This.Offset + count;
-        Return value;
+        Return [string](value);
     }
 }

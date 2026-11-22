@@ -2,7 +2,7 @@
 
 函数、方法、构造函数和命名参数相关诊断。
 
-本文中的示例都是最小复现片段，用来说明该错误码最常见的触发方式；少数更偏内部的诊断会使用最接近用户代码的表面写法来说明。
+本页记录预注册模板。正确示例展示支持的写法；触发形态用于说明规则或解析状态，可能依赖外围声明，或在当前 C 编译器中先报告其他诊断。
 
 ---
 
@@ -27,23 +27,15 @@
 错误示例：
 
 ```kinal
-Function int Add(int a, int b)
-{
-    Return a + b;
-}
-
-int value = Add(1);
+string text = "a";
+int length = text.Length(1);
 ```
 
 正确示例：
 
 ```kinal
-Function int Add(int a, int b)
-{
-    Return a + b;
-}
-
-int value = Add(1, 2);
+string text = "a";
+int length = text.Length();
 ```
 
 原因：编译器在重载解析后找到了目标函数，但调用点提供的实参数量仍然不匹配。
@@ -95,23 +87,17 @@ Format(text = "hello", uppercase = true);
 错误示例：
 
 ```kinal
-Function int Identity(int value)
-{
-    Return value;
-}
+Get IO.Type.any;
 
-int result = Identity(value = 42);
+bool result = IO.Type.any.IsNull(value = null);
 ```
 
 正确示例：
 
 ```kinal
-Function int Identity(int value)
-{
-    Return value;
-}
+Get IO.Type.any;
 
-int result = Identity(42);
+bool result = IO.Type.any.IsNull(null);
 ```
 
 原因：并非所有调用目标都暴露了可按名称绑定的参数信息；某些内置调用、函数对象或特定调用路径只接受位置参数。
@@ -167,23 +153,19 @@ Pair p = New Pair(1, 2);
 错误示例：
 
 ```kinal
-Function string Format(string text, int indent = 0)
-{
-    Return text;
-}
+Function int Add(int left, int right = 0) { Return left + right; }
 
-Format(text = "hello", text = "world");
+IO.Type.Object.Function fn = Add;
+int result = fn(left = 1, left = 2);
 ```
 
 正确示例：
 
 ```kinal
-Function string Format(string text, int indent = 0)
-{
-    Return text;
-}
+Function int Add(int left, int right = 0) { Return left + right; }
 
-Format(text = "hello", indent = 2);
+IO.Type.Object.Function fn = Add;
+int result = fn(left = 1, right = 2);
 ```
 
 原因：同一个形参被重复赋值会让调用语义不明确，编译器无法判断最后应采用哪个值。

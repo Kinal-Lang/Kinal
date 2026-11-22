@@ -133,6 +133,14 @@ endif()
 target_link_libraries(kinal PRIVATE ${KINAL_LLVM_C_LIBRARY})
 
 if (WIN32)
+    # The hosted C compiler exchanges UTF-8 paths and arguments with Kinal programs.
+    set(compiler_manifest "${CMAKE_CURRENT_SOURCE_DIR}/resources/utf8.manifest")
+    if (MINGW)
+        target_sources(kinal PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/resources/utf8.rc")
+    else()
+        target_link_options(kinal PRIVATE "LINKER:/MANIFEST:EMBED" "LINKER:/MANIFESTINPUT:${compiler_manifest}")
+        set_property(TARGET kinal APPEND PROPERTY LINK_DEPENDS "${compiler_manifest}")
+    endif()
     target_link_libraries(kinal PRIVATE kernel32 user32)
     # Debug/ASan builds have large parser/sema/codegen frames. Reserving virtual
     # address space here prevents the host compiler from failing before its

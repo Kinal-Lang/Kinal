@@ -3,8 +3,8 @@
 `KncBackend` lowers the semantic compiler's typed HIR directly to KNC. It does
 not invoke the C compiler, Native backend, LLVM, or an external compiler process.
 `KncModel` owns the bytecode tables, wire-format validation, serialization, and
-readable compiler listing. The emitted revision is KNC2 version 3, including
-signed 64-bit integer constants and numeric opcodes 130–138.
+readable compiler listing. The emitted revision is KNC2 version 4, including the producer compiler version,
+signed 64-bit integer constants and numeric opcodes 130–138 and register-range calls at 139.
 
 ## Pipeline and API
 
@@ -12,7 +12,7 @@ The source/project loader, dependency resolver, and semantic analysis are shared
 with Native compilation. Set the selected profile backend before analysis, so
 `IO.Runtime` constants and conditional compilation describe the VM environment.
 After successful analysis, construct `KncBackend(semantics)` and call
-`Emit(outputPath)`. Failure returns `false` and an explanatory `Error`. Unsupported
+`EmitBytes()` for an in-memory image or `Emit(outputPath)`. Failure returns `false` and an explanatory `Error`. Unsupported
 lowering is detected before the output file is opened. A lowered graph can be
 emitted again without appending duplicate functions, constants, or globals.
 
@@ -63,9 +63,12 @@ Known-origin local references and local copies of `IO.Type.string.Length`,
 This does not establish new guarantees for reassigned or type-erased builtin
 references, bound instance references, or other builtin families.
 
-`Main()` and `Main(string[])` are accepted. The current VM has no process-argument
-injection ABI, so the latter receives a valid empty array. CLI workflows should
-reject requested program arguments rather than silently discarding them.
+The entry function's existing parameter count distinguishes `Main()` (zero) from
+`Main(string[])` (one). For a one-parameter entry the runner places a guest string
+array in register zero before execution. The entry wrapper preserves that register
+across global initialization and passes it to Main. A zero-argument invocation
+gets an empty array. Older bytecode with a wrapper that creates its own empty
+array retains that behavior until recompiled.
 
 ## Conservative loop fusion
 
@@ -81,16 +84,21 @@ ordinary lowering. No broader array/reduction/backedge fusion is promised.
 
 This backend is not universal source-language or Native parity. Current explicit
 unsupported or unvalidated families include async functions, delegate storage
-and bound instance-method references, general native extern calls, mutable
-collection constructors such as `list.Create`, f16/f128, floating remainder, and
+and bound instance-method references, general native extern calls,
+f16/f128, floating remainder, and
 some raw-pointer conversions. Block Jump across Try handler scopes is rejected.
 
-Execution acceptance currently covers Linux64. It does not establish 32-bit
-`isize`/`usize` semantic parity: pointer-sized numeric planning needs a separate
-shared-frontend and backend review before that target can be claimed.
+Execution tests cover Linux x64 and Windows x64. The Windows desktop runner also
+executes IO.UI 2.0 form layout, custom controls and event handlers, with DX11
+drawing and window messages supplied by the host. The 32-bit `isize`/`usize`
+semantics still require validation of both the shared frontend and the backend.
 
-The wire ABI allows four call argument slots (including an instance receiver),
-255 live registers, and 16-bit table and branch operands. Oversized or invalid
+Short calls encode up to four argument registers including the instance receiver.
+Selfhost uses opcode 139, `CallRange`, for larger direct, virtual, closure and
+registered host calls. Its seven bytes encode opcode, destination, call kind,
+little-endian u16 target, first register and count. An instance receiver
+occupies the first register. Arguments retain their evaluation order.
+Frames have at most 255 registers. Table indices and branch operands are 16-bit. Oversized or invalid
 programs must be diagnosed rather than truncated. Native-only tests are not
 counted as KNC regressions merely because their source can be parsed.
 

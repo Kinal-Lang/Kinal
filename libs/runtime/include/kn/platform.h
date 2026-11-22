@@ -30,6 +30,7 @@
 
 #define KN_GENERIC_READ 0x80000000u
 #define KN_GENERIC_WRITE 0x40000000u
+#define KN_FILE_APPEND_DATA 0x00000004u
 #define KN_FILE_SHARE_READ 0x00000001u
 #define KN_FILE_SHARE_WRITE 0x00000002u
 #define KN_FILE_SHARE_DELETE 0x00000004u
@@ -38,6 +39,7 @@
 #define KN_OPEN_EXISTING 3u
 #define KN_FILE_ATTRIBUTE_NORMAL 0x00000080u
 #define KN_FILE_ATTRIBUTE_DIRECTORY 0x00000010u
+#define KN_INVALID_FILE_ATTRIBUTES 0xFFFFFFFFu
 #define KN_FILE_ATTRIBUTE_REPARSE_POINT 0x00000400u
 
 #define KN_ERROR_FILE_NOT_FOUND 2u
@@ -47,6 +49,7 @@
 #define KN_ERROR_NOT_ENOUGH_MEMORY 8u
 #define KN_ERROR_NO_MORE_FILES 18u
 #define KN_ERROR_INVALID_PARAMETER 87u
+#define KN_ERROR_BROKEN_PIPE 109u
 
 #define KN_INFINITE 0xFFFFFFFFu
 
@@ -127,6 +130,20 @@ typedef struct
 
 typedef struct
 {
+    uint32_t dwFileAttributes;
+    KN_FILETIME ftCreationTime;
+    KN_FILETIME ftLastAccessTime;
+    KN_FILETIME ftLastWriteTime;
+    uint32_t nFileSizeHigh;
+    uint32_t nFileSizeLow;
+    uint32_t dwReserved0;
+    uint32_t dwReserved1;
+    uint16_t cFileName[KN_MAX_PATH];
+    uint16_t cAlternateFileName[14];
+} KN_WIN32_FIND_DATAW;
+
+typedef struct
+{
     uint32_t nLength;
     void *lpSecurityDescriptor;
     KN_BOOL bInheritHandle;
@@ -156,6 +173,28 @@ typedef struct
 
 typedef struct
 {
+    uint32_t cb;
+    const uint16_t *lpReserved;
+    const uint16_t *lpDesktop;
+    const uint16_t *lpTitle;
+    uint32_t dwX;
+    uint32_t dwY;
+    uint32_t dwXSize;
+    uint32_t dwYSize;
+    uint32_t dwXCountChars;
+    uint32_t dwYCountChars;
+    uint32_t dwFillAttribute;
+    uint32_t dwFlags;
+    uint16_t wShowWindow;
+    uint16_t cbReserved2;
+    uint8_t *lpReserved2;
+    KN_HANDLE hStdInput;
+    KN_HANDLE hStdOutput;
+    KN_HANDLE hStdError;
+} KN_STARTUPINFOW;
+
+typedef struct
+{
     KN_HANDLE hProcess;
     KN_HANDLE hThread;
     uint32_t dwProcessId;
@@ -175,6 +214,7 @@ KN_DLLIMPORT KN_HANDLE KN_STDCALL GetProcessHeap(void);
 KN_DLLIMPORT void *KN_STDCALL HeapAlloc(KN_HANDLE hHeap, KN_DWORD dwFlags, size_t dwBytes);
 KN_DLLIMPORT KN_BOOL KN_STDCALL HeapFree(KN_HANDLE hHeap, KN_DWORD dwFlags, void *lpMem);
 KN_DLLIMPORT KN_HANDLE KN_STDCALL CreateFileA(const char *lpFileName, KN_DWORD dwDesiredAccess, KN_DWORD dwShareMode, KN_SECURITY_ATTRIBUTES *lpSecurityAttributes, KN_DWORD dwCreationDisposition, KN_DWORD dwFlagsAndAttributes, KN_HANDLE hTemplateFile);
+KN_DLLIMPORT KN_HANDLE KN_STDCALL CreateFileW(const uint16_t *lpFileName, KN_DWORD dwDesiredAccess, KN_DWORD dwShareMode, KN_SECURITY_ATTRIBUTES *lpSecurityAttributes, KN_DWORD dwCreationDisposition, KN_DWORD dwFlagsAndAttributes, KN_HANDLE hTemplateFile);
 KN_DLLIMPORT KN_BOOL KN_STDCALL ReadFile(KN_HANDLE hFile, void *lpBuffer, KN_DWORD nNumberOfBytesToRead, KN_DWORD *lpNumberOfBytesRead, void *lpOverlapped);
 KN_DLLIMPORT KN_BOOL KN_STDCALL CloseHandle(KN_HANDLE hObject);
 KN_DLLIMPORT KN_BOOL KN_STDCALL GetFileSizeEx(KN_HANDLE hFile, int64_t *lpFileSize);
@@ -182,7 +222,9 @@ KN_DLLIMPORT KN_BOOL KN_STDCALL GetFileInformationByHandle(KN_HANDLE hFile, KN_B
 KN_DLLIMPORT KN_BOOL KN_STDCALL LockFileEx(KN_HANDLE hFile, KN_DWORD dwFlags, KN_DWORD dwReserved, KN_DWORD nNumberOfBytesToLockLow, KN_DWORD nNumberOfBytesToLockHigh, KN_OVERLAPPED *lpOverlapped);
 KN_DLLIMPORT KN_BOOL KN_STDCALL UnlockFileEx(KN_HANDLE hFile, KN_DWORD dwReserved, KN_DWORD nNumberOfBytesToUnlockLow, KN_DWORD nNumberOfBytesToUnlockHigh, KN_OVERLAPPED *lpOverlapped);
 KN_DLLIMPORT const char *KN_STDCALL GetCommandLineA(void);
+KN_DLLIMPORT const uint16_t *KN_STDCALL GetCommandLineW(void);
 KN_DLLIMPORT KN_BOOL KN_STDCALL CreateProcessA(const char *lpApplicationName, char *lpCommandLine, KN_SECURITY_ATTRIBUTES *lpProcessAttributes, KN_SECURITY_ATTRIBUTES *lpThreadAttributes, KN_BOOL bInheritHandles, KN_DWORD dwCreationFlags, void *lpEnvironment, const char *lpCurrentDirectory, KN_STARTUPINFOA *lpStartupInfo, KN_PROCESS_INFORMATION *lpProcessInformation);
+KN_DLLIMPORT KN_BOOL KN_STDCALL CreateProcessW(const uint16_t *application, uint16_t *command, KN_SECURITY_ATTRIBUTES *process_attributes, KN_SECURITY_ATTRIBUTES *thread_attributes, KN_BOOL inherit, KN_DWORD flags, void *environment, const uint16_t *directory, KN_STARTUPINFOW *startup, KN_PROCESS_INFORMATION *process);
 KN_DLLIMPORT KN_HANDLE KN_STDCALL CreateThread(KN_SECURITY_ATTRIBUTES *lpThreadAttributes, size_t dwStackSize, KN_THREAD_START_ROUTINE lpStartAddress, void *lpParameter, KN_DWORD dwCreationFlags, KN_DWORD *lpThreadId);
 KN_DLLIMPORT KN_DWORD KN_STDCALL WaitForSingleObject(KN_HANDLE hHandle, KN_DWORD dwMilliseconds);
 KN_DLLIMPORT KN_BOOL KN_STDCALL GetExitCodeProcess(KN_HANDLE hProcess, KN_DWORD *lpExitCode);
@@ -198,15 +240,25 @@ KN_DLLIMPORT KN_BOOL KN_STDCALL FileTimeToSystemTime(const KN_FILETIME *lpFileTi
 /* On POSIX, GetLastError currently reports directory enumeration status only. */
 KN_DLLIMPORT KN_DWORD KN_STDCALL GetLastError(void);
 KN_DLLIMPORT KN_HANDLE KN_STDCALL FindFirstFileA(const char *lpFileName, KN_WIN32_FIND_DATAA *lpFindFileData);
+KN_DLLIMPORT KN_HANDLE KN_STDCALL FindFirstFileW(const uint16_t *lpFileName, KN_WIN32_FIND_DATAW *lpFindFileData);
+#if defined(_WIN32) || defined(_WIN64)
+KN_DLLIMPORT KN_DWORD KN_STDCALL GetFileAttributesW(const uint16_t *lpFileName);
+#endif
 KN_DLLIMPORT KN_BOOL KN_STDCALL FindNextFileA(KN_HANDLE hFindFile, KN_WIN32_FIND_DATAA *lpFindFileData);
+KN_DLLIMPORT KN_BOOL KN_STDCALL FindNextFileW(KN_HANDLE hFindFile, KN_WIN32_FIND_DATAW *lpFindFileData);
 KN_DLLIMPORT KN_BOOL KN_STDCALL FindClose(KN_HANDLE hFindFile);
 KN_DLLIMPORT KN_BOOL KN_STDCALL CreateDirectoryA(const char *lpPathName, KN_SECURITY_ATTRIBUTES *lpSecurityAttributes);
+KN_DLLIMPORT KN_BOOL KN_STDCALL CreateDirectoryW(const uint16_t *lpPathName, KN_SECURITY_ATTRIBUTES *lpSecurityAttributes);
 KN_DLLIMPORT KN_BOOL KN_STDCALL RemoveDirectoryA(const char *lpPathName);
+KN_DLLIMPORT KN_BOOL KN_STDCALL RemoveDirectoryW(const uint16_t *lpPathName);
 KN_DLLIMPORT KN_BOOL KN_STDCALL DeleteFileA(const char *lpFileName);
+KN_DLLIMPORT KN_BOOL KN_STDCALL DeleteFileW(const uint16_t *lpFileName);
 KN_DLLIMPORT KN_DWORD KN_STDCALL GetEnvironmentVariableA(const char *lpName, char *lpBuffer, KN_DWORD nSize);
 KN_DLLIMPORT KN_DWORD KN_STDCALL GetCurrentDirectoryA(KN_DWORD nBufferLength, char *lpBuffer);
+KN_DLLIMPORT KN_DWORD KN_STDCALL GetCurrentDirectoryW(KN_DWORD nBufferLength, uint16_t *lpBuffer);
 KN_DLLIMPORT KN_DWORD KN_STDCALL GetCurrentProcessId(void);
 KN_DLLIMPORT KN_DWORD KN_STDCALL GetModuleFileNameA(KN_HANDLE hModule, char *lpFilename, KN_DWORD nSize);
+KN_DLLIMPORT KN_DWORD KN_STDCALL GetModuleFileNameW(KN_HANDLE hModule, uint16_t *lpFilename, KN_DWORD nSize);
 KN_DLLIMPORT KN_DWORD KN_STDCALL GetFullPathNameA(const char *lpFileName, KN_DWORD nBufferLength, char *lpBuffer, char **lpFilePart);
 KN_DLLIMPORT int KN_STDCALL MultiByteToWideChar(KN_DWORD CodePage, KN_DWORD dwFlags, const char *lpMultiByteStr, int cbMultiByte, uint16_t *lpWideCharStr, int cchWideChar);
 KN_DLLIMPORT int KN_STDCALL WideCharToMultiByte(KN_DWORD CodePage, KN_DWORD dwFlags, const uint16_t *lpWideCharStr, int cchWideChar, char *lpMultiByteStr, int cbMultiByte, const char *lpDefaultChar, KN_BOOL *lpUsedDefaultChar);
@@ -217,9 +269,16 @@ KN_DLLIMPORT int KN_STDCALL GetWindowTextW(KN_HANDLE hWnd, uint16_t *lpString, i
  * recognizes hard links, symlinks and Windows short/case aliases. Missing
  * files are distinct; an identity-query failure is reported separately. */
 #if defined(_WIN32) || defined(_WIN64)
-static inline int kn_paths_same_file(const char *left, const char *right)
+static inline int kn_file_handles_same(KN_HANDLE first, KN_HANDLE second)
 {
     KN_BY_HANDLE_FILE_INFORMATION a, b;
+    int ok = GetFileInformationByHandle(first, &a) && GetFileInformationByHandle(second, &b);
+    if (!ok) return -1;
+    return a.dwVolumeSerialNumber == b.dwVolumeSerialNumber &&
+           a.nFileIndexHigh == b.nFileIndexHigh && a.nFileIndexLow == b.nFileIndexLow;
+}
+static inline int kn_paths_same_file(const char *left, const char *right)
+{
     KN_DWORD share = KN_FILE_SHARE_READ | KN_FILE_SHARE_WRITE | KN_FILE_SHARE_DELETE;
     KN_HANDLE first = CreateFileA(left, 0, share, 0, KN_OPEN_EXISTING, KN_FILE_ATTRIBUTE_NORMAL, 0);
     if (!first || first == KN_INVALID_HANDLE_VALUE) return 0;
@@ -229,12 +288,10 @@ static inline int kn_paths_same_file(const char *left, const char *right)
         CloseHandle(first);
         return 0;
     }
-    int ok = GetFileInformationByHandle(first, &a) && GetFileInformationByHandle(second, &b);
+    int result = kn_file_handles_same(first, second);
     CloseHandle(second);
     CloseHandle(first);
-    if (!ok) return -1;
-    return a.dwVolumeSerialNumber == b.dwVolumeSerialNumber &&
-           a.nFileIndexHigh == b.nFileIndexHigh && a.nFileIndexLow == b.nFileIndexLow;
+    return result;
 }
 #else
 /* POSIX identity lookup must not require read permission on the payload. */

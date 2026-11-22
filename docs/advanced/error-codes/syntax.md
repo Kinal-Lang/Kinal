@@ -2,7 +2,7 @@
 
 Triggered when keywords, separators, parentheses, identifiers, or structural boundaries are missing.
 
-The examples in this document are minimal reproductions of the most common way each diagnostic code is triggered. A few diagnostics that are more implementation-oriented use the closest surface-level form that user code can express.
+This page records the registered templates. Corrected examples show the supported form. A trigger sketch illustrates a rule or parser state and may require surrounding declarations or report an earlier/different diagnostic in the current C compiler.
 
 ---
 
@@ -119,6 +119,7 @@ The examples in this document are minimal reproductions of the most common way e
 | `E-SYN-00105` | Expected '}' | Unexpected end of file while parsing block |
 | `E-SYN-00106` | Unexpected Top-Level Token | Expected a top-level declaration (Function/Class/Struct/Enum/Interface/variable declaration) |
 | `E-SYN-00107` | Invalid Global Modifier | Top-level global variables cannot use function modifiers like Static/Extern/Delegate/Safe/Trusted/Unsafe/Async |
+| `E-SYN-00108` | Statement Too Deep | Statement nesting exceeds parser recursion limit |
 
 ---
 
@@ -244,7 +245,7 @@ Fix: Change the old-style function constructor of the same name to `Constructor`
 - Default Detail: Missing '('
 - Description: The token sequence at the current position does not comply with the current grammar rules.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
 // This form does not produce valid syntax.
@@ -303,7 +304,7 @@ Fix: Append the complete pair of parentheses after `Align`.
 - Default Detail: Missing '(' after Constructor
 - Description: Missing left parenthesis before constructor parameter list.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
 Public Constructor int value)
@@ -314,8 +315,9 @@ Public Constructor int value)
 Correct Example:
 
 ```kinal
-Public Constructor(int value)
+Class User
 {
+    Public Constructor(int value) {}
 }
 ```
 
@@ -331,7 +333,7 @@ Fix: Add `(` after the constructor name.
 - Default Detail: Missing '(' after If
 - Description: `If` Missing left parenthesis before condition.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
 If true)
@@ -361,7 +363,7 @@ Fix: Add `(` and ensure that the conditional expression is complete.
 - Default Detail: Missing '(' after cast type
 - Description: Explicit conversion is missing an opening bracket after the closing type square bracket.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
 int value = [int]42);
@@ -394,6 +396,8 @@ User user = New User;
 Correct Example:
 
 ```kinal
+Class User {}
+
 User user = New User();
 ```
 
@@ -409,7 +413,7 @@ Fix: Add parameter brackets after the class name.
 - Default Detail: Missing '(' after function name
 - Description: The function or method call is missing an opening parenthesis.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
 PrintLine "hello");
@@ -418,6 +422,8 @@ PrintLine "hello");
 Correct Example:
 
 ```kinal
+Get PrintLine By IO.Console.PrintLine;
+
 PrintLine("hello");
 ```
 
@@ -433,7 +439,7 @@ Fix: Add `(` after the transferred target.
 - Default Detail: Missing '(' after function return type
 - Description: Function declaration is missing parameter list left bracket after return type.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
 Function int Add int a, int b)
@@ -463,7 +469,7 @@ Fix: Append the left parenthesis to the parameter list.
 - Default Detail: Missing '(' after method name
 - Description: The function or method call is missing an opening parenthesis.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
 PrintLine "hello");
@@ -472,6 +478,8 @@ PrintLine "hello");
 Correct Example:
 
 ```kinal
+Get PrintLine By IO.Console.PrintLine;
+
 PrintLine("hello");
 ```
 
@@ -487,7 +495,7 @@ Fix: Add `(` after the transferred target.
 - Default Detail: Missing ')'
 - Description: The token sequence at the current position does not comply with the current grammar rules.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
 // This form does not produce valid syntax.
@@ -546,7 +554,7 @@ Fix: Fill in the missing closing bracket.
 - Default Detail: Missing ')' after If condition
 - Description: `If` Missing closing bracket at the end of the condition.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
 If (value > 0
@@ -558,6 +566,7 @@ If (value > 0
 Correct Example:
 
 ```kinal
+int value = 1;
 If (value > 0)
 {
     Return 1;
@@ -576,7 +585,7 @@ Fix: Add `)` at the end of the condition.
 - Default Detail: Missing ')' after catch parameter
 - Description: `Catch` The parameter list is missing a closing parenthesis.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
 Catch (IO.Error err
@@ -587,6 +596,12 @@ Catch (IO.Error err
 Correct Example:
 
 ```kinal
+Get IO.Error;
+
+Try
+{
+    Throw New IO.Error("Example", "message");
+}
 Catch (IO.Error err)
 {
 }
@@ -662,7 +677,7 @@ Fix: Add `)` after the last parameter.
 - Default Detail: Missing ')' in attribute
 - Description: Property parameter list is missing closing bracket.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
 [Route("/ping"]
@@ -671,7 +686,22 @@ Incorrect Example:
 Correct Example:
 
 ```kinal
+Meta Route(string path)
+{
+    On @function;
+    Keep @runtime;
+}
+
 [Route("/ping")]
+Function void Ping()
+{
+}
+
+Static Function int Main()
+{
+    Ping();
+    Return 0;
+}
 ```
 
 Reason: Property calls require a complete pair of parentheses just like normal calls.
@@ -695,6 +725,8 @@ PrintLine("hello";
 Correct Example:
 
 ```kinal
+Get PrintLine By IO.Console.PrintLine;
+
 PrintLine("hello");
 ```
 
@@ -734,7 +766,7 @@ Fix: Append `)` at the end of the conversion expression.
 - Default Detail: Missing ')' in constructor call
 - Description: The calling parameter list is missing a closing parenthesis.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
 PrintLine("hello";
@@ -743,6 +775,8 @@ PrintLine("hello";
 Correct Example:
 
 ```kinal
+Get PrintLine By IO.Console.PrintLine;
+
 PrintLine("hello");
 ```
 
@@ -758,7 +792,7 @@ Fix: Append `)` at the end of the parameter list.
 - Default Detail: Missing ')' in member call
 - Description: The calling parameter list is missing a closing parenthesis.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
 PrintLine("hello";
@@ -767,6 +801,8 @@ PrintLine("hello";
 Correct Example:
 
 ```kinal
+Get PrintLine By IO.Console.PrintLine;
+
 PrintLine("hello");
 ```
 
@@ -847,6 +883,7 @@ int value = ok ? 1 0;
 Correct Example:
 
 ```kinal
+bool ok = true;
 int value = ok ? 1 : 0;
 ```
 
@@ -890,7 +927,7 @@ Fix: Add `</` after the Block name.
 - Default Detail: Missing '<' before generic type arguments
 - Description: Generic call is missing left angle bracket.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
 Identity int>(1);
@@ -899,7 +936,12 @@ Identity int>(1);
 Correct Example:
 
 ```kinal
-Identity<int>(1);
+Function T Identity<T>(T value)
+{
+    Return value;
+}
+
+int result = Identity<int>(1);
 ```
 
 Reason: Explicit type parameters must be completely enclosed in angle brackets.
@@ -942,7 +984,7 @@ Fix: Fill the end boundary with `/>`.
 - Default Detail: Missing '>' after generic type arguments
 - Description: Generic type parameter list is missing a closing angle bracket.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
 Identity<int(1);
@@ -951,7 +993,12 @@ Identity<int(1);
 Correct Example:
 
 ```kinal
-Identity<int>(1);
+Function T Identity<T>(T value)
+{
+    Return value;
+}
+
+int result = Identity<int>(1);
 ```
 
 Reason: Angle brackets must be closed in pairs.
@@ -966,7 +1013,7 @@ Fix: Append `>` to the end of the type parameter list.
 - Default Detail: Missing '>' after generic type parameter list
 - Description: Generic type parameter list is missing a closing angle bracket.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
 Identity<int(1);
@@ -975,7 +1022,12 @@ Identity<int(1);
 Correct Example:
 
 ```kinal
-Identity<int>(1);
+Function T Identity<T>(T value)
+{
+    Return value;
+}
+
+int result = Identity<int>(1);
 ```
 
 Reason: Angle brackets must be closed in pairs.
@@ -990,7 +1042,7 @@ Fix: Append `>` to the end of the type parameter list.
 - Default Detail: Missing '[' in cast expression
 - Description: Explicit conversion missing left bracket.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
 int value = int](1);
@@ -1014,7 +1066,7 @@ Fix: Add `[` before the type.
 - Default Detail: Missing ']'
 - Description: The current bracket structure is missing a closing bracket.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
 int[] values = { 1, 2;
@@ -1038,7 +1090,7 @@ Fix: Fill in the missing `]` or correct the entire structure.
 - Default Detail: Missing ']' after attribute
 - Description: Property is missing closing bracket.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
 [Route("/ping")
@@ -1047,7 +1099,22 @@ Incorrect Example:
 Correct Example:
 
 ```kinal
+Meta Route(string path)
+{
+    On @function;
+    Keep @runtime;
+}
+
 [Route("/ping")]
+Function void Ping()
+{
+}
+
+Static Function int Main()
+{
+    Ping();
+    Return 0;
+}
 ```
 
 Reason: Property declarations must be wrapped in `[` and `]`.
@@ -1071,6 +1138,7 @@ int first = values[0;
 Correct Example:
 
 ```kinal
+int[] values = {1, 2};
 int first = values[0];
 ```
 
@@ -1086,7 +1154,7 @@ Fix: Append `]` at the end of the index.
 - Default Detail: Missing ']' in cast expression
 - Description: Explicit conversion missing closing bracket.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
 int value = [int(1);
@@ -1106,29 +1174,10 @@ Fix: Add `]` after the type.
 
 ## E-SYN-00036 — Expected '{'
 
-- Severity: Error
-- Default Detail: Missing '{'
-- Description: The opening curly brace is missing at the current position.
+- Default detail: Missing '{'
+- Generic parser template: a context requiring braces lacks the opening brace. Ordinary If permits an unbraced single statement; that form does not reproduce this error. Switch and class declarations can report their more specific brace diagnostics.
 
-Incorrect Example:
-
-```kinal
-If (true)
-    Return 1;
-```
-
-Correct Example:
-
-```kinal
-If (true)
-{
-    Return 1;
-}
-```
-
-Reason: This structure requires curly braces to be used to wrap the body.
-
-Fix: Complete `{` and complete the block.
+Check the enclosing grammar and first reported diagnostic; see [Control Flow](../../language/control-flow.md).
 
 ---
 
@@ -1147,6 +1196,7 @@ int value = If (ok) { 1 } Else 0 };
 Correct Example:
 
 ```kinal
+bool ok = true;
 int value = If (ok) { 1 } Else { 0 };
 ```
 
@@ -1171,6 +1221,7 @@ int value = If (ok) 1 } Else { 0 };
 Correct Example:
 
 ```kinal
+bool ok = true;
 int value = If (ok) { 1 } Else { 0 };
 ```
 
@@ -1215,7 +1266,7 @@ Fix: Add `{` after the class name.
 - Default Detail: Missing '{' in enum
 - Description: Enumeration declaration is missing opening curly brace.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
 Enum State
@@ -1302,7 +1353,7 @@ Fix: Add `{` after the structure name.
 - Default Detail: Missing '}'
 - Description: The closing curly brace is missing at the current position.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
 If (true)
@@ -1331,7 +1382,7 @@ Fix: Append `}` at the end of the block.
 - Default Detail: Missing '}' in Else expression
 - Description: One of the branches in the If expression is missing a closing curly brace.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
 int value = If (ok) { 1 Else { 0 };
@@ -1340,6 +1391,7 @@ int value = If (ok) { 1 Else { 0 };
 Correct Example:
 
 ```kinal
+bool ok = true;
 int value = If (ok) { 1 } Else { 0 };
 ```
 
@@ -1364,6 +1416,7 @@ int value = If (ok) { 1 Else { 0 };
 Correct Example:
 
 ```kinal
+bool ok = true;
 int value = If (ok) { 1 } Else { 0 };
 ```
 
@@ -1434,7 +1487,7 @@ Fix: Add `}` at the end of the enumeration.
 - Default Detail: Unexpected end of file while parsing expression
 - Description: The file ended prematurely before the expression ended.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
 int value = (1 +
@@ -1458,7 +1511,7 @@ Fix: Complete missing operands, separators, or closing symbols.
 - Default Detail: Unexpected end of file while parsing variable declaration
 - Description: The file ends when the variable declaration has not been completely written.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
 int value =
@@ -1506,7 +1559,7 @@ Fix: Add the closing quote and check for escaping if necessary.
 - Default Detail: Expected 'Block' keyword
 - Description: The `Block` keyword should be written here.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
 Demo</
@@ -1567,7 +1620,7 @@ Fix: Add legal `Catch` after `Try`.
 - Default Detail: Expected 'Class' keyword
 - Description: This should be the class declaration.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
 Public User
@@ -1595,7 +1648,7 @@ Fix: Add `Class`.
 - Default Detail: Expected 'Constructor' keyword
 - Description: Here it should be written `Constructor`.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
 Public Build(int value)
@@ -1606,8 +1659,9 @@ Public Build(int value)
 Correct Example:
 
 ```kinal
-Public Constructor(int value)
+Class User
 {
+    Public Constructor(int value) {}
 }
 ```
 
@@ -1632,6 +1686,7 @@ int value = If (ok) { 1 };
 Correct Example:
 
 ```kinal
+bool ok = true;
 int value = If (ok) { 1 } Else { 0 };
 ```
 
@@ -1647,7 +1702,7 @@ Fix: Add the `Else` branch.
 - Default Detail: Expected 'Enum' keyword
 - Description: Here it should be written `Enum`.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
 State
@@ -1677,7 +1732,7 @@ Fix: Add `Enum`.
 - Default Detail: Expected 'For' keyword
 - Description: Here it should be written `For`.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
 (int i = 0; i < 10; i = i + 1)
@@ -1705,7 +1760,7 @@ Fix: Add `For`.
 - Default Detail: Expected 'Function' keyword
 - Description: Here it should be written `Function`.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
 int Add(int a, int b)
@@ -1735,7 +1790,7 @@ Fix: Add `Function` before the statement.
 - Default Detail: Expected 'Get' keyword
 - Description: The `Get` import should be written here.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
 IO.Console;
@@ -1759,7 +1814,7 @@ Fix: Change to a complete `Get ...;` statement.
 - Default Detail: Expected block name
 - Description: Block statement is missing a name.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
 Block </
@@ -1787,7 +1842,7 @@ Fix: Add the name after `Block`.
 - Default Detail: Expected block variable name
 - Description: Block variable declaration is missing a variable name.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
 IO.Type.Object.Block = Block</
@@ -1815,7 +1870,7 @@ Fix: Add the variable name after the type.
 - Default Detail: Expected catch variable name
 - Description: Catch parameter is missing a variable name.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
 Catch (IO.Error)
@@ -1826,6 +1881,12 @@ Catch (IO.Error)
 Correct Example:
 
 ```kinal
+Get IO.Error;
+
+Try
+{
+    Throw New IO.Error("Example", "message");
+}
 Catch (IO.Error err)
 {
 }
@@ -2089,7 +2150,7 @@ Fix: Add the method name after the return type.
 - Default Detail: Expected name
 - Description: The current location is missing an identifier.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
 int = 1;
@@ -2143,7 +2204,7 @@ Fix: Add the parameter name after the formal parameter type.
 - Default Detail: Expected record name
 - Description: `Record` Missing tag name.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
 Record;
@@ -2152,7 +2213,10 @@ Record;
 Correct Example:
 
 ```kinal
-Record Exit;
+Block Flow
+</
+    Record Exit;
+/>
 ```
 
 Reason: Block tags must be named.
@@ -2167,7 +2231,7 @@ Fix: Add the label name after `Record`.
 - Default Detail: Expected remote name
 - Description: The remote name or rebind name is missing an identifier.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
 Get Console By IO.Console.;
@@ -2299,7 +2363,7 @@ Fix: Add `C` or `System` after `By`.
 - Default Detail: Expected 'If' keyword
 - Description: Here it should be written `If`.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
 (ok)
@@ -2311,6 +2375,7 @@ Incorrect Example:
 Correct Example:
 
 ```kinal
+bool ok = true;
 If (ok)
 {
     Return 1;
@@ -2329,7 +2394,7 @@ Fix: Add `If`.
 - Default Detail: Expected 'If' keyword in expression
 - Description: What is expected here is an If expression.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
 int value = (ok) { 1 } Else { 0 };
@@ -2338,6 +2403,7 @@ int value = (ok) { 1 } Else { 0 };
 Correct Example:
 
 ```kinal
+bool ok = true;
 int value = If (ok) { 1 } Else { 0 };
 ```
 
@@ -2353,7 +2419,7 @@ Fix: Add `If` at the beginning of the expression.
 - Default Detail: Expected 'Interface' keyword
 - Description: Here it should be written `Interface`.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
 IValue
@@ -2383,7 +2449,7 @@ Fix: Add `Interface`.
 - Default Detail: Expected 'Jump' keyword
 - Description: Here it should be written `Jump`.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
 Record Exit;
@@ -2393,8 +2459,11 @@ Go Exit;
 Correct Example:
 
 ```kinal
-Record Exit;
-Jump Exit;
+Block Flow
+</
+    Record Exit;
+    Jump Exit;
+/>
 ```
 
 Reason: Block jump semantics only recognize `Jump`.
@@ -2469,7 +2538,7 @@ Fix: Change enumeration member values to numbers.
 - Default Detail: Expected 'Record' keyword
 - Description: Here it should be written `Record`.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
 Mark A;
@@ -2478,7 +2547,10 @@ Mark A;
 Correct Example:
 
 ```kinal
-Record A;
+Block Flow
+</
+    Record A;
+/>
 ```
 
 Reason: Label declarations within Block must use `Record`.
@@ -2496,7 +2568,7 @@ Fix: Add `Record`.
 Incorrect Example:
 
 ```kinal
-Class Base
+Class ParentClass
 {
     Public Abstract Function int Value()
 }
@@ -2505,7 +2577,7 @@ Class Base
 Correct Example:
 
 ```kinal
-Class Base
+Abstract Class ParentClass
 {
     Public Abstract Function int Value();
 }
@@ -2523,7 +2595,7 @@ Fix: Add `;` at the end of the abstract method declaration.
 - Default Detail: Extern function requires ';'
 - Description: The current statement is missing a trailing semicolon.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
 Extern Function int puts(string text) By C
@@ -2547,7 +2619,7 @@ Fix: Add `;` at the end of the extern declaration.
 - Default Detail: Missing ';' after Get
 - Description: The current statement is missing a trailing semicolon.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
 Get IO.Console
@@ -2571,7 +2643,7 @@ Fix: Add `;` to the end of the `Get` statement.
 - Default Detail: Missing ';' after Jump
 - Description: The current statement is missing a trailing semicolon.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
 Jump Exit
@@ -2580,7 +2652,11 @@ Jump Exit
 Correct Example:
 
 ```kinal
-Jump Exit;
+Block Flow
+</
+    Jump Exit;
+    Record Exit;
+/>
 ```
 
 Reason: Jump statements require an explicit terminator just like normal statements.
@@ -2619,7 +2695,7 @@ Fix: Add `;` after the `Throw` statement.
 - Default Detail: Missing ';' after Unit
 - Description: The current statement is missing a trailing semicolon.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
 Unit App.Main
@@ -2652,7 +2728,10 @@ Break
 Correct Example:
 
 ```kinal
-Break;
+While (true)
+{
+    Break;
+}
 ```
 
 Reason: `Break` is a complete statement and requires a terminator.
@@ -2676,7 +2755,10 @@ Continue
 Correct Example:
 
 ```kinal
-Continue;
+For (int i = 0; i < 1; i++)
+{
+    Continue;
+}
 ```
 
 Reason: `Continue` is a complete statement and requires a terminator.
@@ -2724,6 +2806,8 @@ PrintLine("hello")
 Correct Example:
 
 ```kinal
+Get PrintLine By IO.Console.PrintLine;
+
 PrintLine("hello");
 ```
 
@@ -2780,6 +2864,7 @@ For (i = 0; i < 10 i = i + 1)
 Correct Example:
 
 ```kinal
+int i = 0;
 For (i = 0; i < 10; i = i + 1)
 {
 }
@@ -2821,7 +2906,7 @@ Fix: Add `;` after `Return`.
 - Default Detail: Missing ';' after variable declaration
 - Description: The current statement is missing a trailing semicolon.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
 Var value = 1
@@ -2845,7 +2930,7 @@ Fix: Add `;` at the end of the variable declaration.
 - Default Detail: Missing ';' in for initializer
 - Description: The token sequence at the current position does not comply with the current grammar rules.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
 // This form does not produce valid syntax.
@@ -2874,7 +2959,7 @@ Fix: Prioritizes checking of nearest keywords, parentheses, curly braces, angle 
 - Default Detail: Expected 'Struct' keyword
 - Description: Here it should be written `Struct`.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
 Pair
@@ -2904,7 +2989,7 @@ Fix: Add `Struct`.
 - Default Detail: Expected 'Throw' keyword
 - Description: Here it should be written `Throw`.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
 Raise "boom";
@@ -2928,7 +3013,7 @@ Fix: Change the keyword to `Throw`.
 - Default Detail: Expected 'Try' keyword
 - Description: Here it should be written `Try`.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
 Test
@@ -2964,7 +3049,7 @@ Fix: Add `Try`.
 - Default Detail: Expected 'While' keyword
 - Description: Here it should be written `While`.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
 (true)
@@ -3050,7 +3135,7 @@ Fix: Change the code to a legal top-level declaration, or move it into the body 
 - Default Detail: Top-level global variables cannot use function modifiers like Static/Extern/Delegate/Safe/Trusted/Unsafe/Async
 - Description: Top-level global variables cannot have function modifiers.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
 Static int counter = 0;
@@ -3065,3 +3150,28 @@ int counter = 0;
 Reason: Modifiers such as `Static`, `Extern`, and `Safe` are function-level semantics and do not apply to top-level variables.
 
 Fix: Remove these modifiers.
+
+## E-SYN-00108 — Statement Too Deep
+
+- Severity: Error
+- Default Detail: Statement nesting exceeds parser recursion limit
+- Trigger: recursive statement nesting exceeds the parser guard, for example accidentally repeated generated If/Block nesting.
+- Fix: split deeply nested logic into functions or sequential statements and check code generation for unintended nesting. Indentation does not change the limit.
+
+Use decomposition rather than generating thousands of nested lines:
+
+```kinal
+Function bool Ready(bool enabled)
+{
+    Return enabled;
+}
+
+Static Function int Main()
+{
+    If (Ready(true))
+    {
+        Return 0;
+    }
+    Return 1;
+}
+```

@@ -61,3 +61,17 @@ KinalVM 通过生成的 `apps/kinalvm/src/IO/Kinal/VM/BuildInfo.kn` Unit 嵌入
 构建流程也会自动刷新此文件。发行包包含对应的根目录 `VERSION` 文件。
 
 详见 [releasing.md](releasing.md)。
+
+## 选择与核对 C 工具链
+
+本文命令构建 C 编译器、LSP 和 C 编译的 VM，自举 bootstrap 属于独立流程。当前 hosted workflow 使用 LLVM 21。选择系统 LLVM 时，将 LLVM_DIR 指向对应 CMake 包目录，并确保 clang、库与目标依赖匹配；不要静默混用另一主版本的 llvm-config／clang。
+
+```bash
+python x.py status
+python x.py status --json
+python -m infra.scripts.x.vm_metadata --check
+```
+
+out/stage/host-release 是 Debug 对应的 Release 暂存目录。PATH 还有其他安装时，应显式使用该目录工具验证。`python x.py test --release --build` 会先构建；独立 Python VM fixture 仍需设置匹配的 KINAL_VM_PATH，见[测试指南](testing.md)。
+
+原生跨编译仅有 target triple 不等于完整 SDK，仍需要目标 CRT／系统库、兼容包资产、启动文件和链接器。保留暂存目录结构，以便发现 LLVM、链接器、运行时与 stdpkg。python x.py dist 打包主机 Release，不存在 x.py release 命令。

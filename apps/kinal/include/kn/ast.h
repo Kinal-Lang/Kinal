@@ -447,7 +447,7 @@ struct Expr
         struct { Expr *recv; const char *name; ExprList args; NameList arg_names; int builtin_id; TypeList type_args; int is_static; const char *static_type; int method_index; const char *method_owner; int is_qual_call; const char *qual_name; int is_property_compound; } member_call;
         struct { Expr *callee; ExprList args; NameList arg_names; } invoke;
         struct { int op; Expr *left; Expr *right; } binary;
-        struct { int op; Expr *expr; int is_postfix; } unary;
+        struct { int op; Expr *expr; int is_postfix; Expr *property_setter; } unary;
         struct { ExprList items; } array;
         struct { ExprList items; } package;
         struct { ExprList keys; ExprList values; } dict;
@@ -854,6 +854,7 @@ void stmtswitchcaselist_push(StmtSwitchCaseList *list, StmtSwitchCase c);
 void attrlist_push(AttrList *list, Attribute a);
 void paramlist_push(ParamList *list, Param p);
 void funclist_push(FuncList *list, Func f);
+bool func_matches_entry(const Func *f, const char *entry);
 void importlist_push(ImportList *list, ImportMap m);
 void fieldlist_push(FieldList *list, Field f);
 void methodlist_push(MethodList *list, Method m);

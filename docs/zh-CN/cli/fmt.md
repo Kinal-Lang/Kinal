@@ -1,141 +1,80 @@
-# kinal fmt — 代码格式化
+# `kinal fmt`：代码格式化
 
-`kinal fmt` 是 Kinal 语言的官方代码格式化子命令，内置于 `kinal` 工具链，无需单独安装。
+`fmt` 内置于 C 编译器工具。它处理源码文本，不能替代语法分析、语义检查或运行测试。
 
-## 用法
-
-```bash
-kinal fmt <文件.kn>
-kinal fmt <目录/>
-kinal fmt <文件1.kn> <文件2.kn> ...
-```
-
-格式化会**直接修改文件**（in-place），将文件内容替换为符合 Kinal 规范的格式。
-
----
-
-## 选项
-
-| 选项 | 说明 |
-|------|------|
-| `--check` | 仅检查是否已格式化，不修改文件 |
-| `--stdin` | 从标准输入读取源码 |
-| `--stdout` | 将格式化结果写入标准输出（不修改文件） |
-| `--stdin-filepath <路径>` | 为 stdin 提供文件路径上下文 |
-| `-h, --help` | 显示 fmt 帮助 |
-
----
-
-## 示例
-
-### 格式化单个文件
+## 命令与退出状态
 
 ```bash
 kinal fmt main.kn
-```
-
-### 格式化目录下所有 .kn 文件
-
-```bash
 kinal fmt src/
+kinal fmt main.kn helpers.kn
+kinal fmt --check src/
+kinal fmt --stdout main.kn
 ```
 
-### 格式化多个文件
+普通文件模式原地替换有变化的文件。目录参数递归收集 `.kn` 文件，其他可支持的源文件拼写需要显式传入。`--check` 不修改文件，存在格式差异时返回非零；无效选项、读取失败等错误也可能返回非零。
+
+| 选项 | 含义 |
+|------|------|
+| `--check` | 比较格式化结果，不写文件 |
+| `--stdin` | 从标准输入读取源码 |
+| `--stdout` | 将格式化文本写到标准输出 |
+| `--stdin-filepath <path>` | 编辑器集成提供的虚拟文件名 |
+| `-h`、`--help` | 显示格式化帮助 |
+
+`--stdin` 默认输出格式化结果，除非被 `--check` 抑制；`--stdout` 显式要求输出。文件模式中的 `--stdout` 用于预览，不覆盖原文件。多个文件的结果会拼接，编辑器整文替换应一次处理一个文件。`--stdin-filepath` 是上下文元数据，不负责选择项目或指定输出。
+
+## 标准输入
 
 ```bash
-kinal fmt main.kn utils.kn helpers.kn
+# POSIX shell
+kinal fmt --stdin --stdout --stdin-filepath src/Main.kn < src/Main.kn
 ```
 
----
+```powershell
+# PowerShell
+Get-Content -Raw -Encoding utf8 src/Main.kn | kinal fmt --stdin --stdout --stdin-filepath src/Main.kn
+```
 
-## Kinal 代码风格规范
+已有文本缓冲区的集成可直接将缓冲区写入子进程 stdin。VS Code 扩展使用这条路径，不需要为了请求格式化而先写磁盘源码。
 
-`kinal fmt` 遵循以下格式规则：
+## 格式风格
 
-### 缩进
-
-- 使用 **4 个空格**缩进（不使用 Tab）
-- 每级嵌套增加 4 个空格
-
-### 括号与大括号
-
-- 函数体、类体、控制流语句体的左大括号 `{` 与语句在同一行
-- 右大括号 `}` 独占一行
+当前格式化器采用四空格缩进、普通二元操作符两侧空格、逗号后空格，块起始花括号独占一行：
 
 ```kinal
-// 正确
-Function int Add(int a, int b)
-{
-    Return a + b;
-}
-
-// 错误（格式化后会修正）
 Function int Add(int a, int b)
 {
     Return a + b;
 }
 ```
 
-### 关键字与标识符
+它不重命名符号，也不会将本地化别名 token 改写成标准关键字。函数名 PascalCase 等属于项目建议，不是格式化器自动重写规则。注释和字符串的含义仍需保留，特殊语法变更应纳入正常代码审查。
 
-- 关键字首字母大写（`If`、`While`、`Function` 等）由编译器强制要求，`fmt` 不负责修改关键字大小写
-- 类名使用 PascalCase（`MyClass`）
-- 函数名使用 PascalCase（`GetValue`）
-- 变量名使用 camelCase（`myValue`）
-
-### 空格
-
-- 运算符前后各一个空格：`a + b`、`x == y`
-- 逗号后一个空格：`Function int Add(int a, int b)`
-- 不在括号内侧加空格：`Add(a, b)` 而非 `Add( a, b )`
-
-### 空行
-
-- 顶级声明之间保留一个空行
-- 函数内逻辑块之间可以有空行，但不超过一个
-
----
-
-## 在 CI 中检查格式
-
-使用 `--check` 在 CI 中验证代码是否符合规范：
+## CI 与编辑器设置
 
 ```bash
 kinal fmt --check src/
+kinal build --project . --emit check -o out/project.kcheck
 ```
 
-`--check` 模式不会修改文件，只在存在格式差异时以非零状态码退出。
+首条命令检查格式，第二条检查语言语义，两者都不能证明运行正确。先在本地格式化并审查 diff，再在 CI 重复只读检查。
 
-也可以用 `git diff` 方式：
-
-```bash
-kinal fmt src/
-git diff --exit-code
-```
-
----
-
-## 编辑器集成
-
-### VS Code
-
-安装 Kinal 语言插件后，可以将 `kinal fmt` 配置为保存时自动格式化：
+VS Code 的 `.vscode/settings.json`：
 
 ```json
-// .vscode/settings.json
 {
-    "[kinal]":
-    {
+    "[kinal]": {
         "editor.formatOnSave": true,
-        "editor.defaultFormatter": "kinal-lang.kinal"
+        "editor.defaultFormatter": "kinal.kinal"
     }
 }
 ```
 
----
+编译器不在 PATH 时设置 `kinal.path`。此格式化器注册给 Kinal 源码，不负责 `.knproj` 配置文件。编译器、LSP 的诊断语言设置也独立于保存时格式化。
 
-## 相关
+## 相关文档
 
-- [CLI 总览](compiler.md) — 所有子命令概览
-- [项目结构](../getting-started/project-structure.md) — 推荐目录布局
-- [CLI 规范](cli-spec.md) — CLI 设计规范（开发者参考）
+- [编译器 CLI](compiler.md)
+- [项目文件](project-files.md)
+- [CLI 设计规范](cli-spec.md)

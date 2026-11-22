@@ -1,0 +1,81 @@
+Unit IO.Kinal.Compiler.Project.CompilationDependencies;
+
+Get IO.Directory;
+Get IO.Path;
+Get IO.Text;
+Get IO.Kinal.Runtime;
+Get IO.Kinal.Compiler.Source.SourcePath;
+Get IO.Kinal.Compiler.Core.CompileSession;
+Get IO.Kinal.Compiler.Project.PackageResolver;
+Get IO.Kinal.Compiler.Project.DependencyResolver;
+
+// Project package resolution needs the package layout itself so it can apply
+// manifest/version selection before extracting an optional .klib payload.
+Safe Function string FindStandardLibraryPackageRoot(string entryPath)
+{
+    string compilerDirectory = IO.Path.Directory(
+        IO.Kinal.Runtime.ExecutablePath());
+    string packagedRoot = IO.Path.Combine(compilerDirectory, "stdpkg");
+    If (IO.Directory.Exists(packagedRoot)) Return packagedRoot;
+
+    string normalizedEntry = IO.Path.Normalize(entryPath);
+    If (IO.Path.IsRelative(normalizedEntry))
+        normalizedEntry = IO.Path.Normalize(
+            IO.Path.Combine(IO.Path.CurrentDirectory(), normalizedEntry));
+    string directory = IO.Path.Directory(normalizedEntry);
+    int depth = 0;
+    While (!IO.Text.IsEmpty(directory) && depth < 16)
+    {
+        string candidate = IO.Path.Combine(directory, "libs/std");
+        If (IO.Directory.Exists(candidate)) Return candidate;
+        string parent = IO.Path.Directory(directory);
+        If (parent == directory) Break;
+        directory = parent;
+        depth = depth + 1;
+    }
+
+    string sourceFallback = IO.Path.Combine(compilerDirectory, "stdlib-src");
+    If (IO.Directory.Exists(sourceFallback)) Return sourceFallback;
+    string currentFallback = IO.Path.Combine(IO.Path.CurrentDirectory(), "libs/std");
+    If (IO.Directory.Exists(currentFallback)) Return currentFallback;
+    Return "";
+}
+
+Safe Function void LoadCatalogRuntimeSources(CompileSession session,
+                                               PackageSourceCatalog catalog)
+{
+    bool savedTrace = session.Trace;
+    session.Trace = false;
+    int index = 0;
+    While (index < catalog.RuntimeSources.Count())
+    {
+        string path = [string](catalog.RuntimeSources.Fetch(index));
+        If (!session.ContainsParsedPath(IO.Kinal.Compiler.Source.SourcePath.Canonical(path))) session.ParseFile(path);
+        index = index + 1;
+    }
+    session.Trace = savedTrace;
+}
+
+Safe Function void PrepareProjectDependencies(CompileSession session,
+                                                string standardRoot, string cacheRoot)
+{
+    PackageSourceCatalog catalog =
+        IO.Kinal.Compiler.Project.PackageResolver.ResolveProjectPackages(
+            session.Project, session.Profile,
+            standardRoot, cacheRoot);
+    If (!IO.Text.IsEmpty(catalog.Error))
+    {
+        session.ReportProject("Package resolution failed", catalog.Error);
+        Return;
+    }
+    If (!session.IsFreestanding()) LoadCatalogRuntimeSources(session, catalog);
+    If (!session.HasErrors())
+    {
+        DependencyResolver resolver = New DependencyResolver(session, catalog);
+        resolver.Resolve();
+    }
+    // Only selected CompilationUnits must survive into Sema/codegen. Keeping
+    // every discovery token stream alive makes later GC work scale with the
+    // entire installed library, including sources this build never uses.
+    session.ProjectProbeCache = dict.Create();
+}

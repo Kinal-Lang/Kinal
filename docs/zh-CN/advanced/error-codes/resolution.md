@@ -2,7 +2,7 @@
 
 找不到符号、类型、成员或引用目标时触发。
 
-本文中的示例都是最小复现片段，用来说明该错误码最常见的触发方式；少数更偏内部的诊断会使用最接近用户代码的表面写法来说明。
+本页记录预注册模板。正确示例展示支持的写法；触发形态用于说明规则或解析状态，可能依赖外围声明，或在当前 C 编译器中先报告其他诊断。
 
 ---
 
@@ -42,7 +42,7 @@
 - 默认详情：Multiple functions match; use qualified name
 - 说明：当前调用点匹配到了多个同等可行的函数候选。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
 Get A By App.MathA;
@@ -54,10 +54,14 @@ int value = Add(1, 2);
 正确示例：
 
 ```kinal
-Get A By App.MathA;
-Get B By App.MathB;
+Unit Docs.MathA;
 
-int value = A.Add(1, 2);
+Function int Add(int a, int b) { Return a + b; }
+
+Static Function int Main()
+{
+    Return Docs.MathA.Add(1, 2);
+}
 ```
 
 原因：当前作用域里存在多个同名且同样适配的候选函数，编译器不能武断地替你选一个。
@@ -72,7 +76,7 @@ int value = A.Add(1, 2);
 - 默认详情：Base class not found
 - 说明：当前引用目标在可见范围内不存在。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
 Class Derived By MissingBase
@@ -171,7 +175,7 @@ State value = State.Done;
 - 默认详情：Unsupported expression
 - 说明：当前表达式形态不是编译器支持的表达式种类。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
 Var pair = (1, 2);
@@ -264,15 +268,19 @@ int value = p.Right;
 - 默认详情：Builtin function reference not found
 - 说明：当前引用目标在可见范围内不存在。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
+Get IO.Console;
+
 IO.Type.Object.Function fn = IO.Console.PrintLn;
 ```
 
 正确示例：
 
 ```kinal
+Get IO.Console;
+
 IO.Type.Object.Function fn = IO.Console.PrintLine;
 ```
 
@@ -317,7 +325,7 @@ int value = MakeUser();
 - 默认详情：Interface not found
 - 说明：当前引用目标在可见范围内不存在。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
 Class User By IMissing
@@ -353,7 +361,7 @@ Class User By IUser
 - 默认详情：Interface method not found
 - 说明：当前引用目标在可见范围内不存在。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
 Interface IUser
@@ -480,7 +488,7 @@ int value = Math.Add(1, 2);
 错误示例：
 
 ```kinal
-Struct Packet By Packed(2)
+Struct Packet By UnknownSpecifier
 {
     int Value;
 }
@@ -507,7 +515,7 @@ Struct Packet By Align(8)
 - 默认详情：Symbol not found in module
 - 说明：模块导入成功了，但目标符号本身并不存在。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
 Get PrintLn By IO.Console.PrintLn;
@@ -531,7 +539,7 @@ Get PrintLine By IO.Console.PrintLine;
 - 默认详情：Cast target type is unknown
 - 说明：当前引用目标在可见范围内不存在。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
 Var value = [MissingType](1);
@@ -555,7 +563,7 @@ int value = [int](1);
 - 默认详情：Class not found
 - 说明：当前引用目标在可见范围内不存在。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
 MissingType value;
@@ -583,7 +591,7 @@ User value;
 - 默认详情：Class or interface not found
 - 说明：当前引用目标在可见范围内不存在。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
 Class Derived By MissingBase
@@ -620,7 +628,7 @@ Class Derived By IValue
 - 默认详情：Enum not found
 - 说明：当前引用目标在可见范围内不存在。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
 MissingEnum value;
@@ -649,7 +657,7 @@ State value;
 - 默认详情：Struct not found
 - 说明：当前引用目标在可见范围内不存在。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
 MissingStruct value;
@@ -728,7 +736,7 @@ int value = missing;
 - 默认详情：Unknown named argument
 - 说明：当前引用目标在可见范围内不存在。
 
-错误示例：
+触发形态（依赖上下文）：
 
 ```kinal
 Function string Format(string text, int indent = 0)

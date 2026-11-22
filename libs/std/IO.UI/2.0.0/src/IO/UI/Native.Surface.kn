@@ -1,0 +1,53 @@
+Unit IO.__UI;
+
+[LinkFileTarget("win-x64", "../../../native/win-x64/kn_ui_surface.obj")]
+[LinkLibTarget("win-x64", "d3d11")]
+[LinkLibTarget("win-x64", "d2d1")]
+[LinkLibTarget("win-x64", "imm32")]
+[LinkLibTarget("win-x64", "dwmapi")]
+[LinkLibTarget("win-x64", "dwrite")]
+[LinkLibTarget("win-x64", "dxgi")]
+[LinkLibTarget("win-x64", "uuid")]
+[LinkFileTarget("win-arm64", "../../../native/win-arm64/kn_ui_surface.obj")]
+[LinkLibTarget("win-arm64", "d3d11")]
+[LinkLibTarget("win-arm64", "d2d1")]
+[LinkLibTarget("win-arm64", "imm32")]
+[LinkLibTarget("win-arm64", "dwmapi")]
+[LinkLibTarget("win-arm64", "dwrite")]
+[LinkLibTarget("win-arm64", "dxgi")]
+[LinkLibTarget("win-arm64", "uuid")]
+Extern Function byte* kn_ui_window(u16* title, i32 x, i32 y, i32 width, i32 height, byte* callback) By C;
+[IO.Kinal.Runtime.KncIntrinsic(192)]
+Extern Function void kn_ui_box(byte* surface, i32 x, i32 y, i32 width, i32 height, u32 color, i32 radius, i32 stroke) By C;
+[IO.Kinal.Runtime.KncIntrinsic(193)]
+Extern Function void kn_ui_gradient(byte* surface, i32 x, i32 y, i32 width, i32 height, u32 fromColor, u32 toColor, i32 vertical) By C;
+[IO.Kinal.Runtime.KncIntrinsic(194)]
+Extern Function void kn_ui_clip(byte* surface, i32 x, i32 y, i32 width, i32 height, i32 enable) By C;
+Extern Function void kn_ui_text(byte* surface, u16* text, i32 x, i32 y, i32 width, i32 height, i32 size, i32 weight, i32 mono, u32 color, i32 alignment) By C;
+[IO.Kinal.Runtime.KncIntrinsic(197)]
+Extern Function void kn_ui_timer(byte* surface, i32 active) By C;
+Extern Function i32 kn_ui_dpi(byte* window) By C;
+[IO.Kinal.Runtime.KncIntrinsic(198)]
+Extern Function void kn_ui_client_size(byte* window, i32 width, i32 height) By C;
+Extern Function void kn_ui_dpi_bounds(byte* window, isize suggested) By C;
+Extern Function void kn_ui_init() By C;
+
+
+[IO.Kinal.Runtime.KncIntrinsic(199)]
+Extern Function void kn_ui_dark_title(byte* window, i32 dark) By C;
+Extern Function void kn_ui_cursor(byte* window,i32 kind) By C;
+[IO.Kinal.Runtime.KncIntrinsic(200)]
+Extern Function void kn_ui_ime(byte* window,i32 x,i32 y) By C;
+[IO.Kinal.Runtime.KncIntrinsic(195)]
+Extern Function void kn_ui_line(byte* window,i32 x,i32 y,i32 endX,i32 endY,u32 color,i32 width) By C;
+[IO.Kinal.Runtime.KncIntrinsic(196)]
+Extern Function void kn_ui_triangle(byte* window,i32 ax,i32 ay,i32 bx,i32 by,i32 cx,i32 cy,u32 color) By C;
+Extern Function void kn_ui_copy(byte* window,u16* value) By C;
+[IO.Kinal.Runtime.KncIntrinsic(201)]
+Extern Function string kn_ui_paste(byte* window) By C;
+
+Extern Function i32 kn_ui_text_position(byte* handle,u16* text,i32 size,i32 mono,i32 value,i32 hit) By C;
+
+Extern Function void kn_ui_code(byte* handle,u16* text,string runs,i32 x,i32 y,i32 size,u32 color) By C;
+
+Extern Function void kn_ui_shown(byte* window) By C;

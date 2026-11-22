@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import stat
 import tarfile
@@ -20,6 +21,7 @@ from .context import (
 from .llvm import detect_llvm_dir, llvm_bin_dir, resolve_cmake_env
 from .runtime_build import (
     build_cjson_for_available_targets,
+    build_io_ui_native_assets,
     build_civetweb_for_available_targets,
     build_kinal_vm_binary,
     build_runtime_for_host,
@@ -35,6 +37,7 @@ from .runtime_build import (
 )
 from .util import copy_tree, find_artifact, read_json, run, write_text
 from .vm_metadata import generate_kinalvm_build_info
+from .compiler_metadata import generate_selfhost_build_info
 
 
 def _rmtree(path: Path) -> None:
@@ -100,6 +103,7 @@ def build_official_stdpkg_klibs(compiler: Path, llvm_bin: Path | None = None) ->
     sync_io_web_native_assets(STDPKG_DIR)
     sync_io_request_native_assets(STDPKG_DIR)
     sync_io_json_native_assets(STDPKG_DIR)
+    build_io_ui_native_assets(STDPKG_DIR)
     for manifest in manifests:
         data = read_json(manifest)
         name = data.get("name", manifest.parent.parent.name)
@@ -107,6 +111,47 @@ def build_official_stdpkg_klibs(compiler: Path, llvm_bin: Path | None = None) ->
         lib_dir.mkdir(parents=True, exist_ok=True)
         out_klib = lib_dir / f"{name}.klib"
         run([compiler, "pkg", "build", "--manifest", manifest, "-o", out_klib], cwd=ROOT)
+
+
+def create_vm_executor_stdpkg(compiler: Path, bundle_stdpkg: Path, include_sources: bool) -> None:
+    """Package the KNC frontend reachable from Executor, without the CLI or LLVM."""
+    import json
+
+    version = bundle_stdpkg / "IO.Kinal.VM.Executor" / "1.0.0"
+    src = version / "src"
+    if src.exists():
+        _rmtree(src)
+    src.mkdir(parents=True)
+    entry = ROOT / "apps/kinalvm/executor/Executor.kn"
+    compiler_src = ROOT / "apps/kinal-selfhost/src"
+    sources = {}
+    for path in compiler_src.rglob("*.kn"):
+        source = path.read_text(encoding="utf-8-sig")
+        unit = re.search(r"^Unit\s+([\w.]+);", source, re.MULTILINE)
+        if unit:
+            sources.setdefault(unit[1], []).append(path)
+    pending = [entry]
+    copied = set()
+    while pending:
+        path = pending.pop()
+        if path in copied:
+            continue
+        copied.add(path)
+        dest = src / (path.name if path == entry else path.relative_to(compiler_src))
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(path, dest)
+        for name in re.findall(r"^Get\s+(?:\w+\s+By\s+)?(IO\.Kinal\.Compiler[\w.]+);",
+                               path.read_text(encoding="utf-8-sig"), re.MULTILINE):
+            pending.extend(sources[name])
+    manifest = version / "package.knpkg.json"
+    manifest.write_text(json.dumps(dict(kind="package", name="IO.Kinal.VM.Executor", version="1.0.0",
+        source_root="src", entry="src/Executor.kn", klib="lib/IO.Kinal.VM.Executor.klib",
+        dependencies=["IO.Core", "IO.Kinal.VM"]), indent=2) + "\n", encoding="utf-8")
+    archive = version / "lib" / "IO.Kinal.VM.Executor.klib"
+    archive.parent.mkdir(exist_ok=True)
+    run([compiler, "pkg", "build", "--manifest", manifest, "-o", archive], cwd=version)
+    if not include_sources:
+        _rmtree(src)
 
 
 def create_kinalvm_stdpkg(compiler: Path, bundle_stdpkg: Path, *, include_sources: bool = True) -> None:
@@ -120,6 +165,7 @@ def create_kinalvm_stdpkg(compiler: Path, bundle_stdpkg: Path, *, include_source
     import json as _json
 
     generate_kinalvm_build_info()
+    generate_selfhost_build_info()
     vm_lib_src = ROOT / "apps" / "kinalvm" / "src" / "IO" / "Kinal" / "VM"
     ver_dir = bundle_stdpkg / "IO.Kinal.VM" / "1.0.0"
     ver_dir.mkdir(parents=True, exist_ok=True)
@@ -142,6 +188,7 @@ def create_kinalvm_stdpkg(compiler: Path, bundle_stdpkg: Path, *, include_source
                 "source_root": "src/IO/Kinal/VM",
                 "klib": "lib/IO.Kinal.VM.klib",
                 "entry": "src/IO/Kinal/VM/Binary.kn",
+                "dependencies": ["IO.Core", "IO.Json"],
             },
             indent=2,
             ensure_ascii=False,
@@ -155,6 +202,7 @@ def create_kinalvm_stdpkg(compiler: Path, bundle_stdpkg: Path, *, include_source
     lib_dir.mkdir(parents=True, exist_ok=True)
     out_klib = lib_dir / "IO.Kinal.VM.klib"
     run([compiler, "pkg", "build", "--manifest", manifest, "-o", out_klib], cwd=ver_dir)
+    create_vm_executor_stdpkg(compiler, bundle_stdpkg, include_sources)
 
     # Optionally strip sources for release
     if not include_sources:

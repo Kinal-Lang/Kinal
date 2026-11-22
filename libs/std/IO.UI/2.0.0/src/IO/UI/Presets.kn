@@ -1,0 +1,194 @@
+Unit IO.UI;
+
+Get IO.Text;
+Get Native By IO.__UI;
+
+Public Class ControlPalette
+{
+    Public u32 Canvas;
+    Public u32 Surface;
+    Public u32 Field;
+    Public u32 Hover;
+    Public u32 Border;
+    Public u32 Subtle;
+    Public u32 Text;
+    Public u32 Accent;
+    Public u32 Caret;
+    Public u32 OnAccent;
+    Public u32 Selection;
+    Public Constructor(){
+        Canvas=0xfff4f5f7;
+        Surface=0xffffffff;
+        Field=0xffffffff;
+        Hover=0xffe6ebef;
+        Border=0xff87939e;
+        Subtle=0xff616c76;
+        Text=0xff20252b;
+        Accent=0xff0067a8;
+        Caret=0xff17212b;
+        OnAccent=0xffffffff;
+        Selection=0xffbdddf4;
+    }
+}
+ControlPalette __UI_DefaultPalette=New ControlPalette();
+
+Function u32 __UI_Color(Color color,u32 fallback){
+    If(color==null)Return fallback;
+    Return ([u32](color.A)<<24)|([u32](color.R)<<16)|([u32](color.G)<<8)|[u32](color.B);
+}
+Function int __UI_Left(Component c){int x=0;While(c!=null){x+=c.ActualX;c=c.Parent;}Return x;}
+Function int __UI_Top(Component c){int y=0;While(c!=null){y+=c.ActualY;c=c.Parent;}Return y;}
+Function Component __UI_Hit(Component node,int x,int y){
+    x-=node.ActualX;y-=node.ActualY;
+    If(x<0||y<0||x>=node.ActualWidth||y>=node.ActualHeight)Return default;
+    If(node Is GroupBox group){
+        int i=group.ChildCount;While(i>0){i--;Component hit=__UI_Hit(group.ChildAt(i),x,y);If(hit!=null)Return hit;}
+    }
+    Return node;
+}
+Function Component[] __UI_TabNodes(Component node,IO.UI.Component[] nodes){
+    If(node Is GroupBox group){int i=0;While(i<group.ChildCount){nodes=__UI_TabNodes(group.ChildAt(i),nodes);i++;}}
+    Else If(node Is Button||node Is Input||node Is RadioButton||node Is CheckBox||node Is ComboBox||node Is Canvas)nodes=nodes.Add(node);
+    Return nodes;
+}
+Function void __UI_DrawTree(Component node,DrawingContext parent){
+    If(node.ActualWidth<=0||node.ActualHeight<=0)Return;
+    DrawingContext g=parent.View(node.ActualX,node.ActualY);
+    g.PushClip(0,0,node.ActualWidth,node.ActualHeight);node.Draw(g);
+    If(node Is GroupBox group){int i=0;While(i<group.ChildCount){__UI_DrawTree(group.ChildAt(i),g);i++;}}
+    g.PopClip();
+}
+Function int __UI_Low(int a,int b){Return a<b?a:b;}
+Function int __UI_High(int a,int b){Return a>b?a:b;}
+Function int __UI_PopupY(ComboBox combo){
+    int y=__UI_Top(combo)+combo.ActualHeight;int h=combo.Items.Length()*26;
+    If(combo.Owner!=null&&y+h>combo.Owner.ClientHeight&&__UI_Top(combo)>=h)y=__UI_Top(combo)-h;
+    Return y;
+}
+Function int __UI_PopupRow(ComboBox c,int x,int y){
+    int left=__UI_Left(c);int top=__UI_PopupY(c);int row=(y-top)/26;
+    If(x<left||x>=left+c.ActualWidth||y<top||row>=c.Items.Length())Return -1;
+    Return row;
+}
+Function void __UI_DrawPopup(ComboBox combo,DrawingContext g){
+    ControlPalette colors=combo.EffectivePalette();
+    int x=__UI_Left(combo);int top=__UI_PopupY(combo);int n=combo.Items.Length();int i=0;
+    g.Box(x,top,combo.ActualWidth,n*26,colors.Surface,3);
+    While(i<n){If(i==combo.SelectedIndex)g.Box(x+1,top+26*i,combo.ActualWidth-2,26,colors.Hover);
+        g.Write(combo.Items[i],x+8,top+i*26,combo.ActualWidth-16,26,colors.Text);i++;}
+}
+Function string __UI_DisplayInput(Input field){
+    If(!field.Password)Return field.Text;string masked="";int i=0;int n=IO.Text.Length(field.Text);
+    While(i<n){masked+="•";i=NextChar(field.Text,i);}Return masked;
+}
+Trusted Function void __UI_DrawPreset(Component node,DrawingContext g){
+    ControlPalette colors=node.EffectivePalette();
+    int w=node.ActualWidth;int h=node.ActualHeight;int size=14;int weight=400;
+    Font font=node.EffectiveFont();If(font!=null){size=font.Size;weight=[int](font.Weight);}
+    u32 fg=node.StyleText(colors.Text);
+    u32 normal=__UI_Color(node.BackColor,colors.Surface);
+    u32 base=node.StyleFill(normal,normal,normal);
+    u32 rim=node.StyleBorder(node.HasFocus?colors.Accent:(node.Hovered?colors.Subtle:colors.Border));
+    int rounding=node.StyleRadius(3);int stroke=node.BorderWidth;
+    If((node Is Panel||node Is Label||node Is GroupBox||node Is CheckBox||node Is RadioButton||node Is ProgressBar)&&
+        (node.BackColor!=null||node.Hovered&&node.HoverBackColor!=null||node.Pressed&&node.PressedBackColor!=null))
+        g.Box(0,0,w,h,base,node.StyleRadius(0));
+    If(node Is Panel)Return;
+    If(node Is GroupBox){If(stroke>0)g.Box(0,7,w,h-8,rim,rounding,stroke);g.Write(node.Text,8,0,w-16,18,fg,size,weight);Return;}
+    If(node Is Label){
+        If(stroke>0&&(node.BorderColor!=null||node.Hovered&&node.HoverBorderColor!=null||node.Pressed&&node.PressedBorderColor!=null))
+            g.Box(0,0,w,h,rim,node.StyleRadius(0),stroke);
+        g.Write(node.Text,0,0,w,h,fg,size,weight);Return;}
+    If(node Is Button){int radius=node.StyleRadius(4);g.Box(0,0,w,h,node.StyleFill(normal,colors.Hover,colors.Border),radius);
+        If(stroke>0)g.Box(0,0,w,h,rim,radius,stroke);g.Write(node.Text,4,0,w-8,h,fg,size,weight,false,TextAlignment.Center);Return;}
+    If(node Is Input field){
+        u32 fieldFill=__UI_Color(node.BackColor,colors.Field);
+        g.Box(0,0,w,h,node.StyleFill(fieldFill,fieldFill,fieldFill),rounding);If(stroke>0)g.Box(0,0,w,h,rim,rounding,stroke);
+        string display=__UI_DisplayInput(field);int caret=__UI_Low(field.Caret,IO.Text.Length(field.Text));
+        int col=Utf16Column(field.Text,caret);int anchor=Utf16Column(field.Text,__UI_Low(field.Anchor,IO.Text.Length(field.Text)));
+        int pos=TextPosition(g.Surface,display,size,false,col);
+        If(field.HasFocus){If(pos-field.ScrollX>w-15)field.ScrollX=pos-w+15;If(pos<field.ScrollX)field.ScrollX=pos;}
+        g.PushClip(5,1,w-10,h-2);int x=7-field.ScrollX;
+        If(field.HasFocus && anchor!=col){int ax=TextPosition(g.Surface,display,size,false,anchor);
+            g.Box(x+__UI_Low(pos,ax),3,__UI_High(pos,ax)-__UI_Low(pos,ax),h-6,colors.Selection);}
+        g.Write(display==""?field.PlaceholderText:display,x,0,w+field.ScrollX-10,h,display==""?colors.Subtle:fg,size,weight);
+        If(field.HasFocus)g.Box(x+pos,5,1,h-10,colors.Caret);
+        g.PopClip();Return;
+    }
+    If(node Is CheckBox||node Is RadioButton){
+        bool checked=false;int radius=3;If(node Is CheckBox box)checked=box.Checked;
+        If(node Is RadioButton radio){checked=radio.Checked;radius=8;}
+        int y=(h-16)/2;g.Box(0,y,16,16,checked?colors.Accent:base,node.StyleRadius(radius));
+        If(stroke>0)g.Box(0,y,16,16,rim,node.StyleRadius(radius),stroke);
+        If(checked){If(radius==8)g.Box(5,y+5,6,6,colors.OnAccent,3);Else{g.Line(3,y+8,6,y+11,colors.OnAccent,2);g.Line(6,y+11,12,y+4,colors.OnAccent,2);}}
+        g.Write(node.Text,23,0,w-23,h,fg,size,weight);Return;
+    }
+    If(node Is ComboBox combo){
+        g.Box(0,0,w,h,base,rounding);If(stroke>0)g.Box(0,0,w,h,rim,rounding,stroke);string title=combo.Text;
+        If(combo.SelectedIndex>=0&&combo.SelectedIndex<combo.Items.Length())title=combo.Items[combo.SelectedIndex];
+        g.Write(title,8,0,w-30,h,fg,size,weight);g.Line(w-17,h/2-2,w-13,h/2+2,fg);g.Line(w-13,h/2+2,w-9,h/2-2,fg);Return;
+    }
+    If(node Is ProgressBar progress){
+        int range=progress.Maximum-progress.Minimum;int filled=range>0?(progress.Value-progress.Minimum)*w/range:0;
+        g.Box(0,h/2-3,w,6,base,rounding);g.Box(0,h/2-3,__UI_Low(w,__UI_High(filled,0)),6,node.StyleText(colors.Accent),rounding);
+        If(stroke>0&&(node.BorderColor!=null||node.Hovered&&node.HoverBorderColor!=null||node.Pressed&&node.PressedBorderColor!=null))
+            g.Box(0,h/2-3,w,6,rim,rounding,stroke);
+    }
+}
+Function void __UI_Activate(Component c){
+    If(c Is Button button)button.TriggerClick();
+    Else If(c Is CheckBox box){box.Checked=!box.Checked;box.TriggerEvent(EventKind.OnCheckedChanged);box.TriggerEvent(EventKind.OnClick);}
+    Else If(c Is RadioButton radio){If(!radio.Checked){radio.Checked=true;radio.TriggerEvent(EventKind.OnCheckedChanged);}radio.TriggerEvent(EventKind.OnClick);}
+    Else If(c Is ComboBox combo){If(c.Owner!=null)c.Owner.Popup=combo;}
+    c.Invalidate();
+}
+Trusted Function void __UI_EditInput(Input field,SurfaceInput input){
+    SurfaceEvent k=input.Kind;int key=input.First;string text=field.Text;int n=IO.Text.Length(text);
+    field.Caret=__UI_Low(n,field.Caret);field.Anchor=__UI_Low(n,field.Anchor);
+    int lo=__UI_Low(field.Anchor,field.Caret);int hi=__UI_High(field.Anchor,field.Caret);
+    If(k==SurfaceEvent.PointerDown||k==SurfaceEvent.PointerMove&&field.Pressed){
+        int size=14;Font f=field.EffectiveFont();If(f!=null)size=f.Size;
+        field.Caret=Utf8Column(text,TextPosition(field.HostHandle,__UI_DisplayInput(field),size,false,input.First-7+field.ScrollX,true));
+        If(k==SurfaceEvent.PointerDown&&!__UI_Key(16))field.Anchor=field.Caret;
+        Native.kn_ui_ime(field.HostHandle,[i32](__UI_Left(field)+input.First),[i32](__UI_Top(field)+field.ActualHeight));field.Invalidate();Return;
+    }
+    string add="";
+    If(k==SurfaceEvent.KeyDown){
+        bool ctrl=__UI_Key(17);
+        If(ctrl&&key==65){field.Anchor=0;field.Caret=n;field.Invalidate();Return;}
+        If(ctrl&&(key==67||key==88)){If(!field.Password)Native.CopyText(field.HostHandle,IO.Text.Slice(text,lo,hi-lo));If(key==67)Return;}
+        Else If(ctrl&&key==86)add=Native.kn_ui_paste(field.HostHandle);
+        Else If(key==37||key==39||key==36||key==35){
+            If(key==36)field.Caret=0;Else If(key==35)field.Caret=n;Else If(key==37)field.Caret=PreviousChar(text,field.Caret);Else field.Caret=NextChar(text,field.Caret);
+            If(!__UI_Key(16))field.Anchor=field.Caret;field.Invalidate();Return;
+        }
+        Else If(key==8){If(lo==hi)lo=PreviousChar(text,lo);}
+        Else If(key==46){If(lo==hi)hi=NextChar(text,hi);}
+        Else Return;
+    }
+    Else If(k==SurfaceEvent.Character && key>=32)add=CharacterText(key);
+    Else Return;
+    If(field.ReadOnly)Return;
+    If(!field.Multiline)add=IO.Text.Replace(IO.Text.Replace(add,"\r",""),"\n","");
+    string next=IO.Text.Slice(text,0,lo)+add+IO.Text.Slice(text,hi,n-hi);
+    If(field.MaxLength>0 && Utf16Column(next,IO.Text.Length(next))>field.MaxLength)Return;
+    If(next!=text){field.Text=next;field.Caret=lo+IO.Text.Length(add);field.Anchor=field.Caret;field.TriggerEvent(EventKind.OnTextChanged);}
+}
+Trusted Function void __UI_PresetInput(Component c,SurfaceInput input){
+    SurfaceEvent k=input.Kind;
+    If(k==SurfaceEvent.PointerMove){If(!c.Hovered){c.Hovered=true;c.TriggerEvent(EventKind.OnMouseEnter);c.Invalidate();}c.TriggerEvent(EventKind.OnMouseMove,[usize](input.First),[isize](input.Second));}
+    Else If(k==SurfaceEvent.PointerLeave){c.Hovered=false;c.TriggerEvent(EventKind.OnMouseLeave);c.Invalidate();}
+    Else If(k==SurfaceEvent.PointerDown){c.Pressed=true;c.TriggerEvent(EventKind.OnMouseDown);c.Invalidate();}
+    Else If(k==SurfaceEvent.PointerUp){bool click=c.Pressed&&input.First>=0&&input.First<c.ActualWidth&&input.Second>=0&&input.Second<c.ActualHeight;c.Pressed=false;c.TriggerEvent(EventKind.OnMouseUp);If(click)__UI_Activate(c);c.Invalidate();}
+    Else If(k==SurfaceEvent.CaptureLost){c.Pressed=false;c.Invalidate();}
+    Else If(k==SurfaceEvent.Focus||k==SurfaceEvent.Blur){If(k==SurfaceEvent.Blur)c.Pressed=false;c.TriggerEvent(k==SurfaceEvent.Focus?EventKind.OnFocus:EventKind.OnBlur);c.Invalidate();}
+    Else If(k==SurfaceEvent.KeyDown||k==SurfaceEvent.KeyUp){
+        c.TriggerEvent(k==SurfaceEvent.KeyDown?EventKind.OnKeyDown:EventKind.OnKeyUp,[usize](input.First));
+        If(!(c Is Input)&&(input.First==13||input.First==32)){
+            c.Pressed=k==SurfaceEvent.KeyDown;c.Invalidate();If(k==SurfaceEvent.KeyUp)__UI_Activate(c);}
+        If(c Is ComboBox combo){If(k==SurfaceEvent.KeyDown&&(input.First==38||input.First==40)&&combo.Items.Length()>0){
+            combo.SelectedIndex=__UI_Low(combo.Items.Length()-1,__UI_High(0,combo.SelectedIndex+(input.First==38?-1:1)));combo.TriggerEvent(EventKind.OnSelectedChanged);}}
+    }
+    If(c Is Input field)__UI_EditInput(field,input);
+}
+

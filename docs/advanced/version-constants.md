@@ -103,3 +103,24 @@ prints the same version families that are available in source code through `IO.V
 - [Compiler CLI](../cli/compiler.md) — `kinal --version` and other global options
 - [KinalVM](../cli/vm.md) — VM-oriented build and run commands
 - [Compilation Pipeline](compilation-pipeline.md) — When compile-time constants are folded
+## Complete Verification Program
+
+Save this as versions.kn and run kinal run versions.kn and kinal vm run versions.kn. Native prints Kinal.Native/false; VM prints Kinal.VM/true. Version text follows the actual build. Compiler and VM component versions can change independently; do not assume matching major/minor versions. KNC file-format version is a separate dimension.
+
+```kinal
+Get IO.Console;
+
+Static Function int Main()
+{
+    IO.Console.PrintLine(IO.Runtime.Name);
+    IO.Console.PrintLine(IO.Version);
+    IO.Console.PrintLine(IO.Runtime.IsVM);
+    If (IO.Runtime.IsVM)
+    {
+        IO.Console.PrintLine(IO.Version.VM);
+    }
+    Return 0;
+}
+```
+
+An IO.Runtime.IsVM branch does not add missing VM functionality. Only an inactive compile-time branch avoids its semantic/backend path; an active Await, collection or native-bridge operation still needs [backend support](backend-support.md).

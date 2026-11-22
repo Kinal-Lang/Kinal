@@ -1,0 +1,52 @@
+Unit Benchmarks.TypedPackages;
+
+Get IO.Console;
+Get IO.GC;
+Get IO.Time;
+
+Struct Row { int[3] Cells; }
+Class Entry
+{
+    Public Entry Next;
+    Public <Row, int> Data;
+}
+
+Static Function int Main(string[] args)
+{
+    If (args.Length() > 1) Return 2;
+    bool phases = args.Length() == 1;
+    int count = [int](phases ? args[0] : IO.Console.ReadLine());
+    If (count < 0 || count > 1000000) Return 2;
+    Entry head = null;
+    u64 start = IO.Time.GetNanoTick();
+    For (int i = 1; i <= count; i++)
+    {
+        Entry entry = New Entry();
+        entry.Next = head;
+        entry.Data[0].Cells[2] = -i;
+        entry.Data[1] = i;
+        head = entry;
+    }
+    u64 built = IO.Time.GetNanoTick();
+    IO.GC.Collect();
+    u64 collected = IO.Time.GetNanoTick();
+    int remaining = count;
+    While (head != null)
+    {
+        int[] cells = head.Data[0].Cells;
+        If (cells.Length() != 3 || cells[0] != 0 || cells[2] != -remaining ||
+            head.Data[1] != remaining) Return 1;
+        remaining--;
+        head = head.Next;
+    }
+    If (remaining != 0) Return 1;
+    u64 checked = IO.Time.GetNanoTick();
+    If (phases)
+    {
+        IO.Console.PrintLine(built - start);
+        IO.Console.PrintLine(collected - built);
+        IO.Console.PrintLine(checked - collected);
+    }
+    Else IO.Console.PrintLine([string](count) + " " + [string](checked - start));
+    Return 0;
+}

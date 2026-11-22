@@ -2,7 +2,7 @@
 
 General rules covering constructors, constants, array length, generic dispatch, and similar behavior.
 
-The examples in this document are minimal reproductions of the most common way each diagnostic code is triggered. A few diagnostics that are more implementation-oriented use the closest surface-level form that user code can express.
+This page records the registered templates. Corrected examples show the supported form. A trigger sketch illustrates a rule or parser state and may require surrounding declarations or report an earlier/different diagnostic in the current C compiler.
 
 ---
 
@@ -17,8 +17,8 @@ The examples in this document are minimal reproductions of the most common way e
 | `E-GEN-00005` | Const Assignment | Cannot modify const variable |
 | `E-GEN-00006` | Const Requires Init | Const variable must have initializer |
 | `E-GEN-00007` | Constructor | Constructor not found |
-| `E-GEN-00008` | Conversion Syntax Changed | Type conversion now use [type](value) syntax instead of type(value). For example: [int]("123") instead of int("123") |
-| `E-GEN-00009` | Conversion Syntax Changed | Type conversion now use [type](value) syntax instead of type(value).  |
+| `E-GEN-00008` | Conversion Syntax Changed | Type conversion now use `[type](value)` syntax instead of `type(value)`. For example: `[int]("123")` instead of `int("123")` |
+| `E-GEN-00009` | Conversion Syntax Changed | Type conversion now use `[type](value)` syntax instead of `type(value)`.  |
 | `E-GEN-00010` | Generic Arity | Wrong number of generic type arguments |
 | `E-GEN-00011` | Generic Function | Failed to resolve instantiated generic function |
 | `E-GEN-00012` | Generic Function | Generic call requires explicit type arguments |
@@ -239,7 +239,7 @@ Fix: Pass in the correct parameters, or supplement the constructor with the corr
 ## E-GEN-00008 — Conversion Syntax Changed
 
 - Severity: Error
-- Default Detail: Type conversion now use [type](value) syntax instead of type(value). For example: [int]("123") instead of int("123")
+- Default Detail: Type conversion now use `[type](value)` syntax instead of `type(value)`. For example: `[int]("123")` instead of `int("123")`
 - Description: The old-style `type(value)` conversion syntax has been deprecated.
 
 Incorrect Example:
@@ -263,10 +263,10 @@ Fix: Batch replace the old writing methods with square bracket conversion syntax
 ## E-GEN-00009 — Conversion Syntax Changed
 
 - Severity: Error
-- Default Detail: Type conversion now use [type](value) syntax instead of type(value). 
+- Default Detail: Type conversion now use `[type](value)` syntax instead of `type(value)`.
 - Description: Another compatibility diagnostic with the same meaning as the old conversion syntax change.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
 float value = float("1.5");
@@ -324,7 +324,7 @@ Fix: Check the generic function or type definition and pass in the exact same nu
 - Default Detail: Failed to resolve instantiated generic function
 - Description: The explicitly instantiated generic function did not successfully resolve the callable.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
 Function T Identity<T>(T value)
@@ -358,7 +358,7 @@ Fix: Check that the explicit type parameter and actual parameter types match, ch
 - Default Detail: Generic call requires explicit type arguments
 - Description: Some generic calls cannot rely entirely on argument deduction, and type parameters must be given explicitly.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
 Function T Identity<T>(T value)
@@ -393,7 +393,7 @@ Fix: Write `<T>` explicitly, or adjust the code so that the argument type unique
 - Default Detail: Generic function reference requires explicit type arguments
 - Description: When obtaining a reference to a generic function, you also need to explicitly instantiate it first.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
 Function T Identity<T>(T value)
@@ -412,12 +412,15 @@ Function T Identity<T>(T value)
     Return value;
 }
 
-IO.Type.Object.Function fn = Identity<int>;
+IO.Type.Object.Function fn = Function int(int value)
+{
+    Return Identity<int>(value);
+};
 ```
 
 Reason: The function object must point to a concrete instance with determined parameters and return types, rather than an abstract generic template.
 
-Fix: Explicitly write out type parameters when taking a reference.
+Fix: the current parser does not accept a standalone Identity<int> reference. Use a non-generic or anonymous wrapper that explicitly calls the desired generic instance.
 
 ---
 
@@ -515,7 +518,7 @@ Fix: Change the interface implementation to `Public`.
 - Default Detail: Imported symbol must be called with module or alias qualifier
 - Description: Symbols imported through modules or aliases must be called with qualified names.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
 Unit App.Main;
@@ -531,13 +534,12 @@ Static Function int Main(string[] args)
 Correct Example:
 
 ```kinal
-Unit App.Main;
+Get Console By IO.Console;
 
-Get U By App.Util;
-
-Static Function int Main(string[] args)
+Static Function int Main()
 {
-    Return U.Add(40, 2);
+    Console.PrintLine("qualified call");
+    Return 0;
 }
 ```
 
@@ -553,7 +555,7 @@ Fix: Qualify the call target using the full module name or an alias.
 - Default Detail: Generic methods are not supported
 - Description: The current compiler does not support generic methods.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
 Class Box
@@ -586,7 +588,7 @@ Fix: Move generic logic to top-level generic functions, or change it to non-gene
 - Default Detail: Generic local named functions are not supported yet
 - Description: Generics are not currently supported for local named functions.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
 Static Function int Main()

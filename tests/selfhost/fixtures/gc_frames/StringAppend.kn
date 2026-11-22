@@ -1,0 +1,121 @@
+Unit Tests.GcFrames;
+
+Get IO.Kinal.Runtime;
+
+string SavedAppendText;
+
+Function void SaveAppendText(string text) { SavedAppendText = text; }
+
+Function string AppendPiece(int step)
+{
+    If (step == 3) Throw "stop";
+    Return "é";
+}
+
+Function bool CheckCapturedAppend()
+{
+    string held = "a";
+    IO.Type.Object.Function closure = Function string() { Return held; };
+    For (int step = 0; step < 2; step++) held += "x";
+    string captured = closure();
+    Return captured == "axx";
+}
+
+Function bool CheckLiteralAppendBytes()
+{
+    string text = "";
+    For (int i = 0; i < 8; i++)
+    {
+        text += "é";
+        text += [r]"\n";
+    }
+    If (text.Length() != 32 || text != "é\\né\\né\\né\\né\\né\\né\\né\\n") Return false;
+    string piece = "a\0hidden";
+    string copies = "";
+    For (int repeat = 0; repeat < 8; repeat++) copies += "a\0hidden";
+    If (copies.Length() != 8 * piece.Length()) Return false;
+    For (int j = 0; j < copies.Length(); j++)
+        If (copies[j] != piece[j % piece.Length()]) Return false;
+    Return true;
+}
+
+Function bool CheckAppendBlockEntry()
+{
+    IO.Type.Object.Block segment = Block Segment</
+        string text = "prefix";
+        Record Start
+        For (int i = 0; i < 3; i++) text += "x";
+        SavedAppendText = text;
+    />;
+    segment.Jump(segment.Start);
+    If (SavedAppendText != "xxx") Return false;
+    segment.Run();
+    Return SavedAppendText == "prefixxxx";
+}
+
+Trusted Function bool CheckLocalAppends()
+{
+    If (!CheckAppendBlockEntry() || !CheckLiteralAppendBytes()) Return false;
+    string text = null;
+    string alias = "";
+    For (int i = 0; i < 6; i++)
+    {
+        text += "a";
+        If (i == 1) alias = text;
+        If (i == 3) SaveAppendText(text);
+    }
+    CollectCallArgument();
+    If (alias != "aa" || SavedAppendText != "aaaa" || text != "aaaaaa") Return false;
+    string old = text;
+    For (int repeat = 0; repeat < 5; repeat++) text = text + "";
+    If (old != text || [char*](old) == [char*](text)) Return false;
+    Try
+    {
+        For (int step = 0; step < 5; step++) text = text + AppendPiece(step);
+        Return false;
+    }
+    Catch (string reason) { If (reason != "stop") Return false; }
+    If (text != "aaaaaaééé" || old != "aaaaaa") Return false;
+
+    string[] snapshots = {"", "", ""};
+    For (int outer = 0; outer < 3; outer++)
+    {
+        string part = "x";
+        For (int j = 0; j <= outer; j++) part += "y";
+        snapshots[outer] = part;
+    }
+    If (snapshots[0] != "xy" || snapshots[1] != "xyy" || snapshots[2] != "xyyy") Return false;
+
+    string self = "x";
+    For (int cycle = 0; cycle < 3; cycle++)
+    {
+        self += "!";
+        self += self;
+        If (cycle == 1) self = "z";
+    }
+    If (self != "z!z!") Return false;
+    string mutable = "";
+    For (int fill = 0; fill < 6; fill++) mutable += "a";
+    char* bytes = [char*](mutable);
+    bytes[2] = '\0';
+    string saved = mutable;
+    mutable = mutable + "b";
+    If (saved != "aa" || mutable != "aab") Return false;
+    string nested = "";
+    string published = "";
+    For (int pair = 0; pair < 2; pair++)
+    {
+        published = (nested += "q");
+        nested += "r";
+    }
+    If (published != "qrq" || nested != "qrqr") Return false;
+    If (!CheckCapturedAppend()) Return false;
+    string exposed = "a";
+    string* slot = &exposed;
+    For (int slotStep = 0; slotStep < 3; slotStep++)
+    {
+        exposed += "b";
+        If (slotStep == 1) *slot = "new";
+    }
+    Return exposed == "newb";
+}

@@ -1,0 +1,19 @@
+Unit Tests.PendingScalar;
+
+int Startup = Fail();
+
+Static Function int Fail() { Throw "pending before scalar call"; }
+
+Static Function int Even(int n)
+{
+    If (n == 0) Return 1;
+    Return Odd(n - 1);
+}
+
+Static Function int Odd(int n)
+{
+    If (n == 0) Return 0;
+    Return Even(n - 1);
+}
+
+Static Function int Main() { Return Even(2); }

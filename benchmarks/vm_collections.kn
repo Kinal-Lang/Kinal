@@ -1,0 +1,42 @@
+Unit Benchmarks.VmCollections;
+
+Get IO.Console;
+Get IO.GC;
+Get IO.Time;
+
+Static Function int Main(string[] args)
+{
+    If (args.Length() != 2) Return 2;
+    string mode = args[0];
+    int count = [int](args[1]);
+    If (count < 1 || count > 1000000) Return 2;
+    list items = list.Create();
+    dict table = dict.Create();
+    int begin = IO.Time.GetNanoTick();
+    If (mode == "list")
+    {
+        For (int i = 0; i < count; i++) items.Add(i);
+    }
+    Else If (mode == "dict")
+    {
+        For (int i = 0; i < count; i++) table.Set([string](i), i);
+    }
+    Else Return 2;
+    int built = IO.Time.GetNanoTick();
+    IO.GC.Collect();
+    int collected = IO.Time.GetNanoTick();
+    If (items.Count() + table.Count() != count) Return 1;
+    If (mode == "list")
+    {
+        For (int i = 0; i < count; i++) If ([int](items.Fetch(i)) != i) Return 1;
+    }
+    Else
+    {
+        For (int i = 0; i < count; i++) If ([int](table.Fetch([string](i))) != i) Return 1;
+    }
+    int checked = IO.Time.GetNanoTick();
+    IO.Console.PrintLine(built - begin);
+    IO.Console.PrintLine(collected - built);
+    IO.Console.PrintLine(checked - collected);
+    Return 0;
+}

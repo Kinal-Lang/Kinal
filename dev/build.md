@@ -65,3 +65,17 @@ and selfhost VM build helpers also refresh it automatically. Distribution bundle
 include the matching canonical `VERSION` file.
 
 See [releasing.md](releasing.md) for details.
+
+## Selecting and Checking a C Toolchain
+
+The commands in this guide build the C compiler, LSP and C-built VM; selfhost bootstrap is separate. The current hosted workflows select LLVM 21. When choosing a system LLVM, point LLVM_DIR at its CMake package directory and ensure the matching clang, libraries and target dependencies are available. Do not silently mix llvm-config/clang from another installed major version.
+
+```bash
+python x.py status
+python x.py status --json
+python -m infra.scripts.x.vm_metadata --check
+```
+
+`out/stage/host-release/` is the Release counterpart of the Debug staging directory. Use that exact compiler path during verification when PATH contains another installation. `python x.py test --release --build` rebuilds before validation; independent Python VM fixtures still need a matching KINAL_VM_PATH as explained in [Testing](testing.md).
+
+For native cross-compilation, a target triple is not a complete SDK: target CRT/system libraries, compatible package assets, startup files and a linker remain required. Preserve the staged bundle layout for LLVM, linker, runtime and stdpkg discovery. `python x.py dist` packages the host release; there is no x.py release command.

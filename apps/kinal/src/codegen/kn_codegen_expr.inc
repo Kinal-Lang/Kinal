@@ -5,6 +5,9 @@ static LLVMValueRef build_array_value(Codegen *g, Type arr_type, Expr *init);
 static LLVMValueRef build_array_from_package_value(Codegen *g, CGValue pkg, Type arr_type);
 static LLVMValueRef build_dict_value(Codegen *g, Expr *init);
 static LLVMValueRef build_heap_array_value(Codegen *g, Type arr_type);
+static void init_array_elements(Codegen *g, Type elem, LLVMValueRef data, int64_t first, int64_t length);
+static bool field_needs_array_storage(Codegen *g, Type type);
+static void init_aggregate_storage(Codegen *g, Type type, LLVMValueRef storage, bool embedded);
 static LLVMValueRef build_array_append_value(Codegen *g, CGValue arr, CGValue item);
 static LLVMValueRef ensure_c_abi_adapter(Codegen *g, FuncSymbol *target, FuncSymbol *signature);
 static void init_class_array_fields(Codegen *g, ClassSymbol *cs, LLVMValueRef obj);
@@ -1408,11 +1411,14 @@ static CGValue gen_resolved_function_call(Codegen *g, Expr *site, ExprList *call
     return out;
 }
 
-static CGValue gen_resolved_method_call(Codegen *g, Expr *site, const CGValue *loaded_recv);
+static CGValue gen_resolved_method_call(Codegen *g, Expr *site, const CGValue *loaded_recv, const CGValue *prepared_args);
 
 static LLVMValueRef gen_method_call_arg(Codegen *g, LLVMValueRef frame, Expr *site,
-                                        int index, Type param_type, const CGValue *recv)
+                                        int index, Type param_type, const CGValue *recv,
+                                        const CGValue *prepared_args)
 {
+    if (prepared_args)
+        return gc_root_temp_value(g, frame, prepared_args[index], "gc.property.updated").value;
     Expr *arg = site->v.member_call.args.items[index];
     if (!site->v.member_call.is_property_compound)
         return gen_rooted_call_arg(g, frame, arg, param_type);
@@ -1420,7 +1426,7 @@ static LLVMValueRef gen_method_call_arg(Codegen *g, LLVMValueRef frame, Expr *si
     if (index != 0 || arg->kind != EXPR_BINARY ||
         arg->v.binary.left->kind != EXPR_MEMBER_CALL || !recv)
         kn_die("invalid compound property lowering plan");
-    CGValue previous = gen_resolved_method_call(g, arg->v.binary.left, recv);
+    CGValue previous = gen_resolved_method_call(g, arg->v.binary.left, recv, NULL);
     previous = gc_root_temp_value(g, frame, previous, "gc.property.previous");
     CGValue value = gen_binary(g, arg, &previous);
     value = gc_root_temp_value(g, frame, value, "gc.property.value");
@@ -1431,7 +1437,7 @@ static LLVMValueRef gen_method_call_arg(Codegen *g, LLVMValueRef frame, Expr *si
     return converted.value;
 }
 
-static CGValue gen_resolved_method_call(Codegen *g, Expr *site, const CGValue *loaded_recv)
+static CGValue gen_resolved_method_call(Codegen *g, Expr *site, const CGValue *loaded_recv, const CGValue *prepared_args)
 {
     CGValue out;
     ClassSymbol *owner = classtable_find(&g->classes, site->resolved_call.owner);
@@ -1468,7 +1474,7 @@ static CGValue gen_resolved_method_call(Codegen *g, Expr *site, const CGValue *l
                                                            LLVMPointerType(fn_type, 0), "vfnc");
                     for (int i = 0; i < site->v.member_call.args.count; i++)
                         args[arg_index++] = gen_method_call_arg(g, temp_frame, site, i,
-                                                               method->params.items[i].type, &recv);
+                                                               method->params.items[i].type, &recv, prepared_args);
                     const char *call_name = method->ret_type.kind == TY_VOID ? "" : "vcall";
                     out.value = LLVMBuildCall2(g->builder, fn_type, fn_ptr, args, (unsigned)argc, call_name);
                     gc_pop_temp_frame(g, temp_frame);
@@ -1480,7 +1486,7 @@ static CGValue gen_resolved_method_call(Codegen *g, Expr *site, const CGValue *l
         }
         for (int i = 0; i < site->v.member_call.args.count; i++)
             args[arg_index++] = gen_method_call_arg(g, temp_frame, site, i,
-                                                   method->params.items[i].type, &recv);
+                                                   method->params.items[i].type, &recv, prepared_args);
         const char *call_name = method->ret_type.kind == TY_VOID ? "" : "call";
         out.value = LLVMBuildCall2(g->builder, fn_type, fn, args, (unsigned)argc, call_name);
         gc_pop_temp_frame(g, temp_frame);
@@ -1503,7 +1509,7 @@ static CGValue gen_resolved_method_call(Codegen *g, Expr *site, const CGValue *l
     args[0] = LLVMBuildBitCast(g->builder, recv.value, g->i8ptr, "this");
     for (int i = 0; i < site->v.member_call.args.count; i++)
         args[i + 1] = gen_method_call_arg(g, temp_frame, site, i,
-                                         method->params.items[i].type, &recv);
+                                         method->params.items[i].type, &recv, prepared_args);
     int slot = vslot_find_method(&g->vslots, method);
     if (slot < 0) kn_die("missing interface slot");
     ClassSymbol *recv_symbol = classtable_find(&g->classes, recv.type.name);
@@ -1547,8 +1553,22 @@ static CGValue gen_expr(Codegen *g, Expr *e)
         out.type = type_make(TY_BOOL);
         return out;
     case EXPR_DEFAULT:
-        out.value = LLVMConstNull(llvm_type(g, e->type));
         out.type = e->type;
+        out.value = LLVMConstNull(llvm_type(g, out.type));
+        if (g->env_kind == KN_ENV_HOSTED && field_needs_array_storage(g, out.type))
+        {
+            if (out.type.kind == TY_ARRAY)
+                out.value = build_array_value(g, out.type, 0);
+            else
+            {
+                LLVMValueRef fn = LLVMGetBasicBlockParent(LLVMGetInsertBlock(g->builder));
+                LLVMValueRef slot = build_entry_alloca(g, fn, llvm_type(g, out.type), "default.aggregate");
+                LLVMBuildStore(g->builder, out.value, slot);
+                gc_add_root(g, slot, out.type);
+                init_aggregate_storage(g, out.type, slot, false);
+                out.value = LLVMBuildLoad2(g->builder, llvm_type(g, out.type), slot, "default.value");
+            }
+        }
         return out;
     case EXPR_NULL:
         out.value = LLVMConstNull(g->i8ptr);
@@ -1888,7 +1908,7 @@ static CGValue gen_expr(Codegen *g, Expr *e)
             e->resolved_call.kind == KN_CALL_TARGET_DELEGATE_KINAL ||
             e->resolved_call.kind == KN_CALL_TARGET_DELEGATE_C)
             return gen_resolved_function_call(g, e, &e->v.member_call.args, "qcall");
-        return gen_resolved_method_call(g, e, 0);
+        return gen_resolved_method_call(g, e, NULL, NULL);
     case EXPR_BINARY:
         return gen_binary(g, e, 0);
     case EXPR_IF:
@@ -2013,8 +2033,24 @@ static CGValue gen_expr(Codegen *g, Expr *e)
         if (e->v.unary.op == TOK_PLUSPLUS || e->v.unary.op == TOK_MINUSMINUS)
         {
             Type lt = type_make(TY_UNKNOWN);
-            LLVMValueRef ptr = gen_lvalue(g, e->v.unary.expr, &lt);
-            LLVMValueRef oldv = LLVMBuildLoad2(g->builder, llvm_type(g, lt), ptr, "incdec.old");
+            Expr *setter = e->v.unary.property_setter;
+            LLVMValueRef ptr = NULL, frame = NULL, oldv;
+            CGValue receiver = {0};
+            if (setter)
+            {
+                frame = gc_push_temp_frame(g, "gc.property.update.frame");
+                if (!setter->v.member_call.is_static)
+                    receiver = gc_root_temp_value(g, frame, gen_expr(g, setter->v.member_call.recv),
+                                                  "gc.property.receiver");
+                CGValue previous = gen_resolved_method_call(g, e->v.unary.expr, &receiver, NULL);
+                lt = previous.type;
+                oldv = gc_root_temp_value(g, frame, previous, "gc.property.previous").value;
+            }
+            else
+            {
+                ptr = gen_lvalue(g, e->v.unary.expr, &lt);
+                oldv = LLVMBuildLoad2(g->builder, llvm_type(g, lt), ptr, "incdec.old");
+            }
 
             LLVMValueRef one_i64 = LLVMConstInt(g->i64, 1, 0);
             LLVMValueRef newv = 0;
@@ -2042,7 +2078,14 @@ static CGValue gen_expr(Codegen *g, Expr *e)
                     : LLVMBuildSub(g->builder, oldv, one, "incdec.sub");
             }
 
-            LLVMBuildStore(g->builder, newv, ptr);
+            if (setter)
+            {
+                CGValue updated = {newv, lt};
+                gen_resolved_method_call(g, setter, &receiver, &updated);
+                gc_pop_temp_frame(g, frame);
+            }
+            else
+                LLVMBuildStore(g->builder, newv, ptr);
             out.value = e->v.unary.is_postfix ? oldv : newv;
             out.type = lt;
             return out;
@@ -2320,6 +2363,8 @@ static LLVMValueRef build_array_value(Codegen *g, Type arr_type, Expr *init)
                 LLVMBuildStore(g->builder, cv, ptr);
             }
         }
+        if (use_heap)
+            init_array_elements(g, elem_type, data_ptr, init_count, alloc_len);
     }
 
     LLVMValueRef out = LLVMGetUndef(arr_struct);
@@ -2467,6 +2512,93 @@ static LLVMValueRef build_array_append_value(Codegen *g, CGValue arr, CGValue it
     return out;
 }
 
+static bool field_needs_array_storage(Codegen *g, Type type)
+{
+    if (type.kind == TY_PACKAGE)
+    {
+        bool found = false;
+        for (int i = 0; i < type.package_count; ++i)
+            if (field_needs_array_storage(g, type.package_elems[i])) found = true;
+        return found;
+    }
+    if (type.kind == TY_ARRAY && type.array_len > 0)
+    {
+        // Check the element shape too. A fixed array of its enclosing struct
+        // would require an infinite chain of default allocations.
+        Type elem = type_immediate_elem(type);
+        field_needs_array_storage(g, elem);
+        return true;
+    }
+    if (type.kind != TY_STRUCT)
+        return false;
+    StructSymbol *ss = structtable_find(&g->structs, type.name);
+    if (!ss) kn_die("missing struct field layout");
+    if (ss->array_fields == ARRAY_FIELDS_CHECKING)
+        kn_die("recursive struct has no finite default storage");
+    if (ss->array_fields == ARRAY_FIELDS_UNKNOWN)
+    {
+        ss->array_fields = ARRAY_FIELDS_CHECKING;
+        bool found = false;
+        for (int i = 0; i < ss->decl->fields.count; i++)
+            if (field_needs_array_storage(g, ss->decl->fields.items[i].type))
+                found = true;
+        ss->array_fields = found ? ARRAY_FIELDS_PRESENT : ARRAY_FIELDS_NONE;
+    }
+    return ss->array_fields == ARRAY_FIELDS_PRESENT;
+}
+
+static void init_array_field(Codegen *g, Type type, LLVMValueRef slot, bool embedded)
+{
+    LLVMValueRef array = build_heap_array_value(g, type);
+    LLVMValueRef store = LLVMBuildStore(g->builder, array, slot);
+    if (embedded) LLVMSetAlignment(store, 1);
+    Type elem = type_immediate_elem(type);
+    if (type.array_len > 0 && field_needs_array_storage(g, elem))
+        init_array_elements(g, elem, LLVMBuildExtractValue(g->builder, array, 0, "arr.elements"), 0, type.array_len);
+}
+
+static void init_aggregate_storage(Codegen *g, Type type, LLVMValueRef storage, bool embedded)
+{
+    if (type.kind == TY_ARRAY)
+    {
+        init_array_field(g, type, storage, embedded);
+        return;
+    }
+    StructSymbol *ss = type.kind == TY_STRUCT ? structtable_find(&g->structs, type.name) : 0;
+    int count = ss ? ss->decl->fields.count : type.package_count;
+    LLVMTypeRef layout = llvm_type(g, type);
+    for (int i = 0; i < count; i++)
+    {
+        Type member = ss ? ss->decl->fields.items[i].type : type.package_elems[i];
+        if (!field_needs_array_storage(g, member)) continue;
+        LLVMValueRef slot = LLVMBuildStructGEP2(g->builder, layout, storage, (unsigned)i, "arr.member");
+        init_aggregate_storage(g, member, slot, true);
+    }
+}
+
+static void init_array_elements(Codegen *g, Type elem, LLVMValueRef data, int64_t first, int64_t length)
+{
+    if (first >= length || !field_needs_array_storage(g, elem)) return;
+    LLVMBasicBlockRef entry = LLVMGetInsertBlock(g->builder);
+    LLVMValueRef fn = LLVMGetBasicBlockParent(entry);
+    LLVMBasicBlockRef body = LLVMAppendBasicBlockInContext(g->ctx, fn, "arr.defaults");
+    LLVMBasicBlockRef done = LLVMAppendBasicBlockInContext(g->ctx, fn, "arr.ready");
+    LLVMBuildBr(g->builder, body);
+    LLVMPositionBuilderAtEnd(g->builder, body);
+    LLVMValueRef index = LLVMBuildPhi(g->builder, g->i64, "arr.index");
+    LLVMValueRef start = LLVMConstInt(g->i64, (uint64_t)first, 0);
+    LLVMAddIncoming(index, &start, &entry, 1);
+    LLVMValueRef slot = LLVMBuildInBoundsGEP2(g->builder, llvm_type(g, elem), data, &index, 1, "arr.item");
+    init_aggregate_storage(g, elem, slot, false);
+    LLVMBasicBlockRef tail = LLVMGetInsertBlock(g->builder);
+    LLVMValueRef next = LLVMBuildAdd(g->builder, index, LLVMConstInt(g->i64, 1, 0), "arr.next");
+    LLVMAddIncoming(index, &next, &tail, 1);
+    LLVMValueRef more = LLVMBuildICmp(g->builder, LLVMIntULT, next,
+                                     LLVMConstInt(g->i64, (uint64_t)length, 0), "arr.more");
+    LLVMBuildCondBr(g->builder, more, body, done);
+    LLVMPositionBuilderAtEnd(g->builder, done);
+}
+
 static void init_class_array_fields(Codegen *g, ClassSymbol *cs, LLVMValueRef obj)
 {
     if (!g || !cs || !cs->decl) return;
@@ -2483,7 +2615,7 @@ static void init_class_array_fields(Codegen *g, ClassSymbol *cs, LLVMValueRef ob
     {
         Field *f = &cs->decl->fields.items[i];
         if (f->is_static) continue;
-        if (f->type.kind != TY_ARRAY) continue;
+        if (f->type.kind != TY_ARRAY && !field_needs_array_storage(g, f->type)) continue;
         int layout_index = class_instance_field_layout_index(cs->decl, i);
         if (layout_index < 0) continue;
 
@@ -2494,8 +2626,7 @@ static void init_class_array_fields(Codegen *g, ClassSymbol *cs, LLVMValueRef ob
             (unsigned)(1 + layout_index),
             "arr.field"
         );
-        LLVMValueRef arr_val = build_heap_array_value(g, f->type);
-        LLVMBuildStore(g->builder, arr_val, field_ptr);
+        init_aggregate_storage(g, f->type, field_ptr, false);
     }
 }
 
@@ -2920,6 +3051,7 @@ static CGValue gen_builtin_collections(Codegen *g, KnBuiltinKind kind, ExprList 
 
 static CGValue gen_collection_string(Codegen *g, KnBuiltinKind kind, ExprList *args, Expr *recv)
 {
+    LLVMValueRef function = LLVMGetBasicBlockParent(LLVMGetInsertBlock(g->builder));
     CGValue out;
     out.value = 0;
     out.type = type_make(TY_VOID);
@@ -2982,7 +3114,7 @@ static CGValue gen_collection_string(Codegen *g, KnBuiltinKind kind, ExprList *a
     {
         CGValue sv = (args->count == 0 && recv) ? gen_expr(g, recv) : gen_expr(g, args->items[0]);
         LLVMValueRef s = cast_value(g, sv, type_make(TY_STRING));
-        LLVMValueRef len_ptr = LLVMBuildAlloca(g->builder, g->i64, "chars.len.ptr");
+        LLVMValueRef len_ptr = build_entry_alloca(g, function, g->i64, "chars.len.ptr");
         LLVMBuildStore(g->builder, LLVMConstInt(g->i64, 0, 0), len_ptr);
         LLVMValueRef argv[2] = { s, len_ptr };
         LLVMValueRef data = LLVMBuildCall2(g->builder, g->fn_string_to_chars_ty, g->fn_string_to_chars, argv, 2, "str.tochars");
@@ -3006,6 +3138,7 @@ static CGValue gen_collection_string(Codegen *g, KnBuiltinKind kind, ExprList *a
 
 static CGValue gen_collection_dict(Codegen *g, KnBuiltinKind kind, ExprList *args, Expr *recv)
 {
+    LLVMValueRef function = LLVMGetBasicBlockParent(LLVMGetInsertBlock(g->builder));
     CGValue out;
     out.value = 0;
     out.type = type_make(TY_VOID);
@@ -3048,8 +3181,9 @@ static CGValue gen_collection_dict(Codegen *g, KnBuiltinKind kind, ExprList *arg
 
         LLVMValueRef dp = dict_as_i8ptr(g, dv);
         LLVMValueRef key = cast_value(g, keyv, type_make(TY_STRING));
-        LLVMValueRef tag_ptr = LLVMBuildAlloca(g->builder, g->i64, "dict.get.tag.ptr");
-        LLVMValueRef payload_ptr = LLVMBuildAlloca(g->builder, g->i64, "dict.get.payload.ptr");
+        // Reuse fixed output slots in loops; initialization remains at the call.
+        LLVMValueRef tag_ptr = build_entry_alloca(g, function, g->i64, "dict.get.tag.ptr");
+        LLVMValueRef payload_ptr = build_entry_alloca(g, function, g->i64, "dict.get.payload.ptr");
         LLVMBuildStore(g->builder, LLVMConstInt(g->i64, 0, 0), tag_ptr);
         LLVMBuildStore(g->builder, LLVMConstInt(g->i64, 0, 0), payload_ptr);
         LLVMValueRef argv[4] = { dp, key, tag_ptr, payload_ptr };
@@ -3059,9 +3193,7 @@ static CGValue gen_collection_dict(Codegen *g, KnBuiltinKind kind, ExprList *arg
         LLVMValueRef anyres = LLVMGetUndef(g->any_ty);
         anyres = LLVMBuildInsertValue(g->builder, anyres, tag, 0, "dict.get.any.tag");
         anyres = LLVMBuildInsertValue(g->builder, anyres, payload, 1, "dict.get.any.payload");
-        LLVMValueRef anytmp = LLVMBuildAlloca(g->builder, g->any_ty, "dict.get.any.tmp");
-        LLVMBuildStore(g->builder, anyres, anytmp);
-        out.value = LLVMBuildLoad2(g->builder, g->any_ty, anytmp, "dict.get.any");
+        out.value = anyres;
         out.type = type_make(TY_ANY);
         return out;
     }
@@ -3081,8 +3213,8 @@ static CGValue gen_collection_dict(Codegen *g, KnBuiltinKind kind, ExprList *arg
             LLVMBuildCall2(g->builder, g->fn_dict_contains_ty, g->fn_dict_contains, (LLVMValueRef[]){ dp, key }, 2, "dict.try.has.c"),
             "dict.try.has");
 
-        LLVMValueRef tag_ptr = LLVMBuildAlloca(g->builder, g->i64, "dict.try.tag.ptr");
-        LLVMValueRef payload_ptr = LLVMBuildAlloca(g->builder, g->i64, "dict.try.payload.ptr");
+        LLVMValueRef tag_ptr = build_entry_alloca(g, function, g->i64, "dict.try.tag.ptr");
+        LLVMValueRef payload_ptr = build_entry_alloca(g, function, g->i64, "dict.try.payload.ptr");
         LLVMBuildStore(g->builder, LLVMConstInt(g->i64, 0, 0), tag_ptr);
         LLVMBuildStore(g->builder, LLVMConstInt(g->i64, 0, 0), payload_ptr);
         LLVMBuildCall2(g->builder, g->fn_dict_get_ty, g->fn_dict_get, (LLVMValueRef[]){ dp, key, tag_ptr, payload_ptr }, 4, "");
@@ -3185,6 +3317,7 @@ static CGValue gen_collection_dict(Codegen *g, KnBuiltinKind kind, ExprList *arg
 
 static CGValue gen_collection_list(Codegen *g, KnBuiltinKind kind, ExprList *args, Expr *recv)
 {
+    LLVMValueRef function = LLVMGetBasicBlockParent(LLVMGetInsertBlock(g->builder));
     CGValue out;
     out.value = 0;
     out.type = type_make(TY_VOID);
@@ -3222,8 +3355,9 @@ static CGValue gen_collection_list(Codegen *g, KnBuiltinKind kind, ExprList *arg
         CGValue iv = gen_expr(g, args->items[idx_i]);
         LLVMValueRef lp = list_as_i8ptr(g, lv);
         LLVMValueRef idxv = cast_value(g, iv, type_make(TY_I64));
-        LLVMValueRef tag_ptr = LLVMBuildAlloca(g->builder, g->i64, "list.get.tag.ptr");
-        LLVMValueRef payload_ptr = LLVMBuildAlloca(g->builder, g->i64, "list.get.payload.ptr");
+        // Reuse fixed output slots in loops; initialization remains at the call.
+        LLVMValueRef tag_ptr = build_entry_alloca(g, function, g->i64, "list.get.tag.ptr");
+        LLVMValueRef payload_ptr = build_entry_alloca(g, function, g->i64, "list.get.payload.ptr");
         LLVMBuildStore(g->builder, LLVMConstInt(g->i64, 0, 0), tag_ptr);
         LLVMBuildStore(g->builder, LLVMConstInt(g->i64, 0, 0), payload_ptr);
         LLVMValueRef argv[4] = { lp, idxv, tag_ptr, payload_ptr };
@@ -3286,8 +3420,8 @@ static CGValue gen_collection_list(Codegen *g, KnBuiltinKind kind, ExprList *arg
         LLVMValueRef def_any = cast_value(g, dv, type_make(TY_ANY));
         LLVMValueRef cnt = LLVMBuildCall2(g->builder, g->fn_list_count_ty, g->fn_list_count, &lp, 1, "list.try.cnt");
         LLVMValueRef in_range = LLVMBuildICmp(g->builder, LLVMIntULT, idxv, cnt, "list.try.range");
-        LLVMValueRef tag_ptr = LLVMBuildAlloca(g->builder, g->i64, "list.try.tag.ptr");
-        LLVMValueRef payload_ptr = LLVMBuildAlloca(g->builder, g->i64, "list.try.payload.ptr");
+        LLVMValueRef tag_ptr = build_entry_alloca(g, function, g->i64, "list.try.tag.ptr");
+        LLVMValueRef payload_ptr = build_entry_alloca(g, function, g->i64, "list.try.payload.ptr");
         LLVMBuildStore(g->builder, LLVMConstInt(g->i64, 0, 0), tag_ptr);
         LLVMBuildStore(g->builder, LLVMConstInt(g->i64, 0, 0), payload_ptr);
         LLVMBuildCall2(g->builder, g->fn_list_get_ty, g->fn_list_get, (LLVMValueRef[]){ lp, idxv, tag_ptr, payload_ptr }, 4, "");
@@ -3330,8 +3464,8 @@ static CGValue gen_collection_list(Codegen *g, KnBuiltinKind kind, ExprList *arg
         CGValue iv = gen_expr(g, args->items[idx_i]);
         LLVMValueRef lp = list_as_i8ptr(g, lv);
         LLVMValueRef idxv = cast_value(g, iv, type_make(TY_I64));
-        LLVMValueRef tag_ptr = LLVMBuildAlloca(g->builder, g->i64, "list.rm.tag.ptr");
-        LLVMValueRef payload_ptr = LLVMBuildAlloca(g->builder, g->i64, "list.rm.payload.ptr");
+        LLVMValueRef tag_ptr = build_entry_alloca(g, function, g->i64, "list.rm.tag.ptr");
+        LLVMValueRef payload_ptr = build_entry_alloca(g, function, g->i64, "list.rm.payload.ptr");
         LLVMBuildStore(g->builder, LLVMConstInt(g->i64, 0, 0), tag_ptr);
         LLVMBuildStore(g->builder, LLVMConstInt(g->i64, 0, 0), payload_ptr);
         LLVMValueRef argv[4] = { lp, idxv, tag_ptr, payload_ptr };
@@ -3368,8 +3502,8 @@ static CGValue gen_collection_list(Codegen *g, KnBuiltinKind kind, ExprList *arg
         int inst = (recv && args->count == 0) ? 1 : 0;
         CGValue lv = inst ? gen_expr(g, recv) : gen_expr(g, args->items[0]);
         LLVMValueRef lp = list_as_i8ptr(g, lv);
-        LLVMValueRef tag_ptr = LLVMBuildAlloca(g->builder, g->i64, "list.pop.tag.ptr");
-        LLVMValueRef payload_ptr = LLVMBuildAlloca(g->builder, g->i64, "list.pop.payload.ptr");
+        LLVMValueRef tag_ptr = build_entry_alloca(g, function, g->i64, "list.pop.tag.ptr");
+        LLVMValueRef payload_ptr = build_entry_alloca(g, function, g->i64, "list.pop.payload.ptr");
         LLVMBuildStore(g->builder, LLVMConstInt(g->i64, 0, 0), tag_ptr);
         LLVMBuildStore(g->builder, LLVMConstInt(g->i64, 0, 0), payload_ptr);
         LLVMValueRef argv[3] = { lp, tag_ptr, payload_ptr };
@@ -3390,8 +3524,8 @@ static CGValue gen_collection_list(Codegen *g, KnBuiltinKind kind, ExprList *arg
         LLVMValueRef lp = list_as_i8ptr(g, lv);
         LLVMValueRef cnt = LLVMBuildCall2(g->builder, g->fn_list_count_ty, g->fn_list_count, &lp, 1, "list.peek.cnt");
         LLVMValueRef idx = LLVMBuildSub(g->builder, cnt, LLVMConstInt(g->i64, 1, 0), "list.peek.idx");
-        LLVMValueRef tag_ptr = LLVMBuildAlloca(g->builder, g->i64, "list.peek.tag.ptr");
-        LLVMValueRef payload_ptr = LLVMBuildAlloca(g->builder, g->i64, "list.peek.payload.ptr");
+        LLVMValueRef tag_ptr = build_entry_alloca(g, function, g->i64, "list.peek.tag.ptr");
+        LLVMValueRef payload_ptr = build_entry_alloca(g, function, g->i64, "list.peek.payload.ptr");
         LLVMBuildStore(g->builder, LLVMConstInt(g->i64, 0, 0), tag_ptr);
         LLVMBuildStore(g->builder, LLVMConstInt(g->i64, 0, 0), payload_ptr);
         LLVMBuildCall2(g->builder, g->fn_list_get_ty, g->fn_list_get, (LLVMValueRef[]){ lp, idx, tag_ptr, payload_ptr }, 4, "");
@@ -5992,6 +6126,9 @@ static void gen_stmt(Codegen *g, Stmt *s)
         }
         scope_add(g->scope, s->v.var.name, ty, alloca);
         gc_add_root(g, alloca, ty);
+        if (!s->v.var.init && (ty.kind == TY_STRUCT || ty.kind == TY_PACKAGE) &&
+            g->env_kind == KN_ENV_HOSTED && field_needs_array_storage(g, ty))
+            init_aggregate_storage(g, ty, alloca, false);
         return;
     }
     case ST_ASSIGN:

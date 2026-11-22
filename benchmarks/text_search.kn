@@ -1,0 +1,79 @@
+Unit Benchmarks.TextSearch;
+
+Get IO.Console;
+Get IO.Text;
+Get IO.Time;
+
+Function string Repeat(string part, int count)
+{
+    IO.Text.Builder result = New IO.Text.Builder();
+    For (int i = 0; i < count; i++) result.Append(part);
+    Return result.Build();
+}
+
+Static Function int Main(string[] args)
+{
+    If (args.Length() != 3) Return 2;
+    string operation = args[0];
+    int blocks = [int](args[1]);
+    int rounds = [int](args[2]);
+    If (blocks < 1 || blocks > 262144 || rounds < 1 || rounds > 100000) Return 2;
+    string pattern = "::";
+    string source = Repeat("abc::", blocks);
+    int expected = blocks;
+    If (operation == "early") { source = "!" + source; pattern = "!a"; expected = 0; }
+    Else If (operation == "absent") { pattern = "/"; expected = -1; }
+    Else If (operation == "short-tail") expected = blocks * 5 - 2;
+    Else If (operation == "length") expected = blocks * 5;
+    Else If (operation == "long-tail" || operation == "long-hit")
+    {
+        pattern = "abcdefghijklmno!";
+        expected = operation == "long-hit" ? 0 : blocks * 5;
+        source = operation == "long-hit" ? pattern + source : source + pattern;
+    }
+    Else If (operation == "periodic" || operation == "reverse")
+    {
+        source = Repeat("a", blocks);
+        pattern = Repeat("a", 127) + "b";
+        expected = -1;
+    }
+    Else If (operation == "split") expected = blocks + 1;
+    Else If (operation != "count" && operation != "replace") Return 2;
+
+    int checksum = 0;
+    string replaced = "";
+    list parts = null;
+    int start = IO.Time.GetNanoTick();
+    For (int i = 0; i < rounds; i++)
+    {
+        If (operation == "length") checksum += IO.Text.Length(source);
+        Else If (operation == "count") checksum += IO.Text.Count(source, pattern);
+        Else If (operation == "split")
+        {
+            parts = IO.Text.Split(source, pattern);
+            checksum += parts.Count();
+        }
+        Else If (operation == "replace")
+        {
+            replaced = IO.Text.Replace(source, pattern, "|");
+            checksum += IO.Text.Length(replaced);
+        }
+        Else If (operation == "reverse" || operation == "short-tail" || operation == "long-tail")
+            checksum += IO.Text.LastIndexOf(source, pattern);
+        Else checksum += IO.Text.IndexOf(source, pattern);
+    }
+    int elapsed = IO.Time.GetNanoTick() - start;
+    If (operation == "replace")
+    {
+        expected = blocks * 4;
+        If (replaced != Repeat("abc|", blocks)) Return 1;
+    }
+    If (operation == "split")
+    {
+        If (parts.Count() != blocks + 1 || [string](parts.Fetch(blocks)) != "") Return 1;
+        For (int j = 0; j < blocks; j++) If ([string](parts.Fetch(j)) != "abc") Return 1;
+    }
+    If (checksum != expected * rounds) Return 1;
+    IO.Console.PrintLine(elapsed);
+    Return 0;
+}

@@ -2,6 +2,8 @@
 
 `kinal` is the unified command-line tool for the Kinal language. All operations are distinguished by **subcommands**; each subcommand has its own independent set of options.
 
+This reference describes the C implementation. The existing `metrics` link below is explicitly selfhost-only; it is not a C compiler subcommand. For build configuration see [Project Files](project-files.md), and for execution limits see [Backend Support](../advanced/backend-support.md).
+
 ## Subcommand Reference
 
 | Subcommand | Purpose |
@@ -11,6 +13,7 @@
 | [`fmt`](fmt.md) | Format `.kn` source files |
 | [`vm`](vm.md) | Bytecode operations (build `.knc`, run, pack vm-exe) |
 | [`pkg`](packages.md) | Package management (build `.klib`, view info, unpack) |
+| [`metrics`](metrics.md) | Project complexity, text/JSON/HTML reports (selfhost only) |
 
 ```
 kinal [options] <subcommand> [options] [args...]
@@ -108,18 +111,23 @@ kinal build [options] <file.kn> [file2.kn ...]
 | `asm` | Generate assembly code |
 | `ir` | Generate LLVM IR (`.ll`) |
 | `check` | Stop after semantic analysis and write a deterministic `.kcheck` summary; no backend or linker is invoked |
+| `tokens` | Stop after lexical analysis and write a deterministic token summary |
+| `ast` | Stop after parsing and write a deterministic AST summary |
 
-`check` is intended for fast editor/CI validation and for stage0/stage1
-differential tests. The summary format starts with `format=kinal-sema-v1` and
-records target properties plus top-level declaration counts. Successful checks
-also include `hir_format=kinal-call-hir-v1`, typed-expression counts, and the
-resolved call-target counts shared by the Native and KNC backends.
+Use `--emit check` for editor or CI validation. Both compilers report the target, pointer width and build environment. Read the `format` field before consuming the other counters.
+
+| Compiler | Summary format | Selected fields |
+| --- | --- | --- |
+| C stage0 | `kinal-sema-v1` | Declaration counts, `hir_unresolved_calls` and binary HIR statistics |
+| Self-hosted | `kinal-selfhost-sema-v1` | Unit and declaration counts, generic instances, `bound_expressions` and `unresolved_expressions` |
+
+Use `--emit tokens` to inspect spelling. Each token row contains its kind, one-based line and byte column, and the original bytes in uppercase hexadecimal. A leading UTF-8 BOM is excluded from the column count. The self-hosted compiler keeps token lists for lexical metrics and releases its references to them after dependency discovery in ordinary checks and backend builds. [Compiler time and memory measurements](../../benchmarks/README.md#source-token-storage)
 
 ### Target Platform
 
 | Option | Description |
 |--------|-------------|
-| `--target <triple>` | Target platform triple (e.g. `x86_64-linux-gnu`) |
+| `--target <triple>` | Target platform triple (e.g. `x86_64-pc-linux-gnu`) |
 | `--freestanding` | Bare-metal/embedded mode |
 | `--env <env>` | Execution environment: `hosted` (default) or `freestanding` |
 | `--runtime <type>` | Runtime: `none`, `alloc`, `gc` |
@@ -130,12 +138,15 @@ resolved call-target counts shared by the Native and KNC backends.
 
 | Alias | Equivalent Triple |
 |-------|------------------|
-| `win86` | `i686-windows-msvc` |
-| `win64` | `x86_64-windows-msvc` |
-| `linux64` | `x86_64-linux-gnu` |
-| `linux-arm64` | `aarch64-linux-gnu` |
-| `bare64` | `x86_64-unknown-none` |
-| `bare-arm64` | `aarch64-unknown-none` |
+| `win86` | `i686-pc-windows-msvc` |
+| `win64` | `x86_64-pc-windows-msvc` |
+| `win-arm64` | `aarch64-pc-windows-msvc` |
+| `linux64` | `x86_64-pc-linux-gnu` |
+| `linux-arm64` | `aarch64-unknown-linux-gnu` |
+| `macos-x64` | `x86_64-apple-darwin` |
+| `macos-arm64` | `aarch64-apple-darwin` |
+| `bare64` | `x86_64-unknown-none-elf` |
+| `bare-arm64` | `aarch64-unknown-none-elf` |
 
 ### Linking Options
 
@@ -146,12 +157,12 @@ resolved call-target counts shared by the Native and KNC backends.
 | `--link-file <file>` | Link a specific object file |
 | `--link-root <dir>` | Add a link root directory |
 | `--link-arg <arg>` | Pass extra arguments to the linker |
-| `--link-script <script>` | Specify a linker script (`.ld`) |
-| `--linker <backend>` | Linker backend: `lld` (default), `zig`, `msvc` |
+| `--link-script <script>` | Freestanding linker script (`.ld`) |
+| `--linker <backend>` | Linker backend: `lld`, `zig`, `msvc`; Windows/freestanding default LLD, hosted Linux/macOS prefer Zig |
 | `--linker-path <path>` | Specify linker executable path |
 | `--lto[=off\|full\|thin]` | Link-time optimization (default `off`) |
 | `--crt <auto\|dynamic\|static>` | CRT selection (default `auto`) |
-| `--no-crt` | Do not link the C runtime |
+| `--no-crt` | Freestanding only: suppress CRT |
 | `--no-default-libs` | Do not link default libraries |
 | `--show-link` | Display the link command |
 | `--show-link-search` | Display library search paths |
@@ -165,7 +176,7 @@ resolved call-target counts shared by the Native and KNC backends.
 | `--pkg-root <dir>` | Add a package search root directory |
 | `--stdpkg-root <dir>` | Override the standard package root directory |
 
-If `--project` points to a directory, `kinal` looks for `kinal.knproj` first. If `--profile` is omitted, the project file uses `DefaultProfile`.
+If `--project` points to a directory, `kinal` looks for `kinal.knproj` first. Without `--profile`, it uses `DefaultProfile`, or the first declared profile if that field is absent. See [Project Files](project-files.md) for field support, path rules, CLI overrides and source participation modes.
 
 ### Frontend Options
 

@@ -1,105 +1,55 @@
 # Functions
 
-## Function Declaration
+Functions declare a result type, name, parameters and body. Examples below are independent unless identified as fragments; a file has one program entry point.
 
-Basic syntax:
+## Declarations and Entry Points
 
 ```kinal
-Function ReturnType FunctionName(ParameterList)
+Function int Add(int left, int right)
 {
-    // function body
-    Return value;
+    Return left + right;
 }
 ```
 
-Examples:
+Use `void` for no result and `Return;` for an early void return. A non-void function needs a return value on every required path; returning a value from void is invalid. Ordinary top-level functions and `Static Function` utilities are supported. Within a class, Static distinguishes class methods from instance methods.
 
-```kinal
-Function int Add(int a, int b)
-{
-    Return a + b;
-}
-
-Function string Greet(string name)
-{
-    Return "Hello, " + name + "!";
-}
-
-Function void PrintValue(int n)
-{
-    Console.PrintLine(n);
-    // No Return needed for void functions
-}
-```
-
-## Static Functions
-
-The `Static` modifier indicates the function does not belong to any class instance:
-
-```kinal
-Static Function int Square(int n)
-{
-    Return n * n;
-}
-```
-
-Module-level (global) utility functions are typically declared as `Static`. The program entry point `Main` must be `Static`:
+Choose one hosted entry signature, not both in the same file:
 
 ```kinal
 Static Function int Main()
 {
     Return 0;
 }
+```
 
-// Version accepting command-line arguments
-Static Function int Main(string[] args)
+Alternatively use `Static Function int Main(string[] args)`. `kinal run file.kn -- first second` forwards program arguments. Freestanding normally uses `KMain` or an explicit entry symbol. See [Compiler CLI](../cli/compiler.md).
+
+## Defaults and Named Arguments
+
+```kinal
+Unit Docs.Arguments;
+Get IO.Console;
+
+Function int Add(int left = 1, int right = 2)
 {
+    Return left + right;
+}
+
+Static Function int Main()
+{
+    IO.Console.PrintLine(Add());                       // 3
+    IO.Console.PrintLine(Add(10, default));            // 12
+    IO.Console.PrintLine(Add(right = 5, left = 10));    // 15
+    IO.Console.PrintLine(Add(left = default, right = 5)); // 6
     Return 0;
 }
 ```
 
-## Default Parameter Values
+Defaults follow required parameters. Omitted defaulted parameters and explicit `default` arguments use the declared parameter default; `default` is not a request to ignore that default and always pass a zero value. A parameter without a default cannot be filled with `default`. Named arguments bind to declared parameter names; unknown names, duplicate bindings, missing required arguments and incompatible types are errors.
 
-Parameters can have default values; parameters with defaults must come after parameters without:
+Function arguments have ordinary value/reference semantics. Passing two scalar parameters to a `Swap<T>(T a, T b)` function only swaps its local copies. To change caller state, use an intentional mutable reference, return updated values (for example a Package), or use a supported low-level pointer API. See [Memory and Lifetimes](../advanced/memory-management.md).
 
-```kinal
-Function int Power(int base, int exp = 2)
-{
-    int result = 1;
-    For (int i = 0; i < exp; i++)
-    {
-        result = result * base;
-    }
-    Return result;
-}
-
-Power(3);       // 9 (exp = 2)
-Power(3, 3);    // 27
-```
-
-## Named Arguments
-
-When calling a function, arguments can be specified by name, regardless of their order:
-
-```kinal
-Function string Format(string text, int indent = 0, bool uppercase = false)
-{
-    // ...
-}
-
-Format(text = "hello", uppercase = true);   // indent uses default value
-Format(uppercase = true, text = "world");   // order can be arbitrary
-```
-
-The `default` keyword can be used explicitly in named argument calls to use the type's default value:
-
-```kinal
-Add(p1 = default, p2 = 5);    // p1 uses default value 1
-```
-
-## Generic Functions
-
-Use `<T>` to declare type parameters:
+## Generics and Recursion
 
 ```kinal
 Function T Identity<T>(T value)
@@ -107,193 +57,74 @@ Function T Identity<T>(T value)
     Return value;
 }
 
-Function T First<T>(T a, T b)
-{
-    Return a;
-}
-
-// Specify type at call site
-int i = Identity<int>(42);
-string s = Identity<string>("hello");
-int f = First<int>(3, 7);   // 3
-```
-
-Generics support multiple type parameters:
-
-```kinal
-Function void Swap<T>(T a, T b)
-{
-    T temp = a;
-    a = b;
-    b = temp;
-}
-```
-
-## Anonymous Functions (Lambda)
-
-Use `Function type(parameterList) { body }` syntax to create anonymous functions:
-
-```kinal
-// Assign to a variable
-IO.Type.Object.Function fn = Function int(int a, int b)
-{
-    Return a + b;
-};
-
-// Or use Var for inference
-Var add = Function int(int a, int b)
-{
-    Return a + b;
-};
-
-// Call
-int result = add(3, 4);  // 7
-```
-
-Anonymous functions can **capture** outer variables (closures):
-
-```kinal
-string msg = "before";
-IO.Type.Object.Block cap = Block </
-    Console.PrintLine(msg);  // captures msg
-/>;
-msg = "after";
-cap.Run();   // prints "after" (captures by reference)
-```
-
-See [Block](blocks.md) and [Async Programming](async.md) for details.
-
-## Function Objects
-
-Functions can be assigned to variables or passed as arguments:
-
-```kinal
-IO.Type.Object.Function p = IO.Console.PrintLine;
-p("hello");  // call via function object
-
-Var q = p;   // Var inference
-q("world");
-```
-
-The type of a function object is `IO.Type.Object.Function`, which can be assigned to `IO.Type.Object.Class`:
-
-```kinal
-IO.Type.Object.Class c = p;
-IO.Console.PrintLine(c.TypeOf());  // prints the type name
-```
-
-## Function Pointers (Low-Level Interop)
-
-In `Unsafe` contexts, function objects can be converted to raw pointers:
-
-```kinal
-Unsafe Function void Demo()
-{
-    IO.Type.Object.Function fn = IO.Console.PrintLine;
-    byte* ptr = [byte*](fn);   // convert to raw function pointer
-}
-```
-
-See [FFI](ffi.md) for details.
-
-## `Delegate` Functions (C Callback Bridging)
-
-`Delegate` declarations are used to map a C function pointer to a Kinal-callable symbol:
-
-```kinal
-[SymbolName("MyLib.Callback")]
-Delegate Function int my_callback(int code) By C;
-```
-
-See [FFI](ffi.md) for details.
-
-## Safety Level Modifiers
-
-Functions can declare a safety level (see [Safety Levels](safety.md)):
-
-```kinal
-Safe Function void SafeOp() { ... }       // can only call Safe functions
-Trusted Function void Bridge() { ... }    // can call Unsafe
-Unsafe Function void RawOp() { ... }      // can use raw pointers
-```
-
-## Async Functions
-
-```kinal
-Async Function int Compute()
-{
-    int a = Await StepOne();
-    int b = Await StepTwo(a);
-    Return b;
-}
-```
-
-See [Async Programming](async.md) for details.
-
-## `Extern` Functions (C Interoperability)
-
-```kinal
-Extern Function int printf(string fmt) By C;
-Extern Function void* malloc(usize size) By C;
-```
-
-See [FFI](ffi.md) for details.
-
-## Recursion
-
-Kinal fully supports recursion, including indirect recursion:
-
-```kinal
 Function int Fibonacci(int n)
 {
-    If (n <= 1)
-    {
-        Return n;
-    }
+    If (n <= 1) { Return n; }
     Return Fibonacci(n - 1) + Fibonacci(n - 2);
 }
 ```
 
-## Function Overloading
+Call a generic with explicit types, such as `Identity<int>(42)`. The instantiated body must be valid for those types and the output backend. Recursion uses runtime stack/storage; no unlimited recursion or tail-call guarantee is implied. See [Generics](generics.md).
 
-Kinal supports explicit function overloading inside the same `Unit`.
+## Anonymous Functions and Closures
 
-Rules:
+```kinal
+Unit Docs.Callables;
+Get IO.Console;
 
-- Every overload participant must declare `[Overload]`.
-- Every overload participant must also declare `[SymbolName("...")]`.
-- `SymbolName` is the real compiled symbol name; the source-level call name stays the declared function name.
-- Overloads must differ by parameter types.
-- If more than one overload matches a call, the compiler reports an ambiguity error.
-- Generic functions cannot use `[Overload]` yet.
+Function IO.Type.Object.Function MakeCounter(int start)
+{
+    int count = start;
+    Return Function int()
+    {
+        count++;
+        Return count;
+    };
+}
 
-Example:
+Static Function int Main()
+{
+    Var add = Function int(int left, int right)
+    {
+        Return left + right;
+    };
+    IO.Console.PrintLine(add(3, 4)); // 7
+
+    IO.Type.Object.Function counter = MakeCounter(10);
+    IO.Console.PrintLine(counter()); // 11
+    IO.Console.PrintLine(counter()); // 12
+    Return 0;
+}
+```
+
+Function literals use `Function ResultType(parameters) { ... }`. Captured variables share their declaration's managed storage, so an escaping callable can retain and update its state after the creator returns. Copying a callable reference shares that state. Block objects have different control-flow operations; see [Blocks](blocks.md).
+
+A function reference can also be stored in `IO.Type.Object.Function`, for example `IO.Console.PrintLine`, after importing `IO.Console`. A callable is a managed Kinal object, not automatically an arbitrary C function pointer. Unsafe representation casts do not replace the C delegate adapter ABI.
+
+## Explicit Overloads
+
+Every overload participant needs both attributes and a distinct parameter-type signature:
 
 ```kinal
 [Overload]
 [SymbolName("DescribeInt")]
-Static Function string Describe(int value)
-{
-    Return "int";
-}
+Static Function string Describe(int value) { Return "int"; }
 
 [Overload]
 [SymbolName("DescribeText")]
-Static Function string Describe(string value)
-{
-    Return "string";
-}
+Static Function string Describe(string value) { Return "string"; }
 ```
 
-## Return Values
+Calls use `Describe(...)`; `SymbolName` identifies the compiled symbol. Return type alone does not distinguish overloads. Multiple assignable candidates produce an ambiguity diagnostic. Generic functions cannot use `[Overload]` in the current implementation. The same explicit attributes apply to supported class/interface method overload sets.
 
-- `Return expression;` — returns a value
-- `Return;` — early return from a `void` function
-- If a function reaches the end without a `Return`, the compiler will report a "Missing Return" error (for non-`void` functions)
+Splitting a unit across files keeps its top-level functions in one namespace. An ordinary function can be defined once in that unit. Each overload needs a distinct parameter-type list and a compiled name that is free in the unit. For example, `Box` and `Models.Box` denote the same parameter type inside `Unit Models`. A separate unit can define its own function of the same name.
 
-Functions can return an `Object.Package` when several values belong together but do not justify a named `struct`:
+## Multiple Results
 
 ```kinal
+Unit Docs.Results;
+Get IO.Console;
+
 Function <int, string> Status()
 {
     Return <200, "OK">;
@@ -308,28 +139,20 @@ Static Function int Main()
 }
 ```
 
-See [Packages](types.md#packages) for package type syntax, aliases, indexing rules, and explicit array materialization.
+Package aliases belong to the declaration, not the type. Use constant indexes or declared aliases; Package v1 has no destructuring. See [Types](types.md#packages).
 
-## Local Functions (Defined Inside a Block)
+## Safety, Async, Extern and Delegate
 
-Local functions, classes, and other declarations can be defined inside Block literals (see [Block](blocks.md)):
+| Form | Purpose |
+|------|---------|
+| `Safe Function` | Safe implementation; can call Safe and Trusted functions |
+| `Trusted Function` | Audited bridge allowed to call Unsafe operations |
+| `Unsafe Function` | Explicitly unsafe implementation, including raw pointer operations |
+| `Async Function` | Async task-producing function; declared result is the awaited value type |
+| `Extern ... By C` | Foreign symbol bound by the native linker |
+| `Delegate ... By C` | Runtime-bindable C ABI callable slot |
+| `Delegate ... By Kinal` | Runtime-bindable Kinal callable slot |
 
-```kinal
-Block ScopeDecl
-</
-    Function int LocalAdd(int a, int b)
-    {
-        Return a + b;
-    }
-    IO.Console.PrintLine(LocalAdd(3, 4));
-/>
-ScopeDecl.Run();
-```
+Extern and C delegate signatures use explicit C ABI marshalling. Delegates are not generic or async. `Async` return wrapping and invocation differ from ordinary functions; see [Async](async.md), [Safety](safety.md) and [FFI](ffi.md).
 
-## Next Steps
-
-- [Classes and Inheritance](classes.md)
-- [Generics](generics.md)
-- [Async Programming](async.md)
-- [Safety Levels](safety.md)
-
+Local declarations inside Block literals are described in [Blocks](blocks.md). Cross-unit functions must be imported and called with a visible qualified name or explicit symbol alias; an ordinary `Get` does not inject every function into bare-name scope.

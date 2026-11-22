@@ -1,0 +1,14 @@
+Unit Tests.Selfhost.GenericLibrary;
+
+Get Model By Tests.Selfhost.GenericModel;
+
+Function Model.Box SelectBox<T>(T[] tags, Model.Box[] boxes)
+{
+    Return boxes[tags.Length() - 1];
+}
+
+Function int ReadBox<T>(<T, Model.Box> pair)
+{
+    Model.Box box = pair[1];
+    Return box.Value;
+}

@@ -1,0 +1,43 @@
+Unit Benchmarks.TimeFormat;
+
+Get IO.Console;
+Get IO.Text;
+Get IO.Time;
+
+Static Function int Main(string[] args)
+{
+    If (args.Length() != 2) Return 2;
+    int rounds = [int](args[0]);
+    If (rounds < 1 || rounds > 1000000) Return 2;
+
+    IO.Time.DateTime date = New IO.Time.DateTime();
+    date.Year = 2024; date.Month = 2; date.Day = 29;
+    date.Hour = 8; date.Minute = 31; date.Second = 47; date.Millisecond = 2;
+    string pattern = "";
+    string expected = "";
+    If (args[1] == "stamp")
+    {
+        pattern = "yyyy-MM-dd HH:mm:ss.fff";
+        expected = "2024-02-29 08:31:47.002";
+    }
+    ElseIf (args[1] == "short") { pattern = "HH"; expected = "08"; }
+    ElseIf (args[1] == "literal")
+    {
+        For (int i = 0; i < 16; i++) pattern += "样本-0123456789-|";
+        expected = pattern;
+    }
+    Else Return 2;
+
+    string result = "";
+    int checksum = 0;
+    int start = IO.Time.GetNanoTick();
+    For (int i = 0; i < rounds; i++)
+    {
+        result = IO.Time.Format(date, pattern);
+        checksum += IO.Text.Length(result);
+    }
+    int elapsed = IO.Time.GetNanoTick() - start;
+    If (result != expected || checksum != rounds * IO.Text.Length(expected)) Return 1;
+    IO.Console.PrintLine(elapsed);
+    Return 0;
+}

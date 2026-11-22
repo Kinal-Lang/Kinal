@@ -170,6 +170,30 @@ class ProjectPackageChecks:
                     "Static Function int Main() { IO.Console.PrintLine(Probe.Data.Value()); Return 0; }\n")
         self.check(project, "package_unit_still_requires_import", None)
 
+    def pins(self) -> None:
+        project = self.project("pins", ["Probe.Pin"])
+        root = project / "packages"
+        for version in ("1.0", "2.0"):
+            package(root, version, "Probe.Pin", version, {"Probe.Pin": version})
+
+        def configure(pins: list[str], overrides: list[str]) -> None:
+            self.project("pins", ["Probe.Pin"],
+                         top=f'Packages {{ Roots = ["packages"]; Pins = {json.dumps(pins)}; }}',
+                         profile=f'Packages {{ Pins = {json.dumps(overrides)}; }}')
+
+        configure(["Probe.Pin@1.0"], [])
+        self.check(project, "project_pins_lower_version", "1.0\n")
+        configure(["Probe.Pin@1.0"], ["Probe.Pin@2.0"])
+        self.check(project, "profile_overrides_only_its_pins", "2.0\n")
+        for specs, label, message in [
+            (["Probe.Pin@1"], "exact_version", "pinned package not found"),
+            (["probe.Pin@1.0"], "case_sensitive_name", "pinned package not found"),
+            (["Probe.Pin@1.0", "Probe.Pin@2.0"], "duplicate", "duplicate package pin"),
+            (["Probe.Pin@1@2"], "invalid", "invalid package pin"),
+        ]:
+            configure(specs, [])
+            self.check(project, "pin_" + label, None, message)
+
     def archives(self) -> None:
         project = self.project("archives", ["Probe.Archive"],
                                top='Packages { Roots = ["packages"]; }')
@@ -249,6 +273,7 @@ class ProjectPackageChecks:
 
     def execute(self) -> None:
         self.resolution()
+        self.pins()
         self.unit_path_identity()
         self.archives()
         self.manifests()

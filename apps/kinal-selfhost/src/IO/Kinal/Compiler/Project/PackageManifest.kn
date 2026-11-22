@@ -3,6 +3,7 @@ Unit IO.Kinal.Compiler.Project.PackageManifest;
 Get IO.File;
 Get IO.Path;
 Get IO.Text;
+Get IO.Kinal.Runtime;
 Get IO.Kinal.Compiler.Source.SourcePath;
 
 // Package manifests are compiler input.  Keep their parser in Kinal so package
@@ -58,13 +59,15 @@ Class PackageManifestConfig
 
 Class PackageJsonReader
 {
-    Public char[] Characters;
+    Public string Text;
+    Public int Length;
     Public int Position;
     Public string Error;
 
     Public Safe Constructor(string text)
     {
-        This.Characters = text.ToChars();
+        This.Text = text;
+        This.Length = IO.Text.Length(text);
         This.Position = 0;
         This.Error = "";
     }
@@ -76,12 +79,12 @@ Class PackageJsonReader
 
     Public Safe Function bool AtEnd()
     {
-        Return This.Position >= This.Characters.Length();
+        Return This.Position >= This.Length;
     }
 
-    Public Safe Function char Current()
+    Public Trusted Function char Current()
     {
-        Return This.AtEnd() ? '\0' : This.Characters[This.Position];
+        Return This.AtEnd() ? '\0' : ([char*](This.Text))[This.Position];
     }
 
     Public Safe Function void SkipWhitespace()
@@ -177,18 +180,27 @@ Class PackageJsonReader
             [string]([char](128 | (value & 63)));
     }
 
-    Public Safe Function string ReadString()
+    Public Trusted Function string ReadString()
     {
         If (!This.Consume('"'))
         {
             This.Fail("expected a JSON string");
             Return "";
         }
-        string result = "";
-        While (!This.AtEnd() && This.Current() != '"')
+        list parts = null;
+        int start = This.Position;
+        While (!This.AtEnd())
         {
             char value = This.Current();
-            This.Position = This.Position + 1;
+            If (value == '"')
+            {
+                string tail = IO.Kinal.Runtime.CopyNativeTextLength(
+                    [char*](This.Text) + start, This.Position - start);
+                This.Position = This.Position + 1;
+                If (parts == null) Return tail;
+                parts.Add(tail);
+                Return IO.Text.Join(parts, "");
+            }
             If (value < ' ')
             {
                 This.Fail("control character in JSON string");
@@ -196,6 +208,11 @@ Class PackageJsonReader
             }
             If (value == '\\')
             {
+                If (parts == null) parts = list.Create();
+                If (start < This.Position)
+                    parts.Add(IO.Kinal.Runtime.CopyNativeTextLength(
+                        [char*](This.Text) + start, This.Position - start));
+                This.Position = This.Position + 1;
                 value = This.Current();
                 If (This.AtEnd())
                 {
@@ -205,8 +222,9 @@ Class PackageJsonReader
                 This.Position = This.Position + 1;
                 If (value == 'u')
                 {
-                    result = result + This.ReadUnicodeEscape();
+                    parts.Add(This.ReadUnicodeEscape());
                     If (!IO.Text.IsEmpty(This.Error)) Return "";
+                    start = This.Position;
                     Continue;
                 }
                 If (value == 'n') value = '\n';
@@ -219,16 +237,13 @@ Class PackageJsonReader
                     This.Fail("invalid JSON string escape");
                     Return "";
                 }
+                parts.Add([string](value));
+                start = This.Position;
             }
-            result = result + [string](value);
+            Else This.Position = This.Position + 1;
         }
-        If (This.AtEnd())
-        {
-            This.Fail("unterminated JSON string");
-            Return "";
-        }
-        This.Position = This.Position + 1;
-        Return result;
+        This.Fail("unterminated JSON string");
+        Return "";
     }
 
     Public Safe Function bool IsDigit()

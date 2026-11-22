@@ -1,0 +1,6 @@
+Unit Tests.Selfhost.GenericModel;
+
+Class Box
+{
+    Public int Value;
+}

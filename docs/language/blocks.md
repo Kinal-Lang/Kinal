@@ -455,3 +455,9 @@ State: Stopped
 - [Control Flow](control-flow.md)
 - [Async Programming](async.md)
 
+
+## Execution Model and Lifetime
+
+Block calls run on the current execution flow; they do not automatically create threads, tasks or a background scheduler. Every Run starts at entry. RunUntil and JumpAndRunUntil exclude their end position and do not preserve a program counter for a later resume. Record values are block label ordinals, not source line numbers or native instruction addresses. Prefer block.Label over hard-coded integers.
+
+Mutable captures retain shared storage; copying a Block reference does not copy captured state. Managed lifetime does not extend a foreign raw pointer or closed resource lifetime. Calls, nested Blocks and loops still follow safety/backend rules. See [Memory and Lifetimes](../advanced/memory-management.md) and [Backend Support](../advanced/backend-support.md).

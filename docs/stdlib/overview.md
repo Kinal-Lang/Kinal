@@ -1,8 +1,19 @@
 # Standard Library Overview
 
-Kinal's standard library is organized under the `IO.*` namespace. Core runtime modules are available directly, while package modules such as `IO.Core`, `IO.Request`, `IO.UI`, and `IO.Web` are brought in through project package configuration.
+This reference follows the current C compiler and standard-library source. `IO.*` is a unit naming scheme, not a claim that all APIs are compiler builtins or available on VM/freestanding.
 
-## Module Quick Reference
+## Packages, Units and Runtime
+
+| Source | Surface |
+|--------|---------|
+| Compiler builtins | IO.Type, IO.Collection, IO.Error, IO.GC, IO.Meta, IO.Volatile, IO.Panic and Target/Host/Runtime/Version constants |
+| IO.Core package | IO.Console, Text, File, Directory, Path, Time, System, Memory, Char, Math |
+| Separate official packages | IO.Json, IO.Request, IO.Web, IO.UI, IO.Cat |
+| IO.Async builtin interface | Task, Async/Await support and child-process operations; corresponding runtime support is still required |
+
+Official bundles preinstall the packages. Imports use declared Unit names; the package name IO.Core is not a Unit that imports every member. Use `Get IO.Console;` followed by `IO.Console.PrintLine`, or import a symbol alias explicitly.
+
+## Unit Navigation
 
 | Module | Description | Docs |
 |--------|-------------|------|
@@ -23,123 +34,31 @@ Kinal's standard library is organized under the `IO.*` namespace. Core runtime m
 | `IO.UI` | Native desktop UI toolkit | [→](ui.md) |
 | `IO.Web` | Embedded HTTP server toolkit | [→](web.md) |
 | `IO.Cat` | Sample package with the `Rommy` class | [→](cat.md) |
-| `IO.Type` | Built-in conversion helpers | Built-in |
+| `IO.Type` | Conversion and value helpers | [→](types.md) |
 | `IO.Target` | Compile-time platform constants | Built-in |
 
-## Import Forms
+
+## Import and Call Example
 
 ```kinal
-Get IO.Console;
-IO.Console.PrintLine("hello");
-
 Get PrintLine By IO.Console.PrintLine;
-PrintLine("hello");
-```
-
-## Built-in Value Helpers
-
-All values expose the `IO.Type.any` helper surface without an extra import:
-
-```kinal
-42.ToString();       // "42"
-42.TypeName();       // "int"
-42.Equals(42);       // true
-42.IsNull();         // false
-```
-
-The same surface is available on `any` values for runtime type checks:
-
-```kinal
-any value = 3.14;
-value.IsFloat();     // true
-value.IsNumber();    // true
-value.IsString();    // false
-value.Tag();         // internal runtime tag
-```
-
-## Common Entry Points
-
-```kinal
-Get IO.Console;
-
-IO.Console.PrintLine("Hello");
-IO.Console.Print("Without newline");
-string input = IO.Console.ReadLine();
-```
-
-```kinal
 Get IO.Text;
 
-IO.Text.Contains("kinal", "na");
-IO.Text.ToUpper("hello");
-IO.Text.Split("a,b,c", ",");
+Static Function int Main()
+{
+    PrintLine(IO.Text.ToUpper("kinal"));
+    any value = 42;
+    PrintLine(value.IsInt(), value.ToString());
+    Return 0;
+}
 ```
 
-## Package Modules
+## Execution Boundaries
 
-### IO.Core
+- Safe code may call Trusted standard-library bridges. Trusted does not automatically validate raw pointers or resource ownership.
+- Native and KinalVM both support collections, JSON parsing and formatting, text splitting and joining, line I/O and directory enumeration. General Await and `IO.Async.Run` currently require Native.
+- IO.Request/Web require matching native assets; HTTPS also requires OpenSSL 3. IO.UI 2.0 draws Windows controls with Direct3D 11, Direct2D and DirectWrite on Native and the desktop VM.
+- Freestanding none/alloc/gc profiles restrict available operations; arbitrary hosted packages are unavailable.
+- Returning bool, null, empty text, an error status, and throwing an exception are distinct contracts. Consult each API page instead of assuming every failure throws.
 
-`IO.Core` provides `IO.Char` and `IO.Math`.
-
-```kinal
-Get IO;
-
-IO.Char.IsDigit('5');
-IO.Math.Abs(-5);
-IO.Math.Sqrt(16.0);
-```
-
-### IO.Request
-
-`IO.Request` is the synchronous outbound HTTP client package.
-
-```kinal
-Get IO.Request;
-
-IO.Request.Response response = IO.Request.Fetch("http://127.0.0.1:8000/");
-```
-
-### IO.Json
-
-`IO.Json` parses JSON objects as `dict` and arrays as `list`, with optional property-style wrappers.
-
-```kinal
-Get IO.Json;
-
-dict root = IO.Json.Parse("{\"name\":\"kinal\"}");
-```
-
-### IO.UI
-
-`IO.UI` provides a native window / control layer for desktop apps.
-
-```kinal
-Get IO.UI;
-
-IO.UI.Window window = New IO.UI.Window("Demo", 640, 480);
-window.Add(New IO.UI.Button("OK", 20, 20, 100, 28));
-```
-
-### IO.Web
-
-`IO.Web` provides an embedded HTTP server with route metadata and static mounts.
-
-```kinal
-Get IO.Web;
-
-IO.Web.Server server = New IO.Web.Server(8080);
-server.UseStatic("/static", "public").UseRoutes();
-```
-
-## See Also
-
-- [IO.Console](console.md)
-- [IO.Text](text.md)
-- [IO.Collection](collections.md)
-- [IO.File / IO.Directory](filesystem.md)
-- [IO.Path](path.md)
-- [IO.Core](core.md)
-- [IO.Json](json.md)
-- [IO.Request](request.md)
-- [IO.UI](ui.md)
-- [IO.Web](web.md)
+See [Backend Support](../advanced/backend-support.md), [Packages](../cli/packages.md), [Memory and Lifetimes](../advanced/memory-management.md), [Type Helpers](types.md), and [Exceptions](../language/exceptions.md).

@@ -45,7 +45,9 @@ Trusted Function byte* Current()
 
 Trusted Function i32 Has()
 {
-    Return State()[CurrentIndex()] == [u64](0) ? [i32](0) : [i32](1);
+    // Fresh TLS is zero. Writers register the exception roots in State()
+    // before storing a managed error; a read-only query needs no registration.
+    Return IO.Kinal.Runtime.Thread.ReadWord(CurrentIndex()) == [u64](0) ? [i32](0) : [i32](1);
 }
 
 Trusted Function byte* Last()

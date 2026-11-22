@@ -1,366 +1,130 @@
 # 异常处理
 
+当前 C 语言前端只接受 `string`、`IO.Error` 类型的 Throw 值，不支持抛出任意整数、对象或 any。Hosted 代码可使用异常处理；freestanding core 禁止 Try／Catch／Throw。
 
+## Try、Catch 与 Throw
 
-Kinal 通过 `Try`/`Catch`/`Throw` 实现异常处理，异常对象可以是任意类型。
-
-
-
-## 基本语法
-
-
+一个 Try 对应一个 Catch：
 
 ```kinal
-
 Try
 {
-
-    // 可能抛出异常的代码
-
+    Throw "operation failed";
 }
-Catch (类型 变量名)
+Catch (string message)
 {
-
-    // 处理异常
-
+    // message 保存抛出的文本
 }
-
 ```
 
+还支持 `Catch (IO.Error error)` 和无参数 `Catch { ... }`。当前语法没有连续多个 Catch，也没有 `Finally`。需要多个恢复边界时嵌套 Try。
 
+`Throw expression;` 必须有表达式，没有省略值的重新抛出语法；传播异常时显式 Throw 捕获值。Catch 变量只在其处理块内可见。
 
-## Throw
+## `IO.Error`
 
-
-
-`Throw` 抛出一个异常，值可以是任意类型：
-
-
+构造函数使用**两个**参数：
 
 ```kinal
-
-Throw "出错了";                    // 抛出字符串
-
-Throw New IO.Error("标题", "详情"); // 抛出 IO.Error 对象
-
-Throw 42;                          // 抛出整数（不推荐但合法）
-
+IO.Error error = New IO.Error("File Error", "File was not found");
 ```
 
-
-
-## Try/Catch
-
-
-
-捕获特定类型的异常：
-
-
-
-```kinal
-
-Try
-{
-
-    Throw "boom";
-
-}
-Catch (string e)
-{
-
-    IO.Console.PrintLine("捕获到字符串异常: " + e);
-
-}
-
-```
-
-
-
-捕获 `IO.Error` 对象：
-
-
-
-```kinal
-
-Try
-{
-
-    Throw New IO.Error("文件错误", "文件不存在");
-
-}
-Catch (IO.Error err)
-{
-
-    IO.Console.PrintLine(err.Title);
-
-    IO.Console.PrintLine(err.Message);
-
-}
-
-```
-
-
-
-## IO.Error — 标准异常类
-
-
-
-`IO.Error` 是 Kinal 内置的标准异常类，字段如下：
-
-
-
-| 字段 | 类型 | 说明 |
-
+| 字段 | 类型 | 含义 |
 |------|------|------|
+| `Title` | `string` | 简短分类／标题 |
+| `Message` | `string` | 错误细节 |
+| `Inner` | `IO.Error` | 关联原因，可以为 null |
+| `Trace` | `string` | 运行时记录的追踪文本 |
 
-| `Title` | `string` | 异常标题（简短描述） |
+内建构造函数只接受 title／message，没有 `(title, message, inner)` 三参数重载。需要确定的原因链时显式设置 `Inner`。运行时也可在抛出处理中附加记录的原因／追踪；链结构重要时不应只依赖隐式行为。
 
-| `Message` | `string` | 详细信息 |
-
-| `Inner` | `IO.Error` | 内嵌的根因异常（可为 `null`） |
-
-| `Trace` | `string` | 调用栈轨迹（自动填充） |
-
-
+## 完整恢复与异常链示例
 
 ```kinal
-
-IO.Error err = New IO.Error("网络错误", "连接超时");
-
-IO.Console.PrintLine(err.Title);    // 网络错误
-
-IO.Console.PrintLine(err.Message);  // 连接超时
-
-```
-
-
-
-### 异常链
-
-
-
-使用 `Inner` 字段链接根因：
-
-
-
-```kinal
-
-Try
-{
-
-    // 底层操作
-
-    IO.Error inner = New IO.Error("Socket 错误", "连接被拒绝");
-
-    Throw New IO.Error("HTTP 请求失败", "无法建立连接", inner);
-
-}
-Catch (IO.Error err)
-{
-
-    IO.Console.PrintLine(err.Title);
-
-    IO.Console.PrintLine(err.Message);
-
-    If (err.Inner != null)
-    {
-        IO.Console.PrintLine("根因: " + err.Inner.Title);
-
-    }
-
-}
-
-```
-
-
-
-完整构造函数：
-
-
-
-```kinal
-
-// IO.Error(title, message) — 两参数版本
-
-IO.Error e1 = New IO.Error("标题", "消息");
-
-// 通过字段设置 Inner
-
-IO.Error e2 = New IO.Error("外层", "外层消息");
-
-// 注意：Inner 字段需要在构造后单独设置（见下面的链式异常测试）
-
-```
-
-
-
-## 不带参数的 Catch
-
-
-
-若不需要异常信息，可以省略 `Catch` 参数（捕获所有类型）：
-
-
-
-```kinal
-
-Try
-{
-
-    RiskyOperation();
-
-} Catch
-{
-
-    IO.Console.PrintLine("发生了异常");
-
-}
-
-```
-
-
-
-## Return via Throw
-
-
-
-在需要从函数通过异常返回时：
-
-
-
-```kinal
-
-Function int SafeDivide(int a, int b)
-{
-
-    If (b == 0)
-    {
-        Throw New IO.Error("除法错误", "除数不能为零");
-
-    }
-
-    Return a / b;
-
-}
-
-Try
-{
-
-    int result = SafeDivide(10, 0);
-
-}
-Catch (IO.Error err)
-{
-
-    IO.Console.PrintLine(err.Title);  // 除法错误
-
-}
-
-```
-
-
-
-## 完整示例
-
-
-
-```kinal
-
-Unit App.ExceptionDemo;
-
+Unit Docs.Exceptions;
 Get IO.Console;
+Get IO.Error;
 
-Function int Divide(int a, int b)
+Function int Divide(int left, int right)
 {
-
-    If (b == 0)
+    If (right == 0)
     {
-        Throw New IO.Error("ArithmeticError", "Division by zero");
-
+        Throw New IO.Error("Division Error", "Divisor cannot be zero");
     }
-
-    Return a / b;
-
+    Return left / right;
 }
 
-Function void Risky()
+Function void Calculate()
 {
-
-    // 嵌套 Try
-
     Try
     {
-
-        int r = Divide(10, 0);
-
-        IO.Console.PrintLine(r);
-
+        IO.Console.PrintLine(Divide(10, 0));
     }
-    Catch (IO.Error inner)
+    Catch (IO.Error cause)
     {
-
-        Throw New IO.Error("Operation Failed", "计算失败", inner);
-
+        IO.Error outer = New IO.Error("Calculation Error", "Unable to calculate");
+        outer.Inner = cause;
+        Throw outer;
     }
-
 }
 
 Static Function int Main()
 {
-
     Try
     {
-
-        Risky();
-
+        Calculate();
     }
-    Catch (IO.Error err)
+    Catch (IO.Error error)
     {
-
-        IO.Console.PrintLine("错误: " + err.Title);
-
-        IO.Console.PrintLine("消息: " + err.Message);
-
-        If (err.Inner != null)
+        IO.Console.PrintLine(error.Title);
+        IO.Console.PrintLine(error.Message);
+        If (error.Inner != null)
         {
-            IO.Console.PrintLine("根因: " + err.Inner.Title + " - " + err.Inner.Message);
-
+            IO.Console.PrintLine(error.Inner.Title);
         }
-
     }
-    Catch (string msg)
-    {
-
-        IO.Console.PrintLine("字符串异常: " + msg);
-
-    }
-
     Return 0;
-
 }
-
 ```
 
+Native 与 VM 预期输出：
 
+```text
+Calculation Error
+Unable to calculate
+Division Error
+```
 
-## 注意事项
+示例处理错误后返回成功。应用无法恢复时，应返回合适的非零退出码，而非静默吞掉失败。
 
+## 捕获表示与后端边界
 
+`Catch (string message)` 可以取得错误消息文本，包括 IO.Error 抛出的 Message；它不是通用任意类型模式匹配。可移植代码中，抛出的字符串按 string 捕获，IO.Error 按 IO.Error 捕获。
 
-- `Catch` 只捕获类型**完全匹配**的异常，Kinal 目前不支持多态捕获（即 `Catch (IO.Error e)` 不捕获 `IO.Error` 的子类）
+将原始字符串按 IO.Error 捕获存在已知后端差异：Native 将其规范化为错误对象，当前 VM 路径可能仍保留待处理异常并非零退出。不要依赖这种混用；需要结构化恢复时显式构造 IO.Error。当前也没有通用用户类异常继承分派契约。
 
-- 未被捕获的异常会将程序终止
+未捕获异常会终止执行。诊断颜色和追踪拼写是运行时／展示细节；测试应断言关键错误信息和退出状态，不应假定追踪中的文件路径跨平台完全相同。
 
-- 在 `Safe` 函数中，异常处理同样可用
+## 运行时查询辅助函数
 
+调用以下辅助函数时导入 `Get IO.Error;`：
 
+| 辅助函数 | 结果 | 用途 |
+|----------|------|------|
+| `IO.Error.LastTrace()` | `string` | 查询运行时记录的追踪 |
+| `IO.Error.HasException()` | `bool` | 查询待处理异常状态 |
+| `IO.Error.Current()` | `IO.Error` | 查询记录的异常对象 |
+| `IO.Error.Clear()` | `void` | 清除待处理异常状态 |
 
-## 下一步
+已记录错误信息与待处理状态是不同概念。普通恢复优先使用 Catch 的显式绑定。清除状态不负责资源清理，也不能替代应执行的错误处理路径。
 
+## 资源处理
 
+Try／Catch 不引入确定性析构，也没有 Finally 块。拥有外部资源时，应在成功和恢复路径显式调用 close／release。GC 不会自动关闭任意外部资源。参见[内存与生命周期](../advanced/memory-management.md)。
 
-- [类与继承](classes.md)
+## 相关文档
 
-- [安全等级](safety.md)
-
-
+- [函数](functions.md)
+- [安全](safety.md)
+- [后端支持](../advanced/backend-support.md)
+- [Freestanding](../advanced/freestanding.md)

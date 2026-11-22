@@ -2,7 +2,7 @@
 
 Problems such as duplicate declarations, scope conflicts, and type-name conflicts.
 
-The examples in this document are minimal reproductions of the most common way each diagnostic code is triggered. A few diagnostics that are more implementation-oriented use the closest surface-level form that user code can express.
+This page records the registered templates. Corrected examples show the supported form. A trigger sketch illustrates a rule or parser state and may require surrounding declarations or report an earlier/different diagnostic in the current C compiler.
 
 ---
 
@@ -322,6 +322,7 @@ Interface IValue
 
 Class Counter By IValue
 {
+    Public Function int Value() { Return 0; }
 }
 ```
 
@@ -337,7 +338,7 @@ Fix: Write each interface only once in the list.
 - Default Detail: Interface method already defined
 - Description: Duplicate definitions occur within the same namespace.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
 Class Counter
@@ -541,7 +542,7 @@ Fix: Rename conflicting entities to keep each public type name globally unique.
 - Default Detail: Class conflicts with interface name
 - Description: Different types of entities use the same name.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
 Class Value
@@ -579,7 +580,7 @@ Fix: Rename conflicting entities to keep each public type name globally unique.
 - Default Detail: Class conflicts with struct name
 - Description: Different types of entities use the same name.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
 Class Value
@@ -617,7 +618,7 @@ Fix: Rename conflicting entities to keep each public type name globally unique.
 - Default Detail: Interface conflicts with enum name
 - Description: Different types of entities use the same name.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
 Class Value
@@ -655,7 +656,7 @@ Fix: Rename conflicting entities to keep each public type name globally unique.
 - Default Detail: Interface conflicts with struct name
 - Description: Different types of entities use the same name.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
 Class Value
@@ -693,7 +694,7 @@ Fix: Rename conflicting entities to keep each public type name globally unique.
 - Default Detail: Struct conflicts with enum name
 - Description: Different types of entities use the same name.
 
-Incorrect Example:
+Trigger sketch (context-dependent):
 
 ```kinal
 Class Value

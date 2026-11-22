@@ -7,6 +7,10 @@
 extern "C" {
 #endif
 
+/* Raw console-mode leaves. Diagnostic/ANSI policy remains in Kinal. */
+int32_t kn_sh_rt_console_mode(int32_t descriptor);
+int32_t kn_sh_rt_set_console_mode(int32_t descriptor, uint32_t mode);
+
 /* Test-only FFI probes used by the selfhost differential suite. */
 int64_t kn_sh_rt_string_length(const char *text);
 int64_t kn_sh_rt_char_array_length(const char *text);

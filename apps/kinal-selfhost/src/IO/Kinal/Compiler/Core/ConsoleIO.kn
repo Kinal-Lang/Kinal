@@ -1,6 +1,6 @@
 Unit IO.Kinal.Compiler.Core.ConsoleIO;
 
-Get IO.Host;
+Get IO.Target;
 Get IO.Text;
 Get IO.Kinal.Runtime;
 
@@ -20,10 +20,9 @@ Extern Unsafe Function i32 WindowsWrite(i32 descriptor, string text, u32 count) 
 Extern Unsafe Function i32 PosixIsTerminal(i32 descriptor) By C;
 [LinkName("_isatty")]
 Extern Unsafe Function i32 WindowsIsTerminal(i32 descriptor) By C;
-
 Trusted Function bool IsTerminal(int descriptor)
 {
-    If (IO.Host.OS == IO.Host.OS.Windows)
+    If (IO.Target.OS == IO.Target.OS.Windows)
         Return WindowsIsTerminal([i32](descriptor)) != 0;
     Else Return PosixIsTerminal([i32](descriptor)) != 0;
 }
@@ -36,7 +35,7 @@ Trusted Function bool WriteCore(int descriptor, string text)
     {
         string remaining = IO.Text.Slice(text, offset, length - offset);
         int written = 0;
-        If (IO.Host.OS == IO.Host.OS.Windows)
+        If (IO.Target.OS == IO.Target.OS.Windows)
             written = [int](WindowsWrite([i32](descriptor), remaining, [u32](length - offset)));
         Else written = [int](PosixWrite([i32](descriptor), remaining, [usize](length - offset)));
         If (written <= 0) Return false;
@@ -52,7 +51,7 @@ Trusted Function string ReadInputCore()
     While (true)
     {
         int count = 0;
-        If (IO.Host.OS == IO.Host.OS.Windows)
+        If (IO.Target.OS == IO.Target.OS.Windows)
             count = [int](WindowsRead([i32](0), buffer, [u32](4096)));
         Else count = [int](PosixRead([i32](0), buffer, [usize](4096)));
         If (count < 0) Return null;
@@ -75,10 +74,10 @@ Trusted Function bool Write(int descriptor, string text)
     // CRT text mode rewrites LF on Windows. The formatter has already chosen
     // the source newline convention and must send the exact bytes requested.
     i32 previous = [i32](-1);
-    If (IO.Host.OS == IO.Host.OS.Windows)
+    If (IO.Target.OS == IO.Target.OS.Windows)
         previous = WindowsSetMode([i32](descriptor), [i32](32768));
     bool result = WriteCore(descriptor, text);
-    If (IO.Host.OS == IO.Host.OS.Windows)
+    If (IO.Target.OS == IO.Target.OS.Windows)
         If (previous != [i32](-1)) WindowsSetMode([i32](descriptor), previous);
     Return result;
 }
@@ -86,10 +85,10 @@ Trusted Function bool Write(int descriptor, string text)
 Trusted Function string ReadInput()
 {
     i32 previous = [i32](-1);
-    If (IO.Host.OS == IO.Host.OS.Windows)
+    If (IO.Target.OS == IO.Target.OS.Windows)
         previous = WindowsSetMode([i32](0), [i32](32768));
     string result = ReadInputCore();
-    If (IO.Host.OS == IO.Host.OS.Windows)
+    If (IO.Target.OS == IO.Target.OS.Windows)
         If (previous != [i32](-1)) WindowsSetMode([i32](0), previous);
     Return result;
 }

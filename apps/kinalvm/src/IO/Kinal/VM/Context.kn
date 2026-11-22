@@ -2,7 +2,9 @@ Unit IO.Kinal.VM.Context;
 
 Get Bytecode By IO.Kinal.VM.Bytecode;
 Get Binary By IO.Kinal.VM.Binary;
-Get Memory By IO.Memory;
+Get IO.Kinal.Runtime;
+Get IO.Text;
+Get IO.Error;
 
 Public Class VMValue
 {
@@ -82,38 +84,20 @@ Public Class VMValue
         Return cell;
     }
 
+    Public Static Function VMValue FromCell(int handle)
+    {
+        VMValue cell = New VMValue();
+        cell.Kind = [int](Bytecode.RegisterKind.CaptureCell);
+        cell.IntValue = handle;
+        Return cell;
+    }
+
     Public Static Function VMValue FromPointer(int handle)
     {
         VMValue cell = New VMValue();
         cell.Kind = [int](Bytecode.ValueKind.Pointer);
         cell.IntValue = handle;
         Return cell;
-    }
-}
-
-Public Class HeapArray
-{
-    Public int ElementKind;
-    Public byte* RawBuffer;
-    Public int RawLength;
-    Public int RawCapacity;
-    Public int[] IntItems;
-    Public float[] FloatItems;
-    Public bool[] BoolItems;
-    Public string[] StringItems;
-    Public VMValue[] Items;
-
-    Public Constructor()
-    {
-        This.ElementKind = [int](Bytecode.ValueKind.Null);
-        This.RawBuffer = null;
-        This.RawLength = 0;
-        This.RawCapacity = 0;
-        This.IntItems = {};
-        This.FloatItems = {};
-        This.BoolItems = {};
-        This.StringItems = {};
-        This.Items = {};
     }
 }
 
@@ -126,6 +110,171 @@ Public Class HeapObject
     {
         This.TypeIndex = -1;
         This.Fields = {};
+    }
+}
+
+Public Class HeapTextBuilder By HeapObject
+{
+    Public IO.Text.Builder Text;
+    Public Constructor() { Text = New IO.Text.Builder(); }
+}
+
+Public Class HeapCollection By HeapObject
+{
+    Public string CollectionName;
+}
+
+// The host list grows geometrically and clears removed references. Its elements
+// are VMValues, so the guest collector still traces guest handles explicitly.
+Public Class HeapValueCollection By HeapCollection
+{
+    Protected list Values;
+    Protected bool StoredHandle;
+    Public Function VMValue ValueAt(int index) { Return [VMValue](Values.Fetch(index)); }
+    Public Property int Count { Get { Return Values.Count(); } }
+    Public Property bool MayContainHandles { Get { Return StoredHandle; } }
+
+    // Primitive values have no edges in the guest heap. After the first handle
+    // write, trace all live slots until Clear, including after a removal.
+    Protected Function void NoteValue(VMValue value)
+    {
+        If (value != null && value.Kind >= [int](Bytecode.ValueKind.Array)) StoredHandle = true;
+    }
+
+    Public Function void Append(VMValue value)
+    {
+        NoteValue(value);
+        Values.Add(value);
+    }
+
+    Public Function void SetValue(int index, VMValue value)
+    {
+        NoteValue(value);
+        Values.Set(index, value);
+    }
+}
+
+Public Class HeapList By HeapValueCollection
+{
+    Public Constructor()
+    {
+        TypeIndex = -1;
+        Fields = {};
+        CollectionName = "IO.Collection.list";
+        Values = list.Create();
+    }
+
+    Public Function void Insert(int index, VMValue value)
+    {
+        NoteValue(value);
+        Values.Insert(index, value);
+    }
+
+    Public Function void Clear()
+    {
+        Values = list.Create();
+        StoredHandle = false;
+    }
+
+    Public Function VMValue RemoveAt(int index)
+    {
+        If (index < 0 || index >= Count) Return VMValue.NullValue();
+        Return [VMValue](Values.RemoveAt(index));
+    }
+
+    Public Trusted Function int IndexOf(VMValue needle)
+    {
+        int count = Values.Count();
+        For (int i = 0; i < count; i++)
+        {
+            VMValue item = ValueAt(i);
+            If (item.Kind != needle.Kind) Continue;
+            If (item.Kind == [int](Bytecode.ValueKind.String))
+            {
+                If (item.StringValue == needle.StringValue) Return i;
+            }
+            ElseIf (item.Kind == [int](Bytecode.ValueKind.Float))
+            {
+                float left = item.FloatValue;
+                float right = needle.FloatValue;
+                If (([u64*](&left))[0] == ([u64*](&right))[0]) Return i;
+            }
+            ElseIf (item.Kind == [int](Bytecode.ValueKind.Bool))
+            {
+                If (item.BoolValue == needle.BoolValue) Return i;
+            }
+            ElseIf (item.IntValue == needle.IntValue) Return i;
+        }
+        Return -1;
+    }
+}
+
+// Slots maps keys to indexes in dense guest storage. Removal fills the hole
+// with the last entry, preserving the key map's enumeration order.
+Public Class HeapDict By HeapValueCollection
+{
+    Public dict Slots;
+    Private list SlotKeys;
+
+    Public Constructor()
+    {
+        TypeIndex = -1;
+        Fields = {};
+        CollectionName = "IO.Collection.dict";
+        Slots = dict.Create();
+        SlotKeys = list.Create();
+        Values = list.Create();
+    }
+
+    Public Function int Lookup(string key)
+    {
+        Return [int](Slots.TryFetch(key, -1));
+    }
+
+    Public Function void Put(string key, VMValue value)
+    {
+        If (key == null) Return;
+        int index = Lookup(key);
+        If (index < 0)
+        {
+            index = Slots.Count();
+            Slots.Set(key, index);
+            Append(value);
+            SlotKeys.Add(key);
+            Return;
+        }
+        SetValue(index, value);
+    }
+
+    Public Function bool RemoveKey(string key)
+    {
+        int index = Lookup(key);
+        If (index < 0) Return false;
+        int last = Slots.Count() - 1;
+        Slots.Remove(key);
+        If (index != last)
+        {
+            string moved = [string](SlotKeys.Fetch(last));
+            Values.Set(index, Values.Fetch(last));
+            SlotKeys.Set(index, moved);
+            Slots.Set(moved, index);
+        }
+        Values.Pop();
+        SlotKeys.Pop();
+        Return true;
+    }
+}
+
+Public Class HeapSet By HeapCollection
+{
+    Public set Members;
+
+    Public Constructor()
+    {
+        TypeIndex = -1;
+        Fields = {};
+        CollectionName = "IO.Collection.set";
+        Members = set.Create();
     }
 }
 
@@ -169,6 +318,8 @@ Public Class FunctionFrame
     Public int Pc;
     Public int ReturnPc;
     Public int ReturnReg;
+    Public bool HostBoundary;
+    Public VMValue HostResult;
     Public int[] Kinds;
     Public int[] IntRegisters;
     Public float[] FloatRegisters;
@@ -179,28 +330,54 @@ Public Class FunctionFrame
 
     Public Constructor(Bytecode.FunctionInfo functionInfo, int functionIndex, int returnPc, int returnReg)
     {
-        This.FnInfo = functionInfo;
-        This.FunctionIndex = functionIndex;
-        This.EnvHandle = -1;
-        This.Pc = 0;
-        This.ReturnPc = returnPc;
-        This.ReturnReg = returnReg;
         This.Kinds = {};
         This.IntRegisters = {};
         This.FloatRegisters = {};
         This.BoolRegisters = {};
         This.StringRegisters = {};
         This.Handlers = {};
+        This.Reset(functionInfo, functionIndex, returnPc, returnReg);
+    }
+
+    Public Function void Reset(Bytecode.FunctionInfo functionInfo, int functionIndex, int returnPc, int returnReg)
+    {
+        This.FnInfo = functionInfo;
+        This.FunctionIndex = functionIndex;
+        This.EnvHandle = -1;
+        This.Pc = 0;
+        This.ReturnPc = returnPc;
+        This.ReturnReg = returnReg;
+        This.HostBoundary = false;
+        This.HostResult = null;
         This.HandlerCount = 0;
 
         int slots = functionInfo.RegisterCount + 8;
-        For (int i = 0; i < slots; i = i + 1)
+        int capacity = This.Kinds.Length();
+        If (capacity > 0) This.ClearRegisters(capacity);
+        For (int next = capacity; next < slots; next++)
         {
             This.Kinds = This.Kinds.Add([int](Bytecode.ValueKind.Null));
             This.IntRegisters = This.IntRegisters.Add(0);
             This.FloatRegisters = This.FloatRegisters.Add(0.0);
             This.BoolRegisters = This.BoolRegisters.Add(false);
             This.StringRegisters = This.StringRegisters.Add("");
+        }
+    }
+
+    Private Function void ClearRegisters(int count)
+    {
+        int[] kinds = Kinds;
+        int[] integers = IntRegisters;
+        float[] floats = FloatRegisters;
+        bool[] booleans = BoolRegisters;
+        string[] strings = StringRegisters;
+        For (int i = 0; i < count; i++)
+        {
+            kinds[i] = [int](Bytecode.ValueKind.Null);
+            integers[i] = 0;
+            floats[i] = 0.0;
+            booleans[i] = false;
+            strings[i] = "";
         }
     }
 
@@ -254,11 +431,17 @@ Public Class FunctionFrame
 
     Public Function void CopyValueFrom(FunctionFrame other, int dst, int src)
     {
-        This.Kinds[dst] = other.Kinds[src];
-        This.IntRegisters[dst] = other.IntRegisters[src];
-        This.FloatRegisters[dst] = other.FloatRegisters[src];
-        This.BoolRegisters[dst] = other.BoolRegisters[src];
-        This.StringRegisters[dst] = other.StringRegisters[src];
+        int kind = other.Kinds[src];
+        If (kind == [int](Bytecode.ValueKind.Null)) { This.SetNull(dst); Return; }
+        This.Kinds[dst] = kind;
+        If (kind == [int](Bytecode.ValueKind.String)) This.StringRegisters[dst] = other.StringRegisters[src];
+        Else
+        {
+            This.StringRegisters[dst] = "";
+            If (kind == [int](Bytecode.ValueKind.Float)) This.FloatRegisters[dst] = other.FloatRegisters[src];
+            Else If (kind == [int](Bytecode.ValueKind.Bool)) This.BoolRegisters[dst] = other.BoolRegisters[src];
+            Else This.IntRegisters[dst] = other.IntRegisters[src];
+        }
     }
 
     Public Function VMValue ExportValue(int reg)
@@ -273,6 +456,7 @@ Public Class FunctionFrame
             Case([int](Bytecode.ValueKind.Array))  { VMValue.FromArray(This.IntRegisters[reg]) }
             Case([int](Bytecode.ValueKind.Object)) { VMValue.FromObject(This.IntRegisters[reg]) }
             Case([int](Bytecode.ValueKind.Pointer)) { VMValue.FromPointer(This.IntRegisters[reg]) }
+            Case([int](Bytecode.RegisterKind.CaptureCell)) { VMValue.FromCell(This.IntRegisters[reg]) }
             Case(default)                          { VMValue.NullValue() }
         };
     }
@@ -286,6 +470,7 @@ Public Class FunctionFrame
             Case([int](Bytecode.ValueKind.Bool))   { This.SetBool(reg, value.BoolValue); }
             Case([int](Bytecode.ValueKind.String)) { This.SetString(reg, value.StringValue); }
             Case([int](Bytecode.ValueKind.Char))   { This.SetChar(reg, [char](value.IntValue)); }
+            Case([int](Bytecode.RegisterKind.CaptureCell)) { This.SetCell(reg, value.IntValue); }
             Case([int](Bytecode.ValueKind.Array))
             {
                 This.Kinds[reg] = [int](Bytecode.ValueKind.Array);
@@ -306,6 +491,18 @@ Public Class FunctionFrame
                 This.SetNull(reg);
             }
         }
+    }
+
+    Public Function void SetCell(int reg, int handle)
+    {
+        This.Kinds[reg] = [int](Bytecode.RegisterKind.CaptureCell);
+        This.IntRegisters[reg] = handle;
+    }
+
+    Public Function int GetCell(int reg)
+    {
+        If (This.Kinds[reg] != [int](Bytecode.RegisterKind.CaptureCell)) Throw "Expected capture cell at r" + [string](reg);
+        Return This.IntRegisters[reg];
     }
 
     Public Function void SetInt(int reg, int value)
@@ -380,6 +577,12 @@ Public Class FunctionFrame
         Return This.StringRegisters[reg];
     }
 
+    Public Function string GetNullableString(int reg)
+    {
+        If (This.Kinds[reg] == [int](Bytecode.ValueKind.Null)) Return null;
+        Return This.GetString(reg);
+    }
+
     Public Function char GetChar(int reg)
     {
         If (This.Kinds[reg] != [int](Bytecode.ValueKind.Char))
@@ -439,16 +642,67 @@ Public Class FunctionFrame
 
 Public Class ExecutionContext
 {
+    Public IO.Type.Object.Function InvokeCallback;
+    Public GuestHeap Heap;
     Public Bytecode.Program Program;
+    Private bool[] TextBuilderTypes;
     Public bool Halted;
     Public int ExitCode;
     Public FunctionFrame[] Frames;
     Public int FrameCount;
     Public VMValue[] Globals;
-    Public VMValue[] Cells;
-    Public HeapArray[] Arrays;
-    Public HeapObject[] Objects;
-    Public PointerInfo[] Pointers;
+    Public Property VMValue[] Cells
+    {
+        Get { Return [VMValue[]](Heap.CellSlots.NativeArray()); }
+        Set { Heap.CellSlots.ReplaceArray(value); }
+    }
+    Public Trusted Function VMValue CellAt(int handle)
+    {
+        HeapSlots slots = Heap.CellSlots;
+        If (handle >= slots.WindowStart && handle < slots.WindowEnd)
+            Return ([VMValue*](slots.Window))[handle - slots.WindowStart];
+        byte* slot = slots.Address(handle);
+        Return slot == null ? null : ([VMValue*](slot))[0];
+    }
+    Public Property HeapArray[] Arrays
+    {
+        Get { Return [HeapArray[]](Heap.ArraySlots.NativeArray()); }
+        Set { Heap.ArraySlots.ReplaceArray(value); }
+    }
+    Public Trusted Function HeapArray ArrayAt(int handle)
+    {
+        HeapSlots slots = Heap.ArraySlots;
+        If (handle >= slots.WindowStart && handle < slots.WindowEnd)
+            Return ([HeapArray*](slots.Window))[handle - slots.WindowStart];
+        byte* slot = slots.Address(handle);
+        Return slot == null ? null : ([HeapArray*](slot))[0];
+    }
+    Public Property HeapObject[] Objects
+    {
+        Get { Return [HeapObject[]](Heap.ObjectSlots.NativeArray()); }
+        Set { Heap.ObjectSlots.ReplaceArray(value); }
+    }
+    Public Trusted Function HeapObject ObjectAt(int handle)
+    {
+        HeapSlots slots = Heap.ObjectSlots;
+        If (handle >= slots.WindowStart && handle < slots.WindowEnd)
+            Return ([HeapObject*](slots.Window))[handle - slots.WindowStart];
+        byte* slot = slots.Address(handle);
+        Return slot == null ? null : ([HeapObject*](slot))[0];
+    }
+    Public Property PointerInfo[] Pointers
+    {
+        Get { Return [PointerInfo[]](Heap.PointerSlots.NativeArray()); }
+        Set { Heap.PointerSlots.ReplaceArray(value); }
+    }
+    Public Trusted Function PointerInfo PointerAt(int handle)
+    {
+        HeapSlots slots = Heap.PointerSlots;
+        If (handle >= slots.WindowStart && handle < slots.WindowEnd)
+            Return ([PointerInfo*](slots.Window))[handle - slots.WindowStart];
+        byte* slot = slots.Address(handle);
+        Return slot == null ? null : ([PointerInfo*](slot))[0];
+    }
     Public VMValue CurrentException;
     Public VMValue LastException;
     Public string CurrentTrace;
@@ -457,14 +711,30 @@ Public Class ExecutionContext
 
     Public Constructor(Bytecode.Program program)
     {
+        This.Heap = New GuestHeap();
         This.Program = program;
+        TextBuilderTypes = {};
+        int builderType = FindTypeByName("IO.Text.Builder");
+        If (builderType >= 0)
+        {
+            int count = program.Types.Length();
+            For (int i = 0; i < count; i++)
+            {
+                bool matches = false;
+                int type = i;
+                For (int depth = 0; type >= 0 && type < count && depth < count; depth++)
+                {
+                    If (type == builderType) { matches = true; Break; }
+                    type = program.Types[type].BaseType;
+                }
+                TextBuilderTypes = TextBuilderTypes.Add(matches);
+            }
+        }
         This.Halted = false;
         This.ExitCode = 0;
         This.Frames = {};
         This.FrameCount = 0;
         This.Globals = {};
-        This.Cells = {};
-        This.Pointers = {};
         This.CurrentException = VMValue.NullValue();
         This.LastException = VMValue.NullValue();
         This.CurrentTrace = "";
@@ -474,8 +744,6 @@ Public Class ExecutionContext
         {
             This.Globals = This.Globals.Add(VMValue.NullValue());
         }
-        This.Arrays = {};
-        This.Objects = {};
     }
 
     Public Function int FindTypeByName(string name)
@@ -536,6 +804,16 @@ Public Class ExecutionContext
             }
             Case(default) { false }
         };
+    }
+
+    Public Function void RaiseHostError(IO.Error error)
+    {
+        int type = FindTypeByName("IO.Error");
+        If (type < 0) { RaiseException(VMValue.FromString(error.Title + ": " + error.Message)); Return; }
+        int handle = NewObject(type);
+        ObjectSetValue(handle, 0, VMValue.FromString(error.Title));
+        ObjectSetValue(handle, 1, VMValue.FromString(error.Message));
+        RaiseException(VMValue.FromObject(handle));
     }
 
     Public Function void ClearException()
@@ -672,23 +950,12 @@ Public Class ExecutionContext
         Return "<exception>";
     }
 
-    Private Function VMValue DefaultValueForKind(int kind)
-    {
-        Return Switch(kind)
-        {
-            Case([int](Bytecode.ValueKind.Int))    { VMValue.FromInt(0) }
-            Case([int](Bytecode.ValueKind.Float))  { VMValue.FromFloat(0.0) }
-            Case([int](Bytecode.ValueKind.Bool))   { VMValue.FromBool(false) }
-            Case([int](Bytecode.ValueKind.String)) { VMValue.FromString("") }
-            Case([int](Bytecode.ValueKind.Char))   { VMValue.FromChar([char](0)) }
-            Case(default)                          { VMValue.NullValue() }
-        };
-    }
-
     Private Function int AddPointerRecord(PointerInfo info)
     {
-        This.Pointers = This.Pointers.Add(info);
-        Return This.Pointers.Length() - 1;
+        Heap.RecordAllocation(48);
+        int slot = Heap.PointerSlots.Take();
+        Heap.PointerSlots.Store(slot, info);
+        Return slot;
     }
 
     Public Function int NewFramePointer(int frameIndex, int reg)
@@ -733,6 +1000,18 @@ Public Class ExecutionContext
         info.A = functionIndex;
         Return This.AddPointerRecord(info);
     }
+    Public Function int FunctionPointerTarget(int handle)
+    {
+        PointerInfo info = This.GetPointerInfo(handle);
+        If (info.Kind != [int](Bytecode.PointerKind.Func)) Throw "Expected a bytecode function pointer";
+        Return info.A;
+    }
+    Public Function int NewHostHandle()
+    {
+        PointerInfo info = New PointerInfo();
+        info.Kind = [int](Bytecode.PointerKind.HostHandle);
+        Return This.AddPointerRecord(info);
+    }
 
     Public Function int NewStringPointer(string text, int index)
     {
@@ -753,11 +1032,12 @@ Public Class ExecutionContext
 
     Private Function PointerInfo GetPointerInfo(int handle)
     {
-        If (handle < 0 || handle >= This.Pointers.Length())
+        PointerInfo stored = PointerAt(handle);
+        If (stored == null)
         {
             Throw "Pointer handle out of range";
         }
-        Return This.Pointers[handle];
+        Return stored;
     }
 
     Private Function FunctionFrame FrameAt(int frameIndex)
@@ -863,146 +1143,79 @@ Public Class ExecutionContext
         };
     }
 
-    Private Function int ArrayStoredLength(HeapArray arr)
+    Private Function int PrimitiveWidth(int kind)
     {
-        Return Switch(arr.ElementKind)
-        {
-            Case([int](Bytecode.ValueKind.Int))    { arr.RawLength }
-            Case([int](Bytecode.ValueKind.Char))   { arr.RawLength }
-            Case([int](Bytecode.ValueKind.Float))  { arr.FloatItems.Length() }
-            Case([int](Bytecode.ValueKind.Bool))   { arr.BoolItems.Length() }
-            Case([int](Bytecode.ValueKind.String)) { arr.StringItems.Length() }
-            Case(default)                          { arr.Items.Length() }
-        };
+        If (kind == [int](Bytecode.ValueKind.Bool)) Return 1;
+        If (kind == [int](Bytecode.ValueKind.Int) || kind == [int](Bytecode.ValueKind.Char) ||
+            kind == [int](Bytecode.ValueKind.Float)) Return 8;
+        Return 0;
     }
 
-    Private Unsafe Function void EnsureRawIntCapacity(HeapArray arr, int minCapacity)
+    Private Unsafe Function HeapArray AllocateArray(int length, int kind, bool clear)
     {
-        If (minCapacity <= arr.RawCapacity)
+        If (length < 0 || length > 1152921504606846959) Throw "Invalid VM array length";
+        int width = PrimitiveWidth(kind);
+        HeapArray array = New HeapArray(Heap);
+        array.ElementKind = kind;
+        array.Length = length;
+        If (width > 0 && length > 0)
         {
-            Return;
+            If ([u64](length) > [u64]([usize](-1)) / [u64](width)) Throw "Invalid primitive VM array size";
+            usize bytes = [usize](length) * [usize](width);
+            array.RawBuffer = clear ? Binary.calloc([usize](length), [usize](width)) : Binary.malloc(bytes);
+            If (array.RawBuffer == null) Throw "Out of memory while allocating a primitive VM array";
         }
+        Heap.RecordAllocation(128 + length * width);
+        Return array;
+    }
 
-        int newCapacity = arr.RawCapacity <= 0 ? 4 : arr.RawCapacity;
-        While (newCapacity < minCapacity)
+    Private Function int StoreArray(HeapArray arr)
+    {
+        int slot = Heap.ArraySlots.Take();
+        Heap.ArraySlots.Store(slot, arr);
+        Return slot;
+    }
+
+    Public Trusted Function void ReleaseArrayBuffers()
+    {
+        For (int i = 0; i < Heap.ArraySlots.Length; i++)
         {
-            newCapacity = newCapacity * 2;
+            HeapArray array = ArrayAt(i);
+            If (array != null) array.ReleaseBuffer();
         }
-
-        int byteCount = newCapacity * 8;
-        byte* next = Binary.malloc([usize](byteCount));
-        If (next == null)
-        {
-            Throw "Out of memory while growing primitive VM array";
-        }
-
-        Memory.Zero(next, [usize](byteCount));
-        If (arr.RawBuffer != null)
-        {
-            If (arr.RawLength > 0)
-            {
-                Memory.Copy(next, arr.RawBuffer, [usize](arr.RawLength * 8));
-            }
-            Binary.free(arr.RawBuffer);
-        }
-
-        arr.RawBuffer = next;
-        arr.RawCapacity = newCapacity;
     }
 
     Public Unsafe Function int NewArray(int length, int elementKind)
     {
-        HeapArray arr = New HeapArray();
-        arr.ElementKind = elementKind;
-
-        Switch(elementKind)
-        {
-            Case([int](Bytecode.ValueKind.Int))
-            {
-                arr.RawLength = length;
-                arr.RawCapacity = length;
-                If (length > 0)
-                {
-                    int byteCount = length * 8;
-                    arr.RawBuffer = Binary.malloc([usize](byteCount));
-                    If (arr.RawBuffer == null)
-                    {
-                        Throw "Out of memory while creating int VM array";
-                    }
-                    Memory.Zero(arr.RawBuffer, [usize](byteCount));
-                }
-            }
-            Case([int](Bytecode.ValueKind.Char))
-            {
-                arr.RawLength = length;
-                arr.RawCapacity = length;
-                If (length > 0)
-                {
-                    int byteCount = length * 8;
-                    arr.RawBuffer = Binary.malloc([usize](byteCount));
-                    If (arr.RawBuffer == null)
-                    {
-                        Throw "Out of memory while creating char VM array";
-                    }
-                    Memory.Zero(arr.RawBuffer, [usize](byteCount));
-                }
-            }
-            Case([int](Bytecode.ValueKind.Float))
-            {
-                For (int i = 0; i < length; i = i + 1)
-                {
-                    arr.FloatItems = arr.FloatItems.Add(0.0);
-                }
-            }
-            Case([int](Bytecode.ValueKind.Bool))
-            {
-                For (int i = 0; i < length; i = i + 1)
-                {
-                    arr.BoolItems = arr.BoolItems.Add(false);
-                }
-            }
-            Case([int](Bytecode.ValueKind.String))
-            {
-                For (int i = 0; i < length; i = i + 1)
-                {
-                    arr.StringItems = arr.StringItems.Add("");
-                }
-            }
-            Case(default)
-            {
-                For (int i = 0; i < length; i = i + 1)
-                {
-                    arr.Items = arr.Items.Add(This.DefaultValueForKind(elementKind));
-                }
-            }
-        }
-
-        This.Arrays = This.Arrays.Add(arr);
-        Return This.Arrays.Length() - 1;
+        Return StoreArray(AllocateArray(length, elementKind, true));
     }
 
     Public Function int NewCell(VMValue value)
     {
-        This.Cells = This.Cells.Add(value);
-        Return This.Cells.Length() - 1;
+        Heap.RecordAllocation(48);
+        int slot = Heap.CellSlots.Take();
+        Heap.CellSlots.Store(slot, value);
+        Return slot;
     }
 
     Public Function VMValue GetCellValue(int handle)
     {
-        If (handle < 0 || handle >= This.Cells.Length())
+        VMValue stored = CellAt(handle);
+        If (stored == null)
         {
             Throw "Cell handle out of range";
         }
-        Return This.Cells[handle];
+        Return stored;
     }
 
     Public Function void SetCellValue(int handle, VMValue value)
     {
-        If (handle < 0 || handle >= This.Cells.Length())
+        VMValue stored = CellAt(handle);
+        If (stored == null)
         {
             Throw "Cell handle out of range";
         }
-        This.Cells[handle] = value;
+        Heap.CellSlots.Store(handle, value);
     }
 
     Public Function int NewObject(int typeIndex)
@@ -1012,25 +1225,84 @@ Public Class ExecutionContext
             Throw "Type index out of range";
         }
 
-        HeapObject obj = New HeapObject();
-        obj.TypeIndex = typeIndex;
         int fieldCount = This.Program.Types[typeIndex].FieldCount;
+        Heap.RecordAllocation(48 + 48 * fieldCount);
+        HeapObject obj;
+        If (TextBuilderTypes.Length() > 0 && TextBuilderTypes[typeIndex]) obj = New HeapTextBuilder();
+        Else obj = New HeapObject();
+        obj.TypeIndex = typeIndex;
         For (int i = 0; i < fieldCount; i = i + 1)
         {
             obj.Fields = obj.Fields.Add(VMValue.NullValue());
         }
-        This.Objects = This.Objects.Add(obj);
-        Return This.Objects.Length() - 1;
+        Return StoreObject(obj);
+    }
+
+    Private Function int StoreObject(HeapObject obj)
+    {
+        int slot = Heap.ObjectSlots.Take();
+        Heap.ObjectSlots.Store(slot, obj);
+        Return slot;
+    }
+
+    Public Function IO.Text.Builder TextBuilderAt(int reg)
+    {
+        FunctionFrame frame = CurrentFrame();
+        If (frame.Kinds[reg] != [int](Bytecode.ValueKind.Object)) Throw "Expected IO.Text.Builder";
+        int handle = frame.IntRegisters[reg];
+        HeapObject storage = ObjectAt(handle);
+        If (!(storage Is HeapTextBuilder))
+            Throw "Expected IO.Text.Builder";
+        Return [HeapTextBuilder](storage).Text;
+    }
+
+    Public Function int NewList()
+    {
+        Heap.RecordAllocation(48);
+        Return StoreObject(New HeapList());
+    }
+
+    Public Function int NewDict()
+    {
+        Heap.RecordAllocation(80);
+        Return StoreObject(New HeapDict());
+    }
+
+    Public Function int NewSet()
+    {
+        Heap.RecordAllocation(48);
+        Return StoreObject(New HeapSet());
+    }
+
+    Private Function HeapCollection CollectionAt(int reg, string expected)
+    {
+        FunctionFrame frame = CurrentFrame();
+        If (frame.Kinds[reg] == [int](Bytecode.ValueKind.Null)) Return null;
+        int handle = frame.IntRegisters[reg];
+        HeapObject storage = ObjectAt(handle);
+        If (frame.Kinds[reg] == [int](Bytecode.ValueKind.Object) && storage Is HeapCollection)
+        {
+            HeapCollection value = [HeapCollection](storage);
+            If (value.CollectionName == expected) Return value;
+        }
+        Throw "Expected " + expected + " register";
+    }
+
+    Public Function HeapList ListAt(int reg) { Return [HeapList](CollectionAt(reg, "IO.Collection.list")); }
+    Public Function HeapDict DictAt(int reg) { Return [HeapDict](CollectionAt(reg, "IO.Collection.dict")); }
+    Public Function HeapSet SetAt(int reg) { Return [HeapSet](CollectionAt(reg, "IO.Collection.set")); }
+
+    Public Function HeapArray RequireArray(int handle)
+    {
+        HeapArray array = ArrayAt(handle);
+        If (array == null) Throw "Array handle out of range";
+        Return array;
     }
 
     Public Unsafe Function VMValue ArrayGetValue(int handle, int index)
     {
-        If (handle < 0 || handle >= This.Arrays.Length())
-        {
-            Throw "Array handle out of range";
-        }
-        HeapArray arr = This.Arrays[handle];
-        If (index < 0 || index >= This.ArrayStoredLength(arr))
+        HeapArray arr = RequireArray(handle);
+        If (index < 0 || index >= arr.Length)
         {
             Throw "Array index out of range";
         }
@@ -1038,21 +1310,17 @@ Public Class ExecutionContext
         {
             Case([int](Bytecode.ValueKind.Int))    { VMValue.FromInt(([int*](arr.RawBuffer))[index]) }
             Case([int](Bytecode.ValueKind.Char))   { VMValue.FromChar([char](([int*](arr.RawBuffer))[index])) }
-            Case([int](Bytecode.ValueKind.Float))  { VMValue.FromFloat(arr.FloatItems[index]) }
-            Case([int](Bytecode.ValueKind.Bool))   { VMValue.FromBool(arr.BoolItems[index]) }
-            Case([int](Bytecode.ValueKind.String)) { VMValue.FromString(arr.StringItems[index]) }
-            Case(default)                          { arr.Items[index] }
+            Case([int](Bytecode.ValueKind.Float))  { VMValue.FromFloat(([float*](arr.RawBuffer))[index]) }
+            Case([int](Bytecode.ValueKind.Bool))   { VMValue.FromBool(([bool*](arr.RawBuffer))[index]) }
+            Case([int](Bytecode.ValueKind.String)) { VMValue.FromString(arr.ReadString(index)) }
+            Case(default)                          { arr.ReadValue(index) }
         };
     }
 
     Public Unsafe Function void ArraySetValue(int handle, int index, VMValue value)
     {
-        If (handle < 0 || handle >= This.Arrays.Length())
-        {
-            Throw "Array handle out of range";
-        }
-        HeapArray arr = This.Arrays[handle];
-        If (index < 0 || index >= This.ArrayStoredLength(arr))
+        HeapArray arr = RequireArray(handle);
+        If (index < 0 || index >= arr.Length)
         {
             Throw "Array index out of range";
         }
@@ -1061,108 +1329,42 @@ Public Class ExecutionContext
         {
             Case([int](Bytecode.ValueKind.Int))    { ([int*](arr.RawBuffer))[index] = value.IntValue; }
             Case([int](Bytecode.ValueKind.Char))   { ([int*](arr.RawBuffer))[index] = value.IntValue; }
-            Case([int](Bytecode.ValueKind.Float))  { arr.FloatItems[index] = value.FloatValue; }
-            Case([int](Bytecode.ValueKind.Bool))   { arr.BoolItems[index] = value.BoolValue; }
-            Case([int](Bytecode.ValueKind.String)) { arr.StringItems[index] = value.StringValue; }
-            Case(default)                          { arr.Items[index] = value; }
+            Case([int](Bytecode.ValueKind.Float))  { ([float*](arr.RawBuffer))[index] = value.FloatValue; }
+            Case([int](Bytecode.ValueKind.Bool))   { ([bool*](arr.RawBuffer))[index] = value.BoolValue; }
+            Case([int](Bytecode.ValueKind.String)) { arr.WriteString(index, value.StringValue); }
+            Case(default)                          { arr.WriteValue(index, value); }
         }
     }
 
     Public Unsafe Function void ArrayLoadIntoFrame(int handle, int index, FunctionFrame frame, int dst)
     {
-        If (handle < 0 || handle >= This.Arrays.Length())
-        {
-            Throw "Array handle out of range";
-        }
-        HeapArray arr = This.Arrays[handle];
-        If (index < 0 || index >= This.ArrayStoredLength(arr))
-        {
-            Throw "Array index out of range";
-        }
-
-        Switch(arr.ElementKind)
-        {
-            Case([int](Bytecode.ValueKind.Int))    { frame.SetInt(dst, ([int*](arr.RawBuffer))[index]); }
-            Case([int](Bytecode.ValueKind.Char))   { frame.SetChar(dst, [char](([int*](arr.RawBuffer))[index])); }
-            Case([int](Bytecode.ValueKind.Float))  { frame.SetFloat(dst, arr.FloatItems[index]); }
-            Case([int](Bytecode.ValueKind.Bool))   { frame.SetBool(dst, arr.BoolItems[index]); }
-            Case([int](Bytecode.ValueKind.String)) { frame.SetString(dst, arr.StringItems[index]); }
-            Case(default)                          { frame.ImportValue(dst, arr.Items[index]); }
-        }
+        RequireArray(handle).LoadIntoFrame(index, frame, dst);
     }
 
     Public Unsafe Function void ArrayStoreFromFrame(int handle, int index, FunctionFrame frame, int src)
     {
-        If (handle < 0 || handle >= This.Arrays.Length())
-        {
-            Throw "Array handle out of range";
-        }
-        HeapArray arr = This.Arrays[handle];
-        If (index < 0 || index >= This.ArrayStoredLength(arr))
-        {
-            Throw "Array index out of range";
-        }
-
-        Switch(arr.ElementKind)
-        {
-            Case([int](Bytecode.ValueKind.Int))    { ([int*](arr.RawBuffer))[index] = frame.GetInt(src); }
-            Case([int](Bytecode.ValueKind.Char))   { ([int*](arr.RawBuffer))[index] = [int](frame.GetChar(src)); }
-            Case([int](Bytecode.ValueKind.Float))  { arr.FloatItems[index] = frame.GetFloat(src); }
-            Case([int](Bytecode.ValueKind.Bool))   { arr.BoolItems[index] = frame.GetBool(src); }
-            Case([int](Bytecode.ValueKind.String)) { arr.StringItems[index] = frame.GetString(src); }
-            Case(default)                          { arr.Items[index] = frame.ExportValue(src); }
-        }
+        RequireArray(handle).StoreFromFrame(index, frame, src);
     }
 
     Public Function int ArrayLengthOf(int handle)
     {
-        If (handle < 0 || handle >= This.Arrays.Length())
-        {
-            Throw "Array handle out of range";
-        }
-        Return This.ArrayStoredLength(This.Arrays[handle]);
+        Return RequireArray(handle).Length;
     }
 
     Public Unsafe Function int ArrayAddValue(int handle, VMValue value)
     {
-        If (handle < 0 || handle >= This.Arrays.Length())
+        HeapArray arr = RequireArray(handle);
+        HeapArray result = AllocateArray(arr.Length + 1, arr.ElementKind, false);
+        int slot = StoreArray(result);
+        int width = PrimitiveWidth(arr.ElementKind);
+        If (width > 0)
         {
-            Throw "Array handle out of range";
+            If (arr.Length > 0) IO.Kinal.Runtime.MemoryCopy(result.RawBuffer, arr.RawBuffer,
+                [usize](arr.Length) * [usize](width));
         }
-        HeapArray arr = This.Arrays[handle];
-        HeapArray result = New HeapArray();
-        result.ElementKind = arr.ElementKind;
-
-        Switch(arr.ElementKind)
-        {
-            Case([int](Bytecode.ValueKind.Int))
-            {
-                This.EnsureRawIntCapacity(result, arr.RawLength + 1);
-                If (arr.RawLength > 0)
-                {
-                    Memory.Copy(result.RawBuffer, arr.RawBuffer, [usize](arr.RawLength * 8));
-                }
-                ([int*](result.RawBuffer))[arr.RawLength] = value.IntValue;
-                result.RawLength = arr.RawLength + 1;
-            }
-            Case([int](Bytecode.ValueKind.Char))
-            {
-                This.EnsureRawIntCapacity(result, arr.RawLength + 1);
-                If (arr.RawLength > 0)
-                {
-                    Memory.Copy(result.RawBuffer, arr.RawBuffer, [usize](arr.RawLength * 8));
-                }
-                ([int*](result.RawBuffer))[arr.RawLength] = value.IntValue;
-                result.RawLength = arr.RawLength + 1;
-            }
-            Case([int](Bytecode.ValueKind.Float))  { result.FloatItems = arr.FloatItems.Add(value.FloatValue); }
-            Case([int](Bytecode.ValueKind.Bool))   { result.BoolItems = arr.BoolItems.Add(value.BoolValue); }
-            Case([int](Bytecode.ValueKind.String)) { result.StringItems = arr.StringItems.Add(value.StringValue); }
-            Case(default)                          { result.Items = arr.Items.Add(value); }
-        }
-
-        This.Arrays = This.Arrays.Add(result);
-        Return This.Arrays.Length() - 1;
+        Else arr.SharePagesWith(result);
+        ArraySetValue(slot, arr.Length, value);
+        Return slot;
     }
 
     Public Unsafe Function int ArrayAddFromFrame(int handle, FunctionFrame frame, int src)
@@ -1172,12 +1374,12 @@ Public Class ExecutionContext
 
     Public Function VMValue ObjectGetValue(int handle, int fieldIndex)
     {
-        If (handle < 0 || handle >= This.Objects.Length())
+        HeapObject obj = ObjectAt(handle);
+        If (obj == null)
         {
             Throw "Object handle out of range";
         }
-        HeapObject obj = This.Objects[handle];
-        If (fieldIndex < 0 || fieldIndex >= obj.Fields.Length())
+        If (obj Is HeapCollection || fieldIndex < 0 || fieldIndex >= obj.Fields.Length())
         {
             Throw "Field index out of range";
         }
@@ -1186,12 +1388,12 @@ Public Class ExecutionContext
 
     Public Function void ObjectSetValue(int handle, int fieldIndex, VMValue value)
     {
-        If (handle < 0 || handle >= This.Objects.Length())
+        HeapObject obj = ObjectAt(handle);
+        If (obj == null)
         {
             Throw "Object handle out of range";
         }
-        HeapObject obj = This.Objects[handle];
-        If (fieldIndex < 0 || fieldIndex >= obj.Fields.Length())
+        If (obj Is HeapCollection || fieldIndex < 0 || fieldIndex >= obj.Fields.Length())
         {
             Throw "Field index out of range";
         }
@@ -1200,11 +1402,12 @@ Public Class ExecutionContext
 
     Public Function int ResolveVirtualFunction(int objectHandle, int slot)
     {
-        If (objectHandle < 0 || objectHandle >= This.Objects.Length())
+        HeapObject obj = ObjectAt(objectHandle);
+        If (obj == null)
         {
             Throw "Object handle out of range";
         }
-        HeapObject obj = This.Objects[objectHandle];
+        If (obj.TypeIndex < 0) Throw "Object has no virtual methods";
         Bytecode.TypeInfo info = This.Program.Types[obj.TypeIndex];
         If (slot < 0 || slot >= info.VTable.Length())
         {
@@ -1233,7 +1436,8 @@ Public Class ExecutionContext
 
     Public Function bool ObjectIsType(int objectHandle, int targetTypeIndex)
     {
-        If (objectHandle < 0 || objectHandle >= This.Objects.Length())
+        HeapObject obj = ObjectAt(objectHandle);
+        If (obj == null)
         {
             Return false;
         }
@@ -1242,7 +1446,9 @@ Public Class ExecutionContext
             Return false;
         }
 
-        int typeIndex = This.Objects[objectHandle].TypeIndex;
+        If (obj Is HeapCollection)
+            Return This.Program.Types[targetTypeIndex].Name == [HeapCollection](obj).CollectionName;
+        int typeIndex = obj.TypeIndex;
         While (typeIndex >= 0 && typeIndex < This.Program.Types.Length())
         {
             Bytecode.TypeInfo info = This.Program.Types[typeIndex];
@@ -1284,15 +1490,50 @@ Public Class ExecutionContext
         This.FrameCount = This.FrameCount + 1;
     }
 
-    Public Function void PushEntry(int functionIndex)
+    Private Function FunctionFrame AcquireFrame(Bytecode.FunctionInfo fn, int index, int returnPc, int returnReg)
     {
-        This.PushFrame(New FunctionFrame(This.Program.Functions[functionIndex], functionIndex, 0, 255));
+        If (This.FrameCount < This.Frames.Length())
+        {
+            FunctionFrame frame = This.Frames[This.FrameCount];
+            frame.Reset(fn, index, returnPc, returnReg);
+            Return frame;
+        }
+        Return New FunctionFrame(fn, index, returnPc, returnReg);
+    }
+
+    Public Trusted Function void PushEntry(int functionIndex, string[] arguments = {}, int firstArgument = 0)
+    {
+        Bytecode.FunctionInfo fn = This.Program.Functions[functionIndex];
+        If (fn.ParamCount < 0 || fn.ParamCount > 1 || fn.RegisterCount < fn.ParamCount)
+            Throw "Invalid entry function signature";
+        FunctionFrame frame = New FunctionFrame(fn, functionIndex, 0, 255);
+        If (fn.ParamCount == 1)
+        {
+            int end = arguments.Length();
+            If (firstArgument < 0 || firstArgument > end) Throw "Invalid entry argument offset";
+            int handle = This.NewArray(end - firstArgument, [int](Bytecode.ValueKind.String));
+            HeapArray array = ArrayAt(handle);
+            For (int i = firstArgument; i < end; i++) array.WriteString(i - firstArgument, arguments[i]);
+            frame.ImportValue(0, VMValue.FromArray(handle));
+        }
+        This.PushFrame(frame);
+    }
+    Public Function FunctionFrame PushCallback(int index, IO.Kinal.VM.Context.VMValue[] values)
+    {
+        If (index < 0 || index >= This.Program.Functions.Length()) Throw "Invalid callback function";
+        Bytecode.FunctionInfo fn = This.Program.Functions[index];
+        If (fn.ParamCount != values.Length() || fn.RegisterCount < fn.ParamCount) Throw "Invalid callback signature";
+        FunctionFrame frame = This.AcquireFrame(fn, index, 0, 255);
+        frame.HostBoundary = true;
+        For (int i = 0; i < values.Length(); i++) frame.ImportValue(i, values[i]);
+        This.PushFrame(frame);
+        Return frame;
     }
 
     Public Function void PushCall(int functionIndex, int envHandle, int returnPc, int returnReg, FunctionFrame caller,
                                   int argCount, int arg0, int arg1, int arg2, int arg3)
     {
-        FunctionFrame frame = New FunctionFrame(This.Program.Functions[functionIndex], functionIndex, returnPc, returnReg);
+        FunctionFrame frame = This.AcquireFrame(This.Program.Functions[functionIndex], functionIndex, returnPc, returnReg);
         frame.EnvHandle = envHandle;
         If (argCount > 0) { frame.CopyValueFrom(caller, 0, arg0); }
         If (argCount > 1) { frame.CopyValueFrom(caller, 1, arg1); }
@@ -1301,25 +1542,52 @@ Public Class ExecutionContext
         This.PushFrame(frame);
     }
 
+    Public Function void PushRangeCall(FunctionFrame caller, int kind, int target, int dst, int first, int count)
+    {
+        If (count < 1 || first + count > caller.FnInfo.RegisterCount ||
+            (dst != 255 && dst >= caller.FnInfo.RegisterCount))
+            Throw "Invalid CallRange registers";
+        int env = -1;
+        If (kind == 1)
+        {
+            If (caller.Kinds[first] != [int](Bytecode.ValueKind.Object)) Throw "Invalid CallRange receiver";
+            target = This.ResolveVirtualFunction(caller.IntRegisters[first], target);
+        }
+        Else If (kind == 2)
+        {
+            If (target >= caller.FnInfo.RegisterCount || caller.Kinds[target] != [int](Bytecode.ValueKind.Object))
+                Throw "Invalid CallRange callable";
+            int handle = caller.IntRegisters[target];
+            target = This.ObjectGetValue(handle, 0).IntValue;
+            VMValue captured = This.ObjectGetValue(handle, 1);
+            If (captured.Kind == [int](Bytecode.ValueKind.Array)) env = captured.IntValue;
+        }
+        Else If (kind != 0) Throw "Invalid CallRange kind";
+        If (target < 0 || target >= This.Program.Functions.Length()) Throw "Invalid CallRange function";
+        Bytecode.FunctionInfo fn = This.Program.Functions[target];
+        If (fn.ParamCount != count || count > fn.RegisterCount) Throw "Invalid CallRange arity";
+        FunctionFrame frame = This.AcquireFrame(fn, target, caller.Pc + 7, dst);
+        frame.EnvHandle = env;
+        For (int i = 0; i < count; i++) frame.CopyValueFrom(caller, i, first + i);
+        This.PushFrame(frame);
+    }
+
     Public Function void ReturnFromCurrent(int reg)
     {
         FunctionFrame current = This.CurrentFrame();
-        VMValue value = reg == 255 ? VMValue.FromInt(0) : current.ExportValue(reg);
+        If (reg != 255 && (reg < 0 || reg >= current.FnInfo.RegisterCount)) Throw "Invalid return register";
+        If (current.HostBoundary)
+        {
+            current.HostResult = reg == 255 ? VMValue.FromInt(0) : current.ExportValue(reg);
+            This.FrameCount--;
+            Return;
+        }
 
         If (This.FrameCount == 1)
         {
-            If (reg == 255)
-            {
-                This.ExitCode = 0;
-            }
-            Else If (value.Kind == [int](Bytecode.ValueKind.Int))
-            {
-                This.ExitCode = value.IntValue;
-            }
-            Else
-            {
-                This.ExitCode = 0;
-            }
+            This.ExitCode = 0;
+            If (reg != 255 && current.Kinds[reg] == [int](Bytecode.ValueKind.Int))
+                This.ExitCode = current.IntRegisters[reg];
             This.Halted = true;
             Return;
         }
@@ -1335,7 +1603,8 @@ Public Class ExecutionContext
             Return;
         }
 
-        caller.ImportValue(returnReg, value);
+        If (reg == 255) caller.SetInt(returnReg, 0);
+        Else caller.CopyValueFrom(current, returnReg, reg);
     }
 
     Public Function void CopyValue(int dst, int src)
@@ -1403,9 +1672,11 @@ Public Class ExecutionContext
         If (This.KindAt(reg) == [int](Bytecode.ValueKind.Object))
         {
             int handle = This.CurrentFrame().IntRegisters[reg];
-            If (handle >= 0 && handle < This.Objects.Length())
+            HeapObject storage = ObjectAt(handle);
+            If (storage != null)
             {
-                int typeIndex = This.Objects[handle].TypeIndex;
+                If (storage Is HeapCollection) Return [HeapCollection](storage).CollectionName;
+                int typeIndex = storage.TypeIndex;
                 If (typeIndex >= 0 && typeIndex < This.Program.Types.Length())
                 {
                     Return This.Program.Types[typeIndex].Name;

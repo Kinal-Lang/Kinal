@@ -1,203 +1,101 @@
 # Linking Configuration
 
-This document covers Kinal's linker integration, including linker backend selection, library dependencies, LTO, and static/shared library builds.
+This reference describes native linking in the C compiler. `--emit check`, `tokens`, `ast`, `ir`, `asm` and `obj` stop before final linking. KNC execution uses a separate [VM path](../cli/vm.md).
 
----
+## Backend and Executable Selection
 
-## Linker Backends
+| Option | Meaning |
+|--------|---------|
+| `--linker lld` | LLD integration; default for Windows and freestanding |
+| `--linker zig` | Zig driver; hosted Linux/macOS default, with a warning and LLD fallback when Zig is unavailable |
+| `--linker msvc` | MSVC linker, Windows targets only |
+| `--linker-path <file>` | Override the chosen tool executable |
+| `--show-link` | Print the command actually executed |
+| `--show-link-search` | Print resolved library search directories |
 
-Kinal supports three linker backends. The default depends on the platform and target rather than using one global setting.
-
-| Backend | Option | Description |
-|---------|--------|-------------|
-| **lld** | `--linker lld` | Available wherever an `lld` tool is present; on hosted Linux/macOS it is the fallback when Zig is unavailable |
-| **zig** | `--linker zig` | Preferred for hosted Linux/macOS and recommended for cross-compilation |
-| **msvc** | `--linker msvc` | Windows MSVC linker, requires Visual Studio |
+Selecting a backend does not install it. The complete distribution carries tools and runtime assets; source builds additionally need the target SDK/libraries. Prefer an absolute `--linker-path` when invoking from different directories.
 
 ```bash
-# Hosted Linux/macOS: prefers zig, warns and falls back to lld if zig is unavailable
-kinal build main.kn -o app
-
-# Explicit zig linker
+kinal build main.kn -o app --show-link --show-link-search
 kinal build main.kn -o app --linker zig
-
-# Explicit lld linker
 kinal build main.kn -o app --linker lld --linker-path /usr/local/bin/ld.lld
 ```
 
-### Hosted Linux and macOS
+Tool syntax depends on the target: Windows LLD uses the COFF linker interface, while Linux uses ELF conventions. Copy flags from the actual tool's interface rather than assuming all backends accept the same flags.
 
-When the target is hosted Linux or macOS, Kinal resolves Zig first. If Zig is not available, it falls back to `lld` and prints a warning.
+## Libraries, Objects and Search Roots
 
----
+| Option | Meaning |
+|--------|---------|
+| `--link-file <file>` | Pass a native object/archive/library input |
+| `-L <dir>` / `--lib-dir <dir>` | Add a library search directory |
+| `-l <name>` / `--lib <name>` | Request a named library |
+| `--link-root <dir>` | Add existing `lib/<triple>`, `lib/<platform-alias>`, `lib`, and root directories as search directories |
+| `--link-arg <arg>` | Add one linker argument; repeat for multiple arguments |
 
-## Library Dependencies
-
-### Linking System Libraries
-
-```bash
-# Link pthread and math libraries
-kinal build main.kn -o app -l pthread -l m
-
-# Add library search directories
-kinal build main.kn -o app -L /usr/local/lib -l mylib
-```
-
-### Linking Object Files
+`--link-root` does not recursively link every object it finds. Select the required library with `-l` or the required file with `--link-file`.
 
 ```bash
-# Link pre-compiled object files
-kinal build main.kn -o app --link-file mylib.o --link-file utils.o
-
-# Specify link root directory (searches for .o and .a files)
-kinal build main.kn -o app --link-root ./build/lib
+kinal build main.kn --link-file build/helper.o -L vendor/lib -l helper -o app
+kinal build main.kn --link-root vendor -l helper -o app
 ```
 
-### Linking `.klib`
+These examples assume compatible files already exist. Match architecture, object format, calling convention and CRT. On POSIX targets, a C math dependency may additionally need `-l m`.
+
+A `.klib` stores Kinal source and native assets with a package manifest. Configure `--pkg-root packages` or project package roots; do not pass `.klib` to `--link-file`. Imported package FFI metadata can select native assets and system libraries. See [Packages](../cli/packages.md).
+
+## Output Kinds
+
+| Kind | Typical output | Notes |
+|------|----------------|-------|
+| `--kind exe` | `.exe` or an extensionless program | Default; hosted entry is `Static Function int Main(...)` |
+| `--kind static` | `.lib` / `.a` | Archive of native objects; consumers still need compatible dependencies |
+| `--kind shared` | `.dll` / `.so` / `.dylib` | Dynamic library; ABI/export policy remains relevant |
 
 ```bash
-kinal build main.kn -o app --link-file mylib.klib
+kinal build library.kn --kind static -o library.lib
+kinal build library.kn --kind shared -o library.dll
 ```
 
----
+Choose target-appropriate filenames on other platforms. A filename extension alone does not select the artifact kind. For exported C functions, use the supported `[Cdecl]` / `[SymbolName(...)]` declarations described in [FFI](../language/ffi.md). A Kinal `string`, managed object or array descriptor is not automatically a portable C data layout.
 
-## Output Types
+## LTO
 
-| Type | Option | Description |
-|------|--------|-------------|
-| Executable | `--kind exe` (default) | System executable |
-| Static library | `--kind static` | `.a` / `.lib` static library |
-| Shared library | `--kind shared` | `.so` / `.dll` shared library |
+`--lto` means full LTO. Explicit modes are `--lto=off` (default), `--lto=full`, and `--lto=thin`.
 
 ```bash
-# Static library
-kinal build mylib.kn --kind static -o libmylib.a
-
-# Shared library
-kinal build mylib.kn --kind shared -o libmylib.so
-# Windows:
-kinal build mylib.kn --kind shared -o mylib.dll
+kinal build main.kn --lto=thin -o app
 ```
 
----
+LTO requires compatible compiler/linker bitcode support. Native machine-code libraries remain machine-code inputs; LTO does not reconstruct their source or guarantee a performance improvement. Compare the resulting size and workload performance. Keep the matching LLVM tools with the compiler bundle when diagnosing bitcode-version errors.
 
-## Link-Time Optimization (LTO)
+## Hosted CRT
 
-LTO allows the linker to perform optimizations across compilation units, typically significantly reducing binary size and improving runtime performance:
+`--crt auto|dynamic|static` selects the supported hosted CRT policy, especially the Windows CRT library family. It is not a filename option. Supply custom objects using `--link-file`.
+
+`--no-default-libs` suppresses automatic default libraries. An application using console, allocation, GC or other host services must then provide their dependencies explicitly. `--crt static` does not make all external libraries or the whole program static. Selecting Zig alone does not promise a static musl executable.
+
+## Freestanding Linking
+
+`--no-crt` and `--link-script` are freestanding-only C driver options. Hosted builds reject them. Supply a matching startup environment, linker script and runtime hooks:
 
 ```bash
-kinal build main.kn -o app --lto
+kinal build kernel.kn --target bare-arm64 \
+    --freestanding --runtime none --panic trap \
+    --no-crt --link-script board.ld -o kernel.elf --show-link
 ```
 
-LTO will:
-- Perform whole-program analysis across all object files
-- Remove unused functions and data (dead code elimination)
-- Inline cross-module function calls
-- Optimize cross-module references more aggressively
+This command assumes `kernel.kn` and `board.ld` already exist. The default language entry is `KMain`; the compiler emits `__kn_entry`. Set up the stack, sections and boot protocol before calling it. See [Freestanding](freestanding.md) for complete source and runtime requirements.
 
-> LTO increases compilation time; it is recommended to enable it only for release builds.
+## Diagnose Failures
 
----
+| Symptom | Check |
+|---------|-------|
+| Tool not found | Full bundle layout, executable path and selected backend |
+| Undefined symbol | Actual link command, correct `-l` / file, symbol spelling, exports, ABI and transitive dependencies |
+| Incompatible object | Target architecture, ELF/COFF/Mach-O format and bitcode/tool versions |
+| Missing CRT/SDK | Target runtime assets and platform SDK; target selection does not install an SDK |
+| Program cannot load a library | Runtime search paths and deployment of shared dependencies, separate from link-time search |
+| `.klib` rejected | Use package discovery rather than native linking |
 
-## C Runtime (CRT)
-
-### Default Behavior
-
-By default, Kinal links the platform's standard CRT:
-- **Linux**: `crt0.o`, `crti.o`, `crtn.o` (from glibc/musl)
-- **Windows**: MSVC CRT or MinGW CRT
-
-### Disabling CRT
-
-```bash
-# Do not link CRT (bare-metal/embedded)
-kinal build main.kn -o app --no-crt
-
-# Do not link default libraries
-kinal build main.kn -o app --no-default-libs
-
-# Specify custom CRT
-kinal build main.kn -o app --crt mycrt.o
-```
-
----
-
-## Linker Scripts
-
-Embedded targets typically require custom memory layouts:
-
-```bash
-kinal build main.kn -o firmware.elf \
-      --target bare-arm64 \
-      --link-script memory_layout.ld \
-      --no-crt
-```
-
----
-
-## Extra Linker Arguments
-
-Use `--link-arg` to pass arbitrary arguments to the linker:
-
-```bash
-# Set entry point
-kinal build main.kn -o app --link-arg -e --link-arg _start
-
-# Add rpath
-kinal build main.kn -o app --link-arg -rpath --link-arg /usr/local/lib
-```
-
----
-
-## Debugging the Link Step
-
-View the actual link command being executed:
-
-```bash
-kinal build main.kn -o app --show-link
-```
-
-Example output:
-
-```
-link: ld.lld -o app main.o -lc -lm --dynamic-linker /lib64/ld-linux-x86-64.so.2
-```
-
----
-
-## Typical Build Configurations
-
-### Development Build
-
-```bash
-kinal build main.kn -o app
-```
-
-### Release Build (with LTO)
-
-```bash
-kinal build main.kn -o app --lto
-```
-
-### Statically Linked Release (no external dependencies)
-
-```bash
-kinal build main.kn -o app \
-      --linker zig \
-      --lto
-```
-
-> The zig linker automatically performs static musl libc linking (Linux), producing a fully static executable.
-
-### Embedded Firmware
-
-```bash
-kinal build main.kn \
-      --target bare-arm64 \
-      --freestanding \
-      --runtime none \
-      --panic trap \
-      --no-crt \
-      --link-script board.ld \
-      -o firmware.elf
-```
+Use `--keep-temps` to retain intermediates. First verify `--emit obj`; then inspect `--show-link` to separate code generation from linking. See [Cross-Compilation](cross-compilation.md) and [Project Files](../cli/project-files.md) for target and path rules.

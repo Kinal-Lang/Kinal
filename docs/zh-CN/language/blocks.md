@@ -455,3 +455,9 @@ Static Function int Main()
 - [控制流](control-flow.md)
 - [异步编程](async.md)
 
+
+## 执行模型与生命周期
+
+Block 调用在当前执行流运行，不会自动创建线程、任务或后台调度器。每次 Run 从入口开始；RunUntil 与 JumpAndRunUntil 的终点不包含在区间内，并非保留程序计数器等待下次 resume。Record 是块内标签序号，不是源码行号或原生机器指令地址。优先传 block.Label，不要硬编码数字。
+
+捕获的可变局部通过共享存储保留；复制 Block 引用不会复制捕获状态。托管生命周期不能延长外部原始指针或已关闭资源的有效期。函数调用、嵌套 Block 和循环仍需符合安全／后端规则，参见[内存与生命周期](../advanced/memory-management.md)及[后端支持](../advanced/backend-support.md)。

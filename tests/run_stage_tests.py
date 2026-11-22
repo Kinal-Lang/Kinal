@@ -158,6 +158,42 @@ def check_capture_storage(compiler: Path, out_dir: Path) -> None:
         print(f"[OK] stage_capture_storage_{target}")
 
 
+def check_collection_loop_storage(compiler: Path, out_dir: Path) -> None:
+    source = ROOT / "tests" / "common" / "collection_loop_storage.kn"
+    for target in ("win64", "win86", "win-arm64", "linux64", "linux-arm64", "mac64", "macos-arm64"):
+        output = out_dir / f"collection-loop-storage-{target}.ll"
+        result = subprocess.run(
+            [str(compiler), "build", "--no-module-discovery", "--emit", "ir",
+             "--target", target, str(source), "-o", str(output)],
+            cwd=ROOT, text=True, capture_output=True, check=False,
+        )
+        if result.returncode != 0:
+            raise AssertionError(f"{target}: collection IR failed:\n{result.stdout}{result.stderr}")
+        ir = output.read_text(encoding="utf-8")
+        match = re.search(
+            r"^define [^\n]*@Tests\.CollectionLoopStorage\.RepeatCollections\([^\n]*\) \{\n(.*?)^\}",
+            ir, re.MULTILINE | re.DOTALL,
+        )
+        if match is None:
+            raise AssertionError(f"{target}: missing RepeatCollections")
+        body = match[1]
+        if "while.body:" not in body:
+            raise AssertionError(f"{target}: missing collection loop")
+        block = None
+        allocations = 0
+        for line in body.splitlines():
+            label = re.match(r"^([\w.$-]+):", line)
+            if label:
+                block = label[1]
+            if " = alloca " in line:
+                allocations += 1
+                if block != "entry":
+                    raise AssertionError(f"{target}: repeated stack allocation in {block}: {line.strip()}")
+        if not allocations:
+            raise AssertionError(f"{target}: missing collection stack storage")
+        print(f"[OK] stage_collection_loop_storage_{target}")
+
+
 def check_project_source_paths(compiler: Path, out_dir: Path) -> None:
     with tempfile.TemporaryDirectory(prefix="project-paths-", dir=out_dir) as directory:
         project = Path(directory)
@@ -193,6 +229,39 @@ def check_project_source_paths(compiler: Path, out_dir: Path) -> None:
         if result.returncode == 0 or output.exists() or "must declare Unit" not in result.stdout + result.stderr:
             raise AssertionError(f"nested RequireUnit validation was swallowed:\n{result.stdout}{result.stderr}")
         print("[OK] stage_project_nested_source_validation")
+
+
+def check_type_alias_candidates(compiler: Path, out_dir: Path) -> None:
+    with tempfile.TemporaryDirectory(prefix="type-alias-", dir=out_dir) as directory:
+        source = Path(directory) / "Main.kn"
+        source.write_text("""Unit Test.Names;
+Alias Selected By Test.Names.Right.Box;
+Class Left {
+    Public Class Box { Public int LeftValue; }
+    Public Struct Pair { int LeftValue; }
+    Public Enum Mode { FromLeft = 1 }
+    Public Interface Reader { Public Abstract Function int ReadLeft(); }
+}
+Class Right {
+    Public Class Box { Public int RightValue; }
+    Public Struct Pair { int RightValue; }
+    Public Enum Mode { FromRight = 2 }
+    Public Interface Reader { Abstract Safe Public Function int ReadRight(); }
+}
+Function int Sum(Left.Reader l, Right.Reader r) { Return l.ReadLeft() + r.ReadRight(); }
+Static Function int Main() {
+    Left.Box left = New Left.Box();
+    Selected right = New Selected();
+    Left.Pair a; Right.Pair b;
+    Left.Mode lm = Left.Mode.FromLeft; Right.Mode rm = Right.Mode.FromRight;
+    Return left.LeftValue + right.RightValue + a.LeftValue + b.RightValue + [int](lm) + [int](rm);
+}
+""", encoding="utf-8")
+        output = source.with_suffix(".kcheck")
+        result = run(compiler, source, output)
+        if result.returncode != 0 or read_summary(output)["hir_unresolved_calls"] != "0":
+            raise AssertionError(result.stdout + result.stderr)
+    print("[OK] stage_type_alias_same_nested_name")
 
 
 def main() -> int:
@@ -323,6 +392,12 @@ def main() -> int:
         raise AssertionError(f"builtin targets missing from typed call HIR: {function_summary}")
     print("[OK] stage_typed_call_hir")
 
+    generic_output = out_dir / "generic-method-calls.kcheck"
+    generic = run(compiler, ROOT / "tests/common/generic_method_calls.kn", generic_output)
+    if generic.returncode != 0 or read_summary(generic_output).get("hir_unresolved_calls") != "0":
+        raise AssertionError(f"unresolved generic method calls in typed HIR: {generic.stdout}{generic.stderr}")
+    print("[OK] stage_generic_method_calls_hir")
+
     binary_source = ROOT / "tests" / "common" / "typed_binary_hir.kn"
     binary_first_output = out_dir / "typed-binary-first.kcheck"
     binary_second_output = out_dir / "typed-binary-second.kcheck"
@@ -380,14 +455,14 @@ def main() -> int:
     require_failure(compiler, out_dir, "delegate_signature", "error_delegate_signature.kn", "Sema", "signature")
     require_failure(compiler, out_dir, "aggregate_equality", "error_aggregate_equality.kn", "Sema", "Equality is not defined")
 
-    unsupported_output = out_dir / "knc-time-unsupported.knc"
-    unsupported_source = ROOT / "tests" / "common" / "time.kn"
+    unsupported_output = out_dir / "knc-async-unsupported.knc"
+    unsupported_source = ROOT / "tests" / "common" / "async_call.kn"
     first_unsupported = run_vm_build(compiler, unsupported_source, unsupported_output)
     second_unsupported = run_vm_build(compiler, unsupported_source, unsupported_output)
     first_text = (first_unsupported.stdout + first_unsupported.stderr).replace("\r\n", "\n")
     second_text = (second_unsupported.stdout + second_unsupported.stderr).replace("\r\n", "\n")
     if first_unsupported.returncode == 0 or second_unsupported.returncode == 0:
-        raise AssertionError("KNC Time.Now unexpectedly compiled without a VM handler")
+        raise AssertionError("KNC IO.Async.Run unexpectedly compiled without a VM handler")
     if "not mapped in the bootstrap KNC emitter yet" not in first_text:
         raise AssertionError(f"unexpected KNC unsupported diagnostic:\n{first_text}")
     if first_text != second_text:
@@ -396,7 +471,9 @@ def main() -> int:
         raise AssertionError("unsupported KNC builtin left a stale artifact")
     print("[OK] stage_knc_unregistered_builtin")
     check_capture_storage(compiler, out_dir)
+    check_collection_loop_storage(compiler, out_dir)
     check_project_source_paths(compiler, out_dir)
+    check_type_alias_candidates(compiler, out_dir)
     return 0
 
 

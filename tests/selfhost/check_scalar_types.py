@@ -159,7 +159,8 @@ def check_scalar_types(compiler: Path, stage0: Path, root: Path, out: Path,
     rejected = subprocess.run([str(compiler), "check-source", str(unsupported)], cwd=root,
                               text=True, capture_output=True, timeout=30)
     (out / "unsupported-f80.log").write_text(rejected.stdout + rejected.stderr, encoding="utf-8")
-    assert rejected.returncode == 1 and "[Sema] Unknown Type: f80" in rejected.stdout + rejected.stderr, rejected
+    assert rejected.returncode == 1 and not rejected.stdout, rejected
+    assert "[Sema][E-RES-00024][error] Unknown Type: f80" in rejected.stderr.splitlines(), rejected
     report = {"name": "scalar_types", "ok": all(result["ok"] for result in results),
               "cases": len(CASES), "runtime_compilers": len(compilers), "unsupported_type_checks": 1,
               "results": results}

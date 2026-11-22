@@ -1,0 +1,42 @@
+Unit Tests.FrameUnwind;
+
+Get IO.Console;
+Get IO.Error;
+Get IO.Text;
+
+Function int Nested(int depth, int value, bool hostError)
+{
+    If (depth == 0)
+    {
+        If (value > 0) Return value * 2;
+        If (hostError)
+        {
+            IO.Text.Builder text = New IO.Text.Builder();
+            text.AppendChar('\0');
+        }
+        Throw "guest exception";
+    }
+    int saved = depth;
+    Return Nested(depth - 1, value, hostError) + saved;
+}
+
+Static Function int Main()
+{
+    int sum = 0;
+    For (int i = 1; i <= 12; i++)
+    {
+        int saved = i * 17;
+        bool caught = false;
+        Try { Nested(i, 0, false); }
+        Catch (string error) { caught = error == "guest exception"; }
+        If (!caught || saved != i * 17) Return 1;
+        caught = false;
+        Try { Nested(i, 0, true); }
+        Catch (IO.Error error) { caught = error.Title == "IO.Text.Builder"; }
+        If (!caught || saved != i * 17) Return 2;
+        sum += Nested(i, i, false);
+    }
+    If (sum != 520) Return 3;
+    IO.Console.PrintLine("ok");
+    Return 0;
+}
