@@ -4,6 +4,11 @@
 
 #if !defined(_WIN32) && !defined(_WIN64)
 #include <unistd.h>
+#if defined(__APPLE__)
+#include <limits.h>
+#include <mach-o/dyld.h>
+#include <stdlib.h>
+#endif
 #endif
 
 #define KN_ZIG_VERSION "0.15.2"
