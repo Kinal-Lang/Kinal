@@ -152,7 +152,7 @@ jobs:
           if [[ "$RUNNER_OS" == Windows ]]; then ext=.exe; fi
           python tests/selfhost/run_selfhost_tests.py --root . --stage0-role bootstrap \
             --stage0 "out/selfhost/stage0-host/kinal$ext" --compiler "out/selfhost/stage3/kinal-selfhost$ext" --out-dir out/selfhost/tests
-          KINAL_VM_PATH="$PWD/out/selfhost/stage3/kinalvm$ext" python tests/test_knc_numeric_format.py
+          KINAL_VM_PATH="$PWD/out/selfhost/stage3/kinalvm$ext" python -m unittest discover -s tests -p "test_*.py"
 
       - name: Build language server
         working-directory: Kinal
