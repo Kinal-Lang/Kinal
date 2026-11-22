@@ -168,16 +168,25 @@ exit 127
 """, encoding="utf-8", newline="\n")
     wrapper.chmod(0o755)
 
-    # Freestanding ELF requires ld.lld even on an Apple host. Homebrew
-    # distributes it separately from clang, in the lld@21 keg.
-    source = llvm_bin_dir(llvm_dir) / "ld.lld"
-    if not source.is_file() and host_tag().startswith("macos-"):
-        installed = shutil.which("ld.lld")
-        if installed:
-            source = Path(installed)
-    if not source.is_file():
-        raise SystemExit(f"LLVM linker was not found: {source}")
-    shutil.copy2(source, stage1_root / "linker" / "ld.lld")
+    # Homebrew lld loads its own dylibs relative to its executable. Run it
+    # inside its keg, including after the SDK moves to a different machine.
+    elf_linker = stage1_root / "linker" / "ld.lld"
+    if host_tag().startswith("macos-"):
+        elf_linker.write_text("""#!/bin/sh
+set -eu
+if command -v brew >/dev/null 2>&1; then
+    linker="$(brew --prefix lld@21)/bin/ld.lld"
+    if [ -x "$linker" ]; then exec "$linker" "$@"; fi
+fi
+echo "Install lld@21 for freestanding ELF linking or set KINAL_LINKER_LLD." >&2
+exit 127
+""", encoding="utf-8", newline="\n")
+        elf_linker.chmod(0o755)
+    else:
+        source = llvm_bin_dir(llvm_dir) / "ld.lld"
+        if not source.is_file():
+            raise SystemExit(f"LLVM linker was not found: {source}")
+        shutil.copy2(source, elf_linker)
 
 
 def package_selfhost_toolchain(stage0: Path, stage1: Path) -> None:

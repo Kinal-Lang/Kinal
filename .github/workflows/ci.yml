@@ -20,13 +20,14 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   LLVM_VERSION: "21.1.8"
   ZIG_VERSION: "0.15.2"
   PYTHON_VERSION: "3.12"
+  PYTHONUTF8: "1"
   SEED_TAG: v0.10.0
 
 jobs:
