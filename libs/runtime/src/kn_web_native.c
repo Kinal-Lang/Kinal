@@ -589,9 +589,9 @@ int __kn_web_server_set_dispatcher(void *handle, void *dispatcher)
     return 1;
 }
 
-int __kn_web_server_mount(void *handle, const char *prefix, const char *directory, const char *default_file)
+static int mount_locked(KnWebServer *server, const char *prefix, const char *directory,
+                        const char *default_file)
 {
-    KnWebServer *server = (KnWebServer *)handle;
     KnWebStaticMount *slot;
     char *norm_prefix;
     if (!server)
@@ -639,6 +639,17 @@ int __kn_web_server_mount(void *handle, const char *prefix, const char *director
     server->mount_count++;
     server->last_error[0] = 0;
     return 1;
+}
+
+int __kn_web_server_mount(void *handle, const char *prefix, const char *directory, const char *default_file)
+{
+    KnWebServer *s = handle;
+    if (!s)
+        return 0;
+    WEB_LOCK(&s->lock);
+    int result = mount_locked(s, prefix, directory, default_file);
+    WEB_UNLOCK(&s->lock);
+    return result;
 }
 
 void *__kn_gc_alloc(size_t size);
@@ -862,12 +873,18 @@ int __kn_web_server_try_serve_static(void *handle)
     KnWebRequestScope *s = g_kn_web_current;
     if (!s || s->server != handle || s->replied || (strcmp(s->method, "GET") && strcmp(s->method, "HEAD")))
         return 0;
-    const KnWebStaticMount *mount = kn_web_find_best_mount(s->server, s->path);
-    char *path = mount ? kn_web_build_static_path(mount, s->path) : NULL;
+    /* Mount strings have server lifetime, while the mount table can grow. */
+    KnWebStaticMount mount = {0};
+    WEB_LOCK(&s->server->lock);
+    const KnWebStaticMount *found = kn_web_find_best_mount(s->server, s->path);
+    if (found)
+        mount = *found;
+    WEB_UNLOCK(&s->server->lock);
+    char *path = mount.directory ? kn_web_build_static_path(&mount, s->path) : NULL;
     if (!path)
         return 0;
     FILE *f = fopen(path, "rb");
-    if (f && within_mount(f, mount->directory))
+    if (f && within_mount(f, mount.directory))
     {
 #ifdef _WIN32
         int64_t size = _filelengthi64(_fileno(f));
@@ -1013,7 +1030,7 @@ static void *web_worker(void *arg)
             int ok = web_tls_accept(&io, &session, &s->identity);
             if (ok)
                 serve_connection(s, &io);
-            web_tls_finish(&session, ok);
+            web_tls_finish(&io, &session, &s->identity, ok);
         }
         else
             serve_connection(s, &io);
@@ -1190,13 +1207,16 @@ int64_t __kn_web_server_reload_version(void *handle)
 {
     KnWebServer *s = handle;
     uint64_t version = 0;
-    if (s)
-        for (size_t i = 0; i < s->mount_count; i++)
-        {
-            uint64_t v = kn_web_scan_directory_reload_version(s->mounts[i].directory);
-            if (v > version)
-                version = v;
-        }
+    if (!s)
+        return 0;
+    WEB_LOCK(&s->lock);
+    for (size_t i = 0; i < s->mount_count; i++)
+    {
+        uint64_t v = kn_web_scan_directory_reload_version(s->mounts[i].directory);
+        if (v > version)
+            version = v;
+    }
+    WEB_UNLOCK(&s->lock);
     return (int64_t)version;
 }
 const char *__kn_web_server_context_info(void *handle)

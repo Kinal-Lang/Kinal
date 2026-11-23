@@ -208,9 +208,28 @@ static int web_tls_accept(HttpIO *io, WebTlsSession *s, WebTlsIdentity *id)
     io->tls = s;
     return 1;
 }
-static void web_tls_finish(WebTlsSession *s, int connected)
+static void web_tls_finish(HttpIO *io, WebTlsSession *s, WebTlsIdentity *id, int connected)
 {
-    (void)connected;
+    if (connected)
+    {
+        DWORD shutdown_token = SCHANNEL_SHUTDOWN;
+        SecBuffer token = {sizeof(shutdown_token), SECBUFFER_TOKEN, &shutdown_token};
+        SecBufferDesc control = {SECBUFFER_VERSION, 1, &token};
+        if (ApplyControlToken(&s->context, &control) == SEC_E_OK)
+        {
+            SecBuffer out = {0, SECBUFFER_TOKEN, NULL};
+            SecBufferDesc output = {SECBUFFER_VERSION, 1, &out};
+            ULONG flags;
+            TimeStamp expiry;
+            AcceptSecurityContext(&id->handle, &s->context, NULL, ASC_REQ_ALLOCATE_MEMORY | ASC_REQ_STREAM,
+                                  SECURITY_NATIVE_DREP, &s->context, &output, &flags, &expiry);
+            if (out.pvBuffer)
+            {
+                write_raw(io, out.pvBuffer, out.cbBuffer);
+                FreeContextBuffer(out.pvBuffer);
+            }
+        }
+    }
     if (s->acquired)
         DeleteSecurityContext(&s->context);
 }

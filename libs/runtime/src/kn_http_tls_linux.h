@@ -257,7 +257,7 @@ static int web_tls_accept(HttpIO *io, WebTlsSession *tls, WebTlsIdentity *id)
     io->write = tls_write;
     return 1;
 }
-static void web_tls_finish(WebTlsSession *tls, int connected)
+static void web_tls_finish(HttpIO *io, WebTlsSession *tls, WebTlsIdentity *id, int connected)
 {
     if (connected)
     {

@@ -99,6 +99,13 @@ def run(binary):
             reply = conn.getresponse()
             assert reply.status == 200 and json.loads(reply.read())["backend"] == "native"
             conn.close()
+            with socket.create_connection(("localhost",port), timeout=10) as tcp:
+                with context.wrap_socket(tcp,server_hostname="localhost",suppress_ragged_eofs=False) as tls:
+                    tls.sendall(b"GET /__kinal/debug/server HTTP/1.1\r\nHost: localhost\r\n\r\n")
+                    received = bytearray()
+                    while block := tls.recv(4096):
+                        received.extend(block)
+                    assert received.startswith(b"HTTP/1.1 200 ")
             client(binary, "get", f"https://localhost:{port}/", expect=2)
             if os.name != "nt":
                 env = dict(os.environ, SSL_CERT_FILE=args[0])
