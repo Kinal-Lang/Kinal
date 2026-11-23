@@ -156,6 +156,16 @@ jobs:
             --stage0 "out/selfhost/stage0-host/kinal$ext" --compiler "out/selfhost/stage3/kinal$ext" --out-dir out/selfhost/tests
           KINAL_VM_PATH="$PWD/out/selfhost/stage3/kinalvm$ext" python -m unittest discover -s tests -p "test_*.py"
 
+      - name: Verify native HTTP client and server
+        if: matrix.family != 'macos'
+        shell: bash
+        working-directory: Kinal
+        run: |
+          ext=""
+          if [[ "$RUNNER_OS" == Windows ]]; then ext=.exe; fi
+          "out/selfhost/stage3/kinal$ext" build --project tests/fixtures/native_http -o "out/http-probe$ext"
+          python tests/check_native_http.py "out/http-probe$ext"
+
       - name: Build language server
         working-directory: Kinal
         run: |

@@ -1,6 +1,6 @@
 # IO.Request
 
-`IO.Request` 是 Kinal 的对外 HTTP 客户端包。它通过 Kinal FFI 包装内置的 CivetWeb client API，提供同步、面向文本响应的请求接口，公开表面以属性和 `dict` 请求头为主。
+`IO.Request` 2.0 是同步 HTTP 客户端，支持 Windows 和 Linux 的 Native 程序。Windows 使用 WinHTTP，Linux 使用系统套接字。
 
 ## 导入
 
@@ -64,6 +64,7 @@ Static Function int Main()
 - `BodyDict`
 - `ContentType`
 - `TimeoutMs`
+- `MaxResponseBytes`
 - `Headers`
 - `SetMethod(method)`
 - `SetBody(body, contentType = "text/plain; charset=utf-8")`
@@ -142,11 +143,8 @@ Else
 ## 说明
 
 - 官方随包构建现在同时接受 `http://` 和 `https://`。
-- `https://` 走 CivetWeb 的 OpenSSL client 路径。运行进程需要能加载 OpenSSL 3 运行时：
-  - Windows：`libssl-3-x64.dll` / `libcrypto-3-x64.dll`，或对应的 ARM64 版本
-  - Linux：`libssl.so.3` 和 `libcrypto.so.3`
-- 如果 OpenSSL 运行时缺失，`IO.Request` 会直接给出运行时错误，不会悄悄降级成明文 HTTP。
-- 当前桥接层还没有暴露 CA 或对端证书校验选项。也就是说 `IO.Request` 现在的 HTTPS 已经加密传输，但还不会校验服务端证书。
+- HTTPS 会验证证书链和目标主机名。Windows 使用系统信任库，Linux 按需加载系统 OpenSSL 3 或 GnuTLS。
+- Linux 缺少两个 TLS 提供程序时，HTTP 仍可用，HTTPS 抛出带有 `TlsBackendUnavailable` 的 `IO.Error`。
 - 这个包是同步接口。
 - 发送前会校验请求头名称和值。
 - `Options.Headers` 和 `Response.Headers` 都使用 `dict`。
@@ -160,9 +158,9 @@ Else
 
 默认方法 GET，超时 10000 毫秒。Send 是同步调用；检查响应状态需要 IsSuccess 或 EnsureSuccess，后者对非 2xx 抛出 IO.Error。配置、连接与解析失败同样可能抛出 IO.Error。BodyDict 每次访问都解析文本并要求对象根。
 
-Header 名称会去除首尾空白，但 dict 键不会统一大小写，Header(name) 也按该键查询；应使用实际返回的名称（如 Content-Type）。HTTP 名称语义与 dict 的大小写敏感存储应分别考虑。
+请求头保留原有拼写，`Response.Header(name)` 忽略大小写。
 
-整个响应体会读入内存，目前没有响应大小上限或流式 API。BodyLength 是字节数，不能用于推断 Unicode 字符数。当前执行路径为 hosted Native；使用前确保原生资产与 OpenSSL 位数匹配。
+`Options.MaxResponseBytes` 以字节为单位，默认 16 MiB。超限响应会抛出 `IO.Error`。
 
 ## 公开源码签名
 
@@ -203,6 +201,7 @@ Header 名称会去除首尾空白，但 dict 键不会统一大小写，Header(
 | `BodyDict` | `Public Trusted Property dict BodyDict` | Get/Set |
 | `ContentType` | `Public Property string ContentType` | Get/Set |
 | `TimeoutMs` | `Public Property int TimeoutMs` | Get/Set |
+| `MaxResponseBytes` | `Public int MaxResponseBytes` | 16 MiB |
 | `Headers` | `Public Property dict Headers` | Get/Set |
 | `SetMethod` | `Public Trusted Function IO.Request.Options SetMethod(IO.Request.Method method)` | — |
 | `SetBody` | `Public Trusted Function IO.Request.Options SetBody(string body, string contentType = "text/plain; charset=utf-8")` | — |

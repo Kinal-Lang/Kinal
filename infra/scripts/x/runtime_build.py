@@ -670,7 +670,7 @@ def sync_io_web_native_assets(stdpkg_dir: Path, targets: list[str] | None = None
     if not target_names:
         return copied
 
-    version_dirs = sorted((stdpkg_dir / "IO.Web").glob("*/"))
+    version_dirs = [stdpkg_dir / "IO.Web" / "1.0.0"]
     for version_dir in version_dirs:
         if not version_dir.is_dir():
             continue
@@ -700,7 +700,7 @@ def sync_io_request_native_assets(stdpkg_dir: Path, targets: list[str] | None = 
     if not target_names:
         return copied
 
-    version_dirs = sorted((stdpkg_dir / "IO.Request").glob("*/"))
+    version_dirs = [stdpkg_dir / "IO.Request" / "1.0.0"]
     for version_dir in version_dirs:
         if not version_dir.is_dir():
             continue

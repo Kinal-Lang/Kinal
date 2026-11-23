@@ -26,7 +26,7 @@ Trusted Static Function int Main()
     Console.PrintLine(options.TimeoutMs == 250);
     Console.PrintLine([string](options.Headers.Fetch("X-Test")) == "kinal");
     Console.PrintLine(IO.Text.Contains(options.HeaderBlock(), "X-Test: kinal\r\n"));
-    Console.PrintLine(IO.Text.Contains(options.HeaderBlock(), "User-Agent: Kinal.IO.Request/1.0\r\n"));
+    Console.PrintLine(IO.Text.Contains(options.HeaderBlock(), "User-Agent: Kinal.IO.Request/"));
     Console.PrintLine(IO.Text.Contains(options.HeaderBlock(), "Content-Type: text/custom\r\n"));
     Console.PrintLine(options.RemoveHeader("X-Test") == options);
     Console.PrintLine(!options.Headers.Contains("X-Test"));

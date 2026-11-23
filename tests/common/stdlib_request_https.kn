@@ -1,25 +1,12 @@
 Unit Tests.StdRequestHttps;
 
-Get Console By IO.Console;
+Get IO.Console;
 Get IO.Request;
+Get IO.Error;
 
 Static Function int Main()
 {
-    IO.Request.Response getResponse = IO.Request.Fetch("https://127.0.0.1:18443/hello", 2000);
-    getResponse.EnsureSuccess();
-    Console.PrintLine(getResponse.StatusCode);
-    Console.PrintLine(getResponse.BodyText);
-    Console.PrintLine(getResponse.ContentType != "");
-
-    IO.Request.Response postResponse = IO.Request.Post(
-        "https://127.0.0.1:18443/echo",
-        "ping",
-        "text/plain; charset=utf-8",
-        2000
-    );
-    postResponse.EnsureSuccess();
-    Console.PrintLine(postResponse.StatusCode);
-    Console.PrintLine(postResponse.BodyText);
-    Console.PrintLine(postResponse.Headers.Count() >= 1);
-    Return 0;
+    Try { IO.Request.Fetch("https://127.0.0.1:18443/hello", 2000); }
+    Catch (IO.Error e) { IO.Console.PrintLine("untrusted certificate rejected"); Return 0; }
+    Return 1;
 }

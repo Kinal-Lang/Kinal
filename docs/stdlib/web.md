@@ -1,6 +1,8 @@
 # IO.Web
 
-`IO.Web` provides an embedded HTTP server package built on top of the bundled CivetWeb runtime bridge.
+`IO.Web` 2.0 serves HTTP/1.1 and HTTPS using Winsock on Windows and POSIX sockets on Linux.
+
+Set `server.MaxRequestBytes` before `Start()` to limit request bodies. The default is 16 MiB. For HTTPS call `server.UseTls(certificate, key)`. On Windows, supply a certificate thumbprint from the MY store and either `CurrentUser` or `LocalMachine`. Schannel opens the associated private key. On Linux, supply PEM certificate chain and private key paths for system OpenSSL 3 or GnuTLS. Services behind a TLS reverse proxy can listen on loopback HTTP.
 
 ## Import
 
@@ -222,6 +224,8 @@ The tables list public fields, constructors, properties and methods from the cur
 | `LiveReload` | `Public Property bool LiveReload` | Get/Set |
 | `IsStarted` | `Public Safe Function bool IsStarted()` | — |
 | `HasRoutes` | `Public Safe Function bool HasRoutes()` | — |
+| `MaxRequestBytes` | `Public Property int MaxRequestBytes` | Get/Set |
+| `UseTls` | `Public Trusted Function Server UseTls(string certificate, string key)` | — |
 | `EnableDebug` | `Public Function Server EnableDebug(bool enabled = true)` | — |
 | `EnableLiveReload` | `Public Function Server EnableLiveReload(bool enabled = true)` | — |
 | `Url` | `Public Safe Function string Url()` | — |

@@ -103,6 +103,9 @@ def build_official_stdpkg_klibs(compiler: Path, llvm_bin: Path | None = None) ->
     sync_io_web_native_assets(STDPKG_DIR)
     sync_io_request_native_assets(STDPKG_DIR)
     sync_io_json_native_assets(STDPKG_DIR)
+    from .native_http import TRIPLES, build as build_http
+    from .zig import ensure_zig_available
+    build_http(STDPKG_DIR, TRIPLES, ("IO.Web", "IO.Request"), ensure_zig_available(fetch=True))
     build_io_ui_native_assets(STDPKG_DIR)
     for manifest in manifests:
         data = read_json(manifest)

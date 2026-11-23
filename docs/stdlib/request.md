@@ -1,6 +1,6 @@
 # IO.Request
 
-`IO.Request` is Kinal's outbound HTTP client package. It wraps the bundled CivetWeb client API through Kinal FFI and exposes a synchronous text-oriented request surface built around properties and `dict` headers.
+`IO.Request` 2.0 provides a synchronous HTTP client for hosted Native applications. Windows uses WinHTTP. Linux uses system sockets.
 
 ## Import
 
@@ -64,6 +64,7 @@ Important properties and helpers:
 - `BodyDict`
 - `ContentType`
 - `TimeoutMs`
+- `MaxResponseBytes`
 - `Headers`
 - `SetMethod(method)`
 - `SetBody(body, contentType = "text/plain; charset=utf-8")`
@@ -143,11 +144,8 @@ When the response body is a JSON object, prefer `BodyDict`; `BodyObject` is the 
 ## Notes
 
 - Official bundled builds accept both `http://` and `https://`.
-- `https://` uses CivetWeb's OpenSSL client path. The process must be able to load the OpenSSL 3 runtime:
-  - Windows: `libssl-3-x64.dll` / `libcrypto-3-x64.dll`, or the ARM64 equivalents
-  - Linux: `libssl.so.3` and `libcrypto.so.3`
-- If the OpenSSL runtime is missing, `IO.Request` reports a direct runtime error instead of silently downgrading to plain HTTP.
-- The current bridge does not expose CA or peer-verification options yet. HTTPS requests are encrypted, but server certificates are not validated by `IO.Request` today.
+- HTTPS validates the certificate chain and hostname. Windows uses system trust. Linux loads system OpenSSL 3 or GnuTLS on demand.
+- With neither provider installed, Linux supports plain HTTP and reports `TlsBackendUnavailable` in an `IO.Error` for HTTPS.
 - The package is synchronous.
 - Header names and values are validated before the request is sent.
 - `Options.Headers` and `Response.Headers` both use `dict`.
@@ -161,9 +159,9 @@ When the response body is a JSON object, prefer `BodyDict`; `BodyObject` is the 
 
 The default method is GET and timeout is 10000 milliseconds. Send is synchronous. Inspect HTTP status using IsSuccess or EnsureSuccess; the latter throws IO.Error for non-2xx status. Configuration, connection and parsing failures may also throw IO.Error. BodyDict reparses the text on access and requires an object root.
 
-Header names are trimmed, but dict keys are not case-folded, and Header(name) queries that key. Use the returned spelling, such as Content-Type. HTTP name semantics and case-sensitive dict storage are separate concerns.
+Headers preserve their spelling in the dictionary. `Response.Header(name)` performs a case-insensitive lookup.
 
-The entire response body is buffered without a response-size limit or streaming API. BodyLength counts bytes, not Unicode characters. The current execution path is hosted Native; native assets and OpenSSL must match the architecture.
+`Options.MaxResponseBytes` bounds the buffered body in bytes and defaults to 16 MiB. Exceeding the limit throws `IO.Error`.
 
 ## Public Source Signatures
 
@@ -204,6 +202,7 @@ The tables list public fields, constructors, properties and methods from the cur
 | `BodyDict` | `Public Trusted Property dict BodyDict` | Get/Set |
 | `ContentType` | `Public Property string ContentType` | Get/Set |
 | `TimeoutMs` | `Public Property int TimeoutMs` | Get/Set |
+| `MaxResponseBytes` | `Public int MaxResponseBytes` | 16 MiB |
 | `Headers` | `Public Property dict Headers` | Get/Set |
 | `SetMethod` | `Public Trusted Function IO.Request.Options SetMethod(IO.Request.Method method)` | — |
 | `SetBody` | `Public Trusted Function IO.Request.Options SetBody(string body, string contentType = "text/plain; charset=utf-8")` | — |

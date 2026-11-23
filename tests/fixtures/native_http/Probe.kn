@@ -1,0 +1,43 @@
+Unit Tests.NativeHttp;
+Get IO.Console;
+Get IO.Error;
+Get IO.Request;
+Get IO.Web;
+
+[IO.Web.Route("/echo", IO.Web.HttpMethod.POST)]
+Trusted Static Function void Echo(IO.Web.Context ctx)
+{
+    ctx.Response.Text(ctx.Request.QueryValue("tag") + "|" + ctx.Request.Header("x-test") + "|" + ctx.Request.BodyText());
+}
+
+Trusted Static Function int Main(string[] args)
+{
+    If (args[0] == "server")
+    {
+        IO.Web.Server server = New IO.Web.Server([int](args[1]), "127.0.0.1");
+        server.MaxRequestBytes = 32;
+        If (args.Length() > 2) server.UseTls(args[2], args[3]);
+        server.EnableDebug().RefreshRoutes().Start();
+        IO.Console.PrintLine(server.Url());
+        IO.Console.ReadLine();
+        server.Stop();
+        Return 0;
+    }
+    Try
+    {
+        IO.Request.Options options = New IO.Request.Options(args[1]);
+        If (args[0] == "post")
+            options.SetMethod(IO.Request.Method.POST).SetHeader("X-Test", "native").SetBody("hello");
+        If (args[0] == "limit") options.MaxResponseBytes = 3;
+        IO.Request.Response response = IO.Request.Send(options);
+        IO.Console.PrintLine(response.StatusCode);
+        IO.Console.PrintLine(response.Header("content-type"));
+        IO.Console.PrintLine(response.BodyText);
+        Return 0;
+    }
+    Catch (IO.Error e)
+    {
+        IO.Console.PrintLine(e.Message);
+        Return 2;
+    }
+}

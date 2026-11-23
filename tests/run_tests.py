@@ -79,8 +79,8 @@ class RequestHttpsHandler(http.server.BaseHTTPRequestHandler):
 def request_https_contexts() -> tuple[ssl.SSLContext, ssl.SSLContext]:
     """Create one-use localhost TLS contexts without retaining credentials.
 
-    The client context checks this fixture independently of IO.Request, whose
-    current CivetWeb bridge does not expose peer-certificate verification.
+    The Python client trusts this fixture explicitly. The native client uses
+    system trust, so the same certificate must be rejected there.
     """
     openssl = shutil.which("openssl")
     if not openssl:

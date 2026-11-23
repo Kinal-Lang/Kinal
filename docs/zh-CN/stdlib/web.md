@@ -1,6 +1,8 @@
 # IO.Web
 
-`IO.Web` 提供基于内置 CivetWeb 运行时桥接的嵌入式 HTTP 服务包。
+`IO.Web` 2.0 在 Windows 上使用 Winsock，在 Linux 上使用 POSIX 套接字，支持 HTTP/1.1 和 HTTPS。
+
+在 `Start()` 之前设置 `server.MaxRequestBytes` 可限制请求体大小，默认 16 MiB。开启 HTTPS 可调用 `server.UseTls(certificate, key)`。Windows 传入 MY 证书库中的证书指纹和 `CurrentUser` 或 `LocalMachine`，由 Schannel 使用证书的私钥。Linux 传入 PEM 证书链和私钥文件路径，由系统 OpenSSL 3 或 GnuTLS 处理连接。反向代理终止 TLS 的应用可直接监听回环 HTTP。
 
 ## 导入
 
@@ -222,6 +224,8 @@ Response.Json 接受文本，应传入序列化后的 JSON，而不是假定任�
 | `LiveReload` | `Public Property bool LiveReload` | Get/Set |
 | `IsStarted` | `Public Safe Function bool IsStarted()` | — |
 | `HasRoutes` | `Public Safe Function bool HasRoutes()` | — |
+| `MaxRequestBytes` | `Public Property int MaxRequestBytes` | Get/Set |
+| `UseTls` | `Public Trusted Function Server UseTls(string certificate, string key)` | — |
 | `EnableDebug` | `Public Function Server EnableDebug(bool enabled = true)` | — |
 | `EnableLiveReload` | `Public Function Server EnableLiveReload(bool enabled = true)` | — |
 | `Url` | `Public Safe Function string Url()` | — |

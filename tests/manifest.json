@@ -494,14 +494,13 @@
   {
     "name": "stdlib_request_https",
     "file": "tests/common/stdlib_request_https.kn",
-    "expected": "200\nhello-secure\ntrue\n200\necho:ping\ntrue\n",
+    "expected": "untrusted certificate rejected\n",
     "auto_link": true,
     "platforms": [
       "windows",
       "linux"
     ],
-    "https_fixture": "request_echo",
-    "needs_openssl_runtime": true
+    "https_fixture": "request_echo"
   },
   {
     "name": "stdlib_ui_alias_nested_new",

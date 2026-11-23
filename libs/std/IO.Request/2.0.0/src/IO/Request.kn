@@ -1,0 +1,605 @@
+Unit IO.Request;
+
+Get IO.Error;
+Get IO.Json;
+Get IO.Text;
+Get Native By IO.__Request;
+
+Enum Method By int
+{
+    GET = 1,
+    POST = 2,
+    PUT = 3,
+    PATCH = 4,
+    DELETE = 5,
+    HEAD = 6,
+    OPTIONS = 7
+}
+
+Trusted Function void __RequestThrow(string message)
+{
+    Throw New IO.Error("IO.Request", message);
+}
+
+Trusted Function string __RequestNativeError(string fallback)
+{
+    string detail = Native.LastError();
+    If (detail == null || detail == "")
+    {
+        Return fallback;
+    }
+    Return detail;
+}
+
+Trusted Function string __RequestMethodText(IO.Request.Method method)
+{
+    If (method == IO.Request.Method.GET)
+    {
+        Return "GET";
+    }
+    If (method == IO.Request.Method.POST)
+    {
+        Return "POST";
+    }
+    If (method == IO.Request.Method.PUT)
+    {
+        Return "PUT";
+    }
+    If (method == IO.Request.Method.PATCH)
+    {
+        Return "PATCH";
+    }
+    If (method == IO.Request.Method.DELETE)
+    {
+        Return "DELETE";
+    }
+    If (method == IO.Request.Method.HEAD)
+    {
+        Return "HEAD";
+    }
+    If (method == IO.Request.Method.OPTIONS)
+    {
+        Return "OPTIONS";
+    }
+    __RequestThrow("Unsupported HTTP method");
+    Return "GET";
+}
+
+Trusted Function string __RequestNormalizeHeaderName(string name)
+{
+    string value = IO.Text.Trim(name);
+    If (value == null || value == "")
+    {
+        __RequestThrow("HTTP header name cannot be empty");
+    }
+    If (IO.Text.Contains(value, "\r") || IO.Text.Contains(value, "\n"))
+    {
+        __RequestThrow("HTTP header name cannot contain CR or LF");
+    }
+    Return value;
+}
+
+Trusted Function string __RequestNormalizeHeaderValue(string value)
+{
+    string text = value;
+    If (text == null)
+    {
+        Return "";
+    }
+    If (IO.Text.Contains(text, "\r") || IO.Text.Contains(text, "\n"))
+    {
+        __RequestThrow("HTTP header value cannot contain CR or LF");
+    }
+    Return text;
+}
+
+Trusted Function bool __RequestHeaderNameEquals(string a, string b)
+{
+    Return IO.Text.ToLower(IO.Text.Trim(a)) == IO.Text.ToLower(IO.Text.Trim(b));
+}
+
+Public Class Response
+{
+    Private int _StatusCode;
+    Private string _StatusText;
+    Private string _BodyText;
+    Private int _BodyLength;
+    Private dict _Headers;
+
+    Public Constructor(int statusCode,
+                       string statusText,
+                       string bodyText,
+                       int bodyLength,
+                       dict headers)
+    {
+        _StatusCode = statusCode;
+        _StatusText = statusText;
+        _BodyText = bodyText;
+        _BodyLength = bodyLength;
+        _Headers = headers;
+    }
+
+    Public Property int StatusCode
+    {
+        Get
+        {
+            Return _StatusCode;
+        }
+        Set
+        {
+            _StatusCode = value;
+        }
+    }
+
+    Public Property string StatusText
+    {
+        Get
+        {
+            Return _StatusText;
+        }
+        Set
+        {
+            _StatusText = value;
+        }
+    }
+
+    Public Property string BodyText
+    {
+        Get
+        {
+            Return _BodyText;
+        }
+        Set
+        {
+            _BodyText = value;
+        }
+    }
+
+    Public Trusted Property IO.Json.Value BodyJson
+    {
+        Get
+        {
+            Return New IO.Json.Value(IO.Json.ParseValue(BodyText));
+        }
+    }
+
+    Public Trusted Property IO.Json.Object BodyObject
+    {
+        Get
+        {
+            Return IO.Json.Wrap(BodyDict);
+        }
+    }
+
+    Public Trusted Property dict BodyDict
+    {
+        Get
+        {
+            Return IO.Json.Parse(BodyText);
+        }
+    }
+
+    Public Property int BodyLength
+    {
+        Get
+        {
+            Return _BodyLength;
+        }
+        Set
+        {
+            _BodyLength = value;
+        }
+    }
+
+    Public Property dict Headers
+    {
+        Get
+        {
+            Return _Headers;
+        }
+        Set
+        {
+            _Headers = value;
+        }
+    }
+
+    Public Safe Function bool IsSuccess()
+    {
+        Return StatusCode >= 200 && StatusCode < 300;
+    }
+
+    Public Trusted Function string Header(string name)
+    {
+        string want = __RequestNormalizeHeaderName(name);
+        list names = Headers.Keys();
+        For (int i = 0; i < names.Count(); i++)
+        {
+            string key = [string](names.Fetch(i));
+            If (__RequestHeaderNameEquals(key, want)) Return [string](Headers.Fetch(key));
+        }
+        Return "";
+    }
+
+    Public Trusted Property string ContentType
+    {
+        Get
+        {
+            Return Header("Content-Type");
+        }
+    }
+
+    Public Trusted Function void EnsureSuccess()
+    {
+        If (!IsSuccess())
+        {
+            __RequestThrow("HTTP request failed: " + [string](StatusCode) + " " + StatusText);
+        }
+    }
+}
+
+Public Class Options
+{
+    Private string _Url;
+    Private IO.Request.Method _Method;
+    Private string _Body;
+    Private string _ContentType;
+    Public int MaxResponseBytes;
+    Private int _TimeoutMs;
+    Private dict _Headers;
+
+    Public Constructor(string url, IO.Request.Method method = IO.Request.Method.GET)
+    {
+        _Url = url;
+        _Method = method;
+        _Body = null;
+        _ContentType = "text/plain; charset=utf-8";
+        _TimeoutMs = 10000;
+        MaxResponseBytes = 16777216;
+        _Headers = dict.Create();
+    }
+
+    Public Property string Url
+    {
+        Get
+        {
+            Return _Url;
+        }
+        Set
+        {
+            _Url = value;
+        }
+    }
+
+    Public Property IO.Request.Method Method
+    {
+        Get
+        {
+            Return _Method;
+        }
+        Set
+        {
+            _Method = value;
+        }
+    }
+
+    Public Property string Body
+    {
+        Get
+        {
+            Return _Body;
+        }
+        Set
+        {
+            _Body = value;
+        }
+    }
+
+    Public Trusted Property IO.Json.Value BodyJson
+    {
+        Get
+        {
+            If (_Body == null || _Body == "")
+            {
+                Return New IO.Json.Value();
+            }
+            Return New IO.Json.Value(IO.Json.ParseValue(_Body));
+        }
+        Set
+        {
+            If (value == null || value.Raw.IsNull())
+            {
+                _Body = null;
+            }
+            Else
+            {
+                _Body = IO.Json.Minify(IO.Json.Format(value.Raw, false));
+            }
+            _ContentType = "application/json; charset=utf-8";
+        }
+    }
+
+    Public Trusted Property IO.Json.Object BodyObject
+    {
+        Get
+        {
+            Return IO.Json.Wrap(BodyDict);
+        }
+        Set
+        {
+            If (value == null)
+            {
+                _Body = null;
+            }
+            Else
+            {
+                _Body = IO.Json.Minify(IO.Json.Format(value.Data, false));
+            }
+            _ContentType = "application/json; charset=utf-8";
+        }
+    }
+
+    Public Trusted Property dict BodyDict
+    {
+        Get
+        {
+            If (_Body == null || _Body == "")
+            {
+                Return dict.Create();
+            }
+            Return IO.Json.Parse(_Body);
+        }
+        Set
+        {
+            If (value == null)
+            {
+                _Body = null;
+            }
+            Else
+            {
+                _Body = IO.Json.Minify(IO.Json.Format(value, false));
+            }
+            _ContentType = "application/json; charset=utf-8";
+        }
+    }
+
+    Public Property string ContentType
+    {
+        Get
+        {
+            Return _ContentType;
+        }
+        Set
+        {
+            _ContentType = value;
+        }
+    }
+
+    Public Property int TimeoutMs
+    {
+        Get
+        {
+            Return _TimeoutMs;
+        }
+        Set
+        {
+            _TimeoutMs = value;
+        }
+    }
+
+    Public Property dict Headers
+    {
+        Get
+        {
+            Return _Headers;
+        }
+        Set
+        {
+            If (value == null)
+            {
+                _Headers = dict.Create();
+            }
+            Else
+            {
+                _Headers = value;
+            }
+        }
+    }
+
+    Public Trusted Function IO.Request.Options SetMethod(IO.Request.Method method)
+    {
+        Method = method;
+        Return This;
+    }
+
+    Public Trusted Function IO.Request.Options SetBody(string body, string contentType = "text/plain; charset=utf-8")
+    {
+        Body = body;
+        ContentType = contentType;
+        Return This;
+    }
+
+    Public Trusted Function IO.Request.Options SetTimeout(int timeoutMs)
+    {
+        If (timeoutMs <= 0)
+        {
+            __RequestThrow("HTTP timeout must be greater than zero");
+        }
+        TimeoutMs = timeoutMs;
+        Return This;
+    }
+
+    Public Trusted Function IO.Request.Options SetHeader(string name, string value)
+    {
+        string cleanName = __RequestNormalizeHeaderName(name);
+        string cleanValue = __RequestNormalizeHeaderValue(value);
+        RemoveHeader(cleanName);
+        Headers.Set(cleanName, cleanValue);
+        Return This;
+    }
+
+    Public Trusted Function IO.Request.Options RemoveHeader(string name)
+    {
+        string want = __RequestNormalizeHeaderName(name);
+        list keys = Headers.Keys();
+        For (int i = 0; i < keys.Count(); i++)
+        {
+            string key = [string](keys.Fetch(i));
+            If (__RequestHeaderNameEquals(key, want)) dict.Remove(Headers, key);
+        }
+        Return This;
+    }
+
+    Public Trusted Function string HeaderBlock()
+    {
+        string text = "";
+        bool hasUserAgent = false;
+        bool hasContentType = false;
+        list keys = Headers.Keys();
+
+        For (int i = 0; i < keys.Count(); i++)
+        {
+            string key = [string](keys.Fetch(i));
+            If (__RequestHeaderNameEquals(key, "User-Agent")) hasUserAgent = true;
+            If (__RequestHeaderNameEquals(key, "Content-Type")) hasContentType = true;
+            string value = __RequestNormalizeHeaderValue([string](Headers.Fetch(key)));
+            text += __RequestNormalizeHeaderName(key) + ": " + value + "\r\n";
+        }
+
+        If (!hasUserAgent)
+        {
+            text += "User-Agent: Kinal.IO.Request/2.0\r\n";
+        }
+        If (Body != null && !hasContentType && ContentType != null && ContentType != "")
+        {
+            text += "Content-Type: " + __RequestNormalizeHeaderValue(ContentType) + "\r\n";
+        }
+
+        Return text;
+    }
+
+    Public Trusted Function void Validate()
+    {
+        If (Url == null || IO.Text.Trim(Url) == "")
+        {
+            __RequestThrow("Request URL cannot be empty");
+        }
+        If (TimeoutMs <= 0)
+        {
+            __RequestThrow("HTTP timeout must be greater than zero");
+        }
+        __RequestMethodText(Method);
+    }
+}
+
+Trusted Function IO.Request.Response __RequestBuildResponse(byte* handle)
+{
+    dict headers = dict.Create();
+    int headerCount = Native.ResponseHeaderCount(handle);
+
+    For (int i = 0; i < headerCount; i++)
+    {
+        headers.Set(
+            __RequestNormalizeHeaderName(Native.ResponseHeaderNameAt(handle, i)),
+            __RequestNormalizeHeaderValue(Native.ResponseHeaderValueAt(handle, i))
+        );
+    }
+
+    Return New IO.Request.Response(
+        Native.ResponseStatusCode(handle),
+        Native.ResponseStatusText(handle),
+        Native.ResponseBodyText(handle),
+        Native.ResponseBodyLength(handle),
+        headers
+    );
+}
+
+Trusted Function IO.Request.Response Send(IO.Request.Options options)
+{
+    byte* handle;
+
+    If (options == null)
+    {
+        __RequestThrow("Request options cannot be null");
+    }
+
+    options.Validate();
+    handle = Native.Send(
+        __RequestMethodText(options.Method),
+        options.Url,
+        options.HeaderBlock(),
+        options.Body,
+        options.TimeoutMs,
+        options.MaxResponseBytes
+    );
+
+    If (handle == null)
+    {
+        __RequestThrow(__RequestNativeError("HTTP request failed"));
+    }
+
+    Try
+    {
+        IO.Request.Response response = __RequestBuildResponse(handle);
+        Native.ResponseFree(handle);
+        Return response;
+    }
+    Catch (IO.Error e)
+    {
+        Native.ResponseFree(handle);
+        Throw e;
+    }
+}
+
+Trusted Function IO.Request.Response Fetch(string url, int timeoutMs = 10000)
+{
+    IO.Request.Options options = New IO.Request.Options(url, IO.Request.Method.GET);
+    options.SetTimeout(timeoutMs);
+    Return Send(options);
+}
+
+Trusted Function IO.Request.Response Head(string url, int timeoutMs = 10000)
+{
+    IO.Request.Options options = New IO.Request.Options(url, IO.Request.Method.HEAD);
+    options.SetTimeout(timeoutMs);
+    Return Send(options);
+}
+
+Trusted Function IO.Request.Response Post(string url,
+                                         string body,
+                                         string contentType = "text/plain; charset=utf-8",
+                                         int timeoutMs = 10000)
+{
+    IO.Request.Options options = New IO.Request.Options(url, IO.Request.Method.POST);
+    options.SetTimeout(timeoutMs);
+    options.SetBody(body, contentType);
+    Return Send(options);
+}
+
+Trusted Function IO.Request.Response Put(string url,
+                                        string body,
+                                        string contentType = "text/plain; charset=utf-8",
+                                        int timeoutMs = 10000)
+{
+    IO.Request.Options options = New IO.Request.Options(url, IO.Request.Method.PUT);
+    options.SetTimeout(timeoutMs);
+    options.SetBody(body, contentType);
+    Return Send(options);
+}
+
+Trusted Function IO.Request.Response Patch(string url,
+                                          string body,
+                                          string contentType = "text/plain; charset=utf-8",
+                                          int timeoutMs = 10000)
+{
+    IO.Request.Options options = New IO.Request.Options(url, IO.Request.Method.PATCH);
+    options.SetTimeout(timeoutMs);
+    options.SetBody(body, contentType);
+    Return Send(options);
+}
+
+Trusted Function IO.Request.Response DeleteRequest(string url, int timeoutMs = 10000)
+{
+    IO.Request.Options options = New IO.Request.Options(url, IO.Request.Method.DELETE);
+    options.SetTimeout(timeoutMs);
+    Return Send(options);
+}

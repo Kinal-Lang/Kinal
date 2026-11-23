@@ -1,0 +1,10 @@
+Project NativeHttpProbe
+{
+    Packages { Pins = ["IO.Request@2.0.0", "IO.Web@2.0.0"]; }
+    SourceSet "probe" { Roots = ["."]; Include = ["Probe.kn"]; }
+    Profile "native"
+    {
+        Source { Entry = "Probe.kn"; Sets = ["probe"]; }
+        Build { Backend = Native; }
+    }
+}
