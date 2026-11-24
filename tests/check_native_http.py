@@ -94,6 +94,7 @@ def run(binary):
     with tempfile.TemporaryDirectory() as tmp, identity(Path(tmp)) as (args, pem):
         with server(binary, port, args):
             context = ssl.create_default_context(cadata=pem)
+            context.minimum_version = ssl.TLSVersion.TLSv1_2
             conn = http.client.HTTPSConnection("localhost", port, context=context)
             conn.request("GET", "/__kinal/debug/server")
             reply = conn.getresponse()
