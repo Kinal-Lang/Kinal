@@ -55,6 +55,8 @@
 | [IO.Json](stdlib/json.md) | JSON 对象、列表、格式化与包装类型 |
 | [IO.Request](stdlib/request.md) | 对外 HTTP 客户端 |
 | [IO.UI](stdlib/ui.md) | 原生桌面 UI 包 |
+| [IO.UI 自定义控件](stdlib/ui-custom-controls.md) | 绘制、输入、动画与 Studio 注册 |
+| [IO.UI 2.0 API 参考](stdlib/ui-reference.md) | 控件、事件、绘制接口与常见问题 |
 | [IO.Web](stdlib/web.md) | 内嵌 HTTP 服务包 |
 | [IO.Cat](stdlib/cat.md) | 示例包 |
 

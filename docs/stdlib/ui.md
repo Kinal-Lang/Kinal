@@ -1,354 +1,232 @@
 # IO.UI
 
-`IO.UI` provides a native desktop window and controls layer.
+IO.UI 2.0 builds Windows desktop forms in Kinal. Each window owns one Direct3D 11 surface. Controls form a tree drawn with Direct2D and DirectWrite. The same window, layout and event code runs as a hosted Native executable or as bytecode with the matching Windows desktop KinalVM.
 
-The Windows x64 SDK selects IO.UI 2.0 by default. `Get IO.UI;` loads it for command-line and Studio builds. Native and the desktop KinalVM draw the controls on a shared Direct3D 11 surface using Direct2D and DirectWrite. For a Native application that accesses individual Win32 control handles, add `Packages { Pins = ["IO.UI@1.0.0"]; }` to its project.
+For a new project, pin `IO.UI@2.0.0` in its `Packages.Pins` list. With both versions installed, an unpinned Windows x64 SDK build selects 2.0. A Native project that calls Win32 with individual child control handles needs `IO.UI@1.0.0`. In 2.0, `component.HostHandle` identifies the owning **window**. Windows x64 is the desktop target covered here.
 
-The Windows desktop KinalVM runs the updated IO.UI 2.0 package. Use the matching selfhost compiler to build the bytecode. Window messages can invoke bytecode event handlers synchronously, including while a modal message box is open. Rendering uses the same DX11 surface as a native build.
+To build a widget for reuse in several forms, see the [custom control and Studio guide](ui-custom-controls.md).
 
-In a 2.0 custom canvas, use `context.Gradient(x, y, width, height, fromColor, toColor)` to fill a rectangle from left to right. Pass `true` as the last argument for top to bottom. Both colors use `0xAARRGGBB`. For example, `context.Gradient(0, 0, 160, 100, 0x00000000, 0xff000000, true)` darkens the drawing beneath it towards the bottom.
+## A resizable form in one file
 
-In IO.UI 2.0, `Viewport3D` accepts indexed triangles via `SetMesh(points, indices, colors)`. Set `Yaw`, `Pitch`, `Zoom`, `PanX` and `PanY` to position the view. `Orthographic`, `Wireframe` and `ShowEdges` control projection and rendering. A middle-button drag pans the view. `ResetCamera()` restores the initial orientation, scale and center. The Studio examples supply their Mocha widgets in their own `src/Controls` directories.
-
-## Import
+Save this as `Greeting.kn`. Type a name, then click **Greet**. Widen the window and the input takes the extra width while the button stays 96 units wide.
 
 ```kinal
-Get IO.UI;
-```
-
-## Main Types
-
-### Window
-
-`IO.UI.Window` is the top-level container.
-
-Important members:
-
-- `Title`
-- `Width`
-- `Height`
-- `X`
-- `Y`
-- `BackColor`
-- `ForeColor`
-- `Font`
-- `Add(component)`
-- `AddEvent(event)`
-- `Show()`
-- `Run()`
-
-### Common Controls
-
-The package currently includes:
-
-- `Label`
-- `Button`
-- `Input`
-- `CheckBox`
-- `RadioButton`
-- `ComboBox`
-- `ProgressBar`
-- `GroupBox`
-
-All controls derive from `IO.UI.Component` and share common properties such as `Text`, `X`, `Y`, `Width`, `Height`, `BackColor`, `ForeColor`, and `Font`.
-
-### Styling Types
-
-- `Color`
-- `Font`
-- `FontWeight`
-
-### Events
-
-`IO.UI.Event` binds a handler to a control or window.
-
-Common event kinds:
-
-- `OnClick`
-- `OnClose`
-- `OnShown`
-- `OnResize`
-- `OnFocus`
-- `OnBlur`
-- `OnTextChanged`
-- `OnCheckedChanged`
-- `OnSelectedChanged`
-
-### MessageBox
-
-`IO.UI.MessageBox` provides small modal dialogs:
-
-- `Show(text, caption = "", buttons = MessageBoxButtons.OK, icon = MessageBoxIcon.None)`
-- `ShowInfo(text, caption = "")`
-- `ShowError(text, caption = "")`
-
-## Example
-
-```kinal
-Unit App.UiDemo;
-
-Get IO.UI;
+Unit App.Greeting;
+Get UI By IO.UI;
 
 Static Function int Main()
 {
-    IO.UI.Window window = New IO.UI.Window("Kinal UI", 640, 480);
-    IO.UI.Label label = New IO.UI.Label("Name:", 20, 20, 60, 24);
-    IO.UI.Input input = New IO.UI.Input("", 90, 20, 200, 24);
-    IO.UI.Button button = New IO.UI.Button("Submit", 20, 60, 120, 28);
+    UI.Window window = New UI.Window("Greeting", 440, 72);
+    window.UseClientSize = true;
+    UI.Panel row = New UI.Panel(UI.LayoutMode.Row);
+    row.FillWindow = true;
+    row.Padding = 16;
+    row.Gap = 8;
 
-    button.AddEvent(New IO.UI.Event(IO.UI.EventKind.OnClick, Function void()
-    {
-        button.Text = "Submitted";
-    }
+    UI.Input name = New UI.Input("", 0, 0, 160, 32);
+    name.PlaceholderText = "Your name";
+    name.Grow = 1;
+    UI.Button greet = New UI.Button("Greet", 0, 0, 96, 32);
+    greet.AddEvent(New UI.Event(UI.EventKind.OnClick,
+        Function void(IO.Type.Object.Class sender, UI.EventArgs args) {
+            UI.MessageBox.ShowInfo("Hello, " + name.Text, "Greeting");
+        }
     ));
-
-    window.Add(label);
-    window.Add(input);
-    window.Add(button);
+    row.Add(name);
+    row.Add(greet);
+    window.Add(row);
     Return window.Run();
 }
 ```
 
-## Notes
+Run the source directly, or build and run its bytecode with the Windows desktop SDK.
 
-- `IO.UI` is intended for hosted desktop builds.
-- The current implementation is native-host backed and not part of the VM surface.
-- Message boxes are useful for compile-only or minimal host checks.
+```powershell
+kinal run Greeting.kn
+kinal vm build Greeting.kn -o Greeting.knc
+kinal vm run Greeting.knc
+```
 
-## See Also
+`UseClientSize = true` makes 440 × 72 the initial *client* size. `Show()` creates and displays a window. `Run()` also starts the message loop. To display two windows, call `Show()` on one and `Run()` on the other. Closing the last window exits the loop. A long-running click handler delays input and painting. Modal dialogs can dispatch further messages before the initiating handler returns.
 
-- [Standard Library Overview](overview.md)
-- [IO.System](system.md)
-- [IO.Web](web.md) — Hosted application surface on the server side
+## Layout and ownership
 
-## Execution and Object Lifetime
+`Width` and `Height` express preferred size. During arrangement each control receives `ActualX`, `ActualY`, `ActualWidth` and `ActualHeight` in logical units relative to its parent. Inspect the actual bounds after layout, and use them when drawing. A top-level `Panel` with `FillWindow = true` follows the client area. Nest panels to combine modes.
 
-The example targets Windows hosted Native; compile an exe and run it. Window.Run enters the message loop and returns after the window closes. Add attaches components to the container. Keep components, events and captured state alive while the window uses them. Long blocking event handlers also block UI message processing.
+| `LayoutMode` | How it arranges the children |
+|---|---|
+| `Absolute` | Places each child at its own `X` and `Y` inside the panel padding, with its margin added. |
+| `Row` / `Column` | Places children in insertion order. Children with `Grow = 0` take their measured extent. Positive `Grow` weights divide the remaining main-axis space after fixed children, gaps and margins. The cross-axis fills the available space within size limits. |
+| `Wrap` | Places children left to right at measured sizes. Starts a new line when the next child and its margins no longer fit. |
+| `Grid` | Assigns cells by zero-based `Row` and `Column`. `RowSpan` and `ColumnSpan` cover adjacent tracks. |
+| `Overlay` | Gives each child the panel's inner rectangle minus its margins. Later children draw over earlier children and are tested first for pointer input. |
 
-Control coordinates and dimensions follow the current Win32 implementation; automatic responsive layout is not promised. Frontend acceptance on another system does not establish an executable control backend. Host/Win32 APIs expose native details; ordinary applications should start with Window, Component and concrete controls.
+`Padding` applies on all four edges of a panel, `Margin` on all four edges of a child. `Gap` separates adjacent tracks or flow items. Set `AbsolutePosition = true` on an individual child to take it out of normal layout and position it with `X` and `Y`. Use `MinWidth`, `MaxWidth`, `MinHeight` and `MaxHeight` to constrain the result. A zero maximum leaves that dimension uncapped.
 
-## Public Source Signatures
+### Grid with an expanding field
 
-The tables list public fields, constructors, properties and methods from the current package source. Inherited members are listed under their declaring base type. Get/Set identify property accessors; signatures include declared defaults. Native handles and Host/Win32 helpers require their ABI/lifetime contracts; ordinary applications should start with the package high-level objects.
+Use the following in `Main` after creating `window`, in place of the row in the first example. `Fixed` reserves its size. `Auto` measures the largest single-track child in that track, including its margins. The auto measurement uses only single-track children. `Fraction` distributes the remaining space by weight. Here the input determines the first row's height and the status spans both columns.
 
-### Enums
+```kinal
+UI.Panel grid = New UI.Panel(UI.LayoutMode.Grid);
+grid.FillWindow = true;
+grid.Padding = 12;
+grid.Gap = 8;
+grid.Columns = { UI.Track.Fixed(96), UI.Track.Fraction(1) };
+grid.Rows = { UI.Track.Auto(), UI.Track.Fixed(32) };
 
-- `IO.UI.FontWeight`: `Normal = 400`, `Bold = 700`
-- `IO.UI.EventKind`: `OnClick = 1`, `OnClose = 2`, `OnShown = 3`, `OnResize = 4`, `OnFocus = 5`, `OnBlur = 6`, `OnTextChanged = 7`, `OnCheckedChanged = 8`, `OnSelectedChanged = 9`, `OnDoubleClick = 10`, `OnKeyDown = 11`, `OnKeyUp = 12`, `OnMouseEnter = 13`, `OnMouseLeave = 14`, `OnMouseDown = 15`, `OnMouseMove = 16`, `OnMouseUp = 17`, `OnMove = 18`
-- `IO.UI.MessageBoxButtons`: `OK = 0`, `OKCancel = 1`, `YesNo = 4`
-- `IO.UI.MessageBoxIcon`: `None = 0`, `Error = 0x10`, `Question = 0x20`, `Warning = 0x30`, `Info = 0x40`
+UI.Label caption = New UI.Label("Address", 0, 0, 80, 28);
+UI.Input address = New UI.Input("", 0, 0, 160, 32);
+address.Column = 1;
+UI.Label status = New UI.Label("Ready", 0, 0, 100, 24);
+status.Row = 1;
+status.ColumnSpan = 2;
+grid.Add(caption);
+grid.Add(address);
+grid.Add(status);
+window.Add(grid);
+```
 
-### IO.UI.Component
+`Add` attaches a control to one container. To move it, call `Remove(child)` on its current parent, then `Add(child)` on the destination. Removal clears focus, capture and frame subscriptions for the detached subtree. `Children`, `Components` and `Events` return snapshots. Use the container methods to modify the tree. Give a control a `Name` and call `window.FindControl(name)` to look it up recursively.
 
-| Member | Declaration | Accessors |
-|--------|-------------|-----------|
-| `Constructor` | `Public Constructor(string text = "", int x = 0, int y = 0, int width = 120, int height = 24)` | — |
-| `Text` | `Public Property string Text` | Get/Set |
-| `X` | `Public Property int X` | Get/Set |
-| `Y` | `Public Property int Y` | Get/Set |
-| `Width` | `Public Property int Width` | Get/Set |
-| `Height` | `Public Property int Height` | Get/Set |
-| `BackColor` | `Public Property Color BackColor` | Get/Set |
-| `ForeColor` | `Public Property Color ForeColor` | Get/Set |
-| `Font` | `Public Property Font Font` | Get/Set |
-| `Handle` | `Public Property byte* Handle` | Get/Set |
-| `NativeBrush` | `Public Property byte* NativeBrush` | Get/Set |
-| `NativeFont` | `Public Property byte* NativeFont` | Get/Set |
-| `NativeProc` | `Public Property byte* NativeProc` | Get/Set |
-| `Owner` | `Public Property Window Owner` | Get/Set |
-| `Events` | `Public Property Event[] Events` | Get/Set |
-| `SupportsEvent` | `Public Virtual Safe Function bool SupportsEvent(EventKind kind)` | — |
-| `HasEvent` | `Public Safe Function bool HasEvent(EventKind kind)` | — |
-| `KindName` | `Public Virtual Safe Function string KindName()` | — |
-| `EffectiveBackColor` | `Public Trusted Function Color EffectiveBackColor()` | — |
-| `EffectiveForeColor` | `Public Trusted Function Color EffectiveForeColor()` | — |
-| `EffectiveFont` | `Public Trusted Function Font EffectiveFont()` | — |
-| `SetBackColor` | `Public Function Component SetBackColor(Color color)` | — |
-| `SetForeColor` | `Public Function Component SetForeColor(Color color)` | — |
-| `SetFont` | `Public Function Component SetFont(Font font)` | — |
-| `AddEvent` | `Public Function Component AddEvent(Event event)` | — |
-| `RemoveEvent` | `Public Function Component RemoveEvent(Event event)` | — |
-| `TriggerEvent` | `Public Trusted Function void TriggerEvent(EventKind kind, usize wParam = 0, isize lParam = 0)` | — |
+For a layout test you can call `window.Arrange(440, 72)` before opening the window, then read actual bounds or call `HitTest(x, y)`. For a preview, `DrawInto(context)` renders the arranged tree into an existing drawing context.
 
-### IO.UI.Label
+## Controls and change notifications
 
-| Member | Declaration | Accessors |
-|--------|-------------|-----------|
-| `Constructor` | `Public Constructor(string text, int x, int y, int width = 160, int height = 24)` | — |
-| `KindName` | `Public Override Safe Function string KindName()` | — |
-| `CreateNative` | `Public Trusted Function byte* CreateNative(byte* parent, byte* instance)` | — |
+| Control | Common task | Event to handle |
+|---|---|---|
+| `Label` / `Button` | Set `Text` to change a caption. A button can be activated with the pointer, Enter or Space. | `UI.EventKind.OnClick` |
+| `Input` | Set `PlaceholderText`, `ReadOnly`, `Password` or `MaxLength`. Read the value from `Text`. Password mode masks the display and suppresses copying the selected text. | `OnTextChanged` for user edits, `OnKeyDown` / `OnKeyUp`, `OnFocus` / `OnBlur` |
+| `CheckBox` / `RadioButton` | Read `Checked`. Radio buttons with the same `GroupName` under the same parent are mutually exclusive. | `OnCheckedChanged` for a state change, `OnClick` for activation |
+| `ComboBox` | Call `ClearItems()` and `AddItem(text)` to populate the list. `SelectedIndex` is zero-based. Check it against `Items.Length()` before indexing. | `OnSelectedChanged` for a user selection |
+| `ProgressBar` | Set `Minimum`, `Maximum` and `Value` for known progress, or set `Step` and call `PerformStep()`. | Update it from the action whose progress it displays. |
+| `GroupBox` / `Panel` | A titled group holds children at their own positions. Use a `Panel` for a layout mode. | Bind to the interactive children. |
+| `TemplateButton` | Use `Enabled` and a `ButtonTemplate` to control disabled, hover, pressed and focus visuals. | `OnClick`, pointer enter/leave/down/up, focus/blur |
 
-### IO.UI.Button
+Changes in application code can have different notification semantics from user input. Setting `input.Text` or `combo.SelectedIndex` repaints the control. To update dependent fields after populating a form, call your update function explicitly.
 
-| Member | Declaration | Accessors |
-|--------|-------------|-----------|
-| `Constructor` | `Public Constructor(string text, int x, int y, int width = 120, int height = 28)` | — |
-| `Id` | `Public Property int Id` | Get/Set |
-| `SupportsEvent` | `Public Override Safe Function bool SupportsEvent(EventKind kind)` | — |
-| `KindName` | `Public Override Safe Function string KindName()` | — |
-| `CreateNative` | `Public Trusted Function byte* CreateNative(byte* parent, byte* instance)` | — |
-| `TriggerClick` | `Public Trusted Function void TriggerClick()` | — |
+### Event lifetime, focus and closing
 
-### IO.UI.Input
+`AddEvent` takes a `UI.Event`. Keep the event object if you will unsubscribe it later with `RemoveEvent`. For a dynamically chosen widget, check `SupportsEvent(kind)` before subscribing. An unsupported registration throws. In a callback, use `sender Is UI.Button button` to access the concrete control. `Tab` and `Shift+Tab` move focus through eligible controls in tree order. Use `window.FocusControl(input)` for explicit focus.
 
-| Member | Declaration | Accessors |
-|--------|-------------|-----------|
-| `Constructor` | `Public Constructor(string text = "", int x = 0, int y = 0, int width = 200, int height = 24)` | — |
-| `Id` | `Public Property int Id` | Get/Set |
-| `Multiline` | `Public Property bool Multiline` | Get/Set |
-| `ReadOnly` | `Public Property bool ReadOnly` | Get/Set |
-| `Password` | `Public Property bool Password` | Get/Set |
-| `MaxLength` | `Public Property int MaxLength` | Get/Set |
-| `PlaceholderText` | `Public Property string PlaceholderText` | Get/Set |
-| `SupportsEvent` | `Public Override Safe Function bool SupportsEvent(EventKind kind)` | — |
-| `KindName` | `Public Override Safe Function string KindName()` | — |
-| `SetMultiline` | `Public Function Input SetMultiline(bool multiline)` | — |
-| `SetReadOnly` | `Public Function Input SetReadOnly(bool readOnly)` | — |
-| `SetPassword` | `Public Function Input SetPassword(bool password)` | — |
-| `SetMaxLength` | `Public Function Input SetMaxLength(int maxLength)` | — |
-| `CreateNative` | `Public Trusted Function byte* CreateNative(byte* parent, byte* instance)` | — |
+Use `OnShown` for work needing a displayed window, `OnResize` for client size changes, `OnClosing` for a close decision and `OnClose` for cleanup after destruction. In an `OnClosing` callback set `args.Handled = true` to keep the window open. `MessageBox.ShowInfo` and `ShowError` display a message. For a decision use `MessageBox.Show` with `MessageBoxButtons.YesNo` and `MessageBoxIcon.Question`. The Windows Yes result is `6`.
 
-### IO.UI.CheckBox
+## Theme a window and its controls
 
-| Member | Declaration | Accessors |
-|--------|-------------|-----------|
-| `Constructor` | `Public Constructor(string text, int x, int y, int width = 160, int height = 24)` | — |
-| `Id` | `Public Property int Id` | Get/Set |
-| `Checked` | `Public Property bool Checked` | Get/Set |
-| `SupportsEvent` | `Public Override Safe Function bool SupportsEvent(EventKind kind)` | — |
-| `KindName` | `Public Override Safe Function string KindName()` | — |
-| `CreateNative` | `Public Trusted Function byte* CreateNative(byte* parent, byte* instance)` | — |
+Insert this before `window.Run()` in the greeting example for a Catppuccin Mocha palette. `Canvas` colors the window background, `Field` is used for input surfaces and `Subtle` for secondary text such as placeholders. `Accent`, `OnAccent`, `Caret` and `Selection` keep focus and editing visible. A combo uses its effective palette for its popup too. Set `DarkTitle` before creating the window.
 
-### IO.UI.RadioButton
+```kinal
+UI.ControlPalette p = New UI.ControlPalette();
+p.Canvas = 0xff1e1e2e;
+p.Surface = 0xff313244;
+p.Field = 0xff181825;
+p.Hover = 0xff45475a;
+p.Border = 0xff585b70;
+p.Subtle = 0xffa6adc8;
+p.Text = 0xffcdd6f4;
+p.Accent = 0xff89b4fa;
+p.Caret = p.Accent;
+p.OnAccent = 0xff11111b;
+p.Selection = 0xff45475a;
+window.Palette = p;
+window.DarkTitle = true;
 
-| Member | Declaration | Accessors |
-|--------|-------------|-----------|
-| `Constructor` | `Public Constructor(string text, int x, int y, int width = 160, int height = 24)` | — |
-| `Id` | `Public Property int Id` | Get/Set |
-| `Checked` | `Public Property bool Checked` | Get/Set |
-| `GroupName` | `Public Property string GroupName` | Get/Set |
-| `SupportsEvent` | `Public Override Safe Function bool SupportsEvent(EventKind kind)` | — |
-| `KindName` | `Public Override Safe Function string KindName()` | — |
-| `CreateNative` | `Public Trusted Function byte* CreateNative(byte* parent, byte* instance)` | — |
+greet.BackColor = UI.Color.FromRgb(49, 50, 68);
+greet.HoverBackColor = UI.Color.FromRgb(69, 71, 90);
+greet.PressedBackColor = UI.Color.FromRgb(88, 91, 112);
+greet.CornerRadius = 6;
+```
 
-### IO.UI.ComboBox
+Palette and drawing colors are `u32` in `0xAARRGGBB` order. Individual style properties take `UI.Color`. A component can override normal, hover and pressed fills, text and borders with `BackColor`, `ForeColor`, `BorderColor` and their `Hover…` / `Pressed…` counterparts. Use `BorderWidth` for stroke thickness and `Font = UI.Font.FromSize(16, 600)` for size and weight. An unset foreground or font can come from a parent or the window. When changing fields on an existing palette after showing the form, call `window.Invalidate()` to repaint.
 
-| Member | Declaration | Accessors |
-|--------|-------------|-----------|
-| `Constructor` | `Public Constructor(int x, int y, int width = 160, int height = 200)` | — |
-| `Id` | `Public Property int Id` | Get/Set |
-| `Items` | `Public Property string[] Items` | Get/Set |
-| `SelectedIndex` | `Public Property int SelectedIndex` | Get/Set |
-| `Editable` | `Public Property bool Editable` | Get/Set |
-| `AddItem` | `Public Function ComboBox AddItem(string item)` | — |
-| `ClearItems` | `Public Function ComboBox ClearItems()` | — |
-| `SupportsEvent` | `Public Override Safe Function bool SupportsEvent(EventKind kind)` | — |
-| `KindName` | `Public Override Safe Function string KindName()` | — |
-| `CreateNative` | `Public Trusted Function byte* CreateNative(byte* parent, byte* instance)` | — |
+### Animate a button with a template
 
-### IO.UI.ProgressBar
+`TemplateButton.Template` exposes `Background`, `HoverBackground`, `PressedBackground`, `DisabledBackground`, `Foreground`, `DisabledForeground`, `Border` and `FocusRing`. `Duration` and `Delay` use milliseconds. Set `Duration = 0` for immediate feedback. Override the template's `Draw(context, button, fill)` to change the shape or content using the interpolated fill.
 
-| Member | Declaration | Accessors |
-|--------|-------------|-----------|
-| `Constructor` | `Public Constructor(int x, int y, int width = 200, int height = 24)` | — |
-| `Minimum` | `Public Property int Minimum` | Get/Set |
-| `Maximum` | `Public Property int Maximum` | Get/Set |
-| `Value` | `Public Property int Value` | Get/Set |
-| `Step` | `Public Property int Step` | Get/Set |
-| `PerformStep` | `Public Trusted Function void PerformStep()` | — |
-| `KindName` | `Public Override Safe Function string KindName()` | — |
-| `CreateNative` | `Public Trusted Function byte* CreateNative(byte* parent, byte* instance)` | — |
+Replace the greeting example's `Button` declaration with this block. Keep the event registration and omit the explicit `greet` style properties from the palette example to let the template supply the colors.
 
-### IO.UI.GroupBox
+```kinal
+UI.TemplateButton greet = New UI.TemplateButton("Greet", 0, 0, 96, 32);
+UI.ButtonTemplate look = New UI.ButtonTemplate();
+look.Background = 0xff313244;
+look.HoverBackground = 0xff45475a;
+look.PressedBackground = 0xff585b70;
+look.DisabledBackground = 0xff181825;
+look.Foreground = 0xffcdd6f4;
+look.DisabledForeground = 0xffa6adc8;
+look.FocusRing = 0xff89b4fa;
+look.Radius = 6;
+look.Duration = 140;
+look.Curve = UI.Easing.EaseOut;
+greet.Template = look;
+```
 
-| Member | Declaration | Accessors |
-|--------|-------------|-----------|
-| `Constructor` | `Public Constructor(string text, int x, int y, int width = 300, int height = 200)` | — |
-| `Children` | `Public Property Component[] Children` | Get/Set |
-| `Add` | `Public Function GroupBox Add(Component child)` | — |
-| `KindName` | `Public Override Safe Function string KindName()` | — |
-| `CreateNative` | `Public Trusted Function byte* CreateNative(byte* parent, byte* instance)` | — |
+Set `greet.Enabled = false` during an operation to show the disabled appearance and suppress activation. Re-enable it when the operation finishes.
 
-### IO.UI.Color
+## Viewport3D
 
-| Member | Declaration | Accessors |
-|--------|-------------|-----------|
-| `Constructor` | `Public Constructor(u8 r = 0, u8 g = 0, u8 b = 0, u8 a = 255)` | — |
-| `R` | `Public Property u8 R` | Get/Set |
-| `G` | `Public Property u8 G` | Get/Set |
-| `B` | `Public Property u8 B` | Get/Set |
-| `A` | `Public Property u8 A` | Get/Set |
-| `ToColorRef` | `Public Trusted Function u32 ToColorRef()` | — |
-| `FromRgb` | `Public Static Function Color FromRgb(u8 r, u8 g, u8 b)` | — |
-| `Black` | `Public Static Function Color Black()` | — |
-| `White` | `Public Static Function Color White()` | — |
-| `Gray` | `Public Static Function Color Gray()` | — |
-| `Blue` | `Public Static Function Color Blue()` | — |
+In a window with room for a 320 × 200 view, add a triangle as follows.
 
-### IO.UI.Font
+```kinal
+UI.Viewport3D view = New UI.Viewport3D("Mesh", 16, 16, 320, 200);
+f64[] points = { -1.0,-1.0,0.0, 1.0,-1.0,0.0, 0.0,1.0,0.0 };
+int[] indices = { 0, 1, 2 };
+u32[] colors = { 0xff89dceb };
+view.SetMesh(points, indices, colors);
+view.ShowEdges = true;
+window.Add(view);
+```
 
-| Member | Declaration | Accessors |
-|--------|-------------|-----------|
-| `Constructor` | `Public Constructor(string family = "Segoe UI", int size = 16, FontWeight weight = FontWeight.Normal, bool italic = false, bool underline = false, bool strikeOut = false)` | — |
-| `Family` | `Public Property string Family` | Get/Set |
-| `Size` | `Public Property int Size` | Get/Set |
-| `Weight` | `Public Property FontWeight Weight` | Get/Set |
-| `Italic` | `Public Property bool Italic` | Get/Set |
-| `Underline` | `Public Property bool Underline` | Get/Set |
-| `StrikeOut` | `Public Property bool StrikeOut` | Get/Set |
+`points` stores XYZ triples, `indices` contains three zero-based vertex indices per triangle and `colors` has one ARGB value per face. `SetMesh` validates the lengths, coordinates, extent and index bounds before replacing the current mesh. Valid geometry is centered and normalized for display. `TriangleCount` reports the loaded face count. `ResetMesh()` restores the built-in geometry. `ResetCamera()` restores the initial camera independently.
 
-### IO.UI.EventArgs
+Drag with the left button to rotate, the middle button to pan, and use the wheel to zoom. With focus, the arrow keys rotate and Home or double-click restores the initial camera. The same settings are available as `Yaw`, `Pitch`, `PanX`, `PanY` and `Zoom` (35–240, initial 100). Set `Orthographic` for parallel projection or `Wireframe` to draw a wire model. `ShowEdges` controls outlines on filled faces.
 
-| Member | Declaration | Accessors |
-|--------|-------------|-----------|
-| `Constructor` | `Public Constructor(EventKind kind = EventKind.OnClick, usize wParam = 0, isize lParam = 0)` | — |
-| `Kind` | `Public Property EventKind Kind` | Get/Set |
-| `WParam` | `Public Property usize WParam` | Get/Set |
-| `LParam` | `Public Property isize LParam` | Get/Set |
-| `Handled` | `Public Property bool Handled` | Get/Set |
+## Docked tools
 
-### IO.UI.Event
+`DockLayout` stores pane identity, position and active tabs. For example, `int log = docks.Add("log", "Output", UI.DockArea.Bottom);` on a new `UI.DockLayout` returns an index. Save that index to call `Activate(log)` or `Move(log, UI.DockArea.Floating)`. `Pane(log)` exposes the title, current `Area`, previous docked `Home` and floating rectangle. Restore it with `docks.Move(log, docks.Pane(log).Home)`. `Active(area)` returns the active pane index or `-1`. Use unique IDs so `Find(id)` can find a pane after rearrangement.
 
-| Member | Declaration | Accessors |
-|--------|-------------|-----------|
-| `Constructor` | `Public Constructor(EventKind kind, IO.Type.Object.Function handler)` | — |
-| `Kind` | `Public Property EventKind Kind` | Get/Set |
-| `Handler` | `Public Property IO.Type.Object.Function Handler` | Get/Set |
-| `Invoke` | `Public Trusted Function void Invoke(IO.Type.Object.Class sender, EventArgs args)` | — |
+The host application draws the tabs, creates floating windows and persists pane positions if required. Kinal Studio uses this model for its tool panes.
 
-### IO.UI.MessageBox
+## Build and distribute a form
 
-| Member | Declaration | Accessors |
-|--------|-------------|-----------|
-| `Show` | `Public Trusted Function int Show(string text, string caption = "", MessageBoxButtons buttons = MessageBoxButtons.OK, MessageBoxIcon icon = MessageBoxIcon.None)` | — |
-| `ShowInfo` | `Public Trusted Function int ShowInfo(string text, string caption = "")` | — |
-| `ShowError` | `Public Trusted Function int ShowError(string text, string caption = "")` | — |
+To build the same source for Native and the desktop VM, place the first example at `src/Greeting.kn` and save this as `kinal.knproj`. The two profiles keep the backend and output path explicit. `HideConsole` selects a GUI executable for the Native build.
 
-### IO.UI.Window
+```kinal
+Project Greeting
+{
+    Packages { Pins = ["IO.UI@2.0.0"]; }
+    SourceSet "app" { Roots = ["src"]; Include = ["**/*.kn"]; RequireUnit = true; }
 
-| Member | Declaration | Accessors |
-|--------|-------------|-----------|
-| `Constructor` | `Public Constructor(string title = "Kinal Window", int width = 640, int height = 480, int x = 100, int y = 100)` | — |
-| `Title` | `Public Property string Title` | Get/Set |
-| `Width` | `Public Property int Width` | Get/Set |
-| `Height` | `Public Property int Height` | Get/Set |
-| `X` | `Public Property int X` | Get/Set |
-| `Y` | `Public Property int Y` | Get/Set |
-| `BackColor` | `Public Property Color BackColor` | Get/Set |
-| `ForeColor` | `Public Property Color ForeColor` | Get/Set |
-| `Font` | `Public Property Font Font` | Get/Set |
-| `SetBackColor` | `Public Function Window SetBackColor(Color color)` | — |
-| `SetForeColor` | `Public Function Window SetForeColor(Color color)` | — |
-| `SetFont` | `Public Function Window SetFont(Font font)` | — |
-| `Add` | `Public Function Window Add(Component component)` | — |
-| `SupportsEvent` | `Public Safe Function bool SupportsEvent(EventKind kind)` | — |
-| `AddEvent` | `Public Function Window AddEvent(Event event)` | — |
-| `RemoveEvent` | `Public Function Window RemoveEvent(Event event)` | — |
-| `TriggerEvent` | `Public Trusted Function void TriggerEvent(EventKind kind, usize wParam = 0, isize lParam = 0)` | — |
-| `Create` | `Public Trusted Function byte* Create()` | — |
-| `Show` | `Public Trusted Function void Show()` | — |
-| `Run` | `Public Trusted Function int Run()` | — |
-| `Handle` | `Public byte* Handle;` | field |
-| `Components` | `Public Component[] Components;` | field |
-| `Events` | `Public Event[] Events;` | field |
-| `NativeBrush` | `Public byte* NativeBrush;` | field |
+    Profile "native"
+    {
+        Source { Entry = "src/Greeting.kn"; Sets = ["app"]; }
+        Build { Backend = Native; Environment = Hosted; Output = "out/Greeting.exe"; HideConsole = true; }
+    }
+
+    Profile "vm"
+    {
+        Source { Entry = "src/Greeting.kn"; Sets = ["app"]; }
+        Build { Backend = VM; Environment = Hosted; Output = "out/Greeting.knc"; }
+    }
+}
+```
+
+Run the following from the project directory. The last command bundles the bytecode with the desktop runner into a separate executable.
+
+```powershell
+kinal build --project . --profile native
+kinal vm build --project . --profile vm
+kinal vm run out/Greeting.knc
+kinal vm pack out/Greeting.knc -o out/Greeting-vm.exe
+```
+
+Use matching versions of `kinal`, `kinalvm` and the installed IO.UI 2.0 package from a Windows desktop SDK. Keep host-specific calls inside the APIs that your target backend supplies. A custom control using `Canvas` and `DrawingContext` can share its drawing code between the two profiles.
+
+## Related guides
+
+- [Custom controls, animation and Studio registration](ui-custom-controls.md)
+- [IO.UI 2.0 API, events, and troubleshooting](ui-reference.md)
+- [IO.UI 1.0 Win32 signature reference](ui-legacy.md)
+- [Standard library overview](overview.md)
+- [Backend support](../advanced/backend-support.md)
+- [Project files and package pins](../cli/project-files.md)

@@ -55,6 +55,8 @@ This documentation follows the current C compiler, runtime and standard library.
 | [IO.Json](stdlib/json.md) | JSON objects, lists, formatting and wrappers |
 | [IO.Request](stdlib/request.md) | Outbound HTTP client |
 | [IO.UI](stdlib/ui.md) | Native desktop UI package |
+| [IO.UI custom controls](stdlib/ui-custom-controls.md) | Drawing, input, animation and Studio registration |
+| [IO.UI 2.0 reference](stdlib/ui-reference.md) | Controls, events, drawing APIs and troubleshooting |
 | [IO.Web](stdlib/web.md) | Embedded HTTP server package |
 | [IO.Cat](stdlib/cat.md) | Sample package |
 
