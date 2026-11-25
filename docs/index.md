@@ -1,6 +1,6 @@
 # Kinal Language Documentation
 
-This documentation follows the current C compiler, runtime and standard library. Selfhost-only entries are explicitly marked. Start with installation and Hello World, then use the project, language and API references. [Native/VM support](advanced/backend-support.md) describes backend-specific limits.
+[Kinal 1.0.0](https://github.com/Kinal-Lang/Kinal/releases/tag/v1.0.0) is the first self-hosted release. It ships a compiler written in Kinal and built by Kinal. Notes for the legacy C compiler and backend-specific features are marked on the relevant pages. Start with installation and Hello World, then use the project, language and API references. [Native/VM support](advanced/backend-support.md) describes backend-specific limits.
 
 > **Kinal** is a statically typed, object-oriented general-purpose compiled language. It builds native code via LLVM and includes a built-in KNC bytecode virtual machine (KinalVM) for dual-mode execution. Design goals: clear and intuitive syntax, clearly defined safety levels, and a complete toolchain.
 
@@ -127,4 +127,4 @@ kinal vm run hello.kn
 
 Complete examples with Main can be saved as standalone .kn files; multi-file examples require every listed file. Other syntax fragments omit enclosing declarations, imports or earlier definitions; ... denotes a placeholder. Incorrect diagnostic examples are deliberately invalid. Select Native, VM, freestanding and platform requirements as stated on each page; highlighting or frontend success does not prove runtime support. Backslash command continuations use POSIX shell syntax; in PowerShell combine the command into one line and run current-directory Windows executables as .\program.exe.
 
-This reference follows current C source. An older installed release may behave differently. Include tool versions, minimal source, the complete command and actual diagnostics when reporting a problem.
+Check the documented version and backend against your installed SDK. Include tool versions, minimal source, the complete command and actual diagnostics when reporting a problem.

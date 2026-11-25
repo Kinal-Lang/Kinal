@@ -1,6 +1,6 @@
 # Native and KinalVM Support
 
-This page covers the C compiler's Native and KNC backends. Features that require the selfhost compiler or a platform-specific VM are marked in the table.
+This page describes Native and KNC support in the Kinal toolchain. Kinal 1.0.0 ships the self-hosted compiler. The tables call out behavior specific to the legacy C compiler or to a platform-specific VM.
 
 ## Choose an Execution Path
 
@@ -12,7 +12,7 @@ This page covers the C compiler's Native and KNC backends. Features that require
 | Packed VM executable | `kinal vm pack` | Compatible VM template and bytecode; target-host dependencies still apply |
 | Native freestanding | `kinal build --env freestanding` | Target linker/startup code; custom runtime hooks for Alloc/GC profiles |
 
-The C compiler binary links against LLVM even when it emits KNC. Running an existing `.knc` with standalone `kinalvm` skips source compilation and native linking; that does not mean the compiler executable can be installed without its LLVM files. Preserve the complete distribution layout.
+Keep the complete SDK layout, including its LLVM files, for source builds. To run an existing `.knc` with the matching standalone `kinalvm`, invoke the interpreter directly and skip the source compilation and linking steps.
 
 KinalVM currently interprets bytecode. It is not documented as a JIT. Startup and throughput depend on the program and environment; native linking occurs at build time, not every time a previously built native executable starts.
 

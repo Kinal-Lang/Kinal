@@ -1,6 +1,6 @@
 # Kinal 语言文档
 
-本文档以当前 C 编译器、运行时和标准库为准，自举专用入口单独标注。建议先阅读安装与 Hello World，再查项目、语言和 API 参考。[Native／VM 支持](advanced/backend-support.md)说明后端限制。
+[Kinal 1.0.0](https://github.com/Kinal-Lang/Kinal/releases/tag/v1.0.0) 是首个自举发行版，随 SDK 提供用 Kinal 编写、由 Kinal 自身构建的编译器。旧版 C 编译器和特定后端的说明在各页标注。建议先阅读安装与 Hello World，再查项目、语言和 API 参考。[Native／VM 支持](advanced/backend-support.md)说明后端限制。
 
 > **Kinal** 是一门静态类型、面向对象的通用编译型语言，基于 LLVM 构建原生代码，并内置 KNC 字节码虚拟机（KinalVM）以双链路使用。设计目标是：语法清晰直观、安全等级分明、工具链完整。
 
@@ -127,4 +127,4 @@ kinal vm run hello.kn
 
 标明“完整示例”且带 Main 的程序可保存为独立 .kn 文件；多文件示例需同时创建列出的各文件。其余语法片段省略外围声明、导入或前文定义，带 ... 的内容为占位示意。诊断章节中的错误示例刻意不能通过编译。Native、VM、freestanding 与平台要求按所在页说明选择，不能从高亮颜色或前端检查成功推断运行支持。命令中的多行反斜杠续行面向 POSIX shell；PowerShell 可合并为一行，运行当前目录 Windows exe 使用 .\program.exe。
 
-本参考跟随当前 C 源码，已安装的旧发行版可能行为不同；报告问题时附上工具版本、最小源码、完整命令和实际诊断。
+请按所安装的 SDK 核对文档标注的版本和后端。报告问题时请附上工具版本、最小源码、完整命令和实际诊断。

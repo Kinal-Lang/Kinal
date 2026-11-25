@@ -1,6 +1,6 @@
 # Standard Library Overview
 
-This reference follows the current C compiler and standard-library source. `IO.*` is a unit naming scheme, not a claim that all APIs are compiler builtins or available on VM/freestanding.
+This reference covers the standard library used by the Kinal toolchain. Kinal 1.0.0 ships the self-hosted compiler. `IO.*` is a unit naming scheme. Check each API's package and backend requirements for builtins, KinalVM and freestanding builds.
 
 ## Packages, Units and Runtime
 
